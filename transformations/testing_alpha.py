@@ -29,14 +29,12 @@ def measure_theta_from_camera():
         show=False,
         use_roi=True
     )
-    return np.deg2rad(angle_deg)  # return radians
+    return np.deg2rad(angle_deg)  
 
 
 
-# ---------------------------------------------------------------------
-# DESIRED ANGLE & MODEL PARAMETERS
-# ---------------------------------------------------------------------
-theta_des = np.deg2rad(36)      # desired beam angle in radians
+
+theta_des = np.deg2rad(36)      
 
 mag = 128e3
 r = 0.0015
@@ -44,7 +42,7 @@ E = 3e6
 A_cs = np.pi * r**2
 I = np.pi * r**4 / 4
 R = 0.11
-# initial guesses for Jacobian controller
+
 B_init = 0.025
 L_init = 0.033
 

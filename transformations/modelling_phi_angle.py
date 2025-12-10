@@ -78,7 +78,7 @@ if __name__ == '__main__':
     radius = 0.0015
     A_cs = np.pi * radius**2
     I = np.pi * radius**4 / 4
-    phi = np.deg2rad(60)
+    phi = np.deg2rad(75)
     B = 0.02
     mag = 128e3
     rhs_eq = constant(B, mag, A_cs, length, E, I)
@@ -92,10 +92,10 @@ if __name__ == '__main__':
     y_pos = integral_y(phi, theta_L, constant_carti)
     print(f"X coordinate is: {x_pos*1000}, Y coordinate is: {y_pos*1000}")
 
-    theta_from_x = find_theta_L(33.33/1000, phi, constant_carti)
+    theta_from_x = find_theta_L(0.029, phi, constant_carti)
     print(f"theta position from x is: {np.rad2deg(theta_from_x)}")
  
-    theta_angle, length_from_carti = find_angle_and_length(phi,  43/1000, 18.6/1000, mag, B, A_cs, E, I)
+    theta_angle, length_from_carti = find_angle_and_length(phi,  0.034, 0.001, mag, B, A_cs, E, I)
     print(f"The recovered angle is {np.rad2deg(theta_angle)} with length {length_from_carti}")
     lengths = np.linspace(0.04, 0.06, 4)
     phis = np.linspace(np.deg2rad(1), np.pi/2, 30)

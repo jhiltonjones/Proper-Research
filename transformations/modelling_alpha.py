@@ -116,6 +116,108 @@ def alpha_controller(theta_des,
     print("[alpha controller] Max iterations reached without full convergence")
     return alpha, theta_new, B_curr, "max_iter"
 
+def alpha_controller_measured(theta_des,
+                              phi_fixed,
+                              alpha_init,
+                              R, m0, mu0,
+                              mag, A_cs, L, E, I,
+                              danger_intervals_by_phi,
+                              phi_values,
+                              measure_theta_fn,
+                              move_fn,
+                              alpha_min=-np.pi,
+                              alpha_max=np.pi,
+                              dt=0.05,
+                              Kp=5.0, Ki=0.0, Kd=0.5,
+                              damping=1e-3,
+                              max_iter=300,
+                              grad_runtime_thresh=20.0,
+                              theta_zero_thresh=np.deg2rad(3.0),
+                              tol_deg=0.5):
+
+    phi_arr = np.array(phi_values)
+    idx_phi = np.argmin(np.abs(phi_arr - phi_fixed))
+    phi_key = phi_arr[idx_phi]
+    danger_intervals = danger_intervals_by_phi.get(phi_key, [])
+
+    alpha = alpha_init
+    e_int = 0.0
+    e_prev = 0.0
+
+    for k in range(max_iter):
+        # 1) Move robot to the CURRENT alpha (absolute)
+        move_fn(alpha)
+
+        # 2) Measure real angle (radians)
+        theta_meas = measure_theta_fn()
+
+        if abs(theta_meas) < theta_zero_thresh:
+            print(f"[alpha controller] |theta_meas| ~ 0 (|θ|={np.rad2deg(theta_meas):.2f} deg). "
+                  "Stopping to avoid flip.")
+            return alpha, theta_meas, None, "danger_zone"
+
+        # 3) Signed error in radians (with your sign convention)
+        # If camera angle is flipped, keep the minus: theta_meas_eff = -theta_meas
+        theta_meas_eff = -theta_meas      # if needed
+        e = theta_des - theta_meas_eff
+
+        print(f"Theta desired is:  {np.rad2deg(theta_des):.2f} deg")
+        print(f"Theta measured is: {np.rad2deg(theta_meas):.2f} deg")
+        print(f"Error is:          {np.rad2deg(e):.2f} deg")
+
+        # PID in theta-space
+        e_int += e * dt
+        e_dot = (e - e_prev) / dt
+        theta_dot_cmd = Kp * e + Ki * e_int + Kd * e_dot
+
+        # 4) Jacobian from model
+        J_alpha = dtheta_dalpha(phi_fixed, alpha, R, m0, mu0,
+                                mag, A_cs, L, E, I)
+
+        if abs(J_alpha) > grad_runtime_thresh:
+            print(f"[alpha controller] |dθ/dα| too large ({J_alpha:.2e}). "
+                  "Stopping near snap region.")
+            return alpha, theta_meas, None, "grad_too_large"
+
+        # 5) Damped least squares
+        JJt = J_alpha**2
+        gain = theta_dot_cmd / (JJt + damping**2)
+        dalpha_rate = J_alpha * gain   # ≈ dα/dt
+
+        # Convert rate to step and clip
+        max_step_deg = 5.0
+        max_step = np.deg2rad(max_step_deg)
+
+        step = dalpha_rate * dt
+        step = np.clip(step, -max_step, max_step)
+
+        alpha_new = alpha - step
+        alpha_new = np.clip(alpha_new, alpha_min, alpha_max)
+
+        # Danger intervals in alpha
+        if alpha_in_intervals(alpha_new, danger_intervals):
+            print("[alpha controller] Proposed alpha enters danger zone (snap region). "
+                  "Not proceeding further.")
+            return alpha, theta_meas, None, "danger_zone"
+
+        print(f"Alpha new is: {np.rad2deg(alpha_new):.2f} deg, step: {np.rad2deg(step):.2f} deg")
+
+        # 6) Convergence check on current error
+        if abs(e) <= np.deg2rad(tol_deg):
+            print(f"[alpha controller] Converged in {k} steps "
+                  f"(measured θ = {np.rad2deg(theta_meas):.2f} deg)")
+            _, B_curr = tip_angle_from_theta(phi_fixed, alpha, R, m0, mu0,
+                                             mag, A_cs, L, E, I)
+            return alpha, theta_meas, B_curr, "converged"
+
+        # 7) Prepare next iteration
+        alpha = alpha_new
+        e_prev = e
+
+    print("[alpha controller] Max iterations reached without full convergence")
+    _, B_curr = tip_angle_from_theta(phi_fixed, alpha, R, m0, mu0,
+                                     mag, A_cs, L, E, I)
+    return alpha, theta_meas, B_curr, "max_iter"
 
 
 if __name__ == '__main__':

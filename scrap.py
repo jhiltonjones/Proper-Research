@@ -5,11 +5,13 @@ TCP_TARGET =  [0.7985173296917242, -0.538880495640068, 0.4502643054124873, -1.97
 if __name__ =='__main__':
     robo = URRtde(ROBOT_IP)
     try:
-        robo.get_joints()
-        robo.get_pose()
-        robo.moveL(TCP_TARGET, speed = 0.1, accel=0.2)
-        print("finished 1")
-        robo.go_home()
+        # current_joint = robo.get_joints()
+        # robo.get_pose()
+        # current_joint[5]+=0.1
+        # robo.moveJ(current_joint)
+        # new_pose = get_point(0,70)
+        # robo.moveL(new_pose)
+        robo.go_home_joint()
         print("Finished")
     finally:
         robo.shutdown()

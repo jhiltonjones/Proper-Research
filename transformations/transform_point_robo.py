@@ -1,15 +1,25 @@
 from robot_class_trans import URRtde
-from transformations import get_point
-
+import numpy as np
+from camera import detect_red_points_and_angle, new_capture
 ROBOT_IP = "192.168.56.101"
-base_pos =  [0.7985173296917242, -0.538880495640068, 0.4502643054124873, -1.9773907947518439, 2.4202883191517617, -0.016116851148178644]
+start_point = [0.6932184569585337, -0.5367080771619072, 0.4230298822195191, 1.7350107136377495, -2.5619839775632967, 0.003689909797916628]
 
 robo = URRtde(ROBOT_IP)
 try:
-    current_joint = robo.get_joints()
     current_pose = robo.get_pose()
-    robo.moveL(base_pos)
-    input("Press Enter")
-    robo.go_home_joint()
+    base_pose = get_point(0,0)
+    robo.moveL(base_pose)
+    values = np.linspace(-90,90,15)
+    # for i in values:
+    #     new_pose = get_point(0,i)
+    #     robo.moveL(new_pose)
+    #     img_file = new_capture(filename="focused_image.jpg")
+    #     pt1, pt2, angle, roi_box = detect_red_points_and_angle(
+    #     img_file,
+    #     show=False,
+    #     use_roi=True
+    # )
+    #     print(angle)
+    robo.moveL(base_pose)
 finally:
     robo.shutdown()

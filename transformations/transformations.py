@@ -75,9 +75,9 @@ def rotate_around_point_transform(axis, pivot_pos, theta):
     return transGen(R, t)
 
 def get_point(theta_angle_x, theta_angle_z):
-    start_point = np.array([0.7980899962522019, -0.5420877341468572, 0.452442897698948, 3.0052494981994466, 0.8233639383732426, 0.007367256454193546])
+    start_point = np.array([0.6832184569585337, -0.5367080771619072, 0.4230298822195191, 1.7350107136377495, -2.5619839775632967, 0.003689909797916628])
 
-    pivot_point = np.array([0.7980899962522019, -0.4012657614330756, 0.16238122113144055, -3.0760125513655026, -0.5854704390599933, 0.08213552142709286])
+    pivot_point = np.array([0.823733332875323, -0.5367080771619072, 0.22740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
 
 
     ee_pos0 = start_point[:3]
@@ -98,7 +98,7 @@ def get_point(theta_angle_x, theta_angle_z):
     theta_z = np.deg2rad(theta_angle_z)
     H_rot_z = rotate_around_point_transform('z', pivot_pos, theta_z)
     theta_x = np.deg2rad(theta_angle_x)
-    H_rot_x = rotate_around_point_transform('y', pivot_pos, theta_x)
+    H_rot_x = rotate_around_point_transform('x', pivot_pos, theta_x)
 
     H_rot = H_rot_x @ H_rot_z
     H_b_m1 = H_rot @ H_b_m0

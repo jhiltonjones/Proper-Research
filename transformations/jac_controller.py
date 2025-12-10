@@ -25,8 +25,8 @@ def dtheta_dL(B, phi, mag, A_cs, L, E, I, dL=1e-4):
     theta_minus = theta_angle_solved(B, phi, mag, A_cs, L-dL, E, I)
     return (theta_plus - theta_minus) / (2*dL)
 
-def jacobian_controller(theta_des,B_init, phi_init, L_init,
-                        mag, A_cs, E, I, L_min = 0.04, L_max=0.06, B_min=0.008, B_max = 0.02,
+def jacobian_controller(theta_des,B_init, phi_init, L_init, 
+                        mag, A_cs, E, I, L_min = 0.04, L_max=0.06, B_min=0.025, B_max = 0.025,
                         phi_min = np.deg2rad(-80), phi_max = np.deg2rad(80), dt=0.05,
                         Kp = 5.0, Ki = 0.0, Kd = 0.5, 
                         max_iter = 300, damping = 1e-3):
@@ -172,14 +172,14 @@ def plot_theta_gradients_over_params(
 
 
 if __name__ == '__main__':
-    theta_target = np.deg2rad(36.72)
-    theta_target2 = np.deg2rad(32)
+    theta_target = np.deg2rad(20)
+    theta_target2 = np.deg2rad(36)
     mag = 128e3
     r = 0.0015
-    E = 5.4e6
+    E = 3e6
     A_cs = np.pi * r**2
     I = np.pi * r**4/4
-    B_init = 0.01; phi_init = np.deg2rad(25); L_init = 0.04
+    B_init = 0.03; phi_init = np.deg2rad(25); L_init = 0.04
     mu_0 = 4e-7*np.pi
     B_r = 1.2
     r = 0.03
@@ -188,7 +188,7 @@ if __name__ == '__main__':
     x_init = 0.09
     mag_epm = magnetic_moment(B_r, mu_0, r, p)
     print(f"Magnetic moment of EPM is {mag_epm}")
-    B_sol, phi_sol, L_sol, theta_sol = jacobian_controller(theta_target, B_init, phi_init, L_init, mag, A_cs, E, I, L_max=0.048)
+    B_sol, phi_sol, L_sol, theta_sol = jacobian_controller(theta_target, B_init, phi_init, L_init, mag, A_cs, E, I, L_max=0.04)
     print(f"B solution: {B_sol*1000}mT, phi_sol: {np.rad2deg(phi_sol)}, L_sol: {L_sol}, with angle of: {theta_sol}")
     mag_pose, field = solve_mag_pose(B_sol, x_init, mu_0, mag_epm, m_hat)
     print(f"Magnetic distance is {mag_pose} which prodices a field of {field}")
@@ -210,7 +210,7 @@ if __name__ == '__main__':
         theta_des = theta_target2,      
         phi_fixed = phi_fixed,
         alpha_init = alpha_init,
-        R = mag_pose, m0 = mag_epm, mu0 = mu_0,
+        R = 0.1, m0 = mag_epm, mu0 = mu_0,
         mag = mag, A_cs = A_cs, L = L_fixed, E = E, I = I,
         danger_intervals_by_phi = danger_intervals_by_phi,
         phi_values = phi_values,

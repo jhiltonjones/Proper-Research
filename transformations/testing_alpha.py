@@ -13,11 +13,8 @@ import os
 
 
 def move_function(alpha_abs):
-    """
-    Move joint 5 so that 'alpha_abs' (in rad) is the deflection relative to alpha_zero.
-    """
     joints = robo.get_joints()
-    joints[5] = alpha_zero + alpha_abs  # absolute command
+    joints[5] = alpha_zero + alpha_abs 
     robo.moveJ(joints)
 
 
@@ -104,7 +101,7 @@ try:
     alpha_zero = zero_joints[5]  
     alpha_init = 0.0
 
-    measure_fn = measure_theta_from_camera   # already returns radians
+    measure_fn = measure_theta_from_camera  
 
     alpha_final, theta_meas_final, B_final, status = alpha_controller_measured(
         theta_des,

@@ -71,51 +71,22 @@ def find_angle_and_length(phi, delta_x, delta_y, mag, B, A_cs, E, I, eps = 1e-4,
     length = np.sqrt(((E*I)*xi_integral)/(mag*B*A_cs))
     return theta_l_sol, length
 
-if __name__ == '__main__':
-    length = 0.04
-    E = 4.5e6
-    radius = 0.0015
-    A_cs = np.pi * radius**2
-    I = np.pi * radius**4 / 4
-    phi = np.deg2rad(75)
-    B = 0.02
-    mag = 128e3
-    rhs_eq = constant(B, mag, A_cs, length, E, I)
-    print(rhs_eq)
+def theta_angle_solved(B, phi, mag, A_cs, L, E, I):
+    rhs_eq = constant(B, mag, A_cs, L, E, I)
     theta_L = root_theta(rhs_eq, phi)
-    print(np.rad2deg(theta_L))
-    angle = tip_angle_from_B_phi_L(B, phi, mag, A_cs, length, E, I)
-    print(np.rad2deg(angle))
-    constant_carti = np.sqrt((E*I)/(2*mag*B*A_cs))
-    x_pos = intergal_x(phi, theta_L, constant_carti)
-    y_pos = integral_y(phi, theta_L, constant_carti)
-    print(f"X coordinate is: {x_pos*1000}, Y coordinate is: {y_pos*1000}")
+    return theta_L
 
-    theta_from_x = find_theta_L(0.029, phi, constant_carti)
-    print(f"theta position from x is: {np.rad2deg(theta_from_x)}")
- 
-    theta_angle, length_from_carti = find_angle_and_length(phi,  0.034, 0.001, mag, B, A_cs, E, I)
-    print(f"The recovered angle is {np.rad2deg(theta_angle)} with length {length_from_carti}")
-    lengths = np.linspace(0.04, 0.06, 4)
-    phis = np.linspace(np.deg2rad(1), np.pi/2, 30)
-    graph_inputs = []
+def dtheta_dB(B, phi, mag, A_cs, L, E, I, dB=1e-4):
+    theta_plus = theta_angle_solved(B+dB, phi, mag, A_cs, L, E, I)
+    theta_minus = theta_angle_solved(B-dB, phi, mag, A_cs, L, E, I)
+    return (theta_plus - theta_minus) / (2*dB)
 
-    for L in lengths:
-        angles = []
-        for phi in phis:
-            rhs_eq = constant(B, mag, A_cs, L, E, I)
-            theta_L = root_theta(rhs_eq, phi)
-            angles.append(theta_L)
-        graph_inputs.append(angles)
+def dtheta_dphi(B, phi, mag, A_cs, L, E, I, dphi=1e-4):
+    theta_plus = theta_angle_solved(B, phi+dphi, mag, A_cs, L, E, I)
+    theta_minus = theta_angle_solved(B, phi-dphi, mag, A_cs, L, E, I)
+    return (theta_plus - theta_minus) / (2*dphi)
 
-    plt.figure()
-    for L, graph in zip(lengths, graph_inputs):
-        plt.plot(np.rad2deg(phis), np.rad2deg(graph), label=f"L={L:.3f} m")
-    plt.title("Bending Angle vs Phi Angle for different Beam Lengths")
-    plt.xlabel("Phi")
-    plt.ylabel("Bending of beam")
-    plt.grid()
-    plt.legend()
-    plt.show()
-
-    
+def dtheta_dL(B, phi, mag, A_cs, L, E, I, dL=1e-4):
+    theta_plus = theta_angle_solved(B, phi, mag, A_cs, L+dL, E, I)
+    theta_minus = theta_angle_solved(B, phi, mag, A_cs, L-dL, E, I)
+    return (theta_plus - theta_minus) / (2*dL)

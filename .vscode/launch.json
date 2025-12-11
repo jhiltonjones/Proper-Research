@@ -1,0 +1,35 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Run testing_script1 (module)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.testing_script1",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run single_shot",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.single_shot",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run Advancer Unit test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.testing_linear_advancer",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+
+    ]
+}

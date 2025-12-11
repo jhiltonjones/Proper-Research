@@ -115,5 +115,3 @@ def get_point(theta_angle_x, theta_angle_z):
     # print("New EE pose to send to robot:")
     # print(repr(new_pose_for_robot))
     return new_pose_for_robot
-new_angle = get_point(-55,-80)
-print(new_angle)

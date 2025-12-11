@@ -3,16 +3,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import json
 import os
+ROI_CONFIG_FILE = "red_roi_box.json"  
 
-ROI_CONFIG_FILE = "red_roi_box.json"   # where we store the box between runs
-
-# ─── CAMERA CAPTURE ─────────────────────────────────────────────────────
+def measure_theta_from_camera():
+    img_file = new_capture(filename="focused_image.jpg")
+    pt1, pt2, angle_deg, roi_box = detect_red_points_and_angle(
+        img_file,
+        show=False,
+        use_roi=True
+    )
+    return np.deg2rad(angle_deg) 
 def new_capture(filename='focused_image.jpg', focus=255):
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError("Cannot open camera")
 
-    # Warm-up
     for _ in range(5):
         cap.read()
 
@@ -25,7 +30,6 @@ def new_capture(filename='focused_image.jpg', focus=255):
     else:
         raise RuntimeError("Failed to capture image")
 
-# ─── ROI STORAGE / SELECTION ────────────────────────────────────────────
 def save_roi_box(box, path=ROI_CONFIG_FILE):
     """
     box: (x, y, w, h) in image pixels.
@@ -59,10 +63,8 @@ def select_roi_interactive(image, window_name="Select red search area"):
     Lets you draw a box with the mouse. Returns (x, y, w, h).
     Uses OpenCV's built-in ROI selector.
     """
-    # clone to avoid modifying original
     img_copy = image.copy()
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    # fromCenter=False = drag from corner to corner
     roi = cv2.selectROI(window_name, img_copy, fromCenter=False, showCrosshair=True)
     cv2.destroyWindow(window_name)
 
@@ -71,7 +73,6 @@ def select_roi_interactive(image, window_name="Select red search area"):
         return None
     return (x, y, w, h)
 
-# ─── ANGLE UTILS ────────────────────────────────────────────────────────
 class AngleUnwrapper:
     def __init__(self):
         self.prev = None
@@ -94,7 +95,6 @@ def compute_signed_angle(v1, v2):
     angle_rad = angle2 - angle1
     angle_deg = np.degrees(angle_rad)
 
-    # Normalize to [-180, 180] but restricted to [-90, 90] in your design
     if angle_deg > 90:
         angle_deg -= 180
     elif angle_deg < -90:
@@ -102,7 +102,6 @@ def compute_signed_angle(v1, v2):
 
     return angle_deg
 
-# ─── RED DETECTION WITH OPTIONAL ROI ────────────────────────────────────
 def detect_red_points_and_angle(image_path, show=False, use_roi=True):
     """
     Detects 2 biggest red blobs in the image (optionally inside a stored / selected ROI),
@@ -118,7 +117,6 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
 
     h_full, w_full = image.shape[:2]
 
-    # Decide ROI
     roi_box = None
     if use_roi:
         roi_box = load_roi_box()
@@ -131,7 +129,6 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
 
     if roi_box is not None:
         x, y, w, h = roi_box
-        # clamp to image bounds just in case
         x = max(0, min(x, w_full - 1))
         y = max(0, min(y, h_full - 1))
         w = max(1, min(w, w_full - x))
@@ -139,11 +136,9 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
         roi_box = (x, y, w, h)
         roi_img = image[y:y+h, x:x+w]
     else:
-        # full image
         x, y, w, h = 0, 0, w_full, h_full
         roi_img = image
 
-    # Convert ROI region to HSV
     image_hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
 
     # Red thresholds
@@ -164,7 +159,6 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
     if len(contours) < 2:
         raise ValueError("Less than two red points detected inside ROI!")
 
-    # Take the largest two contours
     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:2]
     red_centers = []
     for cnt in sorted_contours:
@@ -172,7 +166,6 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
-            # convert ROI coords -> full image coords
             full_cx = cx + x
             full_cy = cy + y
             red_centers.append((full_cx, full_cy))
@@ -180,7 +173,6 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
     if len(red_centers) < 2:
         raise ValueError("Could not compute both marker centroids.")
 
-    # sort by y then x (as you had)
     red_centers.sort(key=lambda p: (p[1], p[0]))
     pt1, pt2 = red_centers
 
@@ -192,12 +184,10 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
     if show:
         vis = image.copy()
 
-        # draw ROI box if used
         if roi_box is not None:
             x, y, w, h = roi_box
             cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
 
-        # draw points and line
         cv2.circle(vis, pt1, 5, (255, 0, 0), -1)
         cv2.circle(vis, pt2, 5, (0, 0, 255), -1)
         cv2.line(vis, pt1, pt2, (0, 255, 0), 2)
@@ -208,7 +198,18 @@ def detect_red_points_and_angle(image_path, show=False, use_roi=True):
         plt.show()
 
     return pt1, pt2, angle, roi_box
-
+def measure_beam_angle_deg(image_filename="focused_image.jpg", use_roi=True, show=False):
+    """
+    Captures an image (or uses an existing file), detects the two red markers,
+    and returns the measured beam angle in degrees.
+    """
+    img_file = new_capture(filename=image_filename)
+    pt1, pt2, angle_deg, roi_box = detect_red_points_and_angle(
+        img_file,
+        show=show,
+        use_roi=use_roi
+    )
+    return angle_deg, (pt1, pt2), roi_box
 # ─── MAIN ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Capture or use existing

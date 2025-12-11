@@ -14,7 +14,7 @@ pid_params.Kp = 1.0
 
 pid_state = PIDState()
 
-length_des_mm = 35.0    
+length_des_mm = 35    
 tol_mm = 1.0        
 
 max_iter = 10

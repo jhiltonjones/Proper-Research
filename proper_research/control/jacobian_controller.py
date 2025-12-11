@@ -6,7 +6,7 @@ def jacobian_controller(theta_des,B_init, phi_init, L_init,
                         mag, A_cs, E, I, L_min = 0.04, L_max=0.06, B_min=0.025, B_max = 0.025,
                         phi_min = np.deg2rad(-90), phi_max = np.deg2rad(90), dt=0.05,
                         Kp = 5.0, Ki = 0.0, Kd = 0.5, 
-                        max_iter = 300, damping = 1e-3):
+                        max_iter = 50, damping = 1e-3):
 
 
     B = B_init

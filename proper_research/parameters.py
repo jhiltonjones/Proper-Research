@@ -113,7 +113,7 @@ def default_alpha_controller_params():
         weight = 0.2,
         alpha_init = 0.0,
         damping=1e-3,
-        max_iter=5,
+        max_iter=10,
         grad_runtime_thresh=20.0,
         theta_zero_thresh=np.deg2rad(3.0),
         tol_deg=0.5,

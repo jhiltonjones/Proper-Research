@@ -243,7 +243,7 @@ def detect_red_markers_in_roi(image_bgr, use_roi=True, expected_markers=2):
 def measure_beam_length_mm_with_checkerboard(
     image_filename="focused_image.jpg",
     use_roi=True,
-    show=True
+    show=False
 ):
     """
     1. Capture image or load existing.
@@ -332,7 +332,7 @@ if __name__ == "__main__":
     result = measure_beam_length_mm_with_checkerboard(
         image_filename="focused_image.jpg",
         use_roi=True,
-        show=True
+        show=False
     )
 
     print("\nResult:")

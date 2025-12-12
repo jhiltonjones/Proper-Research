@@ -29,6 +29,14 @@
             "module": "proper_research.experiments.testing_linear_advancer",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing script 2",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.testing_script3",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
 
     ]

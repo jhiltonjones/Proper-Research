@@ -2,7 +2,7 @@ from proper_research.robot.ur_rtde import URRtde
 from proper_research.robot.transformations import get_point
 from proper_research.parameters import ROBOT_IP, default_beam_params, default_magnet_params, default_alpha_controller_params
 from proper_research.vision.camera import new_capture, measure_theta_from_camera, detect_red_points_and_angle
-from proper_research.control.jacobian_controller import jacobian_controller
+from proper_research.control.jacobian_controller import jacobian_controller, solve_mag_pose
 from proper_research.control.alpha_controller import alpha_controller_measured
 from proper_research.advancer_unit.advancer_control import advancer_go
 from proper_research.vision.measure_length import measure_beam_length_mm_with_checkerboard
@@ -24,12 +24,13 @@ mag_params = default_magnet_params()
 beam_params = default_beam_params()
 alpha_params = default_alpha_controller_params()
 beam_params.L_init = 0.018
-beam_params.B_init = 0.03
+beam_params.B_init = 0.02
 alpha_params.Kp = 10.0
 alpha_params.Ki = 0.02
 alpha_params.kd = 0.7
 measure_fn = measure_theta_from_camera
-
+base_point_pose = 0.823733332875323
+start_point_pose = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
 danger_file = "/home/jack/Proper-Research/data/alpha_danger_map.pkl"
 if os.path.exists(danger_file):
     with open(danger_file, "rb") as f:
@@ -77,13 +78,33 @@ try:
         print("  phi =", phi_cmd, "(rad)", f"= {np.rad2deg(phi_cmd):.2f} deg")
         print("  L   =", L_cmd, "(m)")
         print("  model-predicted angle =", theta_model_deg, "deg")
+        mag_pose,_ = solve_mag_pose(B_cmd, 0.1, mag_params.mu_0, mag_params.mag_epm, mu_hat = np.array([1,0,0]))
+        start_point = base_point_pose - mag_pose
+        start_point_pose[0] = start_point
         current_phi = phi_cmd
         if result_user["theta_target_rad"] >0:
-            new_pose = get_point(0, np.rad2deg(current_phi))
-            robo.moveL(new_pose)
+            new_pose = get_point(0, np.rad2deg(current_phi), start_point_pose)
+            new_base_pose = get_point(0, 0, start_point_pose)
+           
+            print(f"Going to position: {new_pose}")
+            # input("Continue?")
+            if start_point > 0.6:
+                robo.moveL(new_base_pose)
+                robo.moveL(new_pose)
+            else:
+                print("Too close")
         else:
-            new_pose = get_point(0, np.rad2deg(-current_phi))
-            robo.moveL(new_pose)
+            new_pose = get_point(0, np.rad2deg(-current_phi),start_point_pose)
+            new_base_pose = get_point(0, 0, start_point_pose)
+            # input("Continue?")
+            print(f"Going to position: {new_pose}")
+
+            if start_point > 0.6:
+                robo.moveL(new_base_pose)
+                robo.moveL(new_pose)
+            else:
+                print("Too close")
+                
         robo.get_pose()
         # input("Continue?")
         zero_joints = robo.get_joints()

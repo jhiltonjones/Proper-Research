@@ -30,7 +30,7 @@ def tip_angle_from_B_phi_L(B, phi, mag, A_cs, L, E, I):
     theta = root_theta(lam, phi)
     return theta  
 
-def intergal_x(phi, theta_L, constant=0, constant_use=True, eps = 1e-4):
+def integral_x(phi, theta_L, constant=0, constant_use=True, eps = 1e-4):
     def integrand(theta):
         w = np.cos(phi-theta_L)-np.cos(phi- theta)
         return np.cos(theta)/ np.sqrt(w)
@@ -54,14 +54,14 @@ def integral_y(phi, theta_L, constant=0, constant_use=True, eps=1e-4):
     
 def find_theta_L(x_m, phi, constant, eps = 1e-4):
     def f(theta_l):
-        return intergal_x(phi, theta_l, constant) - x_m
+        return integral_x(phi, theta_l, constant) - x_m
     bracket = (eps, phi-eps)
     theta_sol = root_scalar(f, bracket=bracket)
     return theta_sol.root
 
 def find_angle_and_length(phi, delta_x, delta_y, mag, B, A_cs, E, I, eps = 1e-4, eps_bracket = 1e-3):
     def f(theta_l):
-        X = intergal_x(phi, theta_l, constant_use=False)
+        X = integral_x(phi, theta_l, constant_use=False)
         Y = integral_y(phi, theta_l, constant_use=False)
         return Y*delta_x - X*delta_y
     bracket = (eps_bracket, phi-eps)
@@ -90,3 +90,16 @@ def dtheta_dL(B, phi, mag, A_cs, L, E, I, dL=1e-4):
     theta_plus = theta_angle_solved(B, phi, mag, A_cs, L+dL, E, I)
     theta_minus = theta_angle_solved(B, phi, mag, A_cs, L-dL, E, I)
     return (theta_plus - theta_minus) / (2*dL)
+if __name__ == '__main__':
+    theta = np.deg2rad(26.56)
+    E = 4.5e6
+    radius = 0.0015
+    A_cs = np.pi * radius**2
+    I = np.pi * radius**4 / 4
+    B = 0.03
+    mag = 128e3
+    constant_carti = np.sqrt((E*I)/(2*mag*B*A_cs))
+    x_pos = integral_x(phi=np.deg2rad(40.62), theta_L=np.deg2rad(26.1), constant=constant_carti)
+    print(f"x_pos is : {x_pos}")
+    y_pos = integral_y(phi=np.deg2rad(40.62), theta_L=np.deg2rad(26.1), constant=constant_carti)
+    print(f"y_pos is : {y_pos}")

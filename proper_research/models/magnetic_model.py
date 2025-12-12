@@ -36,3 +36,4 @@ def B_and_beta_from_phi_and_alpha(phi, alpha, R, m0, mu0):
     B_mag = np.linalg.norm(B_vec)
     beta = np.arctan2(By, Bx)
     return B_mag, beta
+

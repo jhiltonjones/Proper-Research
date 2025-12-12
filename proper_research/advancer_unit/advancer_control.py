@@ -80,7 +80,7 @@ def advancer_go(length_des_mm):
         final_result = measure_beam_length_mm_with_checkerboard(
             image_filename="focused_image.jpg",
             use_roi=True,
-            show=True,
+            show=False,
         )
         print("\nFinal length: {:.2f} mm".format(final_result["length_mm"]))
 

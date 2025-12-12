@@ -95,10 +95,10 @@ def alpha_controller_measured(
         alpha_prev, theta_prev = alpha, theta_meas
             
 
-        if abs(theta_meas) < params.theta_zero_thresh:
-            print(f"[alpha controller] |theta_meas| ~ 0 (|θ|={np.rad2deg(theta_meas):.2f} deg). "
-                  "Stopping to avoid flip.")
-            return alpha, theta_meas, None, "danger_zone"
+        # if abs(theta_meas) < params.theta_zero_thresh:
+        #     print(f"[alpha controller] |theta_meas| ~ 0 (|θ|={np.rad2deg(theta_meas):.2f} deg). "
+        #           "Stopping to avoid flip.")
+        #     return alpha, theta_meas, None, "danger_zone"
 
 
         theta_meas_eff = -theta_meas      

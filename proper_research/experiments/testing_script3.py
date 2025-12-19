@@ -10,10 +10,8 @@ from proper_research.control.jacobian_controller import jacobian_controller, sol
 from proper_research.control.alpha_controller import alpha_controller_measured
 from proper_research.advancer_unit.advancer_control import advancer_go
 from proper_research.vision.measure_length import measure_beam_length_mm_with_checkerboard
-from proper_research.vision.click_target import (compute_beam_line_to_target, compute_beam_targets_on_center_rectangle_trace, 
-                                                detect_tip_px_using_reference_base, image_points_to_mm, 
+from proper_research.vision.click_target import (detect_tip_px_using_reference_base, image_points_to_mm, 
                                                 plot_all_targets_and_tips_on_image, compute_beam_targets_from_clicked_points)
-from proper_research.vision.plot_points import plot_points_on_image
 import numpy as np 
 import os
 import cv2
@@ -22,7 +20,7 @@ import time
 
 def move_function(alpha_abs):
     joints = robo.get_joints()
-    joints[5] = alpha_zero + alpha_abs 
+    joints[5] = alpha_zero +alpha_abs 
     robo.moveJ(joints)
 
 
@@ -36,8 +34,10 @@ alpha_params.Kp = 10.0
 alpha_params.Ki = 0.02
 alpha_params.kd = 0.7
 measure_fn = measure_theta_from_camera
-base_point_pose = 0.823733332875323
-start_point_pose = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
+base_point_pose = 0.963733332875323
+start_pivot_point = np.array([0.963733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
+
+start_point_pose = np.array([0.8232165993178376, -0.5209241826328589, 0.4533174290989068, -2.0741634614536983, -2.345875896286576, 0.07273609243115334])
 danger_file = "/home/jack/Proper-Research/data/alpha_danger_map.pkl"
 if os.path.exists(danger_file):
     with open(danger_file, "rb") as f:
@@ -56,7 +56,7 @@ def run_one_target(target_id, length_des_mm, theta_des_deg):
     theta_des = np.deg2rad(theta_des_deg)
     theta_des_abs = abs(theta_des)
 
-    if theta_des_abs >= np.deg2rad(50) or length_des_mm >= 47:
+    if theta_des_abs >= np.deg2rad(50) or length_des_mm >= 80:
         return {
             "target_id": target_id,
             "length_des_mm": float(length_des_mm),
@@ -73,8 +73,14 @@ def run_one_target(target_id, length_des_mm, theta_des_deg):
     length_curr_mm = float(result_len["length_mm"])
     beam_params.L_init = length_curr_mm / 1000.0  
 
-    base_point = get_point(0, 0)
-    robo.moveL(base_point)
+    if length_curr_mm < 40:
+        base_point = get_point(0, 0)
+        robo.moveL(base_point)
+    else:
+        diff = length_curr_mm - 40
+        temp_pivot_point = start_pivot_point
+        temp_pivot_point[0]-= (diff/1000)
+        base_point = get_point(0,0,pivot_point=temp_pivot_point)
 
     B_cmd, phi_cmd, L_cmd, theta_model_deg = jacobian_controller(
         theta_des_abs,
@@ -90,21 +96,34 @@ def run_one_target(target_id, length_des_mm, theta_des_deg):
         B_min=beam_params.B_init,
         B_max=beam_params.B_init,
     )
-
+    print(f"B is: {B_cmd}")
+    print(f"Phi is: {phi_cmd}")
+    print(f"Estimated theta: {theta_model_deg}")
     mag_pose, _ = solve_mag_pose(
         B_cmd, 0.1, mag_params.mu_0, mag_params.mag_epm, mu_hat=np.array([1, 0, 0])
     )
+    if length_curr_mm < 40:
+        start_point = base_point_pose - mag_pose
+        start_point_pose[0] = start_point
+        current_phi = phi_cmd
 
-    start_point = base_point_pose - mag_pose
-    start_point_pose[0] = start_point
-    current_phi = phi_cmd
+        if theta_des > 0:
+            new_pose = get_point(0, np.rad2deg(current_phi), start_point_pose)
+        else:
+            new_pose = get_point(0, np.rad2deg(-current_phi), start_point_pose)
 
-    if theta_des > 0:
-        new_pose = get_point(0, np.rad2deg(current_phi), start_point_pose)
+        new_base_pose = get_point(0, 0, start_point_pose)
     else:
-        new_pose = get_point(0, np.rad2deg(-current_phi), start_point_pose)
+        start_point = temp_pivot_point[0] - mag_pose
+        start_point_pose[0] = start_point
+        current_phi = phi_cmd
 
-    new_base_pose = get_point(0, 0, start_point_pose)
+        if theta_des > 0:
+            new_pose = get_point(0, np.rad2deg(current_phi), start_point_pose)
+        else:
+            new_pose = get_point(0, np.rad2deg(-current_phi), start_point_pose)
+
+        new_base_pose = get_point(0, 0, start_point_pose)
 
     if start_point <= 0.6:
         img_file = new_capture(filename=f"focused_image_target_{target_id}.jpg")
@@ -158,7 +177,7 @@ def run_one_target(target_id, length_des_mm, theta_des_deg):
         img_file, show=False, use_roi=True
     )
 
-    robo.moveL(base_point)
+    # robo.moveL(base_point)
 
     return {
         "target_id": target_id,
@@ -231,7 +250,7 @@ try:
 
         err = float(np.linalg.norm(tip_mm - target_mm))
         errors_mm.append(err)
-
+    advancer_go(length_des_mm+15)
 
     plot_all_targets_and_tips_on_image(
         image_filename=reference_image,

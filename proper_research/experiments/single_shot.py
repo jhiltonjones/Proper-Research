@@ -31,7 +31,7 @@ def safe_roi(roi):
         return None, None, None, None
 
 
-OUTPUT_CSV = "beam_calibration_results.csv"
+OUTPUT_CSV = "beam_calibration_results_diag_beam.csv"
 
 robo = URRtde(ROBOT_IP)
 

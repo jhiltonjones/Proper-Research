@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-
+from scipy.linalg import solve_discrete_are
+import numpy as np
 @dataclass
 class PIDState:
     e_init: float = 0.0
@@ -16,3 +17,6 @@ def damped_inverse_scalar(J:float, cmd:float, damping:float):
     JJt = J * J
     gain = cmd/ (JJt + damping**2)
     return J*gain 
+def dare_stabilising_k(A, B, Q, R):
+    P = solve_discrete_are(A,B,Q,R)
+    K = -np.linalg.solve(R + B.T @ P @ B, B.T, P @ A)

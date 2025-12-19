@@ -838,29 +838,29 @@ def save_targets_to_csv(rows, csv_path, extra_fields=None):
         w.writerows(flat_rows)
 
 
-# if __name__ == "__main__":
-#     result = compute_beam_line_to_target(
-#         image_filename="focused_image.jpg",
-#         use_roi=True,
-#         show=True,
-#     )
-
-#     print("\nResult dictionary:")
-#     for k, v in result.items():
-#         print(f"  {k}: {v}")
 if __name__ == "__main__":
-    result = compute_beam_targets_on_center_rectangle_trace(
+    result = compute_beam_line_to_target(
         image_filename="focused_image.jpg",
         use_roi=True,
         show=True,
-        width_px=100,
-        height_px=50,
-        points_per_edge=3,
-        csv_path="rectangle_trace.csv",
     )
 
-    for t in result["targets"]:
-        L = t["length_mm"]
-        theta = t["theta_target_deg"]
-        print(t["target_index"], L, theta)
+    print("\nResult dictionary:")
+    for k, v in result.items():
+        print(f"  {k}: {v}")
+# if __name__ == "__main__":
+#     result = compute_beam_targets_on_center_rectangle_trace(
+#         image_filename="focused_image.jpg",
+#         use_roi=True,
+#         show=True,
+#         width_px=100,
+#         height_px=50,
+#         points_per_edge=3,
+#         csv_path="rectangle_trace.csv",
+#     )
+
+#     for t in result["targets"]:
+#         L = t["length_mm"]
+#         theta = t["theta_target_deg"]
+#         print(t["target_index"], L, theta)
 

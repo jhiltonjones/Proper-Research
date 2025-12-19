@@ -332,7 +332,7 @@ if __name__ == "__main__":
     result = measure_beam_length_mm_with_checkerboard(
         image_filename="focused_image.jpg",
         use_roi=True,
-        show=False
+        show=True
     )
 
     print("\nResult:")

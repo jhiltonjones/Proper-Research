@@ -115,3 +115,55 @@ def get_point(theta_angle_x, theta_angle_z, start_point = np.array([0.8232165993
     # print("New EE pose to send to robot:")
     # print(repr(new_pose_for_robot))
     return new_pose_for_robot
+def quat_normalize(q):
+    n = np.linalg.norm(q, axis=0)
+    n = np.maximum(n, 1e-18)
+    return q / n
+def quat_mul(q, p):
+    """
+    Hamilton product for arrays.
+    q, p: (4,N) each
+    returns (4,N)
+    """
+    qw, qx, qy, qz = q
+    pw, px, py, pz = p
+    return np.vstack([
+        qw*pw - qx*px - qy*py - qz*pz,
+        qw*px + qx*pw + qy*pz - qz*py,
+        qw*py - qx*pz + qy*pw + qz*px,
+        qw*pz + qx*py - qy*px + qz*pw
+    ])
+def quat_to_R(q):
+    qw, qx, qy, qz = q
+    # Rotation matrix components
+    R11 = 1 - 2*(qy*qy + qz*qz)
+    R12 = 2*(qx*qy - qz*qw)
+    R13 = 2*(qx*qz + qy*qw)
+
+    R21 = 2*(qx*qy + qz*qw)
+    R22 = 1 - 2*(qx*qx + qz*qz)
+    R23 = 2*(qy*qz - qx*qw)
+
+    R31 = 2*(qx*qz - qy*qw)
+    R32 = 2*(qy*qz + qx*qw)
+    R33 = 1 - 2*(qx*qx + qy*qy)
+
+    R = np.stack([
+        np.stack([R11, R12, R13], axis=-1),
+        np.stack([R21, R22, R23], axis=-1),
+        np.stack([R31, R32, R33], axis=-1)
+    ], axis=-2)  # (N,3,3)
+    return R
+def quat_to_R_single(q):
+    q = q / max(np.linalg.norm(q), 1e-18)
+    qw, qx, qy, qz = q
+    R11 = 1 - 2*(qy*qy + qz*qz)
+    R12 = 2*(qx*qy - qz*qw)
+    R13 = 2*(qx*qz + qy*qw)
+    R21 = 2*(qx*qy + qz*qw)
+    R22 = 1 - 2*(qx*qx + qz*qz)
+    R23 = 2*(qy*qz - qx*qw)
+    R31 = 2*(qx*qz - qy*qw)
+    R32 = 2*(qy*qz + qx*qw)
+    R33 = 1 - 2*(qx*qx + qy*qy)
+    return np.array([[R11,R12,R13],[R21,R22,R23],[R31,R32,R33]])

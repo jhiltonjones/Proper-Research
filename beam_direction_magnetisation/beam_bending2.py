@@ -1,7 +1,8 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-
+import matplotlib
+matplotlib.use("TkAgg")  
+import matplotlib.pyplot as plt
 MU0_OVER_4PI = 1e-7
 
 def magnetic_moment(B_r, mu_0, r, p):
@@ -44,7 +45,7 @@ def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
 
 rho = 0.14
 theta_z_deg = 0.0
-theta_y_deg = -70.0
+theta_y_deg = 0.0
 r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
 
 def dipole_field(r_pts, m_ext):
@@ -55,9 +56,9 @@ def dipole_field(r_pts, m_ext):
     mdot = Rhat @ m_ext
     return MU0_OVER_4PI * (1.0/(Rnorm**3))[:,None] * (3.0*mdot[:,None]*Rhat - m_ext[None,:])
 
-alpha_deg = -50
+alpha_deg = 50
 alpha = np.deg2rad(alpha_deg)
-m_local = np.array([mu_line*np.cos(alpha), mu_line*np.sin(alpha), 0.0])
+m_local = np.array([mu_line*np.cos(alpha), 0.0,mu_line*np.sin(alpha)])
 
 def m_global_from_psi_vec(psi_vec):
     mx, my, mz = m_local
@@ -73,11 +74,11 @@ def force_and_torque_density(s, v, w, psi, m_ext, eps=5e-5):
     dr_y = np.array([0.0, eps, 0.0])
     gp_y = np.sum(m_pts * dipole_field(r_pts + dr_y, m_ext), axis=1)
     gm_y = np.sum(m_pts * dipole_field(r_pts - dr_y, m_ext), axis=1)
-    fy = (gp_y - gm_y) / (2*eps)
+    fy = (gp_y - gm_y) / (2*eps)*0
     dr_z = np.array([0.0, 0.0, eps])
     gp_z = np.sum(m_pts * dipole_field(r_pts + dr_z, m_ext), axis=1)
     gm_z = np.sum(m_pts * dipole_field(r_pts - dr_z, m_ext), axis=1)
-    fz = (gp_z - gm_z) / (2*eps)
+    fz = (gp_z - gm_z) / (2*eps)*0
     return fy, fz, tau, B0
 def make_ode(m_ext_scale):
     m_ext = m_ext_scale * m_ext_full
@@ -208,13 +209,15 @@ print("\nGeometry:")
 print("  Tip bending angle (t0->tL) [deg]:", bend_angle_deg)
 print("  Tip slope angle in x–y plane [deg]:", theta_y_deg)
 print("  Tip slope angle in x–z plane [deg]:", theta_z_deg)
+slope = np.sqrt(vp**2 + wp**2)
+max_slope_deg = np.rad2deg(np.arctan(np.max(slope)))
+print("max tangent angle from x [deg]:", max_slope_deg)
 
 fig3d = plt.figure(figsize=(8, 6))
 ax = fig3d.add_subplot(111, projection='3d')
 ax.plot(x, y, z, linewidth=2)
 ax.scatter([x[0]], [y[0]], [z[0]], label="base")
 ax.scatter([x[-1]], [y[-1]], [z[-1]], label="tip")
-# ... your ax.plot(x, y, z) etc ...
 
 x_min, x_max = x.min(), x.max()
 y_min, y_max = y.min(), y.max()
@@ -242,4 +245,4 @@ ax.set_zlabel("z [m]")
 ax.set_title("3D beam centerline and tangents")
 ax.legend()
 plt.tight_layout()
-plt.show()
+# plt.show()

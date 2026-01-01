@@ -26,8 +26,8 @@ r_epm = 0.03
 p_epm = 0.09
 mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm) 
 phi_deg=0
-rho = 0.14
-theta_z_deg =40.0
+rho = .14
+theta_z_deg =30.0
 theta_y_deg = 60.0
 alpha_deg = 60
 forcing=True
@@ -65,7 +65,7 @@ def m_ext_world(phi_deg, tilt_y_deg=0.0, tilt_z_deg=0.0):
     return R_ext @ m_body
 
 # # r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
-r_tip = np.array([L, 0.0, 0.0])
+r_tip = np.array([L, 0.0, 0])
 
 # define an initial magnet position "in front"
 r_mag0 = r_tip + np.array([rho, 0.0, 0])
@@ -91,14 +91,12 @@ m_ext_full = R_orbit @ m0
 # r_mag = r_tip + np.array([0.0, 0.0, rho])  # fixed overhead
 
 
-# m_ext_full = mag_epm * np.array([1.0, 0.0, 0.0])
 
-# def m_overhead_torque_only(psi_deg):
-#     return R_z(np.deg2rad(psi_deg)) @ m_ext_full
-
+def m_overhead_torque_only(psi_deg):
+    return R_z(np.deg2rad(psi_deg)) @ m_ext_full
 
 
-# m_ext_full = -mag_epm * np.array([1.0, 0.0, 0.0])    
+
 
 alpha = np.deg2rad(alpha_deg)
 m_mag_body = np.array([mu_line*np.cos(alpha), 0.0, mu_line*np.sin(alpha)])
@@ -215,7 +213,7 @@ def force_and_couple_density(r_pts, Rmats, m_ext, r_src, eps=1e-5, include_force
         return f, l, B0
 
     # Approximate f = grad(m·B) holding m fixed (orientation fixed) over spatial perturbations.
-    U0 = np.sum(m_mag_world * B0, axis=1)
+    # U0 = np.sum(m_mag_world * B0, axis=1)
 
     f = np.zeros_like(r_pts)
     for k in range(3):
@@ -269,7 +267,12 @@ def make_ode(lam, phi_deg, tilt_y_deg=0.0, tilt_z_deg=0.0, include_force=True):
                                             eps=5e-5, include_force=include_force)
         f = f.T   # (3,N)
         l = l.T   # (3,N)
+        rho_mat = 1200.0  # example kg/m^3 (set your actual density)
+        g_vec = np.array([0.0, 0.0, -9.81])  # m/s^2 in world frame
+        mass_per_length = rho_mat * A_cs            # kg/m
+        f_grav = (mass_per_length * g_vec)[:, None] # (3,1), broadcast to (3,N)
 
+        f = f + f_grav
         # Cosserat equilibrium
         # n' = -f
         n_s = -f
@@ -332,7 +335,9 @@ def bc_clamped_free_torsion(Ya, Yb):
     R0 = quat_to_R_single(q0)
     d1_0 = R0[:, 0]
     m0 = Ya[10:13]
-    m_parallel0 = np.dot(m0, d1_0)
+    m_body0 = R0.T @ m0
+    m_parallel0 = m_body0[0]   # torsional component
+
 
     return np.hstack([
         r0,                    # 3
@@ -365,9 +370,9 @@ scales = [0.05, 0.1, 0.2, 0.4, 0.7, 1.0]
 for lam in scales:
     ode = make_ode(lam, phi_deg, tilt_y_deg=theta_y_deg, tilt_z_deg=theta_z_deg, include_force=forcing)  
     if sol is None:
-        sol = solve_bvp(ode, bc_clamped_free_torsion, s_mesh, Y_guess, max_nodes=15000, tol=3e-3)
+        sol = solve_bvp(ode, bc_clamped, s_mesh, Y_guess, max_nodes=15000, tol=3e-3)
     else:
-        sol = solve_bvp(ode, bc_clamped_free_torsion, s_mesh, sol.sol(s_mesh), max_nodes=15000, tol=3e-3)
+        sol = solve_bvp(ode, bc_clamped, s_mesh, sol.sol(s_mesh), max_nodes=15000, tol=3e-3)
 
     # print("lambda", lam, "success", sol.success, "nodes", sol.x.size, "msg", sol.message)
     if not sol.success:
@@ -397,6 +402,12 @@ r_src = r_mag
 r_pts = r_xyz  # (N,3)
 f, l, B = force_and_couple_density(r_pts, Rmats, m_ext, r_src,
                                   eps=5e-5, include_force=forcing)
+rho_mat = 1200.0
+g_vec = np.array([0.0, 0.0, -9.81])
+mass_per_length = rho_mat * A_cs
+f_grav = mass_per_length * g_vec   # (3,)
+f = f + f_grav[None, :]            # (N,3)
+
 # Net force on the rod (integral of force density)
 F_net = np.trapezoid(f, s_out, axis=0)   # shape (3,)
 
@@ -511,5 +522,5 @@ ax.set_box_aspect((1, 1, 1))
 
 
 ax.legend()
-# plt.show()
+plt.show()
 

@@ -37,7 +37,24 @@
             "module": "proper_research.experiments.testing_script3",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing Jacobian",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.mpc_control",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run cosserat",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.cosserat_model_final",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
+
 
     ]
 }

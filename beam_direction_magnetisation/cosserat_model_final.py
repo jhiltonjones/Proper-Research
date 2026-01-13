@@ -1,69 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-
+from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_force_analytical, dipole_field_from_source
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
 MU0_OVER_4PI = 1e-7
 
 def magnetic_moment(B_r, mu_0, r, p):
     return (B_r / mu_0) * (np.pi * r**2 * p)
-def quat_normalize(q):
-    # q: (4,N)
-    n = np.sqrt(np.sum(q*q, axis=0))
-    n = np.maximum(n, 1e-12)
-    return q / n
 
-def quat_to_rot(q):
-    """
-    Convert unit quaternions to rotation matrices.
-    q: (4,N) with q = [qw,qx,qy,qz] columns
-    returns R: (N,3,3) mapping body -> world
-    """
-    qw, qx, qy, qz = q
-    # Precompute products
-    qw2 = qw*qw; qx2 = qx*qx; qy2 = qy*qy; qz2 = qz*qz
-    qxqy = qx*qy; qxqz = qx*qz; qyqz = qy*qz
-    qwqx = qw*qx; qwqy = qw*qy; qwqz = qw*qz
-
-    R = np.empty((qw.shape[0], 3, 3))  # wrong shape if qw is (N,)
-
-def quat_to_rot(q):
-    """
-    q: (4,N) with q = [qw,qx,qy,qz]
-    returns R: (N,3,3) body -> world
-    """
-    qw, qx, qy, qz = q
-    N = qw.size
-    R = np.empty((N, 3, 3))
-
-    R[:,0,0] = 1 - 2*(qy*qy + qz*qz)
-    R[:,0,1] = 2*(qx*qy - qw*qz)
-    R[:,0,2] = 2*(qx*qz + qw*qy)
-
-    R[:,1,0] = 2*(qx*qy + qw*qz)
-    R[:,1,1] = 1 - 2*(qx*qx + qz*qz)
-    R[:,1,2] = 2*(qy*qz - qw*qx)
-
-    R[:,2,0] = 2*(qx*qz - qw*qy)
-    R[:,2,1] = 2*(qy*qz + qw*qx)
-    R[:,2,2] = 1 - 2*(qx*qx + qy*qy)
-
-    return R
-
-def quat_derivative_body(q, u):
-    """
-    q: (4,N) unit quaternion, body -> world
-    u: (3,N) curvature/twist in BODY frame
-    returns q': (4,N)
-    """
-    qw, qx, qy, qz = q
-    ux, uy, uz = u
-
-    dq = np.zeros_like(q)
-    dq[0] = -0.5*(qx*ux + qy*uy + qz*uz)
-    dq[1] =  0.5*(qw*ux + qy*uz - qz*uy)
-    dq[2] =  0.5*(qw*uy + qz*ux - qx*uz)
-    dq[3] =  0.5*(qw*uz + qx*uy - qy*ux)
-    return dq
 def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
     """
     p: (3,N) world positions
@@ -79,7 +23,7 @@ def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
 
     r_pts = p.T  # (N,3)
     B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min)       # (N,3)
-    f = dipole_force_density(r_pts, m_pts, r_src, m_ext, r_min=r_min)    # (N,3)
+    f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min)    # (N,3)
     tau = np.cross(m_pts, B)                                             # (N,3)
 
     return f.T, tau.T, B.T
@@ -118,61 +62,14 @@ def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
     v = R_y(thy) @ (R_z(thz) @ v0)
     return r_tip + v
 
-rho = 0.17
-theta_z_deg = 0.0
-theta_y_deg = -70.0
+rho = 0.14
+theta_z_deg = 70.0
+theta_y_deg = -50.0
 r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
 
-MU0_OVER_4PI = 1e-7  # μ0/(4π)
+# MU0_OVER_4PI = 1e-7  # μ0/(4π)
 
-def dipole_field_from_source(r_pts, r_src, m_src, r_min=1e-6):
-    """
-    Dipole magnetic field B at points r_pts due to a dipole m_src at r_src.
-    r_pts: (N,3), r_src: (3,), m_src: (3,)
-    returns B: (N,3)
-    """
-    R = r_pts - r_src[None, :]
-    R2 = np.sum(R*R, axis=1)
-    Rnorm = np.sqrt(np.maximum(R2, r_min**2))
-    Rhat = R / Rnorm[:, None]
-    mdot = Rhat @ m_src  # (N,)
-    invR3 = 1.0 / (Rnorm**3)
-    B = MU0_OVER_4PI * invR3[:, None] * (3.0 * mdot[:, None] * Rhat - m_src[None, :])
-    return B
 
-def dipole_force_density(r_pts, m_pts, r_src, m_src, r_min=1e-6):
-    """
-    Analytic force density on dipoles m_pts at r_pts due to source dipole m_src at r_src.
-
-    If m_pts is magnetic moment per unit length [A·m], output is force density [N/m].
-    r_pts: (N,3), m_pts: def(N,3) or (3,), r_src: (3,), m_src: (3,)
-    returns F: (N,3)
-    """
-    R = r_pts - r_src[None, :]
-    R2 = np.sum(R*R, axis=1)
-    Rnorm = np.sqrt(np.maximum(R2, r_min**2))
-    Rhat = R / Rnorm[:, None]
-
-    if m_pts.ndim == 1:
-        m = np.repeat(m_pts[None, :], r_pts.shape[0], axis=0)
-    else:
-        m = m_pts
-
-    m_dot_r = np.sum(m * Rhat, axis=1)          # (N,)
-    m0_dot_r = Rhat @ m_src                     # (N,)
-    m_dot_m0 = m @ m_src                        # (N,)
-
-    invR4 = 1.0 / (Rnorm**5)
-
-    term = (
-        m_dot_r[:, None] * m_src[None, :] +
-        m0_dot_r[:, None] * m +
-        m_dot_m0[:, None] * Rhat -
-        (5.0 * (m_dot_r * m0_dot_r)[:, None]) * Rhat
-    )
-
-    F = 3.0 * MU0_OVER_4PI * invR4[:, None] * term
-    return F
 alpha_deg =-50
 alpha = np.deg2rad(alpha_deg)
 m_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
@@ -197,7 +94,7 @@ def magnetic_wrench_density(s, v, w, psi, m_ext, r_src, r_min=1e-6):
     B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min)
     tau = np.cross(m_pts, B)                         # moment per length
 
-    f = dipole_force_density(r_pts, m_pts, r_src, m_ext, r_min=r_min)  # force per length
+    f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min)  # force per length
 
     return f, tau, B
 # def make_ode(m_ext_scale):

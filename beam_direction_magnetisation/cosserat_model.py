@@ -290,11 +290,6 @@ def make_ode(lam, phi_deg, tilt_y_deg=0.0, tilt_z_deg=0.0, include_force=True):
 # mhat = m_ext_full / np.linalg.norm(m_ext_full)
 # print("cos(angle) dipole vs tip direction:", np.dot(mhat, aim))
 
-# ------------------------
-# Boundary conditions
-# Clamped base: r(0)=0, q(0)=identity
-# Free tip: n(L)=0, m(L)=0
-# ------------------------
 def bc(Ya, Yb):
     r0 = Ya[0:3]
     q0 = Ya[3:7]

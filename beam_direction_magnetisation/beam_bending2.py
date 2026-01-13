@@ -42,9 +42,9 @@ def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
     v = R_y(thy) @ (R_z(thz) @ v0)
     return r_tip + v
 
-rho = 0.14
+rho = 0.17
 theta_z_deg = 0.0
-theta_y_deg = -70.0
+theta_y_deg = 70.0
 r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
 
 def dipole_field(r_pts, m_ext):
@@ -55,9 +55,9 @@ def dipole_field(r_pts, m_ext):
     mdot = Rhat @ m_ext
     return MU0_OVER_4PI * (1.0/(Rnorm**3))[:,None] * (3.0*mdot[:,None]*Rhat - m_ext[None,:])
 
-alpha_deg = -50
+alpha_deg =0
 alpha = np.deg2rad(alpha_deg)
-m_local = np.array([mu_line*np.cos(alpha), mu_line*np.sin(alpha), 0.0])
+m_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
 
 def m_global_from_psi_vec(psi_vec):
     mx, my, mz = m_local

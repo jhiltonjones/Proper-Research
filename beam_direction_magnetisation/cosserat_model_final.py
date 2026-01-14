@@ -63,14 +63,12 @@ def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
     return r_tip + v
 
 rho = 0.14
-theta_z_deg = 70.0
-theta_y_deg = -50.0
-r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
-
-# MU0_OVER_4PI = 1e-7  # μ0/(4π)
-
-
-alpha_deg =-50
+theta_z_deg = 0.0
+theta_y_deg = 0.0
+# r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
+r_tip = np.array([L,0.0,0.0])
+r_mag = r_tip + np.array([0.0, 0.0, rho])
+alpha_deg =0
 alpha = np.deg2rad(alpha_deg)
 m_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
 
@@ -97,34 +95,7 @@ def magnetic_wrench_density(s, v, w, psi, m_ext, r_src, r_min=1e-6):
     f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min)  # force per length
 
     return f, tau, B
-# def make_ode(m_ext_scale):
-#     m_ext = m_ext_scale * m_ext_full
 
-#     def ode(s_eval, Y, eps=5e-5):
-#         v, vp, w, wp, psi, psip, Vy, Vz, My, Mz = Y
-#         f, tau, _B0 = magnetic_wrench_density(s_eval, v, w, psi, m_ext, r_mag, r_min=1e-6)
-#         fx, fy, fz = f[:,0], f[:,1], f[:,2]
-#         tau_x, tau_y, tau_z = tau[:,0], tau[:,1], tau[:,2]
-#         tau_x, tau_y, tau_z = tau[:,0], tau[:,1], tau[:,2]
-#         dY = np.zeros_like(Y)
-#         dY[0] = vp
-#         dY[1] = Mz / EI
-#         dY[2] = wp
-#         dY[3] = -My / EI
-#         dY[4] = psip
-#         dY[5] = tau_x / GJ
-#         dY[6] = -fy
-#         dY[7] = -fz
-#         dY[8] = Vz + tau_y
-#         dY[9] = Vy + tau_z
-#         return dY
-#     return ode
-
-# def bc(Ya, Yb):
-#     v0, vp0, w0, wp0, psi0, psip0, Vy0, Vz0, My0, Mz0 = Ya
-#     vL, vpL, wL, wpL, psiL, psipL, VyL, VzL, MyL, MzL = Yb
-#     return np.array([v0, vp0, w0, wp0, psi0,
-#                      VyL, VzL, MyL, MzL, psipL])
 def make_cosserat_kirchhoff_ode(m_ext_scale, Kbt_inv, m_local, u_star=None):
     m_ext = m_ext_scale * m_ext_full
     e1 = np.array([1.0, 0.0, 0.0])
@@ -363,4 +334,4 @@ ax.set_zlabel("z [m]")
 ax.set_title("3D Cosserat rod centerline")
 ax.legend()
 plt.tight_layout()
-plt.show()
+# plt.show()

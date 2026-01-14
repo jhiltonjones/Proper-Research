@@ -1,69 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-
+from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_force_analytical, dipole_field_from_source
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
 MU0_OVER_4PI = 1e-7
 
 def magnetic_moment(B_r, mu_0, r, p):
     return (B_r / mu_0) * (np.pi * r**2 * p)
-def quat_normalize(q):
-    # q: (4,N)
-    n = np.sqrt(np.sum(q*q, axis=0))
-    n = np.maximum(n, 1e-12)
-    return q / n
 
-def quat_to_rot(q):
-    """
-    Convert unit quaternions to rotation matrices.
-    q: (4,N) with q = [qw,qx,qy,qz] columns
-    returns R: (N,3,3) mapping body -> world
-    """
-    qw, qx, qy, qz = q
-    # Precompute products
-    qw2 = qw*qw; qx2 = qx*qx; qy2 = qy*qy; qz2 = qz*qz
-    qxqy = qx*qy; qxqz = qx*qz; qyqz = qy*qz
-    qwqx = qw*qx; qwqy = qw*qy; qwqz = qw*qz
-
-    R = np.empty((qw.shape[0], 3, 3))  # wrong shape if qw is (N,)
-
-def quat_to_rot(q):
-    """
-    q: (4,N) with q = [qw,qx,qy,qz]
-    returns R: (N,3,3) body -> world
-    """
-    qw, qx, qy, qz = q
-    N = qw.size
-    R = np.empty((N, 3, 3))
-
-    R[:,0,0] = 1 - 2*(qy*qy + qz*qz)
-    R[:,0,1] = 2*(qx*qy - qw*qz)
-    R[:,0,2] = 2*(qx*qz + qw*qy)
-
-    R[:,1,0] = 2*(qx*qy + qw*qz)
-    R[:,1,1] = 1 - 2*(qx*qx + qz*qz)
-    R[:,1,2] = 2*(qy*qz - qw*qx)
-
-    R[:,2,0] = 2*(qx*qz - qw*qy)
-    R[:,2,1] = 2*(qy*qz + qw*qx)
-    R[:,2,2] = 1 - 2*(qx*qx + qy*qy)
-
-    return R
-
-def quat_derivative_body(q, u):
-    """
-    q: (4,N) unit quaternion, body -> world
-    u: (3,N) curvature/twist in BODY frame
-    returns q': (4,N)
-    """
-    qw, qx, qy, qz = q
-    ux, uy, uz = u
-
-    dq = np.zeros_like(q)
-    dq[0] = -0.5*(qx*ux + qy*uy + qz*uz)
-    dq[1] =  0.5*(qw*ux + qy*uz - qz*uy)
-    dq[2] =  0.5*(qw*uy + qz*ux - qx*uz)
-    dq[3] =  0.5*(qw*uz + qx*uy - qy*ux)
-    return dq
 def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
     """
     p: (3,N) world positions
@@ -79,7 +23,8 @@ def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
 
     r_pts = p.T  # (N,3)
     B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min)       # (N,3)
-    f = dipole_force_density(r_pts, m_pts, r_src, m_ext, r_min=r_min)    # (N,3)
+    f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min)    # (N,3)
+    # f = np.zeros_like(f)
     tau = np.cross(m_pts, B)                                             # (N,3)
 
     return f.T, tau.T, B.T
@@ -117,65 +62,32 @@ def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
     v0 = np.array([rho,0.0,0.0])
     v = R_y(thy) @ (R_z(thz) @ v0)
     return r_tip + v
-
-rho = 0.17
-theta_z_deg = 0.0
-theta_y_deg = -70.0
-r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
-
-MU0_OVER_4PI = 1e-7  # μ0/(4π)
-
-def dipole_field_from_source(r_pts, r_src, m_src, r_min=1e-6):
+def epm_pose_overhead_spin_z(r_tip, rho, phi_z, m0_dir=np.array([1.0, 0.0, 0.0])):
     """
-    Dipole magnetic field B at points r_pts due to a dipole m_src at r_src.
-    r_pts: (N,3), r_src: (3,), m_src: (3,)
-    returns B: (N,3)
+    Overhead magnet fixed above the tip. Rotate magnet about its OWN z-axis by phi_z (radians).
+    Assumes magnet-local axes coincide with world axes at phi_z = 0.
+    
+    r_tip: (3,) tip reference position (e.g. [L,0,0])
+    rho: standoff distance in +z [m]
+    phi_z: rotation about magnet-local z [rad]
+    m0_dir: dipole direction in magnet-local frame at phi_z=0 (default along +x)
     """
-    R = r_pts - r_src[None, :]
-    R2 = np.sum(R*R, axis=1)
-    Rnorm = np.sqrt(np.maximum(R2, r_min**2))
-    Rhat = R / Rnorm[:, None]
-    mdot = Rhat @ m_src  # (N,)
-    invR3 = 1.0 / (Rnorm**3)
-    B = MU0_OVER_4PI * invR3[:, None] * (3.0 * mdot[:, None] * Rhat - m_src[None, :])
-    return B
-
-def dipole_force_density(r_pts, m_pts, r_src, m_src, r_min=1e-6):
-    """
-    Analytic force density on dipoles m_pts at r_pts due to source dipole m_src at r_src.
-
-    If m_pts is magnetic moment per unit length [A·m], output is force density [N/m].
-    r_pts: (N,3), m_pts: def(N,3) or (3,), r_src: (3,), m_src: (3,)
-    returns F: (N,3)
-    """
-    R = r_pts - r_src[None, :]
-    R2 = np.sum(R*R, axis=1)
-    Rnorm = np.sqrt(np.maximum(R2, r_min**2))
-    Rhat = R / Rnorm[:, None]
-
-    if m_pts.ndim == 1:
-        m = np.repeat(m_pts[None, :], r_pts.shape[0], axis=0)
-    else:
-        m = m_pts
-
-    m_dot_r = np.sum(m * Rhat, axis=1)          # (N,)
-    m0_dot_r = Rhat @ m_src                     # (N,)
-    m_dot_m0 = m @ m_src                        # (N,)
-
-    invR4 = 1.0 / (Rnorm**5)
-
-    term = (
-        m_dot_r[:, None] * m_src[None, :] +
-        m0_dot_r[:, None] * m +
-        m_dot_m0[:, None] * Rhat -
-        (5.0 * (m_dot_r * m0_dot_r)[:, None]) * Rhat
-    )
-
-    F = 3.0 * MU0_OVER_4PI * invR4[:, None] * term
-    return F
-alpha_deg =-50
+    r_src = r_tip + np.array([0.0, 0.0, rho])   # overhead position (fixed)
+    Rm = R_z(phi_z)                              # spin about its own z-axis
+    m_src = mag_epm * (Rm @ m0_dir)              # dipole moment in world frame
+    return r_src, m_src
+# rho = 0.14
+# theta_z_deg = 0.0
+# theta_y_deg = 0.0
+# r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
+# r_tip = np.array([L,0.0,0.0])
+# r_mag = r_tip + np.array([0.0, 0.0, rho])
+alpha_deg =50
+alpha_deg_overhead = 0
 alpha = np.deg2rad(alpha_deg)
+alpha_overhead = np.deg2rad(alpha_deg_overhead)
 m_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
+m_local_overhead = np.array([mu_line*np.cos(alpha_overhead),0.0, mu_line*np.sin(alpha_overhead)])
 
 def m_global_from_psi_vec(psi_vec):
     mx, my, mz = m_local
@@ -197,71 +109,34 @@ def magnetic_wrench_density(s, v, w, psi, m_ext, r_src, r_min=1e-6):
     B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min)
     tau = np.cross(m_pts, B)                         # moment per length
 
-    f = dipole_force_density(r_pts, m_pts, r_src, m_ext, r_min=r_min)  # force per length
+    f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min)  # force per length
 
     return f, tau, B
-# def make_ode(m_ext_scale):
-#     m_ext = m_ext_scale * m_ext_full
 
-#     def ode(s_eval, Y, eps=5e-5):
-#         v, vp, w, wp, psi, psip, Vy, Vz, My, Mz = Y
-#         f, tau, _B0 = magnetic_wrench_density(s_eval, v, w, psi, m_ext, r_mag, r_min=1e-6)
-#         fx, fy, fz = f[:,0], f[:,1], f[:,2]
-#         tau_x, tau_y, tau_z = tau[:,0], tau[:,1], tau[:,2]
-#         tau_x, tau_y, tau_z = tau[:,0], tau[:,1], tau[:,2]
-#         dY = np.zeros_like(Y)
-#         dY[0] = vp
-#         dY[1] = Mz / EI
-#         dY[2] = wp
-#         dY[3] = -My / EI
-#         dY[4] = psip
-#         dY[5] = tau_x / GJ
-#         dY[6] = -fy
-#         dY[7] = -fz
-#         dY[8] = Vz + tau_y
-#         dY[9] = Vy + tau_z
-#         return dY
-#     return ode
-
-# def bc(Ya, Yb):
-#     v0, vp0, w0, wp0, psi0, psip0, Vy0, Vz0, My0, Mz0 = Ya
-#     vL, vpL, wL, wpL, psiL, psipL, VyL, VzL, MyL, MzL = Yb
-#     return np.array([v0, vp0, w0, wp0, psi0,
-#                      VyL, VzL, MyL, MzL, psipL])
-def make_cosserat_kirchhoff_ode(m_ext_scale, Kbt_inv, m_local, u_star=None):
-    m_ext = m_ext_scale * m_ext_full
+def make_cosserat_kirchhoff_ode(m_src, r_src, Kbt_inv, m_local, u_star=None):
     e1 = np.array([1.0, 0.0, 0.0])
-
     if u_star is None:
-        u_star = np.zeros(3)  # intrinsic curvature/twist
+        u_star = np.zeros(3)
 
     def ode(s, Y):
-        # Unpack state
-        p = Y[0:3]      # (3,N)
-        q = Y[3:7]      # (4,N)
-        n = Y[7:10]     # (3,N) internal force
-        m = Y[10:13]    # (3,N) internal moment
+        p = Y[0:3]
+        q = Y[3:7]
+        n = Y[7:10]
+        m = Y[10:13]
 
         qn = quat_normalize(q)
-        R = quat_to_rot(qn)               # (N,3,3)
+        R = quat_to_rot(qn)
 
-        # Kirchhoff kinematics: p' = R e1
-        p_s = np.einsum('nij,j->ni', R, e1).T  # (3,N)
+        p_s = np.einsum('nij,j->ni', R, e1).T
 
-        # Constitutive: u (body) = Kbt^{-1} * (R^T m_world) + u_star
-        # Compute m_body = R^T m_world
-        m_body = np.einsum('nij,jn->in', np.transpose(R, (0,2,1)), m)  # (3,N)
-        u = (Kbt_inv @ m_body) + u_star[:, None]                       # (3,N)
+        m_body = np.einsum('nij,jn->in', np.transpose(R, (0,2,1)), m)
+        u = (Kbt_inv @ m_body) + u_star[:, None]
 
-        # Quaternion kinematics
         q_s = quat_derivative_body(qn, u)
 
-        # External magnetic wrench density in WORLD frame
         f_ext, tau_ext, _B = magnetic_wrench_density_cosserat(
-            p, qn, m_ext, r_mag, m_local, r_min=1e-6
+            p, qn, m_src, r_src, m_local, r_min=1e-6
         )
-
-        # Equilibrium
         n_s = -f_ext
         m_s = -(np.cross(p_s.T, n.T).T) - tau_ext
 
@@ -304,166 +179,262 @@ Y_guess[1] = 0.0              # p_y
 Y_guess[2] = 0.0              # p_z
 Y_guess[3] = 1.0              # qw=1 constant
 
-scales = [0.05, 0.1, 0.2, 0.4, 0.7, 1.0]
-sol = None
+def solve_for_pose(r_src, m_src, Y_guess, s_mesh, m_local):
+    ode = make_cosserat_kirchhoff_ode(m_src, r_src, Kbt_inv, m_local)
+    sol = solve_bvp(lambda s,Y: ode(s,Y),
+                    lambda Ya,Yb: bc_cosserat(Ya, Yb, p0, q0),
+                    s_mesh, Y_guess, max_nodes=20000, tol=3e-3)
+    return sol
+def epm_pose_front(r_tip, rho, theta_z, theta_y, m0_dir=np.array([1.0,0.0,0.0])):
+    """
+    theta_z, theta_y in radians
+    m0_dir is the dipole direction in the magnet's local frame
+    """
+    v0 = np.array([rho, 0.0, 0.0])          # magnet offset in magnet-local coordinates
+    Rm = R_y(theta_y) @ R_z(theta_z)        # magnet orientation in world
 
-for lam in scales:
-    ode = make_cosserat_kirchhoff_ode(lam, Kbt_inv, m_local)
+    r_src = r_tip + Rm @ v0                 # magnet position in world
+    m_src = mag_epm * (Rm @ m0_dir)*-1         # dipole moment direction in world
+    return r_src, m_src
+r_tip = np.array([L,0.0,0.0])
 
-    if sol is None:
-        sol = solve_bvp(lambda s, Y: ode(s, Y),
-                        lambda Ya, Yb: bc_cosserat(Ya, Yb, p0, q0),
-                        s_mesh, Y_guess, max_nodes=20000, tol=3e-3)
+angles_deg = np.linspace(80, 80, 1)
+
+tip_y_front, tip_z_front = [], []
+tip_y_over,  tip_z_over  = [], []
+
+sol_prev_front = None
+sol_prev_over  = None
+rho = .14
+for ang in angles_deg:
+    th = np.deg2rad(ang)
+
+    # Front-of-catheter: rotate around y (you can also set theta_z)
+    r_src_f, m_src_f = epm_pose_front(r_tip, rho=rho, theta_z=th, theta_y=-70)
+
+    # Overhead: twist magnet about x by the same angle
+    r_src_o, m_src_o = epm_pose_overhead_spin_z(r_tip, rho=rho, phi_z=th)
+
+    # Use continuation using previous solution as the next guess
+    if sol_prev_front is None:
+        sol_f = solve_for_pose(r_src_f, m_src_f, Y_guess, s_mesh, m_local)
     else:
-        # reuse previous solution as initial guess
-        y_init = sol.sol(s_mesh)
-        sol = solve_bvp(lambda s, Y: ode(s, Y),
-                        lambda Ya, Yb: bc_cosserat(Ya, Yb, p0, q0),
-                        s_mesh, y_init, max_nodes=20000, tol=3e-3)
+        sol_f = solve_for_pose(r_src_f, m_src_f, sol_prev_front.sol(s_mesh), s_mesh, m_local)
+    s_out = np.linspace(0, L, 300)
+    Yf = sol_f.sol(s_out)
+    p_f = Yf[0:3, :]
+    q_f = Yf[3:7, :]
 
-    print("lambda", lam, "success", sol.success, "nodes", sol.x.size, "msg", sol.message)
-    if not sol.success:
-        break
+    f_ext, tau_ext, B = magnetic_wrench_density_cosserat(
+        p_f, q_f, m_src_f, r_src_f, m_local, r_min=1e-6
+    )
 
+    B_tip = np.linalg.norm(B[:, -1])
 
+    F_net = np.trapezoid(f_ext, s_out, axis=1)
+    T_net = np.trapezoid(tau_ext, s_out, axis=1)
 
-s_out = np.linspace(0, L, 300)
-Y = sol.sol(s_out)
+    F_net_mag = np.linalg.norm(F_net)
+    T_net_mag = np.linalg.norm(T_net)
 
-# --- Unpack the Cosserat state ---
-p = Y[0:3, :]       # (3,N)
-q = Y[3:7, :]       # (4,N)
-n_int = Y[7:10, :]  # (3,N)
-m_int = Y[10:13, :] # (3,N)
+    print(f"Front: ang={ang: .1f} deg  |B_tip|={B_tip:.4e} T  |F_net|={F_net_mag:.4e} N  |T_net|={T_net_mag:.4e} N·m/m?")
+    if sol_prev_over is None:
+        sol_o = solve_for_pose(r_src_o, m_src_o, Y_guess, s_mesh, m_local_overhead)
+    else:
+        sol_o = solve_for_pose(r_src_o, m_src_o, sol_prev_over.sol(s_mesh), s_mesh, m_local_overhead)
+    s_out = np.linspace(0, L, 300)
+    Yo = sol_o.sol(s_out)
+    p_o = Yo[0:3, :]
+    q_o = Yo[3:7, :]
 
-# Normalize quaternions for safety (numerical drift)
-q = quat_normalize(q)
+    f_ext_o, tau_ext_o, B_o = magnetic_wrench_density_cosserat(
+        p_o, q_o, m_src_o, r_src_o, m_local_overhead, r_min=1e-6
+    )
 
-# Rotation matrices along the rod (N,3,3)
-R = quat_to_rot(q)
+    B_tip_o = np.linalg.norm(B_o[:, -1])
 
-# Centerline coordinates
-x = p[0, :]
-y = p[1, :]
-z = p[2, :]
+    F_net_o = np.trapezoid(f_ext_o, s_out, axis=1)
+    T_net_o = np.trapezoid(tau_ext_o, s_out, axis=1)
 
-# Tangent (for Kirchhoff/inextensible this should be R*e1)
-e1 = np.array([1.0, 0.0, 0.0])
-t = np.einsum('nij,j->ni', R, e1).T  # (3,N)
+    print(f"Overhead: ang={ang: .1f} deg  |B_tip|={B_tip_o:.4e} T  |F_net|={np.linalg.norm(F_net_o):.4e} N  |T_net|={np.linalg.norm(T_net_o):.4e} N·m")
+    sol_prev_front, sol_prev_over = sol_f, sol_o
 
-# --- External magnetic wrench density (WORLD frame) ---
-f_ext, tau_ext, B = magnetic_wrench_density_cosserat(
-    p, q, m_ext_full, r_mag, m_local, r_min=1e-6
-)
-# f_ext, tau_ext, B are (3,N)
-fx, fy, fz = f_ext[0, :], f_ext[1, :], f_ext[2, :]
-tau_x, tau_y, tau_z = tau_ext[0, :], tau_ext[1, :], tau_ext[2, :]
+    # Evaluate at the tip s=L (note: pass an array)
+    p_tip_f = sol_f.sol(np.array([L]))[0:3, 0]   # shape (3,)
+    p_tip_o = sol_o.sol(np.array([L]))[0:3, 0]   # shape (3,)
 
-# --- Tip metrics ---
-tip_pos = p[:, -1]
-tip_tangent = t[:, -1]
-base_tangent = t[:, 0]
+    tip_y_front.append(p_tip_f[1])
+    tip_z_front.append(p_tip_f[2])
 
-bend_angle_deg = np.rad2deg(np.arccos(np.clip(base_tangent @ tip_tangent, -1.0, 1.0)))
+    tip_y_over.append(p_tip_o[1])
+    tip_z_over.append(p_tip_o[2])
+angles_deg = np.asarray(angles_deg)
 
-# You can define "tip slope angles" relative to +x in the lab frame
-theta_y_deg = np.rad2deg(np.arctan2(tip_tangent[1], tip_tangent[0]))
-theta_z_deg = np.rad2deg(np.arctan2(tip_tangent[2], tip_tangent[0]))
-
-# Optional: compute curvature/twist strain u(s) in body frame from internal moment
-Kbt = np.diag([GJ, EI, EI])
-Kbt_inv = np.linalg.inv(Kbt)
-m_body = np.einsum('nij,jn->in', np.transpose(R, (0,2,1)), m_int)  # (3,N)
-u = (Kbt_inv @ m_body)  # (3,N), assuming u_star = 0
-kappa_x, kappa_y, kappa_z = u[0, :], u[1, :], u[2, :]
-
-print("Setup:")
-print("  L =", L, "m")
-print("  EI =", EI, "N·m^2")
-print("  GJ =", GJ, "N·m^2")
-print("  mag_epm =", mag_epm, "A·m^2")
-print("  r_mag =", r_mag)
-
-print("\nSolution summary (Cosserat):")
-print("  tip position [m]:", tip_pos)
-print("  tip y deflection [m]:", tip_pos[1])
-print("  tip z deflection [m]:", tip_pos[2])
-print("  max |y| [m]:", np.max(np.abs(y)))
-print("  max |z| [m]:", np.max(np.abs(z)))
-print("  bend angle base->tip [deg]:", bend_angle_deg)
-print("  tip slope angle in x–y [deg]:", theta_y_deg)
-print("  tip slope angle in x–z [deg]:", theta_z_deg)
-
-print("\nExternal magnetic loads (densities):")
-print("  |f_ext| min/max [N/m]:", np.min(np.linalg.norm(f_ext, axis=0)), np.max(np.linalg.norm(f_ext, axis=0)))
-print("  |tau_ext| min/max [N]:", np.min(np.linalg.norm(tau_ext, axis=0)), np.max(np.linalg.norm(tau_ext, axis=0)))
-print("  fx min/max [N/m]:", fx.min(), fx.max())
-print("  fy min/max [N/m]:", fy.min(), fy.max())
-print("  fz min/max [N/m]:", fz.min(), fz.max())
-
-print("\nInternal wrench:")
-print("  |n| tip [N]:", np.linalg.norm(n_int[:, -1]))
-print("  |m| tip [N·m]:", np.linalg.norm(m_int[:, -1]))
-
-print("\nStrain (curvature/twist) u in body frame:")
-print("  kappa_x (twist) min/max [1/m]:", kappa_x.min(), kappa_x.max())
-print("  kappa_y min/max [1/m]:", kappa_y.min(), kappa_y.max())
-print("  kappa_z min/max [1/m]:", kappa_z.min(), kappa_z.max())
-
-# --- Plots ---
-fig = plt.figure(figsize=(10, 10))
-
-ax1 = fig.add_subplot(411)
-ax1.plot(s_out, y)
-ax1.set_ylabel("y(s) [m]")
-ax1.set_title("Cosserat rod centerline: y(s)")
-
-ax2 = fig.add_subplot(412)
-ax2.plot(s_out, z)
-ax2.set_ylabel("z(s) [m]")
-ax2.set_title("Cosserat rod centerline: z(s)")
-
-ax3 = fig.add_subplot(413)
-ax3.plot(s_out, np.rad2deg(np.unwrap(np.arctan2(q[3, :], q[0, :]))))
-ax3.set_ylabel("quaternion phase proxy [deg]")
-ax3.set_title("Orientation proxy (optional)")
-
-ax4 = fig.add_subplot(414)
-ax4.plot(s_out, fy, label="f_y [N/m]")
-ax4.plot(s_out, fz, label="f_z [N/m]")
-ax4.plot(s_out, tau_x, label="tau_x [N]")
-ax4.set_xlabel("s [m]")
-ax4.set_ylabel("load density")
-ax4.legend(loc="best")
-ax4.set_title("Magnetic force and torque densities")
-
-fig.tight_layout()
-
-# --- 3D centerline ---
-fig3d = plt.figure(figsize=(8, 6))
-ax = fig3d.add_subplot(111, projection='3d')
-ax.plot(x, y, z, linewidth=2)
-ax.scatter([x[0]], [y[0]], [z[0]], label="base")
-ax.scatter([x[-1]], [y[-1]], [z[-1]], label="tip")
-
-# Equal-ish aspect scaling
-x_min, x_max = x.min(), x.max()
-y_min, y_max = y.min(), y.max()
-z_min, z_max = z.min(), z.max()
-x_mid = 0.5*(x_min + x_max)
-y_mid = 0.5*(y_min + y_max)
-z_mid = 0.5*(z_min + z_max)
-max_range = max(x_max-x_min, y_max-y_min, z_max-z_min)
-half = 0.5*max_range
-ax.set_xlim(x_mid-half, x_mid+half)
-ax.set_ylim(y_mid-half, y_mid+half)
-ax.set_zlim(z_mid-half, z_mid+half)
-ax.set_box_aspect((1, 1, 1))
-
-ax.set_xlabel("x [m]")
-ax.set_ylabel("y [m]")
-ax.set_zlabel("z [m]")
-ax.set_title("3D Cosserat rod centerline")
-ax.legend()
-plt.tight_layout()
+plt.figure()
+plt.plot(angles_deg, 1e3*np.array(tip_y_front), marker='o', label="Front (rotate magnet)")
+plt.plot(angles_deg, 1e3*np.array(tip_y_over),  marker='o', label="Overhead (spin about z)")
+plt.xlabel("Actuation angle [deg]")
+plt.ylabel("Tip y deflection [mm]")
+plt.title("Tip y deflection vs actuation angle")
+plt.grid(True)
+plt.legend()
 plt.show()
+plt.figure()
+plt.plot(1e3*np.array(tip_y_front), 1e3*np.array(tip_z_front), marker='o', label="Front")
+plt.plot(1e3*np.array(tip_y_over),  1e3*np.array(tip_z_over),  marker='o', label="Overhead")
+plt.xlabel("Tip y [mm]")
+plt.ylabel("Tip z [mm]")
+plt.title("Tip trajectory in y–z plane")
+plt.grid(True)
+plt.axis('equal')
+plt.legend()
+plt.show()
+plt.figure()
+plt.plot(angles_deg, 1e3*np.array(tip_z_front), marker='o', label="Front (rotate magnet)")
+plt.plot(angles_deg, 1e3*np.array(tip_z_over),  marker='o', label="Overhead (spin about z)")
+plt.xlabel("Actuation angle [deg]")
+plt.ylabel("Tip z deflection [mm]")
+plt.title("Tip z deflection vs actuation angle")
+plt.grid(True)
+plt.legend()
+plt.show()
+# s_out = np.linspace(0, L, 300)
+# Y = sol.sol(s_out)
+
+# # --- Unpack the Cosserat state ---
+# p = Y[0:3, :]       # (3,N)
+# q = Y[3:7, :]       # (4,N)
+# n_int = Y[7:10, :]  # (3,N)
+# m_int = Y[10:13, :] # (3,N)
+
+# # Normalize quaternions for safety (numerical drift)
+# q = quat_normalize(q)
+
+# # Rotation matrices along the rod (N,3,3)
+# R = quat_to_rot(q)
+
+# # Centerline coordinates
+# x = p[0, :]
+# y = p[1, :]
+# z = p[2, :]
+
+# # Tangent (for Kirchhoff/inextensible this should be R*e1)
+# e1 = np.array([1.0, 0.0, 0.0])
+# t = np.einsum('nij,j->ni', R, e1).T  # (3,N)
+
+# # --- External magnetic wrench density (WORLD frame) ---
+# f_ext, tau_ext, B = magnetic_wrench_density_cosserat(
+#     p, q, m_ext_full, r_mag, m_local, r_min=1e-6
+# )
+# # f_ext, tau_ext, B are (3,N)
+# fx, fy, fz = f_ext[0, :], f_ext[1, :], f_ext[2, :]
+# tau_x, tau_y, tau_z = tau_ext[0, :], tau_ext[1, :], tau_ext[2, :]
+
+# # --- Tip metrics ---
+# tip_pos = p[:, -1]
+# tip_tangent = t[:, -1]
+# base_tangent = t[:, 0]
+
+# bend_angle_deg = np.rad2deg(np.arccos(np.clip(base_tangent @ tip_tangent, -1.0, 1.0)))
+
+# # You can define "tip slope angles" relative to +x in the lab frame
+# theta_y_deg = np.rad2deg(np.arctan2(tip_tangent[1], tip_tangent[0]))
+# theta_z_deg = np.rad2deg(np.arctan2(tip_tangent[2], tip_tangent[0]))
+
+# # Optional: compute curvature/twist strain u(s) in body frame from internal moment
+# Kbt = np.diag([GJ, EI, EI])
+# Kbt_inv = np.linalg.inv(Kbt)
+# m_body = np.einsum('nij,jn->in', np.transpose(R, (0,2,1)), m_int)  # (3,N)
+# u = (Kbt_inv @ m_body)  # (3,N), assuming u_star = 0
+# kappa_x, kappa_y, kappa_z = u[0, :], u[1, :], u[2, :]
+
+# print("Setup:")
+# print("  L =", L, "m")
+# print("  EI =", EI, "N·m^2")
+# print("  GJ =", GJ, "N·m^2")
+# print("  mag_epm =", mag_epm, "A·m^2")
+# print("  r_mag =", r_mag)
+
+# print("\nSolution summary (Cosserat):")
+# print("  tip position [m]:", tip_pos)
+# print("  tip y deflection [m]:", tip_pos[1])
+# print("  tip z deflection [m]:", tip_pos[2])
+# print("  max |y| [m]:", np.max(np.abs(y)))
+# print("  max |z| [m]:", np.max(np.abs(z)))
+# print("  bend angle base->tip [deg]:", bend_angle_deg)
+# print("  tip slope angle in x–y [deg]:", theta_y_deg)
+# print("  tip slope angle in x–z [deg]:", theta_z_deg)
+
+# print("\nExternal magnetic loads (densities):")
+# print("  |f_ext| min/max [N/m]:", np.min(np.linalg.norm(f_ext, axis=0)), np.max(np.linalg.norm(f_ext, axis=0)))
+# print("  |tau_ext| min/max [N]:", np.min(np.linalg.norm(tau_ext, axis=0)), np.max(np.linalg.norm(tau_ext, axis=0)))
+# print("  fx min/max [N/m]:", fx.min(), fx.max())
+# print("  fy min/max [N/m]:", fy.min(), fy.max())
+# print("  fz min/max [N/m]:", fz.min(), fz.max())
+
+# print("\nInternal wrench:")
+# print("  |n| tip [N]:", np.linalg.norm(n_int[:, -1]))
+# print("  |m| tip [N·m]:", np.linalg.norm(m_int[:, -1]))
+
+# print("\nStrain (curvature/twist) u in body frame:")
+# print("  kappa_x (twist) min/max [1/m]:", kappa_x.min(), kappa_x.max())
+# print("  kappa_y min/max [1/m]:", kappa_y.min(), kappa_y.max())
+# print("  kappa_z min/max [1/m]:", kappa_z.min(), kappa_z.max())
+
+# # --- Plots ---
+# fig = plt.figure(figsize=(10, 10))
+
+# ax1 = fig.add_subplot(411)
+# ax1.plot(s_out, y)
+# ax1.set_ylabel("y(s) [m]")
+# ax1.set_title("Cosserat rod centerline: y(s)")
+
+# ax2 = fig.add_subplot(412)
+# ax2.plot(s_out, z)
+# ax2.set_ylabel("z(s) [m]")
+# ax2.set_title("Cosserat rod centerline: z(s)")
+
+# ax3 = fig.add_subplot(413)
+# ax3.plot(s_out, np.rad2deg(np.unwrap(np.arctan2(q[3, :], q[0, :]))))
+# ax3.set_ylabel("quaternion phase proxy [deg]")
+# ax3.set_title("Orientation proxy (optional)")
+
+# ax4 = fig.add_subplot(414)
+# ax4.plot(s_out, fy, label="f_y [N/m]")
+# ax4.plot(s_out, fz, label="f_z [N/m]")
+# ax4.plot(s_out, tau_x, label="tau_x [N]")
+# ax4.set_xlabel("s [m]")
+# ax4.set_ylabel("load density")
+# ax4.legend(loc="best")
+# ax4.set_title("Magnetic force and torque densities")
+
+# fig.tight_layout()
+
+# # --- 3D centerline ---
+# fig3d = plt.figure(figsize=(8, 6))
+# ax = fig3d.add_subplot(111, projection='3d')
+# ax.plot(x, y, z, linewidth=2)
+# ax.scatter([x[0]], [y[0]], [z[0]], label="base")
+# ax.scatter([x[-1]], [y[-1]], [z[-1]], label="tip")
+
+# # Equal-ish aspect scaling
+# x_min, x_max = x.min(), x.max()
+# y_min, y_max = y.min(), y.max()
+# z_min, z_max = z.min(), z.max()
+# x_mid = 0.5*(x_min + x_max)
+# y_mid = 0.5*(y_min + y_max)
+# z_mid = 0.5*(z_min + z_max)
+# max_range = max(x_max-x_min, y_max-y_min, z_max-z_min)
+# half = 0.5*max_range
+# ax.set_xlim(x_mid-half, x_mid+half)
+# ax.set_ylim(y_mid-half, y_mid+half)
+# ax.set_zlim(z_mid-half, z_mid+half)
+# ax.set_box_aspect((1, 1, 1))
+
+# ax.set_xlabel("x [m]")
+# ax.set_ylabel("y [m]")
+# ax.set_zlabel("z [m]")
+# ax.set_title("3D Cosserat rod centerline")
+# ax.legend()
+# plt.tight_layout()
+# plt.show()

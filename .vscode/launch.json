@@ -54,6 +54,14 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         }
+        {
+            "name": "Run cosserat practice",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.cosserat_model_type",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
 
 
     ]

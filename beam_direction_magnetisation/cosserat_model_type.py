@@ -28,6 +28,7 @@ def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
     tau = np.cross(m_pts, B)                                             # (N,3)
 
     return f.T, tau.T, B.T
+
 mag = 128e3
 r = 0.0015
 E = 3.5e6
@@ -47,6 +48,10 @@ r_epm = 0.03
 p_epm = 0.09
 mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm)
 m_ext_full = mag_epm * np.array([1.0, 0.0, 0.0])
+rho_mat = 6450          # kg/m^3 (material density)
+g = 9.81
+w = rho_mat * A_cs * g # N/m
+f_g = np.array([0.0, 0.0, -w])[:, None]   # (3,1) for broadcasting
 
 def R_y(theta):
     c,s = np.cos(theta), np.sin(theta)
@@ -55,13 +60,6 @@ def R_z(theta):
     c,s = np.cos(theta), np.sin(theta)
     return np.array([[c,-s,0],[s,c,0],[0,0,1]])
 
-def magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg):
-    r_tip = np.array([L,0.0,0.0])
-    thz = np.deg2rad(theta_z_deg)
-    thy = np.deg2rad(theta_y_deg)
-    v0 = np.array([rho,0.0,0.0])
-    v = R_y(thy) @ (R_z(thz) @ v0)
-    return r_tip + v
 def epm_pose_overhead_spin_z(r_tip, rho, phi_z, m0_dir=np.array([1.0, 0.0, 0.0])):
     """
     Overhead magnet fixed above the tip. Rotate magnet about its OWN z-axis by phi_z (radians).
@@ -76,12 +74,7 @@ def epm_pose_overhead_spin_z(r_tip, rho, phi_z, m0_dir=np.array([1.0, 0.0, 0.0])
     Rm = R_z(phi_z)                              # spin about its own z-axis
     m_src = mag_epm * (Rm @ m0_dir)              # dipole moment in world frame
     return r_src, m_src
-# rho = 0.14
-# theta_z_deg = 0.0
-# theta_y_deg = 0.0
-# r_mag = magnet_pose_about_tip(L, rho, theta_z_deg, theta_y_deg)
-# r_tip = np.array([L,0.0,0.0])
-# r_mag = r_tip + np.array([0.0, 0.0, rho])
+
 alpha_deg =50
 alpha_deg_overhead = 0
 alpha = np.deg2rad(alpha_deg)
@@ -137,6 +130,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kbt_inv, m_local, u_star=None):
         f_ext, tau_ext, _B = magnetic_wrench_density_cosserat(
             p, qn, m_src, r_src, m_local, r_min=1e-6
         )
+        f_ext = f_ext + f_g
         n_s = -f_ext
         m_s = -(np.cross(p_s.T, n.T).T) - tau_ext
 
@@ -169,7 +163,7 @@ Kbt_inv = np.linalg.inv(Kbt)
 p0 = np.array([0.0, 0.0, 0.0])
 q0 = np.array([1.0, 0.0, 0.0, 0.0])  # identity quaternion (qw,qx,qy,qz)
 
-n0 = 120
+n0 = 500
 s_mesh = np.linspace(0, L, n0)
 
 # Initial guess: straight rod, zero internal wrench
@@ -198,19 +192,19 @@ def epm_pose_front(r_tip, rho, theta_z, theta_y, m0_dir=np.array([1.0,0.0,0.0]))
     return r_src, m_src
 r_tip = np.array([L,0.0,0.0])
 
-angles_deg = np.linspace(80, 80, 1)
+angles_deg = np.linspace(-90, 90, 20)
 
 tip_y_front, tip_z_front = [], []
 tip_y_over,  tip_z_over  = [], []
 
 sol_prev_front = None
 sol_prev_over  = None
-rho = .14
+rho = .15
 for ang in angles_deg:
     th = np.deg2rad(ang)
 
     # Front-of-catheter: rotate around y (you can also set theta_z)
-    r_src_f, m_src_f = epm_pose_front(r_tip, rho=rho, theta_z=th, theta_y=-70)
+    r_src_f, m_src_f = epm_pose_front(r_tip, rho=rho, theta_z=th, theta_y=np.deg2rad(65))
 
     # Overhead: twist magnet about x by the same angle
     r_src_o, m_src_o = epm_pose_overhead_spin_z(r_tip, rho=rho, phi_z=th)

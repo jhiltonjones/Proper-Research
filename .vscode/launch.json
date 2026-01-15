@@ -53,7 +53,7 @@
             "module": "beam_direction_magnetisation.cosserat_model_final",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
-        }
+        },
         {
             "name": "Run cosserat practice",
             "type": "debugpy",
@@ -61,8 +61,14 @@
             "module": "beam_direction_magnetisation.cosserat_model_type",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run mpc",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.mpc_control",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
-
-
     ]
 }

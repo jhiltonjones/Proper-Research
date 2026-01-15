@@ -1,8 +1,8 @@
 import numpy as np
 
-def quat_normalize(q):
-    n = np.sqrt(np.sum(q*q, axis=0))
-    n = np.maximum(n, 1e-12)
+def quat_normalize(q, eps=1e-12):
+    n = np.linalg.norm(q, axis=0, keepdims=True)
+    n = np.maximum(n, eps)
     return q / n
 
 

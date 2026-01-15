@@ -1,47 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
-from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_force_analytical, dipole_field_from_source
+from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
-MU0_OVER_4PI = 1e-7
-
-def magnetic_moment(B_r, mu_0, r, p):
-    return (B_r / mu_0) * (np.pi * r**2 * p)
-
-def magnetic_wrench_density_cosserat(p, q, m_ext, r_src, m_local, r_min=1e-6):
-    qn = quat_normalize(q)
-    R = quat_to_rot(qn) 
-    m_pts = np.einsum('nij,j->ni', R, m_local) 
-    r_pts = p.T 
-    B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min)      
-    f = magnetic_force_analytical(r_pts, m_pts, r_src, m_ext, r_min=r_min) 
-    f=f*-1 
-    tau = np.cross(m_pts, B)                                      
-    return f.T, tau.T, B.T
-
-mag = 128e3
-r = 0.0015
-E = 3.5e6
-A_cs = np.pi * r**2
-I = np.pi * r**4 / 4
-L = 0.05
-nu = 0.49
-G = E / (2*(1+nu))
-J = 0.5*np.pi*r**4
-EI = E*I
-GJ = G*J
-mu_line = mag * A_cs  
-
-mu_0 = 4e-7*np.pi
-B_r = 1.25
-r_epm = 0.03
-p_epm = 0.09
-mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm)
-m_ext_full = mag_epm * np.array([1.0, 0.0, 0.0])
-rho_mat = 1200          # kg/m^3 
-g = 9.8
-w = rho_mat * A_cs * g # N/m
-f_g = np.array([0.0, 0.0, -w])[:, None] 
+from beam_direction_magnetisation.magnetism.parameters_cosserat import *
 def R_y(theta):
     c,s = np.cos(theta), np.sin(theta)
     return np.array([[c,0,s],[0,1,0],[-s,0,c]])

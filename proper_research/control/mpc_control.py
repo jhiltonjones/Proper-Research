@@ -3,6 +3,8 @@ import osqp
 from scipy.linalg import solve_discrete_are, block_diag
 import scipy.sparse as sp
 from proper_research.models.beam_model import theta_angle_solved, dtheta_dB, dtheta_dL, dtheta_dphi
+
+
 def dare_stabilising_K(A, B, Q, R):
     P = solve_discrete_are(A, B, Q, R)
     K = -np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
@@ -327,7 +329,7 @@ def main():
         mpc,
         mag=mag, A_cs=A_cs, E=E, I=I,
         theta_ref_traj_rad=theta_ref,
-        T=4,
+        T=10,
         print_horizon=4
     )
 

@@ -91,15 +91,37 @@ def dtheta_dL(B, phi, mag, A_cs, L, E, I, dL=1e-4):
     theta_minus = theta_angle_solved(B, phi, mag, A_cs, L-dL, E, I)
     return (theta_plus - theta_minus) / (2*dL)
 if __name__ == '__main__':
-    theta = np.deg2rad(26.56)
+    # theta = np.deg2rad(26.56)
     E = 4.5e6
     radius = 0.0015
     A_cs = np.pi * radius**2
     I = np.pi * radius**4 / 4
-    B = 0.03
+    B = 0.01
     mag = 128e3
-    constant_carti = np.sqrt((E*I)/(2*mag*B*A_cs))
-    x_pos = integral_x(phi=np.deg2rad(40.62), theta_L=np.deg2rad(26.1), constant=constant_carti)
-    print(f"x_pos is : {x_pos}")
-    y_pos = integral_y(phi=np.deg2rad(40.62), theta_L=np.deg2rad(26.1), constant=constant_carti)
-    print(f"y_pos is : {y_pos}")
+    L = 0.042
+    phi = np.deg2rad(50)
+    # theta_L = 30
+    # constant_carti = np.sqrt((E*I)/(2*mag*B*A_cs))
+    # x_pos = integral_x(phi=np.deg2rad(phi), theta_L=np.deg2rad(theta_L), constant=constant_carti)
+    # print(f"x_pos is : {x_pos}")
+    # y_pos = integral_y(phi=np.deg2rad(phi), theta_L=np.deg2rad(theta_L), constant=constant_carti)
+    # print(f"y_pos is : {y_pos}")
+    # angle = np.arctan2(y_pos, x_pos)
+    # print(np.rad2deg(angle))
+    angles = []
+    phis = np.linspace(0.1,80,16)
+    for p in phis:
+        phi = np.deg2rad(p)
+        act_theta = theta_angle_solved(B, phi, mag, A_cs, L, E, I)
+        theta_angle_deg = np.rad2deg(act_theta)
+        angles.append(theta_angle_deg) 
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(phis, angles, marker='o', linestyle='-', color='b', label='Theta vs Phi')
+
+    plt.title('Angle vs Phis')
+    plt.xlabel('Phi (degrees or radians)')
+    plt.ylabel('Angle (degrees)')
+    plt.grid(True)
+    plt.legend()
+    plt.show()

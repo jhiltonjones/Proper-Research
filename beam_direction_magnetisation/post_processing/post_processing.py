@@ -32,7 +32,7 @@ def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z
     plt.legend()
     plt.show()
 
-def axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward):
+def axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward, vessel_centerline, R_vessel):
 
 
     fig3d = plt.figure(figsize=(8, 6))
@@ -88,14 +88,51 @@ def axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward):
     ax.set_ylabel("y [m]")
     ax.set_zlabel("z [m]")
     ax.set_title(f"Front magnet case: rod shape at angle = {ang_plot:.1f} deg")
+    add_tube(ax, vessel_centerline, R_vessel, alpha=0.12)
     ax.legend()
     plt.tight_layout()
     plt.show()
-    plt.figure()
-    plt.plot(s_out, f_toward)
-    plt.axhline(0.0, linewidth=1)
-    plt.xlabel("s [m]")
-    plt.ylabel("f · u_hat [N/m]")
-    plt.title("Local magnetic force component toward magnet")
-    plt.grid(True)
-    plt.show()
+    # plt.figure()
+    # plt.plot(s_out, f_toward)
+    # plt.axhline(0.0, linewidth=1)
+    # plt.xlabel("s [m]")
+    # plt.ylabel("f · u_hat [N/m]")
+    # plt.title("Local magnetic force component toward magnet")
+    # plt.grid(True)
+    # plt.show()
+
+
+def add_tube(ax, centerline, R, n_circle=24, n_samples=80, alpha=0.15):
+    # Sample points along the polyline
+    pts = []
+    seglens = np.linalg.norm(np.diff(centerline, axis=0), axis=1)
+    total = seglens.sum()
+
+    # allocate samples per segment
+    for i in range(len(centerline) - 1):
+        a, b = centerline[i], centerline[i+1]
+        Ni = max(2, int(n_samples * seglens[i] / total))
+        t = np.linspace(0, 1, Ni)
+        pts.append(a[None,:] * (1-t)[:,None] + b[None,:] * t[:,None])
+    pts = np.vstack(pts)  # (Ns,3)
+
+    # Build a tube surface by sweeping a circle
+    theta = np.linspace(0, 2*np.pi, n_circle, endpoint=True)
+    X = np.zeros((len(theta), len(pts)))
+    Y = np.zeros_like(X)
+    Z = np.zeros_like(X)
+
+    # For planar x-y centerline, a simple fixed circle basis works (normal is z)
+    ex = np.array([1.0, 0.0, 0.0])
+    ey = np.array([0.0, 1.0, 0.0])
+
+    for j, c in enumerate(pts):
+        circle = (R*np.cos(theta)[:,None]*ex[None,:] +
+                  R*np.sin(theta)[:,None]*ey[None,:])
+        ring = c[None,:] + circle
+        X[:, j] = ring[:, 0]
+        Y[:, j] = ring[:, 1]
+        Z[:, j] = ring[:, 2]
+
+    ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=0, alpha=alpha)
+    ax.plot(centerline[:,0], centerline[:,1], centerline[:,2], '--', linewidth=2, label="vessel centerline")

@@ -63,10 +63,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run mpc",
+            "name": "Run mpc with xy",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.mpc_control",
+            "module": "proper_research.control.mpc_tip_control",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         }

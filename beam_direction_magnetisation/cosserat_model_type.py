@@ -12,6 +12,66 @@ from beam_direction_magnetisation.post_processing.post_processing import compare
 m_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
 m_local_overhead = np.array([mu_line*np.cos(alpha_overhead),0.0, mu_line*np.sin(alpha_overhead)])
 
+def closest_point_on_segment(p, a, b):
+    ab = b - a
+    t = np.dot(p - a, ab) / (np.dot(ab, ab) + 1e-12)
+    t = np.clip(t, 0.0, 1.0)
+    c = a + t * ab
+    return c
+def make_curved_centerline(x_corner=0.06, y_up=0.06, r_turn=0.02,
+                           n1=50, n_arc=80, n2=50):
+    """
+    Centerline: straight + quarter-circle arc + straight.
+    r_turn = turning radius (smaller = sharper bend).
+    """
+
+    # 1) Straight segment: (0,0) -> (x_corner - r_turn, 0)
+    x1 = np.linspace(0.0, x_corner - r_turn, n1)
+    seg1 = np.stack([x1, 0*x1, 0*x1], axis=1)
+
+    # 2) Quarter-circle arc centered at (x_corner - r_turn, r_turn)
+    # angle from -pi/2 (pointing +x) to 0 (pointing +y)
+    theta = np.linspace(-np.pi/2, 0.0, n_arc)
+    xc, yc = (x_corner - r_turn), r_turn
+    arc = np.stack([xc + r_turn*np.cos(theta),
+                    yc + r_turn*np.sin(theta),
+                    0*theta], axis=1)
+
+    # 3) Straight segment: end of arc -> (x_corner, y_up)
+    y2 = np.linspace(r_turn, y_up, n2)
+    seg2 = np.stack([x_corner + 0*y2, y2, 0*y2], axis=1)
+
+    return np.vstack([seg1, arc, seg2])
+def closest_point_on_polyline(p, poly):
+    # poly: (M,3)
+    best_c = None
+    best_d2 = np.inf
+    for i in range(len(poly) - 1):
+        c = closest_point_on_segment(p, poly[i], poly[i+1])
+        d2 = np.dot(p - c, p - c)
+        if d2 < best_d2:
+            best_d2 = d2
+            best_c = c
+    return best_c, np.sqrt(best_d2)
+def wall_force_density(p, poly, R, k_wall=2e4, p_exp=3):
+    """
+    Quadratic (or higher power) penalty on penetration.
+    k_wall: stiffness scaling (increase to reduce penetration)
+    p_exp: 2 gives quadratic; 3 even stiffer growth
+    """
+    N = p.shape[1]
+    f = np.zeros_like(p)
+
+    for j in range(N):
+        pj = p[:, j]
+        cstar, d = closest_point_on_polyline(pj, poly)
+
+        pen = d - R
+        if pen > 0.0:
+            n = (pj - cstar) / (d + 1e-12)
+            f[:, j] = -k_wall * (pen**p_exp) * n
+
+    return f
 def tip_bending_angles_from_tangent(sol, e1=np.array([1.0,0.0,0.0])):
     YL = sol.sol(np.array([L]))
     qL = quat_normalize(YL[3:7, :]) 
@@ -50,7 +110,8 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         f_ext, tau_ext, _B = magnetic_wrench_density_cosserat_profile(
             p, qn, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
         )
-
+        # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
+        # f_ext = f_ext + f_wall
         f_ext = f_ext + f_g
 
         n_s = -f_ext
@@ -130,12 +191,15 @@ def solve_for_pose(r_src, m_src, Y_guess, s_mesh, m_moment, sol=None):
     return soln
 r_tip = np.array([L,0.0,0.0])
 
-angles_deg = np.linspace(-65, 65, 20)
+angles_deg = np.linspace(-80, 80, 20)
 
 tip_y_front, tip_z_front = [], []
 tip_y_over,  tip_z_over  = [], []
 bend_y_front, bend_z_front, bend_tot_front = [],[],[]
 bend_y_o, bend_z_o, bend_tot_o = [],[],[]
+Btip_front_list, Btip_over_list = [], []
+Fnet_front_list, Fnet_over_list = [], []
+Tnet_front_list, Tnet_over_list = [], []
 sol_prev_front = None
 sol_prev_over  = None
 for ang in angles_deg:
@@ -155,6 +219,9 @@ for ang in angles_deg:
     p_f = Yf[0:3, :]
     q_f = Yf[3:7, :]
     theta_y_fr, theta_z_fr, theta_tot_fr = tip_bending_angles_from_tangent(sol_f)
+    p_tip = sol_f.sol(np.array([L]))[0:3, 0]
+    dist = np.linalg.norm(p_tip - r_src_f)
+    print(ang, "dist =", dist)
     print(f"Tip bending angles: theta_y={np.rad2deg(theta_y_fr):+.2f} deg, theta_z={np.rad2deg(theta_z_fr):+.2f} deg, total={np.rad2deg(theta_tot_fr):.2f} deg")
     f_ext, tau_ext, B = magnetic_wrench_density_cosserat_profile(
         p_f, q_f, s_out, m_src_f, r_src_f, m_local_profile, m_local, r_min=1e-6
@@ -167,7 +234,9 @@ for ang in angles_deg:
 
     F_net_mag = np.linalg.norm(F_net)
     T_net_mag = np.linalg.norm(T_net)
-
+    Btip_front_list.append(B_tip)
+    Fnet_front_list.append(F_net_mag)
+    Tnet_front_list.append(T_net_mag)
     print(f"Front: ang={ang: .1f} deg  |B_tip|={B_tip:.4e} T  |F_net|={F_net_mag:.4e} N  |T_net|={T_net_mag:.4e} N·m/m?")
     if sol_prev_over is None:
         sol_o = solve_for_pose(r_src_o, m_src_o, Y_guess, s_mesh, m_local_overhead)
@@ -181,13 +250,16 @@ for ang in angles_deg:
     f_ext_o, tau_ext_o, B_o = magnetic_wrench_density_cosserat_profile(
         p_o, q_o, s_out, m_src_o, r_src_o, m_local_profile, m_local_overhead, r_min=1e-6
     )
+
     theta_y_o, theta_z_o, theta_tot_o = tip_bending_angles_from_tangent(sol_o)
     print(f"Tip bending angles: theta_y={np.rad2deg(theta_y_o):+.2f} deg, theta_z={np.rad2deg(theta_z_o):+.2f} deg, total={np.rad2deg(theta_tot_o):.2f} deg")
     B_tip_o = np.linalg.norm(B_o[:, -1])
 
     F_net_o = np.trapezoid(f_ext_o, s_out, axis=1)
     T_net_o = np.trapezoid(tau_ext_o, s_out, axis=1)
-
+    Btip_over_list.append(B_tip_o)
+    Fnet_over_list.append(np.linalg.norm(F_net_o))
+    Tnet_over_list.append(np.linalg.norm(T_net_o))
     print(f"Overhead: ang={ang: .1f} deg  |B_tip|={B_tip_o:.4e} T  |F_net|={np.linalg.norm(F_net_o):.4e} N  |T_net|={np.linalg.norm(T_net_o):.4e} N·m")
     sol_prev_front, sol_prev_over = sol_f, sol_o
 
@@ -212,8 +284,8 @@ print("expected approx:", np.sum((s_out >= s_m) & (s_out <= s_m + ell_m)))
 Kinv = Kbt_inv_profile(s_out)
 print("Kinv base EI^-1:", Kinv[1,1,0], " tip EI^-1:", Kinv[1,1,-1])
 plt.figure()
-plt.plot(angles_deg, bend_z_front, marker='o', label="Magnetised at 30 deg bending angle in y-z")
-plt.plot(angles_deg, bend_z_o,  marker='o', label="Magnetised at 0 deg and placed overhead bending angle in x-y")
+plt.plot(angles_deg, bend_y_front, marker='o', label="Magnetised at 30 deg bending angle in y-z")
+plt.plot(angles_deg, bend_y_o,  marker='o', label="Magnetised at 0 deg and placed overhead bending angle in x-y")
 plt.xlabel("Actuation angle [deg]")
 plt.ylabel("Tip bending angle θ_z [deg]")
 plt.grid(True)
@@ -221,11 +293,60 @@ plt.legend()
 plt.show()
 
 compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z_over)
-ang_plot = 60.0  
-th_plot = np.deg2rad(ang_plot)
+Btip_front_arr = np.array(Btip_front_list)
+Btip_over_arr  = np.array(Btip_over_list)
 
+Fnet_front_arr = np.array(Fnet_front_list)
+Fnet_over_arr  = np.array(Fnet_over_list)
+
+Tnet_front_arr = np.array(Tnet_front_list)
+Tnet_over_arr  = np.array(Tnet_over_list)
+
+# # -------------------------
+# # Plot |B_tip| vs angle
+# # -------------------------
+plt.figure()
+plt.plot(angles_deg, Btip_front_arr, marker="o", label="Front")
+plt.plot(angles_deg, Btip_over_arr,  marker="o", label="Overhead")
+plt.xlabel("Actuation angle [deg]")
+plt.ylabel("Tip magnetic field |B_tip| [T]")
+plt.title("Tip magnetic field magnitude vs actuation angle")
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# -------------------------
+# Plot |F_net| vs angle
+# -------------------------
+plt.figure()
+plt.plot(angles_deg, Fnet_front_arr, marker="o", label="Front")
+plt.plot(angles_deg, Fnet_over_arr,  marker="o", label="Overhead")
+plt.xlabel("Actuation angle [deg]")
+plt.ylabel("Net magnetic force |F_net| [N]")
+plt.title("Net force magnitude vs actuation angle")
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# -------------------------
+# Plot |T_net| vs angle
+# -------------------------
+plt.figure()
+plt.plot(angles_deg, Tnet_front_arr, marker="o", label="Front")
+plt.plot(angles_deg, Tnet_over_arr,  marker="o", label="Overhead")
+plt.xlabel("Actuation angle [deg]")
+plt.ylabel("Net magnetic torque |T_net| [N·m]")
+plt.title("Net torque magnitude vs actuation angle")
+plt.grid(True)
+plt.legend()
+plt.show()
+ang_plot = 60.0  
+k_wall = 1e3
+th_plot = np.deg2rad(ang_plot)
+vessel_centerline = make_curved_centerline(x_corner=0.06, y_up=0.06, r_turn=0.04)
+R_vessel = 0.006 
 r_tip = np.array([L, 0.0, 0.0])
-r_src_f, m_src_f = epm_pose_front(r_tip, rho=rho, theta_z=th_plot, theta_y=0)
+r_src_f, m_src_f = epm_pose_front(r_tip, rho=rho, theta_z=th_plot, theta_y=theta_y)
 # r_src_o, m_src_o = epm_pose_overhead_spin_z(r_tip, rho, th_plot, m0_dir=np.array([-1.0, 0.0, 0.0]))
 
 
@@ -233,11 +354,22 @@ sol_f = solve_for_pose(r_src_f, m_src_f, Y_guess, s_mesh, m_local)
 
 s_out = np.linspace(0, L, 300)
 Yf = sol_f.sol(s_out)
+print("BVP success:", sol_f.success)
+print("BVP status:", sol_f.status, sol_f.message)
+
 p_f = Yf[0:3, :]     
 q_f = quat_normalize(Yf[3:7, :]) 
+f_ext, tau_ext, B = magnetic_wrench_density_cosserat_profile(
+    p_f, q_f, s_out, m_src_f, r_src_f, m_local_profile, m_local, r_min=1e-6
+)
+f_wall = wall_force_density(p_f, vessel_centerline, R_vessel, k_wall=k_wall)
+f_ext_total = f_ext  + f_g
+theta_y_sol, theta_z_sol, theta_tot_sol = tip_bending_angles_from_tangent(sol_f)
+print("Max |f_wall|:", np.linalg.norm(f_wall, axis=0).max())
+print("Mean |f_wall|:", np.linalg.norm(f_wall, axis=0).mean())
 m_world = Yf[10:13, :] 
 p_pts = p_f.T         
-f_pts = f_ext.T    
+f_pts = f_ext_total.T    
 
 u = (r_src_f[None, :] - p_pts)                 
 u_norm = np.linalg.norm(u, axis=1, keepdims=True)
@@ -247,6 +379,7 @@ f_toward = np.sum(f_pts * u_hat, axis=1)
 
 print("Local force toward magnet: min/max [N/m] =", f_toward.min(), f_toward.max())
 print("Fraction of rod points pulling toward magnet =", np.mean(f_toward > 0.0))
+print(f"Bending angle in y: {np.rad2deg(theta_y_sol)} and theta angle in z {np.rad2deg(theta_z_sol)}")
 def compute_u_from_solution(s, Y):
     p = Y[0:3, :]
     q = Y[3:7, :]
@@ -283,4 +416,16 @@ print("  u1 min/max [rad/m]:", u1.min(), u1.max())
 print("  integrated twist angle [deg]:", twist_angle_deg)
 x, y, z = p_f[0, :], p_f[1, :], p_f[2, :]
 
-axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward)
+# axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward,vessel_centerline, R_vessel)
+def max_penetration(p, poly, R):
+    N = p.shape[1]
+    pens = []
+    for j in range(N):
+        _, d = closest_point_on_polyline(p[:, j], poly)
+        pens.append(d - R)
+    pens = np.array(pens)
+    return pens.max(), pens
+
+max_pen, pen_profile = max_penetration(p_f, vessel_centerline, R_vessel)
+print("Max penetration (d - R):", max_pen)
+print("Fraction outside:", np.mean(pen_profile > 0.0))

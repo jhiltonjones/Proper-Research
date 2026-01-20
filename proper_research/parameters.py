@@ -76,7 +76,7 @@ def default_beam_params():
 
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
-    B_r = 1.25
+    B_r = 1.0
     r_epm = 0.03
     p_epm = 0.09
     m_hat = (1.0, 0.0, 0.0)

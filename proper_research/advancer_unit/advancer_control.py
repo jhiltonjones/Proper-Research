@@ -10,11 +10,11 @@ def advancer_go(length_des_mm):
     ady = AdvancerUnit(port="/dev/ttyACM0")
 
     pid_params = default_visual_pid_params()
-    pid_params.Kp = 1.0    
+    pid_params.Kp = 2.0    
 
     pid_state = PIDState()
 
-    tol_mm = 1.0        
+    tol_mm = 5.0        
 
     max_iter = 10
     u_max_mm = 5.0         
@@ -87,4 +87,4 @@ def advancer_go(length_des_mm):
     finally:
         ady.shutdown()
 if __name__ == '__main__':
-    advancer_go(length_des_mm=35)
+    advancer_go(length_des_mm=50)

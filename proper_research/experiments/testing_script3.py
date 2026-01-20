@@ -23,7 +23,8 @@ def move_function(alpha_abs):
     joints[5] = alpha_zero +alpha_abs 
     robo.moveJ(joints)
 
-
+start_point = np.array([0.6372552555949702, -0.5765906755688711, 0.4569897127437801, 1.8596684013618174, -2.529358846151256, -0.040608351291805976])
+pivot_point = np.array([0.7772552555949702, -0.5765906755688711, 0.2069897127437801, 1.8596684013618174, -2.529358846151256, -0.040608351291805976])
 robo = URRtde(ROBOT_IP)
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
@@ -34,10 +35,10 @@ alpha_params.Kp = 10.0
 alpha_params.Ki = 0.02
 alpha_params.kd = 0.7
 measure_fn = measure_theta_from_camera
-base_point_pose = 0.963733332875323
-start_pivot_point = np.array([0.963733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
+base_point_pose = pivot_point[0]
+start_pivot_point = pivot_point
 
-start_point_pose = np.array([0.8232165993178376, -0.5209241826328589, 0.4533174290989068, -2.0741634614536983, -2.345875896286576, 0.07273609243115334])
+start_point_pose = start_point
 danger_file = "/home/jack/Proper-Research/data/alpha_danger_map.pkl"
 if os.path.exists(danger_file):
     with open(danger_file, "rb") as f:
@@ -125,7 +126,7 @@ def run_one_target(target_id, length_des_mm, theta_des_deg):
 
         new_base_pose = get_point(0, 0, start_point_pose)
 
-    if start_point <= 0.6:
+    if start_point <= 0.3:
         img_file = new_capture(filename=f"focused_image_target_{target_id}.jpg")
 
         _, _, tip_angle_deg, _ = detect_red_points_and_angle(img_file, show=False, use_roi=True)
@@ -250,7 +251,7 @@ try:
 
         err = float(np.linalg.norm(tip_mm - target_mm))
         errors_mm.append(err)
-    advancer_go(length_des_mm+15)
+    # advancer_go(length_des_mm+15)
 
     plot_all_targets_and_tips_on_image(
         image_filename=reference_image,

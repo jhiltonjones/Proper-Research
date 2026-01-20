@@ -12,9 +12,9 @@ if __name__ =='__main__':
 
         # current_joint[5]+=0.1
         # robo.moveJ(current_joint)
-        # new_pose = get_point(0,0)
-        # robo.moveL(new_pose)
-        robo.go_home_joint()
+        new_pose = get_point(0,0)
+        robo.moveL(new_pose)
+        # robo.go_home_joint()
         print("Finished")
     finally:
         robo.shutdown()

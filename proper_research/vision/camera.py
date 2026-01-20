@@ -13,22 +13,73 @@ def measure_theta_from_camera():
         use_roi=True
     )
     return np.deg2rad(angle_deg) 
-def new_capture(filename='focused_image.jpg', focus=255):
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open camera")
+# def new_capture(filename='focused_image.jpg', focus=255):
+#     cap = cv2.VideoCapture(2)
+#     if not cap.isOpened():
+#         raise RuntimeError("Cannot open camera")
 
-    for _ in range(5):
+#     for _ in range(5):
+#         cap.read()
+
+#     ret, frame = cap.read()
+#     cap.release()
+
+#     if ret and frame is not None:
+#         cv2.imwrite(filename, frame)
+#         return filename
+#     else:
+#         raise RuntimeError("Failed to capture image")
+import cv2
+import numpy as np
+
+import cv2
+
+def new_capture(filename="focused_image.jpg",
+                cam_index=2,
+                backend=cv2.CAP_V4L2,
+                warmup_frames=15,
+                exposure=100.0,     # try 200..5000 initially
+                gain=0.0,
+                auto_exposure_manual=1.0,  # working for you
+                brightness=None,     # e.g. 0.0
+                gamma=None):         # e.g. 0.7
+    cap = cv2.VideoCapture(cam_index, backend)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open camera index {cam_index} with backend {backend}")
+
+    def try_set(prop, val, name):
+        ok = cap.set(prop, val)
+        got = cap.get(prop)
+        print(f"{name}: set({val}) -> {ok}, get() -> {got}")
+        return ok, got
+
+    # Put camera in manual exposure mode (as supported by your driver mapping)
+    try_set(cv2.CAP_PROP_AUTO_EXPOSURE, float(auto_exposure_manual), "AUTO_EXPOSURE(manual)")
+
+    # Reduce gain first
+    try_set(cv2.CAP_PROP_GAIN, float(gain), "GAIN")
+
+    # Set exposure (absolute value for your camera/driver)
+    try_set(cv2.CAP_PROP_EXPOSURE, float(exposure), "EXPOSURE(abs)")
+
+    # Optional tweaks if supported
+    if brightness is not None:
+        try_set(cv2.CAP_PROP_BRIGHTNESS, float(brightness), "BRIGHTNESS")
+    if gamma is not None:
+        try_set(cv2.CAP_PROP_GAMMA, float(gamma), "GAMMA")
+
+    for _ in range(warmup_frames):
         cap.read()
 
     ret, frame = cap.read()
     cap.release()
 
-    if ret and frame is not None:
-        cv2.imwrite(filename, frame)
-        return filename
-    else:
+    if not ret or frame is None:
         raise RuntimeError("Failed to capture image")
+
+    cv2.imwrite(filename, frame)
+    return filename
+
 
 def save_roi_box(box, path=ROI_CONFIG_FILE):
     """
@@ -204,6 +255,7 @@ def measure_beam_angle_deg(image_filename="focused_image.jpg", use_roi=True, sho
     and returns the measured beam angle in degrees.
     """
     img_file = new_capture(filename=image_filename)
+    
     pt1, pt2, angle_deg, roi_box = detect_red_points_and_angle(
         img_file,
         show=show,
@@ -214,6 +266,7 @@ def measure_beam_angle_deg(image_filename="focused_image.jpg", use_roi=True, sho
 if __name__ == "__main__":
     # Capture or use existing
     img_file = new_capture(filename="focused_image.jpg")
+
     # img_file = "focused_image.jpg"  # if you want to reuse existing
 
     pt1, pt2, angle, roi_box = detect_red_points_and_angle(

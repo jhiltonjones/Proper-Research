@@ -2,10 +2,10 @@ import numpy as np
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_moment
 
 rho = 0.15
-alpha_deg =20
-alpha_overhead = np.deg2rad(0)
+alpha_deg =0
+alpha_overhead = np.deg2rad(104)
 alpha = np.deg2rad(alpha_deg)
-theta_y=np.deg2rad(-40)
+theta_y=np.deg2rad(0)
 
 
 MU0_OVER_4PI = 1e-7
@@ -14,7 +14,7 @@ r = 0.0015
 E = 3e6
 A_cs = np.pi * r**2
 I = np.pi * r**4 / 4
-L = 0.06
+L = 0.05
 nu = 0.49
 G = E / (2*(1+nu))
 J = 0.5*np.pi*r**4

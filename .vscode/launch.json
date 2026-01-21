@@ -26,7 +26,7 @@
             "name": "Run Advancer Unit test",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.experiments.testing_linear_advancer",
+            "module": "proper_research.advancer_unit.advancer_control",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
@@ -39,18 +39,18 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run testing Jacobian",
+            "name": "Run testing camera",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.mpc_control",
+            "module": "proper_research.vision.camera",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run cosserat",
+            "name": "Run forward model",
             "type": "debugpy",
             "request": "launch",
-            "module": "beam_direction_magnetisation.cosserat_model_final",
+            "module": "proper_research.models.forward_model",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

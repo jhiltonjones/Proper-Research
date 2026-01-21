@@ -10,10 +10,10 @@ import math
 # =====================================================================
 ROI_CONFIG_FILE = "red_roi_box.json"
 
-CAMERA_TO_CHECKERBOARD_MM = 80.0
-BEAM_RELATIVE_Z_OFFSET_MM = 40.0   # beam distance relative to checkerboard along Z
+CAMERA_TO_CHECKERBOARD_MM = 110.0
+BEAM_RELATIVE_Z_OFFSET_MM = 40.0  # beam distance relative to checkerboard along Z
 
-CHECKERBOARD_SQUARE_SIZE_MM = 5.0
+CHECKERBOARD_SQUARE_SIZE_MM = 6.0
 CHECKERBOARD_SQUARES_X = 9
 CHECKERBOARD_SQUARES_Y = 6
 

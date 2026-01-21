@@ -16,16 +16,88 @@ def integral_cos(phi, theta_L, eps=1e-6):
     xi_val = 0.5*val**2
     return xi_val
 
-def root_theta(rhs_eq, phi, tol = 1e-6):
-        eps = 1e-4
-        theta_min = eps
-        theta_max = max(phi - eps, theta_min)
-        def f(theta_l):
-            return integral_cos(phi, theta_l) - rhs_eq
+# def root_theta(rhs_eq, phi, tol = 1e-6):
+#         eps = 1e-4
+#         theta_min = eps
+#         theta_max = max(phi - eps, theta_min)
+#         def f(theta_l):
+#             return integral_cos(phi, theta_l) - rhs_eq
+#         sol = root_scalar(f, bracket=[theta_min, theta_max], xtol=tol)
+#         return sol.root
+
+
+def root_theta(rhs_eq, phi, tol=1e-6, debug=False, do_scan=True, n_scan=200):
+    eps = 1e-4
+
+    # Basic domain guard
+    if not np.isfinite(phi) or not np.isfinite(rhs_eq):
+        raise ValueError(f"Non-finite inputs: phi={phi}, rhs_eq={rhs_eq}")
+
+    theta_min = eps
+    theta_max = phi - eps
+
+    # If phi too small, we cannot bracket in (0, phi)
+    if theta_max <= theta_min:
+        msg = f"phi too small for bracket: phi={phi:.6g}, theta_min={theta_min:.6g}, theta_max={theta_max:.6g}"
+        if debug:
+            print("[root_theta] " + msg)
+        raise ValueError(msg)
+
+    def f(theta_l):
+        val = integral_cos(phi, theta_l) - rhs_eq
+        return float(val)
+
+    fa = f(theta_min)
+    fb = f(theta_max)
+
+    if debug:
+        print("[root_theta] rhs_eq=", rhs_eq)
+        print(f"[root_theta] phi={phi:.8f}")
+        print(f"[root_theta] bracket=[{theta_min:.8f}, {theta_max:.8f}]")
+        print(f"[root_theta] f(theta_min)={fa:.8e}, f(theta_max)={fb:.8e}")
+
+    # NaN/Inf check
+    if (not np.isfinite(fa)) or (not np.isfinite(fb)):
+        raise ValueError(f"Non-finite f at bracket endpoints: fa={fa}, fb={fb}, phi={phi}, rhs_eq={rhs_eq}")
+
+    # If we already have sign change, solve normally
+    if fa * fb < 0:
         sol = root_scalar(f, bracket=[theta_min, theta_max], xtol=tol)
-        return sol.root
+        return float(sol.root)
+
+    # Optional: scan for a sign-changing sub-bracket
+    if do_scan:
+        thetas = np.linspace(theta_min, theta_max, n_scan)
+        vals = np.array([f(t) for t in thetas], dtype=float)
+
+        # Find any sign change
+        for i in range(len(thetas) - 1):
+            v0, v1 = vals[i], vals[i+1]
+            if not np.isfinite(v0) or not np.isfinite(v1):
+                continue
+            if v0 == 0.0:
+                if debug:
+                    print(f"[root_theta] exact root at theta={thetas[i]:.8f}")
+                return float(thetas[i])
+            if v0 * v1 < 0:
+                a, b = float(thetas[i]), float(thetas[i+1])
+                if debug:
+                    print(f"[root_theta] scanned bracket found: [{a:.8f}, {b:.8f}] with f(a)={v0:.3e}, f(b)={v1:.3e}")
+                sol = root_scalar(f, bracket=[a, b], xtol=tol)
+                return float(sol.root)
+
+        if debug:
+            print("[root_theta] scan failed: no sign change found in bracket grid.")
+            print(f"[root_theta] f range: min={np.nanmin(vals):.3e}, max={np.nanmax(vals):.3e}")
+
+    # If still no bracket: raise with useful info
+    raise ValueError(
+        "No sign change in root bracket for theta. "
+        f"phi={phi}, rhs_eq={rhs_eq}, f(theta_min)={fa}, f(theta_max)={fb}"
+    )
+
 def tip_angle_from_B_phi_L(B, phi, mag, A_cs, L, E, I):
-    # print(B, phi, mag, A_cs, L, E, I)
+    print(B, phi, mag, A_cs, L, E, I)
     lam = constant(B, mag, A_cs, L, E, I)
     theta = root_theta(lam, phi)
     return theta  
@@ -92,13 +164,13 @@ def dtheta_dL(B, phi, mag, A_cs, L, E, I, dL=1e-4):
     return (theta_plus - theta_minus) / (2*dL)
 if __name__ == '__main__':
     # theta = np.deg2rad(26.56)
-    E = 4.5e6
-    radius = 0.0015
+    E = 2e6
+    radius = 0.0008
     A_cs = np.pi * radius**2
     I = np.pi * radius**4 / 4
     B = 0.01
     mag = 128e3
-    L = 0.042
+    L = 0.05
     phi = np.deg2rad(50)
     # theta_L = 30
     # constant_carti = np.sqrt((E*I)/(2*mag*B*A_cs))

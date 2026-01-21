@@ -81,3 +81,7 @@ class AdvancerUnit:
         self.thread.join(timeout=2.0)
         self.arduino.close()
         print("[AdvancerUnit] Shutdown complete.")
+
+if __name__ == "__main__":
+    ady = AdvancerUnit(port="/dev/ttyACM0")
+    ady.forward(5)

@@ -10,7 +10,7 @@ import os
 ROI_CONFIG_FILE = "red_roi_box.json"
 
 CAMERA_TO_CHECKERBOARD_MM = 110.0
-BEAM_RELATIVE_Z_OFFSET_MM = 200.0   # beam distance relative to checkerboard along Z
+BEAM_RELATIVE_Z_OFFSET_MM = 40.0   # beam distance relative to checkerboard along Z
 
 CHECKERBOARD_SQUARE_SIZE_MM = 6.0
 CHECKERBOARD_SQUARES_X = 9
@@ -42,7 +42,7 @@ def new_capture(filename="focused_image.jpg",
                 cam_index=2,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=15,
-                exposure=80.0,     # try 200..5000 initially
+                exposure=50.0,     # try 200..5000 initially
                 gain=0.0,
                 auto_exposure_manual=1.0,  # working for you
                 brightness=None,     # e.g. 0.0
@@ -209,8 +209,8 @@ def detect_red_markers_in_roi(
     expected_markers=3,
 
     # --- detection sensitivity ---
-    min_area=10,                 # was 30; smaller helps middle marker
-    merge_dist=10.0,             # was 12; slightly smaller reduces unintended merges
+    min_area=1,                 # was 30; smaller helps middle marker
+    merge_dist=1.0,             # was 12; slightly smaller reduces unintended merges
 
     # --- morphology (less aggressive; avoid merging markers) ---
     morph_kernel=(3, 3),         # was (5,5)
@@ -220,7 +220,7 @@ def detect_red_markers_in_roi(
     # --- HSV thresholds (tighter hue, lower S/V mins) ---
     s_min=30,                    # was 50
     v_min=30,                    # was 50
-    h_low1=0,  h_high1=8,        # tighter than 10
+    h_low1=0,  h_high1=13,        # tighter than 10
     h_low2=172, h_high2=180,     # tighter than 160..180
 
     # --- debug ---
@@ -372,7 +372,7 @@ def detect_red_markers_in_roi(
         centers = centers[:expected_markers]
 
     if expected_markers == 3:
-        base_px, mag_start_px, tip_px = centers[0], centers[1], centers[2]
+        base_px, mag_start_px, tip_px = centers[2], centers[1], centers[0]
         return base_px, mag_start_px, tip_px, roi_box
     else:
         return centers, roi_box
@@ -568,7 +568,7 @@ def measure_beam_and_tip_lengths_mm_with_checkerboard(
     depth_scale = z_beam / z_board
 
     # Step 4: detect 3 markers (base, mag_start, tip)
-    tip_px, mag_start_px, base_px, roi_box = detect_red_markers_in_roi(
+    base_px, mag_start_px, tip_px, roi_box = detect_red_markers_in_roi(
         image,
         use_roi=use_roi,
         expected_markers=3,

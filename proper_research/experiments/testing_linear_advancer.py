@@ -2,7 +2,7 @@ from proper_research.advancer_unit.advancer_unit_cmd import AdvancerUnit
 from proper_research.control.core import pid_step, PIDState
 from proper_research.parameters import default_visual_pid_params
 from proper_research.vision.measure_length import (
-    measure_beam_length_mm_with_checkerboard,
+    measure_beam_and_tip_lengths_mm_with_checkerboard,
 )
 import numpy as np
 
@@ -10,11 +10,11 @@ import numpy as np
 ady = AdvancerUnit(port="/dev/ttyACM0")
 
 pid_params = default_visual_pid_params()
-pid_params.Kp = 1.0    
+pid_params.Kp = 0.5    
 
 pid_state = PIDState()
 
-length_des_mm = 55    
+length_des_mm = 50   
 tol_mm = 1.0        
 
 max_iter = 10
@@ -27,12 +27,12 @@ dt = pid_params.dt
 try:
     for k in range(max_iter):
 
-        result = measure_beam_length_mm_with_checkerboard(
+        result = measure_beam_and_tip_lengths_mm_with_checkerboard(
             image_filename="focused_image.jpg",
             use_roi=True,
             show=False,
         )
-        length_curr = result["length_mm"]
+        length_curr = result["total_length_mm"]
         e = length_des_mm - length_curr
 
         print(f"\n[Iter {k}]")
@@ -64,12 +64,12 @@ try:
             print(f"  Moving BACKWARD by {abs(u):.2f} mm")
             ady.backward(abs(u))
 
-    final_result = measure_beam_length_mm_with_checkerboard(
+    final_result = measure_beam_and_tip_lengths_mm_with_checkerboard(
         image_filename="focused_image.jpg",
         use_roi=True,
         show=True,
     )
-    print("\nFinal length: {:.2f} mm".format(final_result["length_mm"]))
+    print("\nFinal length: {:.2f} mm".format(final_result["total_length_mm"]))
 
 finally:
     ady.shutdown()

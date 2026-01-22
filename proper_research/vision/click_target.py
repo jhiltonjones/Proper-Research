@@ -4,7 +4,7 @@ import numpy as np
 import json
 import os
 import math
-
+from proper_research.vision.measure_length import detect_red_markers_in_roi
 # =====================================================================
 # CONFIG
 # =====================================================================
@@ -225,63 +225,63 @@ def image_points_to_mm(points, H_img_to_mm):
 # DETECT RED MARKERS INSIDE ROI (2 markers → beam ends)
 # =====================================================================
 
-def detect_red_markers_in_roi(image_bgr, use_roi=True, expected_markers=2):
-    h_full, w_full = image_bgr.shape[:2]
+# def detect_red_markers_in_roi(image_bgr, use_roi=True, expected_markers=2):
+#     h_full, w_full = image_bgr.shape[:2]
 
-    roi_box = None
-    if use_roi:
-        roi_box = load_roi_box()
-        if roi_box is None:
-            print("[INFO] No ROI stored yet. Draw a box around the beam region.")
-            roi_box = select_roi_interactive(image_bgr)
-            if roi_box is None:
-                raise RuntimeError("No ROI selected.")
-            save_roi_box(roi_box)
+#     roi_box = None
+#     if use_roi:
+#         roi_box = load_roi_box()
+#         if roi_box is None:
+#             print("[INFO] No ROI stored yet. Draw a box around the beam region.")
+#             roi_box = select_roi_interactive(image_bgr)
+#             if roi_box is None:
+#                 raise RuntimeError("No ROI selected.")
+#             save_roi_box(roi_box)
 
-    if roi_box is not None:
-        x, y, w, h = roi_box
-        x = max(0, min(x, w_full - 1))
-        y = max(0, min(y, h_full - 1))
-        w = max(1, min(w, w_full - x))
-        h = max(1, min(h, h_full - y))
-        roi_box = (x, y, w, h)
-        roi_img = image_bgr[y:y+h, x:x+w]
-    else:
-        x, y, w, h = 0, 0, w_full, h_full
-        roi_img = image_bgr
+#     if roi_box is not None:
+#         x, y, w, h = roi_box
+#         x = max(0, min(x, w_full - 1))
+#         y = max(0, min(y, h_full - 1))
+#         w = max(1, min(w, w_full - x))
+#         h = max(1, min(h, h_full - y))
+#         roi_box = (x, y, w, h)
+#         roi_img = image_bgr[y:y+h, x:x+w]
+#     else:
+#         x, y, w, h = 0, 0, w_full, h_full
+#         roi_img = image_bgr
 
-    image_hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
-    red_ranges = [
-        (np.array([0, 50, 50]),   np.array([10, 255, 255])),
-        (np.array([160, 50, 50]), np.array([180, 255, 255])),
-    ]
-    red_mask = None
-    for lower_red, upper_red in red_ranges:
-        temp_mask = cv2.inRange(image_hsv, lower_red, upper_red)
-        red_mask = temp_mask if red_mask is None else cv2.bitwise_or(red_mask, temp_mask)
+#     image_hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
+#     red_ranges = [
+#         (np.array([0, 50, 50]),   np.array([10, 255, 255])),
+#         (np.array([160, 50, 50]), np.array([180, 255, 255])),
+#     ]
+#     red_mask = None
+#     for lower_red, upper_red in red_ranges:
+#         temp_mask = cv2.inRange(image_hsv, lower_red, upper_red)
+#         red_mask = temp_mask if red_mask is None else cv2.bitwise_or(red_mask, temp_mask)
 
-    contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) < expected_markers:
-        raise ValueError(f"Expected at least {expected_markers} red markers, found {len(contours)}.")
+#     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+#     if len(contours) < expected_markers:
+#         raise ValueError(f"Expected at least {expected_markers} red markers, found {len(contours)}.")
 
-    sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:expected_markers]
+#     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:expected_markers]
 
-    centers = []
-    for cnt in sorted_contours:
-        M = cv2.moments(cnt)
-        if M["m00"] != 0:
-            cx = float(M["m10"] / M["m00"])
-            cy = float(M["m01"] / M["m00"])
-            full_cx = cx + x
-            full_cy = cy + y
-            centers.append((full_cx, full_cy))
+#     centers = []
+#     for cnt in sorted_contours:
+#         M = cv2.moments(cnt)
+#         if M["m00"] != 0:
+#             cx = float(M["m10"] / M["m00"])
+#             cy = float(M["m01"] / M["m00"])
+#             full_cx = cx + x
+#             full_cy = cy + y
+#             centers.append((full_cx, full_cy))
 
-    if len(centers) < expected_markers:
-        raise ValueError("Could not compute all marker centroids.")
+#     if len(centers) < expected_markers:
+#         raise ValueError("Could not compute all marker centroids.")
 
-    centers.sort(key=lambda p: (p[1], p[0]))
-    pt1, pt2 = centers
-    return pt1, pt2, roi_box
+#     centers.sort(key=lambda p: (p[1], p[0]))
+#     pt1, pt2 = centers
+#     return pt1, pt2, roi_box
 
 # =====================================================================
 # TARGET PICKING VIA MATPLOTLIB
@@ -451,7 +451,7 @@ def measure_tip_px_and_mm(image_filename, H_img_to_mm, depth_scale, use_roi=True
     # Your detect_red_markers_in_roi returns (pt1, pt2, roi_box) where it then does pt1, pt2 = centers.
     # In your compute_beam_line_to_target you used: tip_px, base_px = detect_red_markers_in_roi(...)
     # Keep consistent with that: tip_px is first returned.
-    tip_px, base_px, _ = detect_red_markers_in_roi(img_bgr, use_roi=use_roi, expected_markers=2)
+    base_px, _, tip_px, roi_box = detect_red_markers_in_roi(img_bgr, use_roi=use_roi, expected_markers=2)
 
     (tip_mm_board,) = image_points_to_mm([tip_px], H_img_to_mm)
     tip_mm_board = np.array(tip_mm_board, dtype=np.float32)
@@ -521,7 +521,7 @@ def compute_beam_targets_on_center_rectangle_trace(
     H_img_to_mm = compute_checkerboard_homography(image)
 
     # detect markers
-    tip_px, base_px, roi_box = detect_red_markers_in_roi(image, use_roi=use_roi, expected_markers=2)
+    base_px, _, tip_px, roi_box = detect_red_markers_in_roi(image, use_roi=use_roi, expected_markers=2)
 
     # Depth scaling
     z_board = float(CAMERA_TO_CHECKERBOARD_MM)
@@ -617,7 +617,7 @@ def detect_tip_px_using_reference_base(image_bgr, base_px_ref, use_roi=True):
     Detects two red markers and returns (tip_px, base_px) where base is chosen
     as the marker closest to base_px_ref.
     """
-    p1, p2, _ = detect_red_markers_in_roi(image_bgr, use_roi=use_roi, expected_markers=2)
+    p1, _, p2, roi_box = detect_red_markers_in_roi(image_bgr, use_roi=use_roi, expected_markers=2)
 
     b = np.array(base_px_ref, dtype=np.float32)
     p1a = np.array(p1, dtype=np.float32)
@@ -667,7 +667,12 @@ def compute_beam_targets_from_clicked_points(
     H_img_to_mm = compute_checkerboard_homography(image)
 
     # detect markers (your convention: tip_px first, base_px second)
-    tip_px, base_px, roi_box = detect_red_markers_in_roi(image, use_roi=use_roi, expected_markers=2)
+    base_px, _, tip_px, roi_box = detect_red_markers_in_roi(
+        image,
+        use_roi=use_roi,
+        expected_markers=3,
+        allow_two_markers_when_expected_three=True,
+    )
 
     # Depth scaling
     z_board = float(CAMERA_TO_CHECKERBOARD_MM)
@@ -696,7 +701,7 @@ def compute_beam_targets_from_clicked_points(
             x, y, w, h = roi_box
             cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
 
-        cv2.circle(vis, (int(base_px[0]), int(base_px[1])), 7, (0, 255, 0), -1)
+        # cv2.circle(vis, (int(base_px[0]), int(base_px[1])), 7, (0, 255, 0), -1)
         cv2.circle(vis, (int(tip_px[0]),  int(tip_px[1])),  7, (0, 0, 255), -1)
 
         for r in rows:

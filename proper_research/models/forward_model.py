@@ -472,13 +472,13 @@ if __name__ == "__main__":
 
     p_min = np.array([
         np.deg2rad(-90),
-        np.deg2rad(-90),
+        np.deg2rad(-2),
         0.10,
         0.03
     ])
     p_max = np.array([
         np.deg2rad(90),
-        np.deg2rad(90),
+        np.deg2rad(2),
         0.25,
         0.08
     ])
@@ -486,7 +486,7 @@ if __name__ == "__main__":
     # Initial guess (must be in feasible region!)
     p_init = np.array([
         np.deg2rad(5.0),
-        np.deg2rad(5.0),
+        np.deg2rad(1.0),
         0.13,
         0.05
     ])
@@ -499,8 +499,9 @@ if __name__ == "__main__":
     # ---- Choose a target tip position (same units as forward_fn output) ----
     # Your forward model outputs tip_xy in meters? (check scale in your integrals)
     # Put something plausible for your L range, e.g. x around ~L and y small-ish.
-    x_target = np.array([0.038, 0.031])  # example: 45mm forward, 10mm lateral (if in meters)
-
+    x_target = np.array([0.038714, 0.018675])  # example: 45mm forward, 10mm lateral (if in meters)
+    angle_target = np.rad2deg(np.arctan2(x_target[1], x_target[0]))
+    print(f"target of angle is: {angle_target}")
     p_sol = solve_params_for_target_xy(
         x_des=x_target,
         p_init=p_init,
@@ -527,8 +528,8 @@ if __name__ == "__main__":
     forward_fn = make_forward_fn(beam_params.mag, beam_params.A_cs, beam_params.E, beam_params.I, mag_params.mag_epm)
     jac_fn = make_jac_fn(forward_fn, eps, debug=False, fail_policy="raise")
 
-    p0 = np.array([np.deg2rad(5.0), np.deg2rad(5.0), 0.13, 0.05])
-    p_min = np.array([np.deg2rad(-90), np.deg2rad(-90), 0.10, 0.03])
-    p_max = np.array([np.deg2rad(90),  np.deg2rad(90),  0.25, 0.08])
+    p0 = np.array([np.deg2rad(1.0), np.deg2rad(1.0), 0.13, 0.05])
+    p_min = np.array([np.deg2rad(-90), np.deg2rad(0), 0.10, 0.03])
+    p_max = np.array([np.deg2rad(90),  np.deg2rad(10),  0.25, 0.08])
 
     tangent_test(forward_fn, jac_fn, p0, p_min, p_max, n_tests=100)

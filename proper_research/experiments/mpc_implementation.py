@@ -16,6 +16,7 @@ from proper_research.models.forward_model import make_forward_fn, make_jac_fn
 from proper_research.parameters import default_magnet_params, BeamParams
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
+
 eps = np.array([
     np.deg2rad(0.5),
     np.deg2rad(0.5),
@@ -24,13 +25,13 @@ eps = np.array([
 ])
 p_min = np.array([
     np.deg2rad(-90),   # gamma
-    np.deg2rad(-90),   # beta
+    np.deg2rad(-40),   # beta
     0.1,              # rho (m)
     0.03               # L (m)
 ])
 p_max = np.array([
     np.deg2rad(90),
-    np.deg2rad(90),
+    np.deg2rad(40),
     0.25,
     0.08
 ])
@@ -69,7 +70,7 @@ def apply_robot_command_from_p(robo, p_next):
 
     # 1) Advance
     advancer_go(L_m * 1000.0)  # meters -> mm
-
+    
     # 2) Set gamma (your get_point expects degrees in your example)
     gamma_deg = np.rad2deg(gamma_rad)
     new_pose = get_point(0, gamma_deg)
@@ -91,6 +92,44 @@ def angle_from_points_deg(base_px, p2_px):
 def _fmt(v, nd=4):
     v = np.asarray(v, dtype=float).ravel()
     return "[" + ", ".join(f"{x:.{nd}f}" for x in v) + "]"
+def print_mpc_rollout(info, target_mpc, *, k=None, max_rows=None):
+    """
+    info: dict returned by mpc.step(...)
+    target_mpc: (2,) target in MPC meters
+    """
+    X = np.asarray(info.get("X_pred", []), dtype=float)   # (Np,2)
+    U = np.asarray(info.get("U_seq", []), dtype=float)    # (Np,4)
+    if X.size == 0 or U.size == 0:
+        print("[MPC] No rollout available in info (infeasible or not returned).")
+        return
+
+    Np = X.shape[0]
+    target = np.asarray(target_mpc, dtype=float).reshape(1, 2)
+
+    if max_rows is None:
+        max_rows = Np
+
+    print("-" * 72)
+    hdr = f"[MPC rollout]{'' if k is None else f' iter={k}'} status={info.get('status')} infeasible={info.get('infeasible')}"
+    print(hdr)
+    print(f"  u0 = {_fmt(info.get('u0', np.zeros(4)), 6)}")
+    print(f"  d  = {_fmt(info.get('d', np.zeros(2)), 6)}")
+    print("  step |   x_pred(m)        y_pred(m)      | err_norm(mm) |  u(g,b,rho,L) ")
+    print("  -----+-------------------------------+-------------+------------------------")
+
+    for i in range(min(Np, max_rows)):
+        xi = X[i, :]
+        ui = U[i, :]
+        if np.any(~np.isfinite(xi)):
+            err_mm = np.nan
+        else:
+            err_mm = 1e3 * float(np.linalg.norm(xi - target.reshape(2,)))
+
+        print(f"  {i:>4d} | {xi[0]:>10.6f} {xi[1]:>10.6f} | {err_mm:>11.3f} | {ui[0]:>8.5f} {ui[1]:>8.5f} {ui[2]:>8.5f} {ui[3]:>8.5f}")
+
+    if Np > max_rows:
+        print(f"  ... ({Np-max_rows} more steps)")
+    print("-" * 72)
 
 def _assert_ok(cond, msg):
     if not cond:
@@ -106,7 +145,7 @@ def run_closed_loop_to_target(
     flip_x=False,
     flip_y=False,
     tol_m=1.5e-3,
-    max_iters=3,
+    max_iters=1,
     sleep_s=0.1,
     capture_filename="focused_image.jpg",
     show_debug=False,
@@ -115,6 +154,7 @@ def run_closed_loop_to_target(
     plot_at_end=True,
     annotate_plot=True,
     draw_lines=True,
+    robo: URRtde,
 
     # --- NEW debug knobs ---
     debug_dir=".",              # where to write debug images
@@ -128,7 +168,7 @@ def run_closed_loop_to_target(
 
     Adds strong debugging to localize failures.
     """
-
+    robo = ensure_robo(robo)
     # -------------------------
     # PRE-FLIGHT CHECKS
     # -------------------------
@@ -151,7 +191,6 @@ def run_closed_loop_to_target(
         print("[PRE] swap_xy/flip_x/flip_y:", swap_xy, flip_x, flip_y)
         print("[PRE] target_px:", target_px)
 
-    robo = URRtde(ROBOT_IP)
 
     hist = {
         "img_files": [],
@@ -180,16 +219,19 @@ def run_closed_loop_to_target(
     }
 
     last_tip_px = None
+    prev_xpred_step1 = None   # will store info["X_pred"][0] from previous iter
 
     try:
         for k in range(max_iters):
             t0 = time.time()
+            robo = ensure_robo(robo)
             if show_debug:
                 print("\n" + "=" * 72)
                 print(f"[ITER {k}] start")
 
             try:
                 # ---- 1) capture ----
+
                 img_file = new_capture(filename=capture_filename)
                 hist["img_files"].append(img_file)
 
@@ -207,82 +249,71 @@ def run_closed_loop_to_target(
 
                 # ---- 2) detect base/mag_start/tip ----
                 # IMPORTANT: detector returns base, mag_start, tip
+                time.sleep(0.1)
                 base_px, mag_start_px, tip_px, roi_box = detect_red_markers_in_roi(
-                    image, use_roi=True, expected_markers=3, show_debug=False
+                    image,
+                    use_roi=True,
+                    expected_markers=3,
+                    show_debug=False,
+                    allow_two_markers_when_expected_three=True,  # IMPORTANT
                 )
 
                 base_px = tuple(base_px)
-                mag_start_px = tuple(mag_start_px)
+                mag_start_px = None if mag_start_px is None else tuple(mag_start_px)
                 tip_px = tuple(tip_px)
 
                 hist["base_px"].append(base_px)
                 hist["mag_start_px"].append(mag_start_px)
                 hist["tip_px"].append(tip_px)
                 hist["roi_box"].append(roi_box)
-                beam_angle_deg   = angle_from_points_deg(base_px, tip_px)*-1
-                target_angle_deg = angle_from_points_deg(base_px, target_px)*-1
 
-                angle_err_deg = target_angle_deg - beam_angle_deg
-                # wrap to [-90, 90] if you want consistent
-                if angle_err_deg > 90: angle_err_deg -= 180
-                if angle_err_deg < -90: angle_err_deg += 180
-
-                print(f"[DBG] beam_angle={beam_angle_deg:.2f}deg, target_angle={target_angle_deg:.2f}deg, angle_err={angle_err_deg:.2f}deg")
-
-                last_tip_px = tip_px
-
-                # Sanity checks (ordering + separation)
+                # Always available:
                 px_sep_bt = float(np.linalg.norm(np.array(tip_px) - np.array(base_px)))
-                px_sep_bm = float(np.linalg.norm(np.array(mag_start_px) - np.array(base_px)))
-                px_sep_mt = float(np.linalg.norm(np.array(tip_px) - np.array(mag_start_px)))
-
-                if show_debug:
-                    print(f"[ITER {k}] base_px={base_px} mag_px={mag_start_px} tip_px={tip_px}")
-                    print(f"[ITER {k}] px distances: |B-T|={px_sep_bt:.2f}, |B-M|={px_sep_bm:.2f}, |M-T|={px_sep_mt:.2f}")
-
-                if px_sep_bt < 5 or px_sep_bm < 5 or px_sep_mt < 5:
-                    msg = f"[WARN] Iter {k}: markers too close; detection likely bad."
+                if px_sep_bt < 5:
+                    msg = f"[WARN] Iter {k}: base-tip too close; detection likely bad."
                     print(msg)
                     hist["exceptions"].append(msg)
                     time.sleep(sleep_s)
                     continue
 
-                # Optional: write overlay image
-                if show_debug and write_debug_images:
-                    dbg = image.copy()
-                    if roi_box is not None:
-                        x, y, rw, rh = roi_box
-                        cv2.rectangle(dbg, (x, y), (x+rw, y+rh), (0, 255, 255), 2)
+                # Optional checks only if mag_start exists
+                if mag_start_px is not None:
+                    px_sep_bm = float(np.linalg.norm(np.array(mag_start_px) - np.array(base_px)))
+                    px_sep_mt = float(np.linalg.norm(np.array(tip_px) - np.array(mag_start_px)))
+                    if show_debug:
+                        print(f"[ITER {k}] px distances: |B-T|={px_sep_bt:.2f}, |B-M|={px_sep_bm:.2f}, |M-T|={px_sep_mt:.2f}")
+                    if px_sep_bm < 5 or px_sep_mt < 5:
+                        msg = f"[WARN] Iter {k}: markers too close; detection likely bad."
+                        print(msg)
+                        hist["exceptions"].append(msg)
+                        time.sleep(sleep_s)
+                        continue
+                else:
+                    if show_debug:
+                        print(f"[ITER {k}] only base+tip detected (mag_start missing). Using 2-marker mode.")
 
-                    for (pt, col, lab) in [
-                        (base_px,      (255, 0, 0),   "B"),
-                        (mag_start_px, (0, 255, 255), "M"),
-                        (tip_px,       (0, 0, 255),   "T"),
-                        (target_px,    (0, 255, 0),   "X"),
-                    ]:
-                        cv2.circle(dbg, (int(pt[0]), int(pt[1])), 7, col, -1)
-                        cv2.putText(dbg, lab, (int(pt[0])+8, int(pt[1])+8),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, col, 2)
-                    out_path = f"{debug_dir}/debug_iter_{k}.png"
-                    cv2.imwrite(out_path, dbg)
-                    print(f"[ITER {k}] wrote {out_path}")
-
-                # ---- 3) pixels -> beam-plane mm ----
+                # ---- pixels -> beam-plane mm ----
                 base_mm = px_to_beam_mm(base_px, H_img_to_mm, depth_scale)
-                mag_mm  = px_to_beam_mm(mag_start_px, H_img_to_mm, depth_scale)
                 tip_mm  = px_to_beam_mm(tip_px,  H_img_to_mm, depth_scale)
                 tgt_mm  = px_to_beam_mm(target_px, H_img_to_mm, depth_scale)
 
                 hist["base_mm"].append(base_mm.copy())
-                hist["mag_mm"].append(mag_mm.copy())
                 hist["tip_mm"].append(tip_mm.copy())
                 hist["tgt_mm"].append(tgt_mm.copy())
 
+                # mag_mm is optional
+                if mag_start_px is not None:
+                    mag_mm = px_to_beam_mm(mag_start_px, H_img_to_mm, depth_scale)
+                    hist["mag_mm"].append(mag_mm.copy())
+                else:
+                    mag_mm = None
+                    hist["mag_mm"].append(None)  # keep list aligned
+
                 tip_mm_rel = tip_mm - base_mm
                 tgt_mm_rel = tgt_mm - base_mm
-
                 hist["tip_mm_rel"].append(tip_mm_rel.copy())
                 hist["tgt_mm_rel"].append(tgt_mm_rel.copy())
+
 
                 if show_debug:
                     print(f"[ITER {k}] base_mm={_fmt(base_mm,3)} tip_mm={_fmt(tip_mm,3)} tgt_mm={_fmt(tgt_mm,3)}")
@@ -298,6 +329,13 @@ def run_closed_loop_to_target(
                 # ---- 4) map to MPC meters ----
                 tip_mpc    = cam_beam_mm_to_mpc_m(tip_mm_rel, swap_xy=swap_xy, flip_x=flip_x, flip_y=flip_y)
                 target_mpc = cam_beam_mm_to_mpc_m(tgt_mm_rel, swap_xy=swap_xy, flip_x=flip_x, flip_y=flip_y)
+                # --- Cross-iteration check: compare current measurement to last iter's predicted next state ---
+                if prev_xpred_step1 is not None and np.all(np.isfinite(prev_xpred_step1)) and np.all(np.isfinite(tip_mpc)):
+                    pred_err = tip_mpc - prev_xpred_step1
+                    pred_err_norm = float(np.linalg.norm(pred_err))
+                    if show_debug:
+                        print(f"[PREDCHK] ||x_meas - x_pred(prev)[0]|| = {pred_err_norm*1000.0:.3f} mm "
+                              f"  meas={_fmt(tip_mpc,6)} pred={_fmt(prev_xpred_step1,6)}")
 
                 hist["tip_mpc"].append(tip_mpc.copy())
                 hist["tgt_mpc"].append(target_mpc.copy())
@@ -334,7 +372,27 @@ def run_closed_loop_to_target(
                     inside = np.all(p_now >= mpc_xy.p_min - 1e-12) and np.all(p_now <= mpc_xy.p_max + 1e-12)
                     print(f"[ITER {k}] p_now(rad)={_fmt(p_now,6)} inside_bounds={inside}")
 
-                p_next, x_next, info = mpc_xy.step(xref_seq, x_meas=tip_mpc)
+                p_next, x_next, info = mpc_xy.step(xref_seq, x_meas=tip_mpc, debug=show_debug)
+                robo.get_joints()
+                robo.get_pose()
+                # Save the predicted next-step state for the next iteration comparison
+                X_pred = info.get("X_pred", None)
+                if X_pred is not None:
+                    X_pred = np.asarray(X_pred, dtype=float)
+                    if X_pred.ndim == 2 and X_pred.shape[1] == 2 and X_pred.shape[0] >= 1:
+                        prev_xpred_step1 = X_pred[0].copy()   # prediction for "next measured tip"
+                    else:
+                        prev_xpred_step1 = None
+                else:
+                    prev_xpred_step1 = None
+                
+                if show_debug:
+                    X = info.get("X_pred", None)
+                    if X is not None and np.all(np.isfinite(X[0])):
+                        print("[OUTSIDE] X_pred[0], X_pred[-1]:", X[0], X[-1])
+
+                if show_debug:
+                    print_mpc_rollout(info, target_mpc, k=k, max_rows=mpc_xy.Np)
 
                 hist["status"].append(info.get("status", ""))
                 hist["infeasible"].append(int(info.get("infeasible", 1)))
@@ -358,6 +416,8 @@ def run_closed_loop_to_target(
                     continue
 
                 # ---- 7) apply to robot ----
+                robo = ensure_robo(robo)
+
                 apply_robot_command_from_p(robo, p_next)
 
                 # ---- 8) timing ----
@@ -384,21 +444,75 @@ def run_closed_loop_to_target(
         robo.shutdown()
 
     # ---- END-OF-RUN plot ----
+    reference_image = new_capture(filename=capture_filename)  # filename/path returned
+
     if plot_at_end and reference_image is not None and targets_px is not None and len(targets_px) > 0:
-        final_tips_px = [last_tip_px] * len(targets_px) if last_tip_px is not None else [(np.nan, np.nan)] * len(targets_px)
+        ref_img_bgr = cv2.imread(reference_image)
+        final_tip_px = None
+        final_base_px = None
 
-        errors_mm = None
-        if last_tip_px is not None and len(hist["tip_mm_rel"]) > 0:
-            tip_mm_rel_last = hist["tip_mm_rel"][-1]
-            base_px_last = hist["base_px"][-1]
-            base_mm_last = px_to_beam_mm(base_px_last, H_img_to_mm, depth_scale)
+        # 1) Prefer: re-detect on the final image you are plotting
+        if ref_img_bgr is not None:
+            try:
+                b_px, _, t_px, _ = detect_red_markers_in_roi(
+                    ref_img_bgr,
+                    use_roi=True,
+                    expected_markers=3,
+                    show_debug=False,
+                    allow_two_markers_when_expected_three=True,
+                )
+                final_base_px = tuple(b_px)
+                final_tip_px = tuple(t_px)
+            except Exception as e:
+                if show_debug:
+                    print(f"[ENDPLOT] final-frame detection failed: {repr(e)}")
 
-            errors_mm = []
-            for tpx in targets_px:
+        # 2) Fallback: last valid from history (may be earlier frame)
+        if final_tip_px is None or final_base_px is None:
+            if show_debug:
+                print("[ENDPLOT] using history fallback for final tip/base")
+
+            # Walk backward to find last valid base/tip/tip_mm_rel entries
+            last_base_px = None
+            last_tip_px_for_plot = None
+            last_tip_mm_rel = None
+
+            for i in range(len(hist["base_px"]) - 1, -1, -1):
+                bp = hist["base_px"][i] if i < len(hist["base_px"]) else None
+                tp = hist["tip_px"][i] if i < len(hist["tip_px"]) else None
+                tr = hist["tip_mm_rel"][i] if i < len(hist["tip_mm_rel"]) else None
+                if bp is not None and tp is not None and tr is not None:
+                    last_base_px = bp
+                    last_tip_px_for_plot = tp
+                    last_tip_mm_rel = tr
+                    break
+
+            final_base_px = last_base_px
+            final_tip_px = last_tip_px_for_plot
+
+        # tips array for all targets
+        final_tips_px = (
+            [final_tip_px] * len(targets_px)
+            if final_tip_px is not None
+            else [(np.nan, np.nan)] * len(targets_px)
+        )
+
+        # --- compute per-target errors in mm (always produce a list) ---
+        errors_mm = [float("nan")] * len(targets_px)
+
+        # Compute errors using the FINAL FRAME if possible:
+        # Need final_base_px + final_tip_px -> tip_mm_rel_final
+        if final_base_px is not None and final_tip_px is not None:
+            base_mm_last = px_to_beam_mm(final_base_px, H_img_to_mm, depth_scale)
+            tip_mm_last  = px_to_beam_mm(final_tip_px,  H_img_to_mm, depth_scale)
+            tip_mm_rel_last = tip_mm_last - base_mm_last
+
+            for j, tpx in enumerate(targets_px):
                 t_mm = px_to_beam_mm(tuple(tpx), H_img_to_mm, depth_scale)
                 t_mm_rel = t_mm - base_mm_last
-                errors_mm.append(float(np.linalg.norm(t_mm_rel - tip_mm_rel_last)))
+                errors_mm[j] = float(np.linalg.norm(t_mm_rel - tip_mm_rel_last))
 
+        time.sleep(0.5)
         plot_all_targets_and_tips_on_image(
             image_filename=reference_image,
             targets_px=targets_px,
@@ -408,6 +522,8 @@ def run_closed_loop_to_target(
             draw_lines=draw_lines,
             annotate=annotate_plot,
         )
+
+
 
     return hist
 
@@ -425,19 +541,19 @@ Jxy_fn = make_jac_fn(forward_tip, eps, debug=False, fail_policy="nan")
 mpc_xy = mpc_controller_tipxy_LTI(
     Jxy_fn=Jxy_fn,
     forward_tip_fn=forward_tip,
-    dt=0.2,
+    dt=.2,
     Np=10,
     w_xy=(100.0, 100.0),
-    w_u=(1e-4, 1e-1, 1e-2, 1e-2),
-    w_du=(1e-3, 1e-3, 1e-2, 1e-2),
-    u_max=(np.deg2rad(40), np.deg2rad(40), 0.03, 0.01),
+    w_u=(1e-4, 1e-3, 1e-2, 1e-2),
+    w_du=(1e-4, 1e-4, 1e-3, 1e-3),
+    u_max=(np.deg2rad(30), np.deg2rad(30), 0.03, 0.01),
     p_min=p_min,
     p_max=p_max,
     N_sqp=3,
     use_offset_free=True,
     d_alpha=0.15,
 )
-mpc_xy.set_initial_params(gamma0=np.deg2rad(5.0), beta0=np.deg2rad(5.0), rho0=0.13, L0=0.05)
+mpc_xy.set_initial_params(gamma0=np.deg2rad(5.0), beta0=np.deg2rad(1.0), rho0=0.13, L0=0.05)
 
 rect = compute_beam_targets_from_clicked_points(
     image_filename="focused_image.jpg",
@@ -455,6 +571,17 @@ target_px = targets_px[0]
 reference_image = rect["image_file"]
 targets_px = [tuple(t["target_px"]) for t in rect["targets"]]
 target_px = targets_px[0]
+robo = URRtde(ROBOT_IP)
+def ensure_robo(robo):
+    try:
+        robo.get_joints()
+        return robo
+    except Exception:
+        try:
+            robo.shutdown()
+        except Exception:
+            pass
+        return URRtde(ROBOT_IP)
 
 hist = run_closed_loop_to_target(
     mpc_xy=mpc_xy,
@@ -465,11 +592,12 @@ hist = run_closed_loop_to_target(
     flip_x=False,
     flip_y=False,
     tol_m=1.5e-3,
-    max_iters=3,
+    max_iters=10,
     sleep_s=0.15,
     show_debug=True,
     reference_image=reference_image,
     targets_px=targets_px,
     plot_at_end=True,
+    robo=robo,
 )
 

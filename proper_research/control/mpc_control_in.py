@@ -23,6 +23,7 @@ eps = np.array([
     1e-3,
     5e-4
 ])
+
 def dare_stabilising_K(A, B, Q, R):
     P = solve_discrete_are(A, B, Q, R)
     K = -np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
@@ -145,16 +146,26 @@ class mpc_controller_tipxy_LTI:
         self._rebuild_S()
         self.Du = self._build_Du_matrix()
 
-        # --- NEW: successive linearization settings ---
         self.N_sqp = int(N_sqp)
 
-        # --- NEW: offset-free tracking via disturbance state d ---
         self.use_offset_free = bool(use_offset_free)
         self.d_alpha = float(d_alpha)
-        self.d = np.zeros(2, dtype=float)   # disturbance/bias on tip dynamics
+        self.d = np.zeros(2, dtype=float)   
 
     def _rebuild_S(self):
         self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
+    def _tip_stack_from_p_seq(self, p_seq):
+        """
+        Build stacked nominal tip positions using the nonlinear forward model:
+        X_bar = [f(p1); f(p2); ...; f(pNp)]  shape (Np*n, 1)
+        """
+        n = 2
+        Np = self.Np
+        X_bar = np.zeros((Np*n, 1))
+        for i in range(Np):
+            xi = np.asarray(self.forward_tip_fn(p_seq[i]), dtype=float).reshape(n,)
+            X_bar[i*n:(i+1)*n, 0] = xi
+        return X_bar
 
     def _build_Du_matrix(self):
         Np = self.Np
@@ -250,7 +261,8 @@ class mpc_controller_tipxy_LTI:
         Mx, Mc = seq_mat_ltv(self.A, B_list)
         return p_seq, J_list, B_list, Mx, Mc
 
-    def step(self, xref_seq, x_meas=None):
+    def step(self, xref_seq, x_meas=None, debug=False):
+
         """
         xref_seq: (Np,2)
         x_meas: measured tip (2,) for offset-free update. If None, uses internal x.
@@ -262,14 +274,16 @@ class mpc_controller_tipxy_LTI:
         # measurement update
         if x_meas is not None:
             self.x = np.asarray(x_meas, dtype=float).reshape(2,)
-
+        d_max = 0.002
         # --- offset-free disturbance update ---
         # Use model residual to update d (low-pass filtered)
         if self.use_offset_free and x_meas is not None:
             x_model = self.forward_tip_fn(self.p)  # predicted from p
             r = self.x - x_model                   # residual
+            d_max = 0.002  # 2 mm
+        
             self.d = (1.0 - self.d_alpha) * self.d + self.d_alpha * r
-
+            self.d = np.clip(self.d, -d_max, d_max)
         n = 2
         m = 4
         Np = self.Np
@@ -304,10 +318,13 @@ class mpc_controller_tipxy_LTI:
             else:
                 H_du = 0.0
 
-            xk = self.x.reshape(2, 1)
+            # Nominal (around U_guess) predicted tip stack using the nonlinear model
+            X_bar_stack = self._tip_stack_from_p_seq(p_seq)  # (Np*n, 1)
 
-            # baseline predicted state stack (no control)
-            X0_stack = (Mx @ xk).reshape(Np*n, 1)
+            # SQP linearization uses deltaU = U - U_guess, but we keep U as the decision variable:
+            U_guess_vec = U_guess.reshape(Np*m, 1)
+            X0_stack = X_bar_stack - (Mc @ U_guess_vec)
+
 
             # add disturbance contribution (offset-free)
             if self.use_offset_free:
@@ -370,6 +387,19 @@ class mpc_controller_tipxy_LTI:
             U_warm_vec = U_opt_vec if U_opt_vec is not None else self.U_warm
             U_opt_vec, _, status = solve_qp_osqp(H, f, A_osqp, l_osqp, u_osqp, U_warm=U_warm_vec)
             status_last = status
+            if debug:
+                # Predicted trajectory for this SQP iterate
+                X_pred_stack_it = X0_stack + Mc @ U_opt_vec.reshape(-1, 1)
+                X_pred_it = X_pred_stack_it.reshape(Np, n)
+
+                # Error to reference along horizon
+                err_it = X_pred_it - xref_seq
+                err_norm_mm = 1e3 * np.linalg.norm(err_it, axis=1)
+
+                print(f"[MPC][SQP it={it}] status={status} ||d||={np.linalg.norm(self.d):.4e}")
+                print(f"  u0(it) = {U_opt_vec[:m]}")
+                print(f"  mean err(mm)={np.nanmean(err_norm_mm):.2f}  final err(mm)={err_norm_mm[-1]:.2f}")
+                print(f"  X_pred[0] = {X_pred_it[0]}   X_pred[-1] = {X_pred_it[-1]}")
 
             infeas = (status not in ("solved", "solved inaccurate")) or (U_opt_vec is None)
             if infeas:
@@ -393,10 +423,17 @@ class mpc_controller_tipxy_LTI:
             # build final predicted trajectory using last Mc/Mx
             # note: Mc/Mx correspond to last SQP iteration
             xk = self.x.reshape(2, 1)
-            X0_stack = (Mx @ xk).reshape(Np*n, 1)
+            X_bar_stack = self._tip_stack_from_p_seq(p_seq)
+            U_guess_vec = U_guess.reshape(Np*m, 1)
+            X0_stack = X_bar_stack - (Mc @ U_guess_vec)
             if self.use_offset_free:
                 X0_stack = X0_stack + self._disturbance_stack(self.d)
-            X_pred_stack = (X0_stack + Mc @ U_opt_vec.reshape(-1, 1))
+
+            X_pred_stack = X0_stack + Mc @ U_opt_vec.reshape(-1, 1)
+            U_guess_vec = U_guess.reshape(Np*m, 1)
+            X_lin_at_guess = X0_stack + Mc @ U_guess_vec
+            print("lin-vs-nom residual:", np.linalg.norm(X_lin_at_guess - X_bar_stack))
+
             X_pred = X_pred_stack.reshape(Np, n)
             infeas_final = False
 
@@ -411,6 +448,9 @@ class mpc_controller_tipxy_LTI:
             self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
         else:
             self.U_warm = None
+        if debug:
+            print("[STEP END] X_pred[0], X_pred[-1]:", X_pred[0], X_pred[-1])
+            print("[STEP END] xref_seq[0], xref_seq[-1]:", xref_seq[0], xref_seq[-1])
 
         info = dict(
             status=status_last,

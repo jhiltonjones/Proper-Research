@@ -63,12 +63,46 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Run cosserat 6d",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.cosserat_6d_pose",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run mpc with xy",
             "type": "debugpy",
             "request": "launch",
             "module": "proper_research.control.mpc_improve",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+
+        {
+            "name": "Run nmpc",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.nmpc",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run nmpc2",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.nmpc2",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run mpc_3d",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.mpc_3d",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
+
     ]
 }

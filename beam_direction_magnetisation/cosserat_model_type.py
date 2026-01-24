@@ -5,7 +5,7 @@ from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wre
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
 from beam_direction_magnetisation.magnetism.parameters_cosserat import *
 from beam_direction_magnetisation.quarternions.rotations import epm_pose_overhead_spin_z, epm_pose_front
-from beam_direction_magnetisation.magnetism.beam_geometry import m_local_profile, Kbt_inv_profile
+from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.post_processing.post_processing import compare_magnet_plots, axis3d
 from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
 # alpha = np.deg2rad(alpha_deg)
@@ -144,7 +144,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         )
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
-        f_ext = f_ext + f_g
+        f_ext = f_ext + f_g*0
 
         n_s = -f_ext
         m_s = -(np.cross(p_s.T, n.T).T) - tau_ext
@@ -223,7 +223,7 @@ def solve_for_pose(r_src, m_src, Y_guess, s_mesh, m_moment, sol=None):
     return soln
 r_tip = np.array([L,0.0,0.0])
 
-angles_deg = np.linspace(-80, 80, 30)
+angles_deg = np.linspace(60, 60, 1)
 
 tip_y_front, tip_z_front = [], []
 tip_y_over,  tip_z_over  = [], []
@@ -386,7 +386,7 @@ Tnet_over_arr  = np.array(Tnet_over_list)
 # plt.grid(True)
 # plt.legend()
 # plt.show()
-ang_plot = 60.0  
+ang_plot = 30.0  
 k_wall = 1e3
 th_plot = np.deg2rad(ang_plot)
 vessel_centerline = make_curved_centerline(x_corner=0.06, y_up=0.06, r_turn=0.04)
@@ -463,105 +463,105 @@ print("  integrated twist angle [deg]:", twist_angle_deg)
 x, y, z = p_f[0, :], p_f[1, :], p_f[2, :]
 
 # axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward,vessel_centerline, R_vessel)
-def max_penetration(p, poly, R):
-    N = p.shape[1]
-    pens = []
-    for j in range(N):
-        _, d = closest_point_on_polyline(p[:, j], poly)
-        pens.append(d - R)
-    pens = np.array(pens)
-    return pens.max(), pens
+# def max_penetration(p, poly, R):
+#     N = p.shape[1]
+#     pens = []
+#     for j in range(N):
+#         _, d = closest_point_on_polyline(p[:, j], poly)
+#         pens.append(d - R)
+#     pens = np.array(pens)
+#     return pens.max(), pens
 
-max_pen, pen_profile = max_penetration(p_f, vessel_centerline, R_vessel)
-print("Max penetration (d - R):", max_pen)
-print("Fraction outside:", np.mean(pen_profile > 0.0))
+# max_pen, pen_profile = max_penetration(p_f, vessel_centerline, R_vessel)
+# print("Max penetration (d - R):", max_pen)
+# print("Fraction outside:", np.mean(pen_profile > 0.0))
 
-alpha_candidates_deg = np.linspace(-180, 180, 61)  # 6 degree steps
-alpha_candidates = np.deg2rad(alpha_candidates_deg)
-def tip_y_from_solution(sol):
-    p_tip = sol.sol(np.array([L]))[0:3, 0]
-    return p_tip[1]  # y component
+# alpha_candidates_deg = np.linspace(-180, 180, 61)  # 6 degree steps
+# alpha_candidates = np.deg2rad(alpha_candidates_deg)
+# def tip_y_from_solution(sol):
+#     p_tip = sol.sol(np.array([L]))[0:3, 0]
+#     return p_tip[1]  # y component
 
 
-def find_best_alpha_for_pose(r_src, m_src, s_mesh, Y_guess, alpha_candidates):
-    """
-    For one fixed magnet pose (r_src, m_src), sweep alpha_end and return
-    the alpha that maximises +y tip deflection.
-    """
-    best_alpha = None
-    best_tip_y = -np.inf
-    best_sol = None
+# def find_best_alpha_for_pose(r_src, m_src, s_mesh, Y_guess, alpha_candidates):
+#     """
+#     For one fixed magnet pose (r_src, m_src), sweep alpha_end and return
+#     the alpha that maximises +y tip deflection.
+#     """
+#     best_alpha = None
+#     best_tip_y = -np.inf
+#     best_sol = None
 
-    sol_prev = None
+#     sol_prev = None
 
-    for alpha_end in alpha_candidates:
-        # Warm-start: reuse last solution to help convergence
-        if sol_prev is None:
-            guess = Y_guess
-        else:
-            guess = sol_prev.sol(s_mesh)
+#     for alpha_end in alpha_candidates:
+#         # Warm-start: reuse last solution to help convergence
+#         if sol_prev is None:
+#             guess = Y_guess
+#         else:
+#             guess = sol_prev.sol(s_mesh)
 
-        sol = solve_for_pose(r_src, m_src, guess, s_mesh, alpha_end)
+#         sol = solve_for_pose(r_src, m_src, guess, s_mesh, alpha_end)
 
-        if not sol.success:
-            # if the BVP fails, just skip this alpha
-            continue
+#         if not sol.success:
+#             # if the BVP fails, just skip this alpha
+#             continue
 
-        y_tip = tip_y_from_solution(sol)
-        y_tip = abs(y_tip)
-        if y_tip > best_tip_y:
-            best_tip_y = y_tip
-            best_alpha = alpha_end
-            best_sol = sol
+#         y_tip = tip_y_from_solution(sol)
+#         y_tip = abs(y_tip)
+#         if y_tip > best_tip_y:
+#             best_tip_y = y_tip
+#             best_alpha = alpha_end
+#             best_sol = sol
 
-        sol_prev = sol
+#         sol_prev = sol
 
-    return best_alpha, best_tip_y, best_sol
-angles_deg = np.linspace(-90, 90, 20)
-alpha_candidates_deg = np.linspace(0, 180, 61)
-alpha_candidates = np.deg2rad(alpha_candidates_deg)
+#     return best_alpha, best_tip_y, best_sol
+# angles_deg = np.linspace(-90, 90, 20)
+# alpha_candidates_deg = np.linspace(0, 180, 61)
+# alpha_candidates = np.deg2rad(alpha_candidates_deg)
 
-best_alpha_per_act2 = []
-best_tip_y_per_act2 = []
+# best_alpha_per_act2 = []
+# best_tip_y_per_act2 = []
 
-sol_best_prev = None
+# sol_best_prev = None
 
-for ang in angles_deg:
-    th = np.deg2rad(ang)
+# for ang in angles_deg:
+#     th = np.deg2rad(ang)
 
-    r_src, m_src = epm_pose_front(r_tip, rho=rho, theta_z=th, theta_y=theta_y)
+#     r_src, m_src = epm_pose_front(r_tip, rho=rho, theta_z=th, theta_y=theta_y)
 
-    if sol_best_prev is None:
-        guess = Y_guess
-    else:
-        guess = sol_best_prev.sol(s_mesh)
+#     if sol_best_prev is None:
+#         guess = Y_guess
+#     else:
+#         guess = sol_best_prev.sol(s_mesh)
 
-    best_alpha, best_tip_y, best_sol = find_best_alpha_for_pose(
-        r_src, m_src, s_mesh, guess, alpha_candidates
-    )
+#     best_alpha, best_tip_y, best_sol = find_best_alpha_for_pose(
+#         r_src, m_src, s_mesh, guess, alpha_candidates
+#     )
 
-    best_alpha_per_act2.append(best_alpha)
-    best_tip_y_per_act2.append(best_tip_y)
+#     best_alpha_per_act2.append(best_alpha)
+#     best_tip_y_per_act2.append(best_tip_y)
 
-    sol_best_prev = best_sol
+#     sol_best_prev = best_sol
 
-    print(f"Actuation {ang:+.1f} deg: best alpha_end = {np.rad2deg(best_alpha):+.1f} deg, y_tip = {best_tip_y:+.4e} m")
+#     print(f"Actuation {ang:+.1f} deg: best alpha_end = {np.rad2deg(best_alpha):+.1f} deg, y_tip = {best_tip_y:+.4e} m")
 
-best_alpha_per_act2 = np.array(best_alpha_per_act2)
-best_tip_y_per_act2 = np.array(best_tip_y_per_act2)
+# best_alpha_per_act2 = np.array(best_alpha_per_act2)
+# best_tip_y_per_act2 = np.array(best_tip_y_per_act2)
 
-plt.figure()
-plt.plot(angles_deg, np.rad2deg(best_alpha_per_act2), marker="o")
-plt.xlabel("Actuation angle theta_z [deg]")
-plt.ylabel("Optimal magnetisation alpha_end [deg]")
-plt.grid(True)
-plt.title("Optimal alpha_end for max +y tip deflection")
-plt.show()
+# plt.figure()
+# plt.plot(angles_deg, np.rad2deg(best_alpha_per_act2), marker="o")
+# plt.xlabel("Actuation angle theta_z [deg]")
+# plt.ylabel("Optimal magnetisation alpha_end [deg]")
+# plt.grid(True)
+# plt.title("Optimal alpha_end for max +y tip deflection")
+# plt.show()
 
-plt.figure()
-plt.plot(angles_deg, best_tip_y_per_act2, marker="o")
-plt.xlabel("Actuation angle theta_z [deg]")
-plt.ylabel("Max tip deflection in +y [m]")
-plt.grid(True)
-plt.title("Maximum achievable +y tip deflection vs actuation angle")
-plt.show()
+# plt.figure()
+# plt.plot(angles_deg, best_tip_y_per_act2, marker="o")
+# plt.xlabel("Actuation angle theta_z [deg]")
+# plt.ylabel("Max tip deflection in +y [m]")
+# plt.grid(True)
+# plt.title("Maximum achievable +y tip deflection vs actuation angle")
+# plt.show()

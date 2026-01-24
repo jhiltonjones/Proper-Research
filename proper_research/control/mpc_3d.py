@@ -1,0 +1,745 @@
+import numpy as np
+import osqp
+import scipy.sparse as sp
+from scipy.linalg import solve_discrete_are
+from proper_research.models.forward_model import make_forward_fn, make_jac_fn
+from proper_research.parameters import default_magnet_params
+from beam_direction_magnetisation.cosserat_6d_pose import CosseratForwardModel, make_m_local_fun_wire_tip
+from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
+from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz, unpack_pose_euler_L, quat_to_rot_wxyz, rot_to_euler_zyx
+from beam_direction_magnetisation.post_processing.post_processing import plot_mpc_state_3d
+mag_params = default_magnet_params()
+
+mag = 128e3
+r = 0.0015
+A_cs = np.pi*r**2
+E = 3.5e6
+I = np.pi*r**4/4
+L = 0.05
+rho = 0.15
+# p = [x,y,z, roll,pitch,yaw, L]
+p_min = np.array([ 0.00, -0.20, -0.20,  -np.pi, -np.pi/2, -np.pi,  0.03])
+p_max = np.array([ 0.30,  0.20,  0.20,  +np.pi, +np.pi/2, +np.pi,  0.08])
+
+u_max = np.array([ np.deg2rad(30),np.deg2rad(30), np.deg2rad(30), np.deg2rad(30), np.deg2rad(30), np.deg2rad(45),  0.02])
+eps = np.array([
+    1e-3, 1e-3, 1e-3,              # x,y,z
+    np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  # roll,pitch,yaw
+    5e-4                              # L
+], dtype=float)
+def wrap_pi(a):
+    return (a + np.pi) % (2*np.pi) - np.pi
+def dare_stabilising_K(A, B, Q, R):
+    P = solve_discrete_are(A, B, Q, R)
+    K = -np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
+    return K, P
+def seq_mat_ltv(A, B_list):
+    """
+    Build stacked prediction matrices for time-varying B_k (LTV system)
+      x_{k+1} = A x_k + B_k u_k
+
+    Returns:
+      Mx: (Np*n, n)
+      Mc: (Np*n, Np*m)
+
+    B_list: list length Np with each B_k shape (n,m)
+            where B_0 corresponds to step from x0 -> x1
+    """
+    B_list = [np.asarray(B) for B in B_list]
+    Np = len(B_list)
+    n, m = B_list[0].shape
+
+    Mx = np.zeros((Np*n, n))
+    Mc = np.zeros((Np*n, Np*m))
+
+    A_pow = np.eye(n)
+
+    for i in range(Np):
+        # x_{i+1} = A^{i+1} x0 + sum_{j=0..i} A^{i-j} B_j u_j
+        A_pow = A @ A_pow
+        Mx[i*n:(i+1)*n, :] = A_pow
+
+        for j in range(i + 1):
+            A_ij = np.linalg.matrix_power(A, i - j)
+            Mc[i*n:(i+1)*n, j*m:(j+1)*m] = A_ij @ B_list[j]
+
+    return Mx, Mc
+
+def seq_mat_lti(A, B, N):
+    n, m = B.shape
+    Mx = np.zeros((N*n, n))
+    Mc = np.zeros((N*n, N*m))
+
+    A_pow = np.eye(n)
+
+    A_pow = A @ A_pow
+    Mx[0:n, :] = A_pow
+    Mc[0:n, 0:m] = B
+
+    for i in range(1, N):
+        A_pow = A @ A_pow
+        Mx[i*n:(i+1)*n, :] = A_pow
+        Mc[i*n:(i+1)*n, 0:i*m] = A @ Mc[(i-1)*n:i*n, 0:i*m]
+        Mc[i*n:(i+1)*n, i*m:(i+1)*m] = B
+
+    return Mx, Mc
+
+
+def solve_qp_osqp(H, f, A, l, u, U_warm=None):
+    P = sp.csc_matrix(0.5 * (H + H.T))
+    q = f.astype(float)
+    A = sp.csc_matrix(A)
+
+    prob = osqp.OSQP()
+    prob.setup(P=P, q=q, A=A, l=l, u=u, verbose=False)
+
+    if U_warm is not None:
+        prob.warm_start(x=U_warm)
+
+    res = prob.solve()
+    status = res.info.status
+    if status not in ("solved", "solved inaccurate"):
+        return None, None, status
+
+    return res.x, res.y, status
+
+class mpc_controller_tipxy_LTI:
+    def __init__(self, *, Jxy_fn, forward_tip_fn,
+                 dt=0.05, Np=10,
+                 w_xy=(50.0, 50.0, 50.0),
+                 w_u=None,
+                 w_du=None,
+                 band_xy=0.0,
+                 u_max=None,
+                 p_min=None,
+                 p_max=None,
+                 N_sqp=3,
+                 use_offset_free=True,
+                 n_out=3,
+                 n_u=7,
+                d_min_tip_mag=0.10,     # meters
+                 enable_tip_keepout=True,
+                 d_alpha=0.15):
+
+        # dimensions
+        self.n = int(n_out)
+        self.m = int(n_u)
+
+        # store functions
+        self.Jxy_fn = Jxy_fn
+        self.forward_tip_fn = forward_tip_fn
+
+        # horizon / timestep
+        self.dt = float(dt)
+        self.Np = int(Np)
+
+        # dynamics (simple integrator)
+        self.A = np.eye(self.n)
+
+        # tube constraint parameter
+        self.band_xy = float(band_xy)
+
+        # warm start
+        self.U_warm = None
+
+        # weights defaults
+        if w_u is None:
+            w_u = (1e-3,) * self.m
+        if w_du is None:
+            w_du = (0.0,) * self.m
+
+        w_xy = np.asarray(w_xy, float).ravel()
+        w_u  = np.asarray(w_u,  float).ravel()
+        w_du = np.asarray(w_du, float).ravel()
+
+        if w_xy.size != self.n:
+            raise ValueError(f"w_xy must have length {self.n}, got {w_xy.size}")
+        if w_u.size != self.m:
+            raise ValueError(f"w_u must have length {self.m}, got {w_u.size}")
+        if w_du.size != self.m:
+            raise ValueError(f"w_du must have length {self.m}, got {w_du.size}")
+
+        self.Q  = np.diag(w_xy)
+        self.R  = np.diag(w_u)
+        self.Rd = np.diag(w_du)
+
+        # bounds defaults
+        if u_max is None:
+            u_max = np.full(self.m, np.inf)
+        if p_min is None:
+            p_min = -np.full(self.m, np.inf)
+        if p_max is None:
+            p_max = +np.full(self.m, np.inf)
+
+        self.u_max = np.asarray(u_max, float).ravel()
+        self.p_min = np.asarray(p_min, float).ravel()
+        self.p_max = np.asarray(p_max, float).ravel()
+
+        if self.u_max.size != self.m: raise ValueError("u_max wrong length")
+        if self.p_min.size != self.m: raise ValueError("p_min wrong length")
+        if self.p_max.size != self.m: raise ValueError("p_max wrong length")
+
+        # state / params
+        self.d  = np.zeros(self.n, float)
+        self.p  = None
+        self.x  = None
+        self.Qf = None
+
+        # SQP / offset-free
+        self.N_sqp = int(N_sqp)
+        self.use_offset_free = bool(use_offset_free)
+        self.d_alpha = float(d_alpha)
+
+        # matrices
+        self._rebuild_S()
+        self.Du = self._build_Du_matrix()
+        self.d_min_tip_mag = float(d_min_tip_mag)
+        self.enable_tip_keepout = bool(enable_tip_keepout)
+
+        # selector: picks magnet position (x,y,z) from p = [x,y,z,roll,pitch,yaw,L]
+        self.Sel_pos = np.zeros((3, self.m))
+        self.Sel_pos[0, 0] = 1.0
+        self.Sel_pos[1, 1] = 1.0
+        self.Sel_pos[2, 2] = 1.0
+    def _rebuild_S(self):
+        self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
+    def _build_tip_keepout_constraints(self, *, Mc, X0_stack, p0, U_guess_vec):
+        """
+        Build linearized constraints enforcing ||r_i - x_i|| >= dmin for i=1..Np
+        using SQP linearization around current predicted (r0_i, x0_i).
+
+        Returns:
+          A_ko: (Np, Np*m)
+          l_ko: (Np,)
+          u_ko: (Np,)
+        """
+        if not self.enable_tip_keepout:
+            return None, None, None
+
+        dmin = self.d_min_tip_mag
+        n, m, Np = self.n, self.m, self.Np
+
+        # Map U -> stacked p along horizon (same as you used for bounds)
+        A_p = np.kron(self.S_np, np.eye(m))          # (Np*m, Np*m)
+        p0_stack = np.tile(p0, Np)                   # (Np*m,)
+
+        # stacked magnet positions: r_stack = (I kron Sel_pos) (p0_stack + A_p U)
+        Spos = np.kron(np.eye(Np), self.Sel_pos)     # (Np*3, Np*m)
+        r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
+        Rmap = Spos @ A_p                            # (Np*3, Np*m)
+
+        # predicted x along horizon under current guess:
+        # X_guess = X0 + Mc U_guess
+        X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)   # (Np*n,1)
+
+        # predicted p along horizon under current guess:
+        p_guess = p0_stack.reshape(-1, 1) + A_p @ U_guess_vec.reshape(-1, 1)  # (Np*m,1)
+        r_guess = (Spos @ p_guess).reshape(Np, 3)                              # (Np,3)
+
+        # Extract x_guess per step
+        x_guess = X_guess.reshape(Np, n)[:, :3]  # n=3 in your use-case, keep [:3] for safety
+
+        # Build one linear constraint per horizon step
+        A_rows = []
+        l_rows = []
+        u_rows = []
+
+        for i in range(Np):
+            r0 = r_guess[i, :].reshape(3, 1)
+            x0 = x_guess[i, :].reshape(3, 1)
+            s0 = (r0 - x0).reshape(3, 1)
+
+            s0n = float(np.linalg.norm(s0))
+            # If s0 is extremely small, the linearization direction is ill-defined.
+            # In that case, skip (or you can pick a fixed direction).
+            if s0n < 1e-8:
+                continue
+
+            # Blocks mapping U -> r_i and U -> x_i
+            Rmap_i = Rmap[i*3:(i+1)*3, :]                  # (3, Np*m)
+            Mc_i   = Mc[i*n:(i+1)*n, :]                    # (n, Np*m)
+            Mc_i3  = Mc_i[:3, :]                           # (3, Np*m)
+
+            # r_i - x_i = (r_base_i - X0_i) + (Rmap_i - Mc_i3) U
+            X0_i = X0_stack[i*n:(i+1)*n, :][:3, :]         # (3,1)
+            r_base_i = r0_stack_base[i*3:(i+1)*3, :]       # (3,1)
+
+            # Linearized constraint: 2 s0^T (r_i - x_i) >= dmin^2 + ||s0||^2
+            # => a_i U >= b_i
+            a_i = (2.0 * s0.T) @ (Rmap_i - Mc_i3)          # (1, Np*m)
+            b_i = (dmin**2 + (s0n**2)) - float((2.0 * s0.T) @ (r_base_i - X0_i))
+
+            A_rows.append(a_i.reshape(1, -1))
+            l_rows.append(b_i)
+            u_rows.append(np.inf)
+
+        if not A_rows:
+            return None, None, None
+
+        A_ko = np.vstack(A_rows)
+        l_ko = np.asarray(l_rows, dtype=float)
+        u_ko = np.asarray(u_rows, dtype=float)
+        return A_ko, l_ko, u_ko
+    def _build_Du_matrix(self):
+        Np = self.Np
+        m = self.m
+        if Np <= 1:
+            return np.zeros((0, Np*m))
+
+        D1 = np.zeros((Np-1, Np))
+        for i in range(Np-1):
+            D1[i, i]   = -1.0
+            D1[i, i+1] = +1.0
+
+        return np.kron(D1, np.eye(m))
+
+    def set_dt(self, dt):
+        self.dt = float(dt)
+        self._rebuild_S()
+        self.Du = self._build_Du_matrix()
+
+    def set_initial_params(self, p0):
+        self.p = np.asarray(p0, float).reshape(self.m,)
+        self.x = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
+        self.d = np.zeros(self.n, float)
+        self.U_warm = None
+
+    def _compute_Qtil(self, B0):
+        # terminal cost via DARE with B0 (first-step)
+        _, P = dare_stabilising_K(self.A, B0, self.Q, self.R)
+        self.Qf = P
+
+        n = self.n
+        Np = self.Np
+        Qtil = np.zeros((Np*n, Np*n))
+        if Np > 1:
+            Qtil[:(Np-1)*n, :(Np-1)*n] = np.kron(np.eye(Np-1), self.Q)
+        Qtil[(Np-1)*n:, (Np-1)*n:] = self.Qf
+        return Qtil
+
+    def _disturbance_stack(self, d):
+        """
+        Build stacked contribution of constant disturbance d across horizon.
+        For A = I:
+          x1 gets +1*d
+          x2 gets +2*d
+          ...
+        For generic A:
+          d_acc_{i+1} = A d_acc_i + d
+        """
+        n = self.n
+        Np = self.Np
+        d = np.asarray(d, dtype=float).reshape(n,)
+
+        d_stack = np.zeros((Np*n, 1))
+        d_acc = np.zeros(n)
+
+        for i in range(Np):
+            d_acc = self.A @ d_acc + d
+            d_stack[i*n:(i+1)*n, 0] = d_acc
+
+        return d_stack
+
+
+
+    def _clamp_p(self, p):
+        p = np.minimum(np.maximum(p, self.p_min), self.p_max)
+        p[3] = wrap_pi(p[3])  # roll
+        p[5] = wrap_pi(p[5])  # yaw
+        # pitch often kept within [-pi/2, pi/2] as you already do
+        return p
+
+    def _p_seq_from_U(self, p0, U_seq):
+        """
+        Integrate p forward: p_{i+1} = clamp(p_i + dt * u_i)
+        Returns list length Np of p_{i+1} values.
+        """
+        p_running = p0.copy()
+        p_list = []
+        for i in range(self.Np):
+            p_running = p_running + U_seq[i] * self.dt
+            p_running = self._clamp_p(p_running)
+            p_list.append(p_running.copy())
+        return np.array(p_list)
+
+    def _build_ltv_prediction_mats(self, p0, U_guess):
+        """
+        Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
+        """
+        if U_guess is None:
+            U_guess = np.zeros((self.Np, self.m))
+
+        p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
+        B_list = []
+        J_list = []
+        for i in range(self.Np):
+            Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
+            if Ji.shape != (self.n, self.m):
+                raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
+            J_list.append(Ji)
+            B_list.append(self.dt * Ji)
+
+        Mx, Mc = seq_mat_ltv(self.A, B_list)
+        return p_seq, J_list, B_list, Mx, Mc
+
+    def step(self, xref_seq, x_meas=None):
+        """
+        xref_seq: (Np,2)
+        x_meas: measured tip (2,) for offset-free update. If None, uses internal x.
+        """
+
+        if self.p is None:
+            raise ValueError("Call set_initial_params(...) before step().")
+
+        p_prev = self.p.copy()
+        x_prev = self.x.copy()
+        # measurement update
+        if x_meas is not None:
+            self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
+
+        # --- offset-free disturbance update ---
+        # Use model residual to update d (low-pass filtered)
+        if self.use_offset_free and x_meas is not None:
+            x_model = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
+            r = self.x - x_model
+            self.d = (1.0 - self.d_alpha) * self.d + self.d_alpha * r
+
+        n = self.n
+        m = self.m
+        Np = self.Np
+
+        xref_seq = np.asarray(xref_seq, float).reshape(Np, self.n)
+        xref_stack = xref_seq.reshape(Np*self.n, 1)
+        xk = self.x.reshape(self.n, 1)
+
+        # --- SQP / successive linearization loop ---
+        # initial guess U: warm-start if available else zeros
+        if self.U_warm is not None and self.U_warm.size == Np*m:
+            U_opt_vec = self.U_warm.copy()
+            U_guess = U_opt_vec.reshape(Np, m)
+        else:
+            U_guess = np.zeros((Np, m))
+            U_opt_vec = None
+
+        status_last = "init"
+
+        for it in range(self.N_sqp):
+            # build LTV model based on current U_guess
+            p0 = self.p.copy()
+            p_seq, J_list, B_list, Mx, Mc = self._build_ltv_prediction_mats(p0, U_guess)
+
+            # stage+terminal cost
+            Qtil = self._compute_Qtil(B_list[0])
+            Rtil = np.kron(np.eye(Np), self.R)
+
+            # delta-u penalty
+            if self.Np > 1 and np.any(np.diag(self.Rd) > 0):
+                Rd_til = np.kron(np.eye(Np-1), self.Rd)
+                H_du = self.Du.T @ Rd_til @ self.Du
+            else:
+                H_du = 0.0
+
+            xk = self.x.reshape(self.n, 1)
+
+            # baseline predicted state stack (no control)
+            X0_stack = (Mx @ xk).reshape(Np*n, 1)
+
+            # add disturbance contribution (offset-free)
+            if self.use_offset_free:
+                X0_stack = X0_stack + self._disturbance_stack(self.d)
+
+            # objective
+            H = 2.0 * (Mc.T @ Qtil @ Mc + Rtil + H_du)
+            f = 2.0 * (Mc.T @ Qtil @ (X0_stack - xref_stack))
+            # --- tip keep-out constraint (magnet must stay >= dmin from tip) ---
+            A_list, l_list, u_list = [], [], []
+            if self.enable_tip_keepout:
+                # Current iterate as vector
+                U_guess_vec = U_guess.reshape(-1)
+
+                A_ko, l_ko, u_ko = self._build_tip_keepout_constraints(
+                    Mc=Mc,
+                    X0_stack=X0_stack,
+                    p0=self.p.copy(),
+                    U_guess_vec=U_guess_vec
+                )
+                if A_ko is not None:
+                    A_list.append(A_ko)
+                    l_list.append(l_ko)
+                    u_list.append(u_ko)
+            # constraints
+
+
+            # (1) input bounds
+            if np.all(np.isfinite(self.u_max)):
+                A_u = np.eye(Np * self.m)
+                umax_stack = np.tile(self.u_max, Np)
+                A_list.append(A_u)
+                l_list.append(-umax_stack)
+                u_list.append(+umax_stack)
+
+            # (2) parameter bounds across horizon (via integrated controls)
+            if np.all(np.isfinite(self.p_min)) and np.all(np.isfinite(self.p_max)):
+                A_p = np.kron(self.S_np, np.eye(self.m))
+                p0_stack = np.tile(self.p, Np)
+
+                l_p = np.tile(self.p_min, Np) - p0_stack
+                u_p = np.tile(self.p_max, Np) - p0_stack
+
+                A_list.append(A_p)
+                l_list.append(l_p)
+                u_list.append(u_p)
+
+            # (3) tube constraint around reference (optional)
+            if self.band_xy > 0.0:
+                band = float(self.band_xy)
+                band_stack = band * np.ones((Np*n,))
+
+                rhs_p = band_stack + (xref_stack - X0_stack).reshape(-1)
+                rhs_n = band_stack + (X0_stack - xref_stack).reshape(-1)
+
+                A_list.append(Mc)
+                l_list.append(-np.inf * np.ones(Np*n))
+                u_list.append(rhs_p)
+
+                A_list.append(-Mc)
+                l_list.append(-np.inf * np.ones(Np*n))
+                u_list.append(rhs_n)
+
+            # stack constraints for OSQP
+            if A_list:
+                A_osqp = np.vstack(A_list)
+                l_osqp = np.concatenate(l_list)
+                u_osqp = np.concatenate(u_list)
+            else:
+                A_osqp = np.zeros((0, Np*m))
+                l_osqp = np.zeros(0)
+                u_osqp = np.zeros(0)
+
+            # solve QP with warm-start (inside SQP loop we warm-start from last iterate)
+            U_warm_vec = U_opt_vec if U_opt_vec is not None else self.U_warm
+            U_opt_vec, _, status = solve_qp_osqp(H, f, A_osqp, l_osqp, u_osqp, U_warm=U_warm_vec)
+            status_last = status
+
+            infeas = (status not in ("solved", "solved inaccurate")) or (U_opt_vec is None)
+            if infeas:
+                # if infeasible, break SQP loop and apply zero control
+                U_guess = np.zeros((Np, m))
+                U_opt_vec = None
+                break
+
+            # update guess for next SQP iteration
+            U_guess = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
+
+        # --- apply first control action ---
+        if U_opt_vec is None:
+            u0 = np.zeros(m)
+            U_seq = np.zeros((Np, m))
+            X_pred = np.full((Np, n), np.nan)
+            infeas_final = True
+        else:
+            U_seq = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
+            u0 = U_seq[0, :]
+            # build final predicted trajectory using last Mc/Mx
+            # note: Mc/Mx correspond to last SQP iteration
+            xk = self.x.reshape(self.n, 1)
+            X0_stack = (Mx @ xk).reshape(Np*n, 1)
+            if self.use_offset_free:
+                X0_stack = X0_stack + self._disturbance_stack(self.d)
+            X_pred_stack = (X0_stack + Mc @ U_opt_vec.reshape(-1, 1))
+            X_pred = X_pred_stack.reshape(Np, n)
+            infeas_final = False
+        p_next_true = self._clamp_p(p_prev + self.dt*u0)
+        x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
+
+        if self.use_offset_free:
+            x_next_true = x_next_true + self.d 
+        # update parameter state
+        self.p = self._clamp_p(self.p + u0 * self.dt)
+
+        # update plant state using nonlinear forward model
+        self.x = self.forward_tip_fn(self.p)
+
+        # store warm-start for next MPC step
+        if not infeas_final:
+            self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
+        else:
+            self.U_warm = None
+        pred1_err = np.linalg.norm(x_next_true - X_pred[0])
+        info = dict(
+            status=status_last,
+            infeasible=int(infeas_final),
+            u0=u0.copy(),
+            p_now=self.p.copy(),
+            x_now=self.x.copy(),
+            d=self.d.copy(),
+            X_pred=X_pred.copy(),
+            U_seq=U_seq.copy(),
+            N_sqp=self.N_sqp,
+            pred1_err = pred1_err,
+            x_prev = x_prev.copy(),
+            x_next_true = x_next_true.copy(),
+            X_pred0 = X_pred[0].copy(),
+            pred0_vec_err = (x_next_true - X_pred[0]).copy(),
+        )
+        return self.p.copy(), self.x.copy(), info
+
+
+def forward_cosserat_from_pose_euler_L(p, model, *, m_body):
+    r_src, q_src, L = unpack_pose_euler_L(p)
+    out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
+
+    if not out["solved"]:
+        return np.array([1e3, 1e3, 1e3], float)
+
+    return np.asarray(out["p_tip"], float).reshape(3,)
+def numerical_jacobian_tip_xyz_pose(p, forward_fn, eps):
+    p = np.asarray(p, float).ravel()
+    eps = np.asarray(eps, float).ravel()
+    assert eps.size == p.size
+
+    n_out = 3
+    J = np.zeros((n_out, p.size), float)
+    for i in range(p.size):
+        dp = np.zeros_like(p)
+        dp[i] = eps[i]
+        xp = np.asarray(forward_fn(p + dp), float).reshape(n_out,)
+        xm = np.asarray(forward_fn(p - dp), float).reshape(n_out,)
+        J[:, i] = (xp - xm) / (2.0 * eps[i])
+    return J
+
+def rollout_open_loop_from_plan(mpc, p_start, U_seq):
+    """
+    Roll forward the nonlinear plant using the planned control sequence U_seq (Np,m).
+    Returns:
+      P_nl: (Np, m) parameter trajectory (p1..pNp)
+      X_nl: (Np, n) tip trajectory
+    """
+    p = p_start.copy()
+    P_nl = []
+    X_nl = []
+    for i in range(U_seq.shape[0]):
+        p = mpc._clamp_p(p + mpc.dt * U_seq[i])
+        x = np.asarray(mpc.forward_tip_fn(p), float).reshape(mpc.n,)
+        P_nl.append(p.copy())
+        X_nl.append(x.copy())
+    return np.vstack(P_nl), np.vstack(X_nl)
+def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horizon=4, do_nl_rollout=True):
+    e = x_target - x_now
+    err_mm = 1e3 * np.linalg.norm(e)
+
+    print(f"k={k:02d} tip=[{x_now[0]:+.4f},{x_now[1]:+.4f},{x_now[2]:+.4f}] "
+          f"||e||={err_mm:.2f}mm status={info['status']} infeas={info['infeasible']}")
+
+    u0 = info["u0"]
+    X_pred = info["X_pred"]
+    U_seq = info["U_seq"]
+    pred_err = info.get("pred1_err", np.nan)
+    r_src, q_src, L = unpack_pose_euler_L(p_now)
+    print(f"Pose is : {r_src} and Q is : {q_src}")
+    R = quat_to_rot_wxyz(q_src)
+    r2,p2,y2 = rot_to_euler_zyx(R)
+    r2,p2,y2 = wrap_pi(r2), wrap_pi(p2), wrap_pi(y2)
+    print("   euler-from-q(deg):", np.rad2deg([r2,p2,y2]))
+    print("   euler-state(deg) :", np.rad2deg(p_now[3:6]))
+    # p_now: [x,y,z, roll,pitch,yaw, L]
+    print("   p_now:",
+          f"x={p_now[0]:+.3f} y={p_now[1]:+.3f} z={p_now[2]:+.3f}  "
+          f"rpy(deg)=[{np.rad2deg(p_now[3]):+.1f},{np.rad2deg(p_now[4]):+.1f},{np.rad2deg(p_now[5]):+.1f}]  "
+          f"L={p_now[6]:.3f}")
+
+    print("   u0:",
+          f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
+          f"d_rpy(deg/s)=[{np.rad2deg(u0[3]):+.2f},{np.rad2deg(u0[4]):+.2f},{np.rad2deg(u0[5]):+.2f}]  "
+          f"dL={u0[6]:+.5f}")
+
+    print(f"   pred1_err (one-step tip mismatch): {pred_err}")
+
+    # horizon print
+    ph = min(print_horizon, X_pred.shape[0]) if X_pred is not None else 0
+    if X_pred is not None and np.all(np.isfinite(X_pred)):
+        for i in range(ph):
+            print(f"   pred[{i}]={X_pred[i]}   ref[{i}]={xref_seq[i]}")
+    else:
+        print("   X_pred NaNs or missing -> infeasible/failed QP")
+
+    # nonlinear open-loop rollout using planned U_seq
+    if do_nl_rollout and (U_seq is not None) and np.all(np.isfinite(U_seq)):
+        P_nl, X_nl = rollout_open_loop_from_plan(mpc, p_now.copy(), U_seq)
+        ph2 = min(print_horizon, X_nl.shape[0])
+        for i in range(ph2):
+            print(f"   NL [{i}] ={X_nl[i]}   (vs lin pred {X_pred[i] if X_pred is not None else None})")
+    x_lin1 = x_pre + mpc.dt * (J_fn(p_pre) @ info["u0"])
+    print("   one-step lin check |x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
+    print()
+
+
+
+model = CosseratForwardModel(
+    p0=np.array([0.0, 0.0, 0.0]),
+    q0=np.array([1.0, 0.0, 0.0, 0.0]),
+    Kinv_fun=Kbt_inv_profile,
+    m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
+    m_moment=0.0,  # not used by this m_local_fun
+    n_nodes=120,
+    tol=1e-5    
+    )
+m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
+
+forward_tip_fn = lambda p: forward_cosserat_from_pose_euler_L(p, model, m_body=m_body)
+J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
+
+mpc = mpc_controller_tipxy_LTI(
+    Jxy_fn=J_fn,
+    forward_tip_fn=forward_tip_fn,
+    dt=0.05,
+    Np=6,
+    n_out=3,
+    n_u=7,
+    w_xy=(150.0,150.0,150.0),
+    w_u=(1e-3,)*7,
+    w_du=(1e-3,)*7,
+    u_max=u_max,
+    p_min=p_min,
+    p_max=p_max,
+    N_sqp=2,
+    use_offset_free=False
+)
+
+L0 = 0.05                      # 5 cm beam length
+d_tip_to_mag = 0.14            # 14 cm from tip
+
+# "Straight beam" nominal tip position/direction assumption:
+tip0 = np.array([L0, 0.0, 0.0])
+a0   = np.array([1.0, 0.0, 0.0])  # aligned with +x
+
+r_src0 = tip0 + d_tip_to_mag * a0  # magnet center 14 cm in front of tip
+
+roll0 = 0.0
+pitch0 = 0.0
+yaw0 = 0.0
+
+p0 = np.array([r_src0[0], r_src0[1], r_src0[2], roll0, pitch0, yaw0, L0], dtype=float)
+mpc.set_initial_params(p0)
+x_target = np.array([0.03033489, 0.02378958, 0.0057291 ])  # desired catheter tip (x,y,z)
+Np = mpc.Np
+xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
+p_test = p0.copy()
+J_test = J_fn(p_test)
+print("J shape:", J_test.shape)  # must be (3,7)
+n=20
+for k in range(n):
+    p_pre = mpc.p.copy()
+    x_pre = mpc.x.copy()
+
+    xref_seq = np.tile(x_target, (mpc.Np, 1))
+    p_post, x_post, info = mpc.step(xref_seq, x_meas=None)
+
+    debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
+                     print_horizon=4, do_nl_rollout=True)
+
+    # Plot this step (beam+magnet+dipoledir)
+    if k == n-1:
+        plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
+
+ 

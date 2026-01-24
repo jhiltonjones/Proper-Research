@@ -267,6 +267,8 @@ class mpc_controller_tipxy_LTI:
         if self.p is None:
             raise ValueError("Call set_initial_params(...) before step().")
 
+        p_prev = self.p.copy()
+        x_prev = self.x.copy()
         # measurement update
         if x_meas is not None:
             self.x = np.asarray(x_meas, dtype=float).reshape(2,)
@@ -407,7 +409,10 @@ class mpc_controller_tipxy_LTI:
             X_pred_stack = (X0_stack + Mc @ U_opt_vec.reshape(-1, 1))
             X_pred = X_pred_stack.reshape(Np, n)
             infeas_final = False
-
+        p_next_true = self._clamp_p(p_prev + self.dt*u0)
+        x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(2,)
+        if self.use_offset_free:
+            x_next_true = x_next_true + self.d 
         # update parameter state
         self.p = self._clamp_p(self.p + u0 * self.dt)
 
@@ -419,7 +424,7 @@ class mpc_controller_tipxy_LTI:
             self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
         else:
             self.U_warm = None
-
+        pred1_err = np.linalg.norm(x_next_true - X_pred[0]) if np.all(np.isfinite(X_pred[0])) else np.nan
         info = dict(
             status=status_last,
             infeasible=int(infeas_final),
@@ -430,6 +435,11 @@ class mpc_controller_tipxy_LTI:
             X_pred=X_pred.copy(),
             U_seq=U_seq.copy(),
             N_sqp=self.N_sqp,
+            pred1_err = pred1_err,
+            x_prev = x_prev.copy(),
+            x_next_true = x_next_true.copy(),
+            X_pred0 = X_pred[0].copy(),
+            pred0_vec_err = (x_next_true - X_pred[0]).copy(),
         )
         return self.p.copy(), self.x.copy(), info
 
@@ -441,7 +451,7 @@ mpc_xy = mpc_controller_tipxy_LTI(
     forward_tip_fn=forward_tip,
     dt=0.1,
     Np=4,
-    w_xy=(100.0, 100.0),
+    w_xy=(150.0, 150.0),
     w_u=(1e-4, 1e-4, 1e-2, 1e-2),
     w_du=(1e-3, 1e-3, 1e-2, 1e-2),
     u_max=(np.deg2rad(40), np.deg2rad(40), 0.03, 0.01),
@@ -449,7 +459,7 @@ mpc_xy = mpc_controller_tipxy_LTI(
     p_max=p_max,
 
     N_sqp=5,      
-    use_offset_free=True, 
+    use_offset_free=False, 
     d_alpha=0.15          
 )
 def fmt_xy(v, fmt="{:+.4f}"):
@@ -478,18 +488,21 @@ def debug_step_tipxy(k, x_target, xref_seq, p_cmd, x_now, info, print_horizon=4)
           f"||e||={err_mm:.2f}mm status={info['status']}")
 
     u0 = info["u0"]
-    Jxy = info["Jxy"]
     X_pred = info["X_pred"]
     U_seq = info["U_seq"]
+    pred_err = info["pred1_err"]
 
     print(f"   p_cmd: gamma={np.rad2deg(p_cmd[0]):+.1f}deg, beta={np.rad2deg(p_cmd[1]):+.1f}deg, "
           f"rho={p_cmd[2]:.3f}m, L={p_cmd[3]:.3f}m")
 
     print(f"   u0: gdot={np.rad2deg(u0[0]):+.2f}deg/s, bdot={np.rad2deg(u0[1]):+.2f}deg/s, "
           f"rhodot={u0[2]:+.4f}m/s, Ldot={u0[3]:+.4f}m/s")
-
-    print("   Jxy:")
-    print(Jxy)
+    print(f"Prediction error: {pred_err}")
+    print("x_prev     =", info["x_prev"])
+    print("x_next_true=", info["x_next_true"])
+    print("x_pred0    =", info["X_pred0"])
+    print("err (mm)   =", 1e3*np.linalg.norm(info["pred0_vec_err"]))
+    print("err vec(mm)=", 1e3*info["pred0_vec_err"])
 
     ph = min(print_horizon, X_pred.shape[0])
     if np.all(np.isfinite(X_pred)):
@@ -511,7 +524,7 @@ for k in range(10):
 
     p_cmd, x_now, info = mpc_xy.step(xref_seq)
 
-    # debug_step_tipxy(k, x_target, xref_seq, p_cmd, x_now, info, print_horizon=4)
+    debug_step_tipxy(k, x_target, xref_seq, p_cmd, x_now, info, print_horizon=4)
 print(f"Final tip position is: [{x_now[0]:+.4f}, {x_now[1]:+.4f}] with target: {x_target}")
 theta_y_tip = np.arctan2(x_now[1], x_now[0])
 theta_y_target = np.arctan2(x_target[1], x_target[0])

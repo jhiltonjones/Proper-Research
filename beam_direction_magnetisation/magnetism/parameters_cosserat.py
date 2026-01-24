@@ -1,9 +1,9 @@
 import numpy as np
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_moment
 
-rho = 0.11
-alpha_deg =90
-alpha_overhead = np.deg2rad(90)
+rho = 0.12
+alpha_deg =0
+alpha_overhead = np.deg2rad(0)
 alpha = np.deg2rad(alpha_deg)
 theta_y=np.deg2rad(0)
 

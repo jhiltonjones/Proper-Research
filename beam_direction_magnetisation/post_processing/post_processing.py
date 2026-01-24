@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np 
 from mpl_toolkits.mplot3d import Axes3D  
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_to_rot
+from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz
 def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z_over):
     plt.figure()
     plt.plot(angles_deg, 1e3*np.array(tip_y_front), marker='o', label="Front magnetised at 30 deg")
@@ -136,3 +137,210 @@ def add_tube(ax, centerline, R, n_circle=24, n_samples=80, alpha=0.15):
 
     ax.plot_surface(X, Y, Z, rstride=1, cstride=1, linewidth=0, alpha=alpha)
     ax.plot(centerline[:,0], centerline[:,1], centerline[:,2], '--', linewidth=2, label="vessel centerline")
+    """
+Drop-in plotting utility for your MPC loop.
+
+What it plots (3D):
+- Beam centerline from Cosserat model (base -> tip), using the SAME forward call you use
+- Tip position (from your MPC's x_now / x_post)
+- Magnet position r_src (from your MPC's p_now / p_post, first 3 entries)
+- Dipole direction (magnet local +x axis rotated by roll/pitch/yaw in p), as an arrow
+- Optional dashed line tip -> magnet (distance check)
+
+How to use:
+1) Paste this block below your definitions of Rx/Ry/Rz (or keep these provided ones)
+2) In your MPC loop, after mpc.step(...), call:
+     plot_mpc_state_3d(model, m_body, p_post, x_post, show=True)
+   or store frames by setting show=False and saving figures.
+
+Assumptions:
+- Your model.forward(...) returns a dict that includes either:
+    out["p_s"] or out["p"] or out["p_nodes"] or out["r"] as (N,3) centerline points.
+  If none exist, we fall back to a straight line base->tip.
+- Beam base pose is model.p0 and model.q0 (as you construct it); base point is model.p0.
+"""
+
+def R_from_rpy(roll, pitch, yaw):
+    return Rz(yaw) @ Ry(pitch) @ Rx(roll)
+
+def unit(v, eps=1e-12):
+    v = np.asarray(v, dtype=float).ravel()
+    n = np.linalg.norm(v)
+    return v if n < eps else (v / n)
+
+def set_axes_equal(ax):
+    x_limits = ax.get_xlim3d()
+    y_limits = ax.get_ylim3d()
+    z_limits = ax.get_zlim3d()
+    x_range = abs(x_limits[1] - x_limits[0])
+    y_range = abs(y_limits[1] - y_limits[0])
+    z_range = abs(z_limits[1] - z_limits[0])
+    x_middle = np.mean(x_limits)
+    y_middle = np.mean(y_limits)
+    z_middle = np.mean(z_limits)
+    plot_radius = 0.5 * max([x_range, y_range, z_range])
+    ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
+    ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
+    ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
+
+
+# ---------- beam centerline extraction ----------
+def extract_centerline_from_forward_output(out):
+    """
+    Try common keys for centerline/backbone points.
+    Returns None if not found.
+    """
+    for key in ["p_s", "p", "p_nodes", "r", "centerline", "backbone"]:
+        if key in out:
+            arr = np.asarray(out[key], dtype=float)
+            if arr.ndim == 2 and arr.shape[1] == 3 and arr.shape[0] >= 2:
+                return arr
+    return None
+
+
+# ---------- plotting ----------
+def plot_mpc_state_3d(model, m_body, p_pose7, x_tip,
+                      title=None,
+                      dipole_scale=0.05,
+                      show_tip_to_mag=True,
+                      show=True,
+                      ax=None):
+    """
+    model: your CosseratForwardModel instance
+    m_body: dipole vector in body frame passed to model.forward
+    p_pose7: (7,) [x,y,z, roll,pitch,yaw, L] => magnet pose + beam length used in model.forward
+    x_tip: (3,) tip position (your MPC x_now / x_post)
+    """
+
+    p_pose7 = np.asarray(p_pose7, dtype=float).ravel()
+    x_tip   = np.asarray(x_tip,   dtype=float).ravel()
+    assert p_pose7.size == 7
+    assert x_tip.size == 3
+
+    r_mag = p_pose7[0:3]
+    roll, pitch, yaw = p_pose7[3:6]
+    L = float(p_pose7[6])
+
+    # Call the SAME forward as your forward_cosserat_from_pose_euler_L
+    # but here we want the full output to draw the backbone.
+    # We reconstruct q_src the same way your unpack_pose_euler_L does.
+    Rsrc = R_from_rpy(roll, pitch, yaw)
+
+    # robust rot->quat not needed for plotting, but model.forward expects q_src quaternion.
+    # We'll implement a minimal rot->quat here:
+    def rot_to_quat(R):
+        tr = np.trace(R)
+        if tr > 0:
+            S = np.sqrt(tr + 1.0) * 2
+            qw = 0.25 * S
+            qx = (R[2,1] - R[1,2]) / S
+            qy = (R[0,2] - R[2,0]) / S
+            qz = (R[1,0] - R[0,1]) / S
+        else:
+            if (R[0,0] > R[1,1]) and (R[0,0] > R[2,2]):
+                S = np.sqrt(1.0 + R[0,0] - R[1,1] - R[2,2]) * 2
+                qw = (R[2,1] - R[1,2]) / S
+                qx = 0.25 * S
+                qy = (R[0,1] + R[1,0]) / S
+                qz = (R[0,2] + R[2,0]) / S
+            elif R[1,1] > R[2,2]:
+                S = np.sqrt(1.0 + R[1,1] - R[0,0] - R[2,2]) * 2
+                qw = (R[0,2] - R[2,0]) / S
+                qx = (R[0,1] + R[1,0]) / S
+                qy = 0.25 * S
+                qz = (R[1,2] + R[2,1]) / S
+            else:
+                S = np.sqrt(1.0 + R[2,2] - R[0,0] - R[1,1]) * 2
+                qw = (R[1,0] - R[0,1]) / S
+                qx = (R[0,2] + R[2,0]) / S
+                qy = (R[1,2] + R[2,1]) / S
+                qz = 0.25 * S
+        q = np.array([qw, qx, qy, qz], dtype=float)
+        return q / (np.linalg.norm(q) + 1e-12)
+
+    q_src = rot_to_quat(Rsrc)
+
+    out = model.forward(L=L, r_src=r_mag, q_src=q_src, m_body=m_body)
+
+    # Tip from model output (for sanity) if present; otherwise use x_tip provided
+    x_tip_model = None
+    if isinstance(out, dict) and "p_tip" in out:
+        x_tip_model = np.asarray(out["p_tip"], dtype=float).ravel()
+        if x_tip_model.size == 3:
+            pass
+        else:
+            x_tip_model = None
+
+    # Centerline
+    centerline = extract_centerline_from_forward_output(out) if isinstance(out, dict) else None
+
+    # If no centerline provided by model.forward, fall back to a straight segment base->tip
+    # Base point: try model.p0 else origin
+    r_base = getattr(model, "p0", np.array([0.0, 0.0, 0.0], dtype=float))
+    r_base = np.asarray(r_base, dtype=float).ravel()
+    if r_base.size != 3:
+        r_base = np.array([0.0, 0.0, 0.0], dtype=float)
+
+    if centerline is None:
+        centerline = np.vstack([r_base, x_tip])
+
+    # Dipole direction in world frame: local +x rotated by Rsrc
+    dip_hat = unit(Rsrc @ np.array([1.0, 0.0, 0.0], dtype=float))
+
+    # Create axes if needed
+    if ax is None:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+    else:
+        fig = ax.figure
+
+    # Plot beam centerline
+    ax.plot(centerline[:,0], centerline[:,1], centerline[:,2],
+            linewidth=3, label="Beam centerline")
+
+    # Plot base and tip
+    ax.scatter([centerline[0,0]], [centerline[0,1]], [centerline[0,2]], s=60, label="Beam base")
+    ax.scatter([x_tip[0]], [x_tip[1]], [x_tip[2]], s=70, label="Tip (from MPC)")
+
+    if x_tip_model is not None:
+        ax.scatter([x_tip_model[0]], [x_tip_model[1]], [x_tip_model[2]], s=40, label="Tip (from model)")
+
+    # Plot magnet position
+    ax.scatter([r_mag[0]], [r_mag[1]], [r_mag[2]], s=90, label="Magnet position")
+
+    # Dipole arrow
+    ax.quiver(r_mag[0], r_mag[1], r_mag[2],
+              dip_hat[0], dip_hat[1], dip_hat[2],
+              length=dipole_scale, normalize=True,
+              label="Dipole direction (+x_local)")
+
+    # Tip -> magnet dashed line and distance
+    if show_tip_to_mag:
+        ax.plot([x_tip[0], r_mag[0]],
+                [x_tip[1], r_mag[1]],
+                [x_tip[2], r_mag[2]],
+                linestyle="--", linewidth=2, label=f"Tip→Mag ({np.linalg.norm(r_mag-x_tip):.3f} m)")
+
+    # Labels
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_zlabel("z [m]")
+    if title is None:
+        title = f"MPC state: r_src={r_mag}, rpy(deg)={[np.rad2deg(roll), np.rad2deg(pitch), np.rad2deg(yaw)]}"
+    ax.set_title(title)
+
+    # Limits from plotted points
+    pts = np.vstack([centerline, r_mag.reshape(1,3), x_tip.reshape(1,3)])
+    mins = pts.min(axis=0)
+    maxs = pts.max(axis=0)
+    pad = 0.05
+    ax.set_xlim(mins[0]-pad, maxs[0]+pad)
+    ax.set_ylim(mins[1]-pad, maxs[1]+pad)
+    ax.set_zlim(mins[2]-pad, maxs[2]+pad)
+    set_axes_equal(ax)
+
+    ax.legend()
+    if show:
+        plt.show()
+
+    return fig, ax

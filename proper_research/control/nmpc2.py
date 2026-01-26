@@ -296,12 +296,21 @@ def debug_step_tipxy_nmpc(k, x_target, xref_seq, p_cmd, x_now, info, print_horiz
     else:
         print("   X_pred NaNs -> infeasible solve")
     print()
+def build_xref_from_path(path, k, Np):
+    """
+    path: (N,3)
+    returns xref_seq: (Np,3) with look-ahead
+    """
+    N = path.shape[0]
+    idx = np.clip(np.arange(k, k + Np), 0, N - 1)
+    return path[idx]
+
 forward_tip = make_forward_fn(mag, A_cs, E, I, mag_params.mag_epm)
 Jxy_fn = make_jac_fn(forward_tip, eps)
 
 nmpc = nmpc_controller_tipxy_simple(
     forward_tip_fn=forward_tip,
-    dt=0.1,
+    dt=0.05,
     Np=4,
     w_xy=(100.0, 100.0),
     w_u=(1e-4, 1e-4, 1e-2, 1e-2),
@@ -317,10 +326,14 @@ nmpc.set_initial_params(*p0)
 print("Initial tip:", nmpc.x)
 x_target = forward_tip([np.deg2rad(40), np.deg2rad(0), 0.12, 0.06])
 print(f"x_target is {x_target}")
-for k in range(10):
-    x_now = nmpc.x.copy()
-    p_now = nmpc.p.copy()
-    xref_seq = np.tile(x_target, (nmpc.Np, 1))
+n=10
+x_start = nmpc.x.copy()
+path = np.linspace(x_start, x_target, n)
+for k in range(n):
+    p_pre = nmpc.p.copy()
+    x_pre = nmpc.x.copy()
+
+    xref_seq = build_xref_from_path(path, k, nmpc.Np)  
 
     p_cmd, x_now, info = nmpc.step(xref_seq)
 

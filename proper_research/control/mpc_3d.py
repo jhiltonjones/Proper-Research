@@ -10,18 +10,11 @@ from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, R
 from beam_direction_magnetisation.post_processing.post_processing import plot_mpc_state_3d
 mag_params = default_magnet_params()
 
-mag = 128e3
-r = 0.0015
-A_cs = np.pi*r**2
-E = 3.5e6
-I = np.pi*r**4/4
-L = 0.05
-rho = 0.15
 # p = [x,y,z, roll,pitch,yaw, L]
 p_min = np.array([ 0.00, -0.20, -0.20,  -np.pi, -np.pi/2, -np.pi,  0.03])
 p_max = np.array([ 0.30,  0.20,  0.20,  +np.pi, +np.pi/2, +np.pi,  0.08])
 
-u_max = np.array([ np.deg2rad(30),np.deg2rad(30), np.deg2rad(30), np.deg2rad(30), np.deg2rad(30), np.deg2rad(45),  0.02])
+u_max = np.array([ .05, .05, .05, np.deg2rad(30), np.deg2rad(30), np.deg2rad(45),  0.02])
 eps = np.array([
     1e-3, 1e-3, 1e-3,              # x,y,z
     np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  # roll,pitch,yaw
@@ -672,7 +665,14 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     x_lin1 = x_pre + mpc.dt * (J_fn(p_pre) @ info["u0"])
     print("   one-step lin check |x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
     print()
-
+def build_xref_from_path(path, k, Np):
+    """
+    path: (N,3)
+    returns xref_seq: (Np,3) with look-ahead
+    """
+    N = path.shape[0]
+    idx = np.clip(np.arange(k, k + Np), 0, N - 1)
+    return path[idx]
 
 
 model = CosseratForwardModel(
@@ -693,7 +693,7 @@ mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
     dt=0.05,
-    Np=6,
+    Np=10,
     n_out=3,
     n_u=7,
     w_xy=(150.0,150.0,150.0),
@@ -721,25 +721,26 @@ yaw0 = 0.0
 
 p0 = np.array([r_src0[0], r_src0[1], r_src0[2], roll0, pitch0, yaw0, L0], dtype=float)
 mpc.set_initial_params(p0)
-x_target = np.array([0.03033489, 0.02378958, 0.0057291 ])  # desired catheter tip (x,y,z)
+x_target = np.array([0.04323858, 0.02329207, 0.00432832])
 Np = mpc.Np
 xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
 p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
-n=20
+x_start = mpc.x.copy()
+n=10
+path = np.linspace(x_start, x_target, n)
 for k in range(n):
     p_pre = mpc.p.copy()
     x_pre = mpc.x.copy()
 
-    xref_seq = np.tile(x_target, (mpc.Np, 1))
+    xref_seq = build_xref_from_path(path, k, mpc.Np)    
     p_post, x_post, info = mpc.step(xref_seq, x_meas=None)
 
     debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
-                     print_horizon=4, do_nl_rollout=True)
+                     print_horizon=10, do_nl_rollout=True)
 
-    # Plot this step (beam+magnet+dipoledir)
-    if k == n-1:
+    error = np.linalg.norm(x_target-x_post)
+    if error < 0.001 or k==n-1:
         plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
-
- 
+        break

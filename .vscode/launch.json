@@ -102,6 +102,14 @@
             "module": "proper_research.control.mpc_3d",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run nmpc_3d",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.nmpc_3d",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
 
     ]

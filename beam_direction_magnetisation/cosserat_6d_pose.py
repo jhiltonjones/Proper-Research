@@ -55,7 +55,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         )
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
-        f_ext = f_ext + f_g*0
+        f_ext = f_ext + f_g
 
         n_s = -f_ext
         m_s = -(np.cross(p_s.T, n.T).T) - tau_ext
@@ -397,7 +397,36 @@ def pose6_from_r_quat_wxyz(r, q):
     roll, pitch, yaw = wrap_pi(roll), wrap_pi(pitch), wrap_pi(yaw)
     return np.array([r[0], r[1], r[2], roll, pitch, yaw], float)
 
+def make_safe_forward_tip_fn(model, m_body, p_min, p_max, penalty=1e3):
+    L_lo = float(p_min[6])
+    L_hi = float(p_max[6])
 
+    def safe_forward_tip(p):
+        p = np.asarray(p, float).ravel()
+        if p.size != 7 or (not np.all(np.isfinite(p))):
+            return np.array([penalty, penalty, penalty], float)
+
+        # Extract pose
+        r_src, q_src, L = unpack_pose_euler_L(p)
+
+        # HARD GUARD: never allow invalid L into solve_bvp
+        if (not np.isfinite(L)) or (L <= 1e-9):
+            return np.array([penalty, penalty, penalty], float)
+
+        # During optimization, clip L to physical range (trust-constr probes outside constraints)
+        L = float(np.clip(L, L_lo, L_hi))
+
+        try:
+            out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
+        except Exception:
+            return np.array([penalty, penalty, penalty], float)
+
+        if not out.get("solved", False):
+            return np.array([penalty, penalty, penalty], float)
+
+        return np.asarray(out["p_tip"], float).reshape(3,)
+
+    return safe_forward_tip
 def forward_cosserat_from_pose_euler_L(p, model, *, m_body, return_mode="tip_xyz"):
     p = np.asarray(p, float).ravel()
     if p.size != 7:
@@ -435,29 +464,29 @@ if __name__ == "__main__":
         tol=1e-5    
         )
     p0 = np.array([0.0, 0.0, 0.0])
-    L_cmd = 0.04
+    L_cmd = 0.05
     rho = 0.12
 
     r_tip_nominal = p0 + np.array([L_cmd, 0.0, 0.0])
 
     # angles you want to sweep
-    theta_orbit_z = np.deg2rad(80.0)   # orbit around tip about world z
-    beta_spin     = np.deg2rad(10.0)   # spin around magnet's own z
-    theta_orbit_y = -20.0                # keep 0 if you only want z-orbit in plane
+    theta_orbit_z = np.deg2rad(50.0)   # orbit around tip about world z
+    beta_spin     = np.deg2rad(0.0)   # spin around magnet's own z
+    theta_orbit_y = 30.0                # keep 0 if you only want z-orbit in plane
 
 
 
 
     # --- your usage ---
-    # r_src_cmd, q_src_cmd = epm_pose_orbit_and_spin(
-    #     r_tip_nominal,
-    #     rho=rho,
-    #     theta_orbit_z=theta_orbit_z,
-    #     beta_spin=beta_spin,
-    #     theta_orbit_y=theta_orbit_y
-    # )
-    r_src_cmd = np.array([ 0.07095213, 0.12030573, 0.03433744])
-    q_src_cmd = np.array([9.98602493e-01, -4.49818333e-04, -8.61497118e-03, -5.21405933e-02])
+    r_src_cmd, q_src_cmd = epm_pose_orbit_and_spin(
+        r_tip_nominal,
+        rho=rho,
+        theta_orbit_z=theta_orbit_z,
+        beta_spin=beta_spin,
+        theta_orbit_y=theta_orbit_y
+    )
+    # r_src_cmd = np.array([ 0.07095213, 0.12030573, 0.03433744])
+    # q_src_cmd = np.array([9.98602493e-01 -4.49818333e-04, -8.61497118e-03, -5.21405933e-02])
     pose6 = pose6_from_r_quat_wxyz(r_src_cmd, q_src_cmd)
 
     print("Pos of magnet:", r_src_cmd)

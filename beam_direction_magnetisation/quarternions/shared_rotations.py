@@ -55,22 +55,73 @@ def rot_to_quat_wxyz(R):
     if q[0] < 0:
         q = -q
     return q
+import numpy as np
 
-def unpack_pose_euler_L(p):
+def rotvec_to_quat_wxyz(rvec):
+    """
+    rvec: (3,) rotation vector (axis * angle), radians (UR convention)
+    returns q_wxyz: (4,) quaternion [w,x,y,z]
+    """
+    rvec = np.asarray(rvec, float).reshape(3,)
+    th = np.linalg.norm(rvec)
+    if th < 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0], float)
+    axis = rvec / th
+    h = 0.5 * th
+    return np.array([np.cos(h), *(np.sin(h) * axis)], float)
+
+def canonicalize_rotvec(rvec):
+    """
+    Optional: map to angle in (-pi, pi] for continuity.
+    If angle>pi, flip axis and use 2pi-angle.
+    """
+    rvec = np.asarray(rvec, float).reshape(3,)
+    th = np.linalg.norm(rvec)
+    if th < 1e-12:
+        return rvec
+    axis = rvec / th
+    # wrap angle to (-pi, pi]
+    th_wrapped = (th + np.pi) % (2*np.pi) - np.pi
+    # if th_wrapped is negative, flip axis to keep angle positive-ish
+    if th_wrapped < 0:
+        th_wrapped = -th_wrapped
+        axis = -axis
+    return axis * th_wrapped
+
+def unpack_pose_ur_rotvec_L(p, canonicalize=True):
+    """
+    p = [x,y,z, rx,ry,rz, L] where r* is UR rotation vector (rad)
+    returns r_src (3,), q_src wxyz (4,), L (float)
+    """
     p = np.asarray(p, float).ravel()
     assert p.size == 7
+
     r_src = p[0:3]
-    roll, pitch, yaw = p[3:6]
-    L = float(p[6])
+    rvec  = p[3:6]
+    L     = float(p[6])
 
-    # IMPORTANT: wrap angles here so Euler->quat is consistent step-to-step
-    roll  = wrap_pi(roll)
-    pitch = np.clip(pitch, -np.pi/2, np.pi/2)  # if that's your chosen constraint
-    yaw   = wrap_pi(yaw)
+    if canonicalize:
+        rvec = canonicalize_rotvec(rvec)
 
-    R = R_from_rpy_zyx(roll, pitch, yaw)
-    q_src = rot_to_quat_wxyz(R)
+    q_src = rotvec_to_quat_wxyz(rvec)
+    q_src /= (np.linalg.norm(q_src) + 1e-12)
     return r_src, q_src, L
+
+# def unpack_pose_euler_L(p):
+#     p = np.asarray(p, float).ravel()
+#     assert p.size == 7
+#     r_src = p[0:3]
+#     roll, pitch, yaw = p[3:6]
+#     L = float(p[6])
+
+#     # IMPORTANT: wrap angles here so Euler->quat is consistent step-to-step
+#     roll  = wrap_pi(roll)
+#     pitch = np.clip(pitch, -np.pi/2, np.pi/2)  # if that's your chosen constraint
+#     yaw   = wrap_pi(yaw)
+
+#     R = R_from_rpy_zyx(roll, pitch, yaw)
+#     q_src = rot_to_quat_wxyz(R)
+#     return r_src, q_src, L
 def quat_to_rot_wxyz(q):
     """Quaternion q in [w,x,y,z]"""
     q = np.asarray(q, float).ravel()

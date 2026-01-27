@@ -3,6 +3,7 @@ import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_to_rot
 from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz
+from scipy.spatial.transform import Rotation as Rot
 def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z_over):
     plt.figure()
     plt.plot(angles_deg, 1e3*np.array(tip_y_front), marker='o', label="Front magnetised at 30 deg")
@@ -218,13 +219,10 @@ def plot_mpc_state_3d(model, m_body, p_pose7, x_tip,
     assert x_tip.size == 3
 
     r_mag = p_pose7[0:3]
-    roll, pitch, yaw = p_pose7[3:6]
     L = float(p_pose7[6])
+    rvec = p_pose7[3:6]
+    Rsrc = Rot.from_rotvec(rvec).as_matrix()
 
-    # Call the SAME forward as your forward_cosserat_from_pose_euler_L
-    # but here we want the full output to draw the backbone.
-    # We reconstruct q_src the same way your unpack_pose_euler_L does.
-    Rsrc = R_from_rpy(roll, pitch, yaw)
 
     # robust rot->quat not needed for plotting, but model.forward expects q_src quaternion.
     # We'll implement a minimal rot->quat here:

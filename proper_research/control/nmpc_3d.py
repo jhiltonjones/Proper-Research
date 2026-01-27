@@ -207,7 +207,7 @@ class nmpc_controller_tipxyz_pose7:
         X = np.zeros((self.Np, self.n), float)
         for k in range(self.Np):
             xk = np.asarray(self.forward_tip_fn(p_seq[k]), float).reshape(self.n,)
-            if self.use_offset_free:
+            if self.use_offset_free: 
                 xk = xk + self.d
             X[k] = xk
         return p_seq, X

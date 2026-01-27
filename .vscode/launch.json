@@ -110,6 +110,14 @@
             "module": "proper_research.control.nmpc_3d",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run scrap",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scrap",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
 
     ]

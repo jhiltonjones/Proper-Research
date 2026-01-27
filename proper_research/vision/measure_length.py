@@ -39,7 +39,7 @@ CHECKERBOARD_PATTERN_SIZE = (
 #     cv2.imwrite(filename, frame)
 #     return filename
 def new_capture(filename="focused_image.jpg",
-                cam_index=2,
+                cam_index=0,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=15,
                 exposure=50.0,     # try 200..5000 initially

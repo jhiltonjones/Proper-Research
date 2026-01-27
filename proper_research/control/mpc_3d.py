@@ -2,19 +2,17 @@ import numpy as np
 import osqp
 import scipy.sparse as sp
 from scipy.linalg import solve_discrete_are
-from proper_research.models.forward_model import make_forward_fn, make_jac_fn
 from proper_research.parameters import default_magnet_params
-from beam_direction_magnetisation.cosserat_6d_pose import CosseratForwardModel, make_m_local_fun_wire_tip
+from beam_direction_magnetisation.cosserat_6d_pose import CosseratForwardModel, make_m_local_fun_wire_tip, ur_pose6_to_T, T_to_p_quat_wxyz
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz, unpack_pose_euler_L, quat_to_rot_wxyz, rot_to_euler_zyx
+from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz, unpack_pose_ur_rotvec_L, quat_to_rot_wxyz, rot_to_euler_zyx
 from beam_direction_magnetisation.post_processing.post_processing import plot_mpc_state_3d
 mag_params = default_magnet_params()
 
 # p = [x,y,z, roll,pitch,yaw, L]
-p_min = np.array([ 0.00, -0.20, -0.20,  -np.pi, -np.pi/2, -np.pi,  0.03])
-p_max = np.array([ 0.30,  0.20,  0.20,  +np.pi, +np.pi/2, +np.pi,  0.08])
 
-u_max = np.array([ .05, .05, .05, np.deg2rad(30), np.deg2rad(30), np.deg2rad(45),  0.02])
+
+u_max = np.array([ .05, .05, .05, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
     1e-3, 1e-3, 1e-3,              # x,y,z
     np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  # roll,pitch,yaw
@@ -111,7 +109,7 @@ class mpc_controller_tipxy_LTI:
                  n_out=3,
                  n_u=7,
                 d_min_tip_mag=0.10,     # meters
-                 enable_tip_keepout=True,
+                 enable_tip_keepout=False,
                  d_alpha=0.15):
 
         # dimensions
@@ -552,7 +550,8 @@ class mpc_controller_tipxy_LTI:
 
         # update plant state using nonlinear forward model
         self.x = self.forward_tip_fn(self.p)
-
+        print(f"Pose inside mpc step is {self.p}")
+        print(f"X inside mpc step is {self.x}")
         # store warm-start for next MPC step
         if not infeas_final:
             self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
@@ -578,14 +577,14 @@ class mpc_controller_tipxy_LTI:
         return self.p.copy(), self.x.copy(), info
 
 
-def forward_cosserat_from_pose_euler_L(p, model, *, m_body):
-    r_src, q_src, L = unpack_pose_euler_L(p)
+def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
+    r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
     out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
-
     if not out["solved"]:
         return np.array([1e3, 1e3, 1e3], float)
-
     return np.asarray(out["p_tip"], float).reshape(3,)
+
+
 def numerical_jacobian_tip_xyz_pose(p, forward_fn, eps):
     p = np.asarray(p, float).ravel()
     eps = np.asarray(eps, float).ravel()
@@ -627,8 +626,9 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     u0 = info["u0"]
     X_pred = info["X_pred"]
     U_seq = info["U_seq"]
+    x_now = info["x_now"]
     pred_err = info.get("pred1_err", np.nan)
-    r_src, q_src, L = unpack_pose_euler_L(p_now)
+    r_src, q_src, L = unpack_pose_ur_rotvec_L(p_now)
     print(f"Pose is : {r_src} and Q is : {q_src}")
     R = quat_to_rot_wxyz(q_src)
     r2,p2,y2 = rot_to_euler_zyx(R)
@@ -638,7 +638,7 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     # p_now: [x,y,z, roll,pitch,yaw, L]
     print("   p_now:",
           f"x={p_now[0]:+.3f} y={p_now[1]:+.3f} z={p_now[2]:+.3f}  "
-          f"rpy(deg)=[{np.rad2deg(p_now[3]):+.1f},{np.rad2deg(p_now[4]):+.1f},{np.rad2deg(p_now[5]):+.1f}]  "
+          f"rpy(deg)=[{p_now[3]:+.1f},{p_now[4]:+.1f},{p_now[5]:+.1f}]  "
           f"L={p_now[6]:.3f}")
 
     print("   u0:",
@@ -664,7 +664,28 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
             print(f"   NL [{i}] ={X_nl[i]}   (vs lin pred {X_pred[i] if X_pred is not None else None})")
     x_lin1 = x_pre + mpc.dt * (J_fn(p_pre) @ info["u0"])
     print("   one-step lin check |x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
-    print()
+    print(f" X_now is: {x_now}")
+    print("--------------------------------------------------------------------")
+import numpy as np
+from scipy.spatial.transform import Rotation as Rot
+
+def ur_pose6_from_p_quat_wxyz(p_ur, q_wxyz):
+    """
+    p_ur:   (3,) position in UR base frame
+    q_wxyz: (4,) quaternion [w,x,y,z] in UR base frame
+
+    returns pose6: (6,) [x,y,z, rx,ry,rz] where r* is rotation vector (rad)
+    """
+    p_ur = np.asarray(p_ur, float).reshape(3,)
+    q_wxyz = np.asarray(q_wxyz, float).reshape(4,)
+
+    # scipy expects [x,y,z,w]
+    q_xyzw = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
+    q_xyzw /= (np.linalg.norm(q_xyzw) + 1e-12)
+
+    rvec = Rot.from_quat(q_xyzw).as_rotvec()  # (3,) axis-angle vector (rad)
+    return np.hstack([p_ur, rvec])
+
 def build_xref_from_path(path, k, Np):
     """
     path: (N,3)
@@ -674,29 +695,55 @@ def build_xref_from_path(path, k, Np):
     idx = np.clip(np.arange(k, k + Np), 0, N - 1)
     return path[idx]
 
+pivot_point = np.array([
+    0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
+    -3.116988654350607, 0.19059356279735162, 0.028215660130034903
+])
+start_point = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.116988654350607, 0.19059356279735162, 0.028215660130034903])
+
+
+T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
+p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+
+T_ur_mag = ur_pose6_to_T(start_point)       # UR TCP pose at magnet
+r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
 
 model = CosseratForwardModel(
-    p0=np.array([0.0, 0.0, 0.0]),
-    q0=np.array([1.0, 0.0, 0.0, 0.0]),
+    p0=p0_ur,
+    q0=q0_ur,
     Kinv_fun=Kbt_inv_profile,
     m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
-    m_moment=0.0,  # not used by this m_local_fun
-    n_nodes=120,
-    tol=1e-5    
-    )
+    m_moment=0.0,
+)
+
+# model = CosseratForwardModel(
+#     p0=np.array([0.0, 0.0, 0.0]),
+#     q0=np.array([1.0, 0.0, 0.0, 0.0]),
+#     Kinv_fun=Kbt_inv_profile,
+#     m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
+#     m_moment=0.0,  # not used by this m_local_fun
+#     n_nodes=120,
+#     tol=1e-5    
+#     )
 m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
-
-forward_tip_fn = lambda p: forward_cosserat_from_pose_euler_L(p, model, m_body=m_body)
+L0 = 0.05      
+forward_tip_fn = lambda p: forward_cosserat_from_pose_ur_rotvec_L(p, model, m_body=m_body)
 J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
-
+# p0 = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.116988654350607, 0.19059356279735162, 0.028215660130034903,L0])
+start_point_pose6 = start_point  # [x,y,z, rx,ry,rz]
+p0 = np.array([start_point_pose6[0], start_point_pose6[1], start_point_pose6[2],
+               start_point_pose6[3], start_point_pose6[4], start_point_pose6[5],
+               L0], float)
+p_min = np.array([ 0.2, -1, 0.2,  p0[3]-np.pi*2, p0[4]-np.pi*2, p0[5]-np.pi*2,  0.03])
+p_max = np.array([ 0.78,  1,  1.0,  p0[3]+np.pi*2, p0[4]+np.pi*2, p0[5]+np.pi*2,  0.08])
 mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
     dt=0.05,
-    Np=10,
+    Np=4,
     n_out=3,
     n_u=7,
-    w_xy=(150.0,150.0,150.0),
+    w_xy=(200.0,200.0,200.0),
     w_u=(1e-3,)*7,
     w_du=(1e-3,)*7,
     u_max=u_max,
@@ -706,31 +753,34 @@ mpc = mpc_controller_tipxy_LTI(
     use_offset_free=False
 )
 
-L0 = 0.05                      # 5 cm beam length
-d_tip_to_mag = 0.14            # 14 cm from tip
+                # 5 cm beam length
+# d_tip_to_mag = 0.14            # 14 cm from tip
 
-# "Straight beam" nominal tip position/direction assumption:
-tip0 = np.array([L0, 0.0, 0.0])
-a0   = np.array([1.0, 0.0, 0.0])  # aligned with +x
+# # "Straight beam" nominal tip position/direction assumption:
+# tip0 = np.array([L0, 0.0, 0.0])
+# a0   = np.array([1.0, 0.0, 0.0])  # aligned with +x
 
-r_src0 = tip0 + d_tip_to_mag * a0  # magnet center 14 cm in front of tip
+# r_src0 = tip0 + d_tip_to_mag * a0  # magnet center 14 cm in front of tip
 
-roll0 = 0.0
-pitch0 = 0.0
-yaw0 = 0.0
+# roll0 = 0.0
+# pitch0 = 0.0
+# yaw0 = 0.0
 
-p0 = np.array([r_src0[0], r_src0[1], r_src0[2], roll0, pitch0, yaw0, L0], dtype=float)
+# p0 = np.array([r_src0[0], r_src0[1], r_src0[2], roll0, pitch0, yaw0, L0], dtype=float)
+# from your known UR TCP pose6 for the magnet:
+
+
 mpc.set_initial_params(p0)
-x_target = np.array([0.04323858, 0.02329207, 0.00432832])
+x_target = np.array([0.7453072  ,-0.59366864 , 0.20739915])
 Np = mpc.Np
 xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
 p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
 x_start = mpc.x.copy()
-n=10
+n=20
 path = np.linspace(x_start, x_target, n)
-for k in range(n):
+for k in range(100):
     p_pre = mpc.p.copy()
     x_pre = mpc.x.copy()
 
@@ -741,6 +791,11 @@ for k in range(n):
                      print_horizon=10, do_nl_rollout=True)
 
     error = np.linalg.norm(x_target-x_post)
-    if error < 0.001 or k==n-1:
+    if error < 0.001:
         plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
+        print("UR pose6:", repr(p_post))
         break
+print("UR pose6:", repr(p_post))
+
+    
+    

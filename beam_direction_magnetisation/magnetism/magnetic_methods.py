@@ -65,5 +65,5 @@ def magnetic_wrench_density_cosserat_profile(p, q, s, m_ext, r_src, m_local_fun,
     f = magnetic_force_analytical(r_pts, m_pts.T, r_src, m_ext, r_min=r_min).T  # (3,N)
     # f=0*f
     tau = np.cross(m_pts.T, B.T).T         # (3,N)
-
+    # tau = tau*0
     return f, tau, B

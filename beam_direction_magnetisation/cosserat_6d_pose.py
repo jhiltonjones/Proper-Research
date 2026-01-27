@@ -452,54 +452,218 @@ def forward_cosserat_from_pose_euler_L(p, model, *, m_body, return_mode="tip_xyz
     if return_mode == "tip_xyz_bend":
         return np.array([p_tip[0], p_tip[1], p_tip[2],
                          float(out["theta_y"]), float(out["theta_z"])])
-    
+import numpy as np
+from scipy.spatial.transform import Rotation as Rot
+
+def ur_pose6_to_T(pose6):
+    """
+    UR RTDE TCP pose6: [x, y, z, rx, ry, rz]
+    where [rx,ry,rz] is rotation vector (Rodrigues), radians.
+    Returns 4x4 transform.
+    """
+    pose6 = np.asarray(pose6, float).ravel()
+    assert pose6.size == 6
+
+    p = pose6[:3]
+    rvec = pose6[3:6]
+
+    R = Rot.from_rotvec(rvec).as_matrix()
+
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = p
+    return T
+
+def T_to_p_quat_wxyz(T):
+    """
+    Convert 4x4 transform -> position (3,) and quaternion [w,x,y,z].
+    """
+    p = T[:3, 3].copy()
+    R = T[:3, :3]
+    q_xyzw = Rot.from_matrix(R).as_quat()  # returns [x,y,z,w]
+    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+    q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
+    return p, q_wxyz   
+import numpy as np
+from scipy.spatial.transform import Rotation as Rot
+
+# -----------------------------
+# UR Pose (RTDE) helpers
+# -----------------------------
+def ur_pose6_to_T(pose6):
+    """
+    UR RTDE TCP pose6: [x, y, z, rx, ry, rz]
+    where [rx,ry,rz] is rotation vector (axis-angle), radians.
+    Returns 4x4 transform.
+    """
+    pose6 = np.asarray(pose6, float).ravel()
+    if pose6.size != 6:
+        raise ValueError("Expected UR pose6 = [x,y,z,rx,ry,rz]")
+
+    p = pose6[:3]
+    rvec = pose6[3:6]
+    Rm = Rot.from_rotvec(rvec).as_matrix()
+
+    T = np.eye(4)
+    T[:3, :3] = Rm
+    T[:3, 3] = p
+    return T
+
+
+def T_to_p_quat_wxyz(T):
+    """
+    Convert 4x4 transform -> position (3,) and quaternion [w,x,y,z].
+    """
+    p = T[:3, 3].copy()
+    Rm = T[:3, :3]
+    q_xyzw = Rot.from_matrix(Rm).as_quat()  # [x,y,z,w]
+    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+    q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
+    return p, q_wxyz
+
+
+# -----------------------------
+# Build SIM frame from pivot+start
+# -----------------------------
+def build_T_sim_from_ur_using_two_points(pivot_pose6, start_pose6):
+    """
+    Creates a mapping T_sim_from_ur such that:
+      - pivot position maps to (0,0,0)
+      - start position maps to (+0.15, 0, 0)
+    while preserving right-handedness.
+
+    Orientation convention:
+      - sim +X axis points from pivot -> start
+      - sim +Z axis is chosen close to UR base +Z
+      - sim +Y completes a right-handed frame
+    """
+    pivot_pose6 = np.asarray(pivot_pose6, float).ravel()
+    start_pose6 = np.asarray(start_pose6, float).ravel()
+
+    p_pivot = pivot_pose6[:3]
+    p_start = start_pose6[:3]
+
+    d = p_start - p_pivot
+    dist = np.linalg.norm(d)
+    if dist < 1e-9:
+        raise ValueError("pivot_point and start_point positions are identical; cannot define +X axis.")
+
+    # Define sim X axis (in UR base coordinates)
+    x_hat = d / dist  # pivot->start direction
+
+    # Choose a reference "up" direction from UR base frame
+    up_ref = np.array([0.0, 0.0, 1.0])
+
+    # If x_hat is nearly parallel to up_ref, use Y as fallback
+    if abs(np.dot(x_hat, up_ref)) > 0.95:
+        up_ref = np.array([0.0, 1.0, 0.0])
+
+    # Build a right-handed basis: z_hat ⟂ x_hat, y_hat = z_hat × x_hat
+    z_hat = up_ref - np.dot(up_ref, x_hat) * x_hat
+    z_hat /= (np.linalg.norm(z_hat) + 1e-12)
+
+    y_hat = np.cross(z_hat, x_hat)
+    y_hat /= (np.linalg.norm(y_hat) + 1e-12)
+
+    # Recompute z_hat to ensure exact orthonormality
+    z_hat = np.cross(x_hat, y_hat)
+    z_hat /= (np.linalg.norm(z_hat) + 1e-12)
+
+    # Rotation mapping UR->SIM:
+    # p_sim = R_map (p_ur - p_pivot)
+    R_map = np.vstack([x_hat, y_hat, z_hat])  # rows are sim axes expressed in UR
+
+    t_map = -R_map @ p_pivot
+
+    T_sim_from_ur = np.eye(4)
+    T_sim_from_ur[:3, :3] = R_map
+    T_sim_from_ur[:3, 3] = t_map
+
+    return T_sim_from_ur, dist
+def make_T_from_p_quat_wxyz(p, q_wxyz):
+    """Build 4x4 transform from position p (3,) and quaternion [w,x,y,z]."""
+    p = np.asarray(p, float).reshape(3,)
+    q_wxyz = np.asarray(q_wxyz, float).reshape(4,)
+    # scipy expects [x,y,z,w]
+    q_xyzw = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], float)
+    Rm = Rot.from_quat(q_xyzw).as_matrix()
+
+    T = np.eye(4)
+    T[:3, :3] = Rm
+    T[:3, 3] = p
+    return T
+
+def T_to_ur_pose6(T):
+    """
+    Convert 4x4 transform into UR pose6: [x,y,z, rx,ry,rz]
+    where [rx,ry,rz] is rotation vector (axis-angle), radians.
+    """
+    p = T[:3, 3].copy()
+    Rm = T[:3, :3]
+    rvec = Rot.from_matrix(Rm).as_rotvec()
+    return np.hstack([p, rvec])
+
 if __name__ == "__main__":
+    DEBUG = True
+
+    pivot_point = np.array([
+        0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
+       -2.081278830177124,  2.3523542602060017, 0.040846003961920924
+    ])
+
+    start_point = np.array([
+        0.6336091530378535, -0.5654053885267907, 0.20700816061967686,
+       -2.081278830177124,  2.3523542602060017, 0.040846003961920924
+    ])
+    # 1) Build mapping UR->SIM once
+    T_sim_from_ur, dist = build_T_sim_from_ur_using_two_points(pivot_point, start_point)
+    T_ur_from_sim = np.linalg.inv(T_sim_from_ur)
+
+    if DEBUG:
+        print("UR distance pivot->start =", dist)
+
+    # 2) Map pivot into SIM -> base BCs
+    T_sim_pivot = T_sim_from_ur @ ur_pose6_to_T(pivot_point)
+    p0_sim, q0_sim = T_to_p_quat_wxyz(T_sim_pivot)
+
+    if DEBUG:
+        print("Pivot mapped to SIM p0_sim =", p0_sim)
+        T_sim_start = T_sim_from_ur @ ur_pose6_to_T(start_point)
+        p_start_sim, _ = T_to_p_quat_wxyz(T_sim_start)
+        print("Start mapped to SIM p =", p_start_sim)
+
+    # 3) Build model
     model = CosseratForwardModel(
-        p0=np.array([0.0, 0.0, 0.0]),
-        q0=np.array([1.0, 0.0, 0.0, 0.0]),
+        p0=p0_sim,
+        q0=q0_sim,
         Kinv_fun=Kbt_inv_profile,
         m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
-        m_moment=0.0,  # not used by this m_local_fun
+        m_moment=0.0,
         n_nodes=120,
-        tol=1e-5    
-        )
-    p0 = np.array([0.0, 0.0, 0.0])
-    L_cmd = 0.05
-    rho = 0.12
-
-    r_tip_nominal = p0 + np.array([L_cmd, 0.0, 0.0])
-
-    # angles you want to sweep
-    theta_orbit_z = np.deg2rad(50.0)   # orbit around tip about world z
-    beta_spin     = np.deg2rad(0.0)   # spin around magnet's own z
-    theta_orbit_y = 30.0                # keep 0 if you only want z-orbit in plane
-
-
-
-
-    # --- your usage ---
-    r_src_cmd, q_src_cmd = epm_pose_orbit_and_spin(
-        r_tip_nominal,
-        rho=rho,
-        theta_orbit_z=theta_orbit_z,
-        beta_spin=beta_spin,
-        theta_orbit_y=theta_orbit_y
+        tol=1e-5
     )
-    # r_src_cmd = np.array([ 0.07095213, 0.12030573, 0.03433744])
-    # q_src_cmd = np.array([9.98602493e-01 -4.49818333e-04, -8.61497118e-03, -5.21405933e-02])
-    pose6 = pose6_from_r_quat_wxyz(r_src_cmd, q_src_cmd)
 
-    print("Pos of magnet:", r_src_cmd)
-    print("Quat (qw,qx,qy,qz):", q_src_cmd)
-    print("Euler 6D pose [x,y,z,roll,pitch,yaw]:", pose6)
-    print("Euler deg:", np.rad2deg(pose6[3:6]))
+    L_cmd = 0.05
+    rho = 0.1
+    r_tip_nominal = p0_sim + np.array([L_cmd, 0.0, 0.0])
+    r_pivot_sim = p0_sim
+    r_src_cmd, q_src_cmd = epm_pose_orbit_and_spin(
+        r_pivot_sim, rho=rho,
+        theta_orbit_z=np.deg2rad(40.0),
+        beta_spin=np.deg2rad(0.0),
+        theta_orbit_y=0.0
+    )
 
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])  # dipole in magnet BODY frame (x-axis)
-
+    # 5) Forward solve
+    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     out = model.forward(L=L_cmd, r_src=r_src_cmd, q_src=q_src_cmd, m_body=m_body)
 
-    print("tip:", out["p_tip"])
-    print("bend deg:", np.rad2deg(out["theta_y"]), np.rad2deg(out["theta_z"]))
-    print("|B_tip|:", out["B_tip"])
-    print("|F_net|:", np.linalg.norm(out["F_net"]))
-    print("|T_net|:", np.linalg.norm(out["T_net"]))
+    # 6) Convert SIM magnet pose back to UR command pose
+    T_sim_mag_cmd = make_T_from_p_quat_wxyz(r_src_cmd, q_src_cmd)
+
+    T_tcp_from_mag = np.eye(4)  # mount correction, identity for now
+    T_ur_mag_cmd = T_ur_from_sim @ T_sim_mag_cmd @ T_tcp_from_mag
+    ur_mag_pose6_cmd = T_to_ur_pose6(T_ur_mag_cmd)
+
+    if DEBUG:
+        print("UR magnet pose6 cmd:", ur_mag_pose6_cmd)

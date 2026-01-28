@@ -212,7 +212,11 @@ class mpc_controller_tipxy_LTI:
         r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
         Rmap = Spos @ A_p                            # (Np*3, Np*m)
 
+<<<<<<< HEAD
         X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)
+=======
+        X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)   # (Np*n,1)
+>>>>>>> 541ec66 (update mpc control)
 
         # predicted p along horizon under current guess:
         p_guess = p0_stack.reshape(-1, 1) + A_p @ U_guess_vec.reshape(-1, 1)  # (Np*m,1)
@@ -582,6 +586,7 @@ class mpc_controller_tipxy_LTI:
         else:
             U_seq = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
             u0 = U_seq[0, :]
+<<<<<<< HEAD
 
             # Use SQP-consistent prediction baseline from the final linearization
             if (Mc_last is None) or (X_aff_last is None):
@@ -595,6 +600,15 @@ class mpc_controller_tipxy_LTI:
 
                 p_next_true = self._clamp_p(p_prev + self.dt*u0)
                 x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
+=======
+            xk = self.x.reshape(self.n, 1)
+            X0_stack = (Mx @ xk).reshape(Np*n, 1)
+            if self.use_offset_free:
+                X0_stack = X0_stack + self._disturbance_stack(self.d)
+            X_pred_stack = (X0_stack + Mc @ U_opt_vec.reshape(-1, 1))
+            X_pred = X_pred_stack.reshape(Np, n)
+            infeas_final = False
+>>>>>>> 541ec66 (update mpc control)
         p_next_true = self._clamp_p(p_prev + self.dt*u0)
         x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
         if self.use_offset_free:
@@ -631,8 +645,11 @@ class mpc_controller_tipxy_LTI:
             B_first=B_first.copy(),
             p_lin=p_lin,
             p_first=p_first,
+<<<<<<< HEAD
             X_aff_last = X_aff_last.copy() if X_aff_last is not None else None,
             Mc_last = Mc_last.copy() if Mc_last is not None else None,
+=======
+>>>>>>> 541ec66 (update mpc control)
 
         )
         return self.p.copy(), self.x.copy(), info
@@ -701,6 +718,10 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     print("   u0:",
         f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
         f"d_rotvec=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}")
+<<<<<<< HEAD
+=======
+
+>>>>>>> 541ec66 (update mpc control)
 
 
     Mc_last = info.get("Mc_last", None)
@@ -717,6 +738,19 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
             np.linalg.norm(x1_from_blocks - X_pred[0]))
 
 
+<<<<<<< HEAD
+=======
+    if do_nl_rollout and (U_seq is not None) and np.all(np.isfinite(U_seq)):
+        P_nl, X_nl = rollout_open_loop_from_plan(mpc, p_now.copy(), U_seq)
+        ph2 = min(print_horizon, X_nl.shape[0])
+        for i in range(ph2):
+            print(f"   NL [{i}] ={X_nl[i]}   (vs lin pred {X_pred[i] if X_pred is not None else None})")
+        x_lin1 = x_pre + info["B_first"] @ info["u0"]
+        print("|x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
+        print("|p_first - p_pre| =", np.linalg.norm(info["p_first"] - info["p_lin"]))
+
+
+>>>>>>> 541ec66 (update mpc control)
     print(f" X_now is: {x_now}")
     print("--------------------------------------------------------------------")
 
@@ -776,13 +810,21 @@ mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
     dt=0.05,
-    Np=4,
+    Np=10,
     n_out=3,
     n_u=7,
+<<<<<<< HEAD
     w_xy=(1, 1, 1),
     w_u=w_u,
     w_du=w_du,
     model_mode="lti",
+=======
+    w_xy=(1e3, 1e3, 1e3),
+    w_u  = (1e-8,) * 7,
+    w_du = (0.0,) * 7,
+
+    model_mode= "lti",
+>>>>>>> 541ec66 (update mpc control)
     u_max=u_max,
     p_min=p_min,
     p_max=p_max,
@@ -790,7 +832,10 @@ mpc = mpc_controller_tipxy_LTI(
     use_offset_free=False
 )
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 541ec66 (update mpc control)
 
 mpc.set_initial_params(p0)
 x_target = np.array([ 0.74374346, -0.54484699 , 0.1895042])
@@ -800,9 +845,15 @@ p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
 x_start = mpc.x.copy()
+<<<<<<< HEAD
 n=30
 path = np.linspace(x_start, x_target, n)
 for k in range(40):
+=======
+n=10
+path = np.linspace(x_start, x_target, n)
+for k in range(10):
+>>>>>>> 541ec66 (update mpc control)
     p_pre = mpc.p.copy()
     x_pre = mpc.x.copy()
 

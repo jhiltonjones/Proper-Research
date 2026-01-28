@@ -54,7 +54,11 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         )
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
+<<<<<<< HEAD
         f_ext = f_ext + (f_g)
+=======
+        f_ext = f_ext + f_g
+>>>>>>> 541ec66 (update mpc control)
         # f_ext = np.zeros_like(p)       # same shape as p (3,N)
         # tau_ext = np.zeros_like(p)     # (3,N)
         n_s = -f_ext

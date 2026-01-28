@@ -5,7 +5,7 @@ import numpy as np
 
 theta_orbit_z = np.deg2rad(0.0)   # orbit around tip about world z
 beta_spin     = np.deg2rad(0.0)   # spin around magnet's own z
-theta_orbit_y = 0.0                # keep 0 if you only want z-orbit in plane
+theta_orbit_y = 0.0                
 
 test = np.array([ 0.70700471, -0.62968415,  0.45700816,  2.75324056, -1.49480981,
        -0.03850979])

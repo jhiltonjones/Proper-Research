@@ -5,21 +5,20 @@ from scipy.linalg import solve_discrete_are
 from proper_research.parameters import default_magnet_params
 from beam_direction_magnetisation.cosserat_6d_pose import CosseratForwardModel, make_m_local_fun_wire_tip, ur_pose6_to_T, T_to_p_quat_wxyz
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz, unpack_pose_ur_rotvec_L, quat_to_rot_wxyz, rot_to_euler_zyx
+from beam_direction_magnetisation.quarternions.shared_rotations import unpack_pose_ur_rotvec_L
 from beam_direction_magnetisation.post_processing.post_processing import plot_mpc_state_3d
+from scipy.spatial.transform import Rotation as Rot
 mag_params = default_magnet_params()
 
-# p = [x,y,z, roll,pitch,yaw, L]
 
 
 u_max = np.array([ .05, .05, .05, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
     1e-3, 1e-3, 1e-3,              # x,y,z
-    np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  # roll,pitch,yaw
+    np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  
     5e-4                              # L
 ], dtype=float)
-def wrap_pi(a):
-    return (a + np.pi) % (2*np.pi) - np.pi
+
 def dare_stabilising_K(A, B, Q, R):
     P = solve_discrete_are(A, B, Q, R)
     K = -np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
@@ -108,31 +107,29 @@ class mpc_controller_tipxy_LTI:
                  use_offset_free=True,
                  n_out=3,
                  n_u=7,
-                d_min_tip_mag=0.10,     # meters
+                 model_mode = "ltv",
+                 d_min_tip_mag=0.10,  
                  enable_tip_keepout=False,
                  d_alpha=0.15):
 
-        # dimensions
         self.n = int(n_out)
         self.m = int(n_u)
 
-        # store functions
         self.Jxy_fn = Jxy_fn
         self.forward_tip_fn = forward_tip_fn
 
-        # horizon / timestep
         self.dt = float(dt)
         self.Np = int(Np)
 
-        # dynamics (simple integrator)
         self.A = np.eye(self.n)
 
-        # tube constraint parameter
+        # tube constraint 
         self.band_xy = float(band_xy)
 
-        # warm start
         self.U_warm = None
-
+        self.model_mode = str(model_mode).lower()
+        if self.model_mode not in ("lti", "ltv"):
+            raise ValueError("model_mode must be 'lti' or 'ltv'")
         # weights defaults
         if w_u is None:
             w_u = (1e-3,) * self.m
@@ -154,7 +151,6 @@ class mpc_controller_tipxy_LTI:
         self.R  = np.diag(w_u)
         self.Rd = np.diag(w_du)
 
-        # bounds defaults
         if u_max is None:
             u_max = np.full(self.m, np.inf)
         if p_min is None:
@@ -170,13 +166,11 @@ class mpc_controller_tipxy_LTI:
         if self.p_min.size != self.m: raise ValueError("p_min wrong length")
         if self.p_max.size != self.m: raise ValueError("p_max wrong length")
 
-        # state / params
         self.d  = np.zeros(self.n, float)
         self.p  = None
         self.x  = None
         self.Qf = None
 
-        # SQP / offset-free
         self.N_sqp = int(N_sqp)
         self.use_offset_free = bool(use_offset_free)
         self.d_alpha = float(d_alpha)
@@ -187,7 +181,6 @@ class mpc_controller_tipxy_LTI:
         self.d_min_tip_mag = float(d_min_tip_mag)
         self.enable_tip_keepout = bool(enable_tip_keepout)
 
-        # selector: picks magnet position (x,y,z) from p = [x,y,z,roll,pitch,yaw,L]
         self.Sel_pos = np.zeros((3, self.m))
         self.Sel_pos[0, 0] = 1.0
         self.Sel_pos[1, 1] = 1.0
@@ -219,8 +212,6 @@ class mpc_controller_tipxy_LTI:
         r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
         Rmap = Spos @ A_p                            # (Np*3, Np*m)
 
-        # predicted x along horizon under current guess:
-        # X_guess = X0 + Mc U_guess
         X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)   # (Np*n,1)
 
         # predicted p along horizon under current guess:
@@ -228,7 +219,7 @@ class mpc_controller_tipxy_LTI:
         r_guess = (Spos @ p_guess).reshape(Np, 3)                              # (Np,3)
 
         # Extract x_guess per step
-        x_guess = X_guess.reshape(Np, n)[:, :3]  # n=3 in your use-case, keep [:3] for safety
+        x_guess = X_guess.reshape(Np, n)[:, :3]  
 
         # Build one linear constraint per horizon step
         A_rows = []
@@ -296,7 +287,6 @@ class mpc_controller_tipxy_LTI:
         self.U_warm = None
 
     def _compute_Qtil(self, B0):
-        # terminal cost via DARE with B0 (first-step)
         _, P = dare_stabilising_K(self.A, B0, self.Q, self.R)
         self.Qf = P
 
@@ -335,10 +325,10 @@ class mpc_controller_tipxy_LTI:
 
     def _clamp_p(self, p):
         p = np.minimum(np.maximum(p, self.p_min), self.p_max)
-        p[3] = wrap_pi(p[3])  # roll
-        p[5] = wrap_pi(p[5])  # yaw
-        # pitch often kept within [-pi/2, pi/2] as you already do
+        # optional: keep a canonical rotvec representation for continuity
+        # p[3:6] = canonicalize_rotvec(p[3:6])
         return p
+
 
     def _p_seq_from_U(self, p0, U_seq):
         """
@@ -353,25 +343,65 @@ class mpc_controller_tipxy_LTI:
             p_list.append(p_running.copy())
         return np.array(p_list)
 
-    def _build_ltv_prediction_mats(self, p0, U_guess):
-        """
-        Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
-        """
-        if U_guess is None:
-            U_guess = np.zeros((self.Np, self.m))
+    # def _build_ltv_prediction_mats(self, p0, U_guess):
+    #     """
+    #     Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
+    #     """
+    #     if U_guess is None:
+    #         U_guess = np.zeros((self.Np, self.m))
 
-        p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
+    #     p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
+    #     B_list = []
+    #     J_list = []
+    #     for i in range(self.Np):
+    #         Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
+    #         if Ji.shape != (self.n, self.m):
+    #             raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
+    #         J_list.append(Ji)
+    #         B_list.append(self.dt * Ji)
+
+    #     Mx, Mc = seq_mat_ltv(self.A, B_list)
+    #     return p_seq, J_list, B_list, Mx, Mc
+    def _build_prediction_mats(self, p0, U_guess):
+        """
+        Returns: p_seq, Mx, Mc, B0
+        - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
+        - Mx, Mc: stacked prediction matrices
+        - B0: first-step input matrix (for terminal cost DARE)
+        """
+        n, m, Np = self.n, self.m, self.Np
+
+        if self.model_mode == "lti":
+            # Constant Jacobian at current p0
+            J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
+            if J0.shape != (n, m):
+                raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
+            B0 = self.dt * J0
+
+            Mx, Mc = seq_mat_lti(self.A, B0, Np)
+
+            # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
+            if U_guess is None:
+                U_guess = np.zeros((Np, m))
+            p_seq = self._p_seq_from_U(p0, U_guess)
+
+            return p_seq, Mx, Mc, B0
+
+        # --- LTV ---
+        if U_guess is None:
+            U_guess = np.zeros((Np, m))
+
+        p_seq = self._p_seq_from_U(p0, U_guess)  # p1..pNp
         B_list = []
-        J_list = []
-        for i in range(self.Np):
+        for i in range(Np):
             Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
-            if Ji.shape != (self.n, self.m):
-                raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
-            J_list.append(Ji)
+            if Ji.shape != (n, m):
+                raise ValueError(f"Jacobian must be {(n,m)} but got {Ji.shape}")
             B_list.append(self.dt * Ji)
 
         Mx, Mc = seq_mat_ltv(self.A, B_list)
-        return p_seq, J_list, B_list, Mx, Mc
+        B0 = B_list[0]
+        return p_seq, Mx, Mc, B0
 
     def step(self, xref_seq, x_meas=None):
         """
@@ -417,10 +447,14 @@ class mpc_controller_tipxy_LTI:
         for it in range(self.N_sqp):
             # build LTV model based on current U_guess
             p0 = self.p.copy()
-            p_seq, J_list, B_list, Mx, Mc = self._build_ltv_prediction_mats(p0, U_guess)
+            p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
 
-            # stage+terminal cost
-            Qtil = self._compute_Qtil(B_list[0])
+            B_first = B0         
+            p_lin   = p_prev.copy()
+            p_first = p_seq[0].copy()
+
+            Qtil = self._compute_Qtil(B0)
+            
             Rtil = np.kron(np.eye(Np), self.R)
 
             # delta-u penalty
@@ -522,7 +556,6 @@ class mpc_controller_tipxy_LTI:
             # update guess for next SQP iteration
             U_guess = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
 
-        # --- apply first control action ---
         if U_opt_vec is None:
             u0 = np.zeros(m)
             U_seq = np.zeros((Np, m))
@@ -531,8 +564,6 @@ class mpc_controller_tipxy_LTI:
         else:
             U_seq = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
             u0 = U_seq[0, :]
-            # build final predicted trajectory using last Mc/Mx
-            # note: Mc/Mx correspond to last SQP iteration
             xk = self.x.reshape(self.n, 1)
             X0_stack = (Mx @ xk).reshape(Np*n, 1)
             if self.use_offset_free:
@@ -573,6 +604,10 @@ class mpc_controller_tipxy_LTI:
             x_next_true = x_next_true.copy(),
             X_pred0 = X_pred[0].copy(),
             pred0_vec_err = (x_next_true - X_pred[0]).copy(),
+            B_first=B_first.copy(),
+            p_lin=p_lin,
+            p_first=p_first,
+
         )
         return self.p.copy(), self.x.copy(), info
 
@@ -630,21 +665,17 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     pred_err = info.get("pred1_err", np.nan)
     r_src, q_src, L = unpack_pose_ur_rotvec_L(p_now)
     print(f"Pose is : {r_src} and Q is : {q_src}")
-    R = quat_to_rot_wxyz(q_src)
-    r2,p2,y2 = rot_to_euler_zyx(R)
-    r2,p2,y2 = wrap_pi(r2), wrap_pi(p2), wrap_pi(y2)
-    print("   euler-from-q(deg):", np.rad2deg([r2,p2,y2]))
-    print("   euler-state(deg) :", np.rad2deg(p_now[3:6]))
-    # p_now: [x,y,z, roll,pitch,yaw, L]
-    print("   p_now:",
-          f"x={p_now[0]:+.3f} y={p_now[1]:+.3f} z={p_now[2]:+.3f}  "
-          f"rpy(deg)=[{p_now[3]:+.1f},{p_now[4]:+.1f},{p_now[5]:+.1f}]  "
-          f"L={p_now[6]:.3f}")
+    rvec = p_now[3:6]
+    theta_deg = np.rad2deg(np.linalg.norm(rvec))
+
+    print(f"   p_now: x={p_now[0]:+.3f} y={p_now[1]:+.3f} z={p_now[2]:+.3f}  "
+        f"rotvec=[{rvec[0]:+.3f},{rvec[1]:+.3f},{rvec[2]:+.3f}] |theta|={theta_deg:.1f}deg  "
+        f"L={p_now[6]:.3f}")
 
     print("   u0:",
-          f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
-          f"d_rpy(deg/s)=[{np.rad2deg(u0[3]):+.2f},{np.rad2deg(u0[4]):+.2f},{np.rad2deg(u0[5]):+.2f}]  "
-          f"dL={u0[6]:+.5f}")
+        f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
+        f"d_rotvec=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}")
+
 
     print(f"   pred1_err (one-step tip mismatch): {pred_err}")
 
@@ -656,35 +687,19 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
     else:
         print("   X_pred NaNs or missing -> infeasible/failed QP")
 
-    # nonlinear open-loop rollout using planned U_seq
     if do_nl_rollout and (U_seq is not None) and np.all(np.isfinite(U_seq)):
         P_nl, X_nl = rollout_open_loop_from_plan(mpc, p_now.copy(), U_seq)
         ph2 = min(print_horizon, X_nl.shape[0])
         for i in range(ph2):
             print(f"   NL [{i}] ={X_nl[i]}   (vs lin pred {X_pred[i] if X_pred is not None else None})")
-    x_lin1 = x_pre + mpc.dt * (J_fn(p_pre) @ info["u0"])
-    print("   one-step lin check |x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
+        x_lin1 = x_pre + info["B_first"] @ info["u0"]
+        print("|x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
+        print("|p_first - p_pre| =", np.linalg.norm(info["p_first"] - info["p_lin"]))
+
+
     print(f" X_now is: {x_now}")
     print("--------------------------------------------------------------------")
-import numpy as np
-from scipy.spatial.transform import Rotation as Rot
 
-def ur_pose6_from_p_quat_wxyz(p_ur, q_wxyz):
-    """
-    p_ur:   (3,) position in UR base frame
-    q_wxyz: (4,) quaternion [w,x,y,z] in UR base frame
-
-    returns pose6: (6,) [x,y,z, rx,ry,rz] where r* is rotation vector (rad)
-    """
-    p_ur = np.asarray(p_ur, float).reshape(3,)
-    q_wxyz = np.asarray(q_wxyz, float).reshape(4,)
-
-    # scipy expects [x,y,z,w]
-    q_xyzw = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], dtype=float)
-    q_xyzw /= (np.linalg.norm(q_xyzw) + 1e-12)
-
-    rvec = Rot.from_quat(q_xyzw).as_rotvec()  # (3,) axis-angle vector (rad)
-    return np.hstack([p_ur, rvec])
 
 def build_xref_from_path(path, k, Np):
     """
@@ -705,8 +720,6 @@ start_point = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.11698865435060
 T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
 p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
-T_ur_mag = ur_pose6_to_T(start_point)       # UR TCP pose at magnet
-r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
 
 model = CosseratForwardModel(
     p0=p0_ur,
@@ -740,34 +753,20 @@ mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
     dt=0.05,
-    Np=4,
+    Np=10,
     n_out=3,
     n_u=7,
-    w_xy=(200.0,200.0,200.0),
-    w_u=(1e-3,)*7,
-    w_du=(1e-3,)*7,
+    w_xy=(1e3, 1e3, 1e3),
+    w_u  = (1e-8,) * 7,
+    w_du = (0.0,) * 7,
+
+    model_mode= "lti",
     u_max=u_max,
     p_min=p_min,
     p_max=p_max,
-    N_sqp=2,
+    N_sqp=4,
     use_offset_free=False
 )
-
-                # 5 cm beam length
-# d_tip_to_mag = 0.14            # 14 cm from tip
-
-# # "Straight beam" nominal tip position/direction assumption:
-# tip0 = np.array([L0, 0.0, 0.0])
-# a0   = np.array([1.0, 0.0, 0.0])  # aligned with +x
-
-# r_src0 = tip0 + d_tip_to_mag * a0  # magnet center 14 cm in front of tip
-
-# roll0 = 0.0
-# pitch0 = 0.0
-# yaw0 = 0.0
-
-# p0 = np.array([r_src0[0], r_src0[1], r_src0[2], roll0, pitch0, yaw0, L0], dtype=float)
-# from your known UR TCP pose6 for the magnet:
 
 
 mpc.set_initial_params(p0)
@@ -778,9 +777,9 @@ p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
 x_start = mpc.x.copy()
-n=20
+n=10
 path = np.linspace(x_start, x_target, n)
-for k in range(100):
+for k in range(10):
     p_pre = mpc.p.copy()
     x_pre = mpc.x.copy()
 
@@ -788,7 +787,7 @@ for k in range(100):
     p_post, x_post, info = mpc.step(xref_seq, x_meas=None)
 
     debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
-                     print_horizon=10, do_nl_rollout=True)
+                     print_horizon=mpc.Np, do_nl_rollout=True)
 
     error = np.linalg.norm(x_target-x_post)
     if error < 0.001:

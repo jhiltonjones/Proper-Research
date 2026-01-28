@@ -12,12 +12,14 @@ mag_params = default_magnet_params()
 
 
 
+
 u_max = np.array([ .05, .05, .05, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
     1e-3, 1e-3, 1e-3,              # x,y,z
     np.deg2rad(0.5), np.deg2rad(0.5), np.deg2rad(0.5),  
     5e-4                              # L
 ], dtype=float)
+
 
 def dare_stabilising_K(A, B, Q, R):
     P = solve_discrete_are(A, B, Q, R)
@@ -124,9 +126,13 @@ class mpc_controller_tipxy_LTI:
         self.A = np.eye(self.n)
 
         # tube constraint 
+        # tube constraint 
         self.band_xy = float(band_xy)
 
         self.U_warm = None
+        self.model_mode = str(model_mode).lower()
+        if self.model_mode not in ("lti", "ltv"):
+            raise ValueError("model_mode must be 'lti' or 'ltv'")
         self.model_mode = str(model_mode).lower()
         if self.model_mode not in ("lti", "ltv"):
             raise ValueError("model_mode must be 'lti' or 'ltv'")
@@ -212,17 +218,14 @@ class mpc_controller_tipxy_LTI:
         r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
         Rmap = Spos @ A_p                            # (Np*3, Np*m)
 
-<<<<<<< HEAD
         X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)
-=======
-        X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)   # (Np*n,1)
->>>>>>> 541ec66 (update mpc control)
 
         # predicted p along horizon under current guess:
         p_guess = p0_stack.reshape(-1, 1) + A_p @ U_guess_vec.reshape(-1, 1)  # (Np*m,1)
         r_guess = (Spos @ p_guess).reshape(Np, 3)                              # (Np,3)
 
         # Extract x_guess per step
+        x_guess = X_guess.reshape(Np, n)[:, :3]  
         x_guess = X_guess.reshape(Np, n)[:, :3]  
 
         # Build one linear constraint per horizon step
@@ -331,7 +334,10 @@ class mpc_controller_tipxy_LTI:
         p = np.minimum(np.maximum(p, self.p_min), self.p_max)
         # optional: keep a canonical rotvec representation for continuity
         # p[3:6] = canonicalize_rotvec(p[3:6])
+        # optional: keep a canonical rotvec representation for continuity
+        # p[3:6] = canonicalize_rotvec(p[3:6])
         return p
+
 
 
     def _p_seq_from_U(self, p0, U_seq):
@@ -392,6 +398,51 @@ class mpc_controller_tipxy_LTI:
             return p_seq, Mx, Mc, B0
 
         # --- LTV ---
+    # def _build_ltv_prediction_mats(self, p0, U_guess):
+    #     """
+    #     Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
+    #     """
+    #     if U_guess is None:
+    #         U_guess = np.zeros((self.Np, self.m))
+
+    #     p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
+    #     B_list = []
+    #     J_list = []
+    #     for i in range(self.Np):
+    #         Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
+    #         if Ji.shape != (self.n, self.m):
+    #             raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
+    #         J_list.append(Ji)
+    #         B_list.append(self.dt * Ji)
+
+    #     Mx, Mc = seq_mat_ltv(self.A, B_list)
+    #     return p_seq, J_list, B_list, Mx, Mc
+    def _build_prediction_mats(self, p0, U_guess):
+        """
+        Returns: p_seq, Mx, Mc, B0
+        - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
+        - Mx, Mc: stacked prediction matrices
+        - B0: first-step input matrix (for terminal cost DARE)
+        """
+        n, m, Np = self.n, self.m, self.Np
+
+        if self.model_mode == "lti":
+            # Constant Jacobian at current p0
+            J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
+            if J0.shape != (n, m):
+                raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
+            B0 = self.dt * J0
+
+            Mx, Mc = seq_mat_lti(self.A, B0, Np)
+
+            # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
+            if U_guess is None:
+                U_guess = np.zeros((Np, m))
+            p_seq = self._p_seq_from_U(p0, U_guess)
+
+            return p_seq, Mx, Mc, B0
+
+        # --- LTV ---
         if U_guess is None:
             U_guess = np.zeros((Np, m))
 
@@ -406,6 +457,7 @@ class mpc_controller_tipxy_LTI:
         Mx, Mc = seq_mat_ltv(self.A, B_list)
         B0 = B_list[0]
         return p_seq, Mx, Mc, B0
+
 
     def step(self, xref_seq, x_meas=None):
         """
@@ -435,6 +487,8 @@ class mpc_controller_tipxy_LTI:
         Mc_last = None
         X_aff_last = None
         p_seq_last = None
+        X_nom_last = None
+
         xref_seq = np.asarray(xref_seq, float).reshape(Np, self.n)
         xref_stack = xref_seq.reshape(Np*self.n, 1)
         xk = self.x.reshape(self.n, 1)
@@ -460,6 +514,7 @@ class mpc_controller_tipxy_LTI:
             p_first = p_seq[0].copy()
 
             Qtil = self._compute_Qtil(B0)
+        
             
             Rtil = np.kron(np.eye(Np), self.R)
 
@@ -494,6 +549,7 @@ class mpc_controller_tipxy_LTI:
             Mc_last = Mc
             X_aff_last = X_aff
             p_seq_last = p_seq
+            X_nom_last = X_nom
             # Now prediction is X_aff + Mc U
             H = 2.0 * (Mc.T @ Qtil @ Mc + Rtil + H_du)
             f = 2.0 * (Mc.T @ Qtil @ (X_aff - xref_stack))
@@ -586,7 +642,6 @@ class mpc_controller_tipxy_LTI:
         else:
             U_seq = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
             u0 = U_seq[0, :]
-<<<<<<< HEAD
 
             # Use SQP-consistent prediction baseline from the final linearization
             if (Mc_last is None) or (X_aff_last is None):
@@ -600,15 +655,6 @@ class mpc_controller_tipxy_LTI:
 
                 p_next_true = self._clamp_p(p_prev + self.dt*u0)
                 x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
-=======
-            xk = self.x.reshape(self.n, 1)
-            X0_stack = (Mx @ xk).reshape(Np*n, 1)
-            if self.use_offset_free:
-                X0_stack = X0_stack + self._disturbance_stack(self.d)
-            X_pred_stack = (X0_stack + Mc @ U_opt_vec.reshape(-1, 1))
-            X_pred = X_pred_stack.reshape(Np, n)
-            infeas_final = False
->>>>>>> 541ec66 (update mpc control)
         p_next_true = self._clamp_p(p_prev + self.dt*u0)
         x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
         if self.use_offset_free:
@@ -618,6 +664,8 @@ class mpc_controller_tipxy_LTI:
 
         # update plant state using nonlinear forward model
         self.x = self.forward_tip_fn(self.p)
+        print(f"Pose inside mpc step is {self.p}")
+        print(f"X inside mpc step is {self.x}")
         print(f"Pose inside mpc step is {self.p}")
         print(f"X inside mpc step is {self.x}")
         # store warm-start for next MPC step
@@ -645,22 +693,24 @@ class mpc_controller_tipxy_LTI:
             B_first=B_first.copy(),
             p_lin=p_lin,
             p_first=p_first,
-<<<<<<< HEAD
             X_aff_last = X_aff_last.copy() if X_aff_last is not None else None,
-            Mc_last = Mc_last.copy() if Mc_last is not None else None,
-=======
->>>>>>> 541ec66 (update mpc control)
-
+            Mc_last    = Mc_last.copy()    if Mc_last is not None else None,
+            X_nom_last = X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
+            p_seq_last = p_seq_last.copy() if p_seq_last is not None else None,
         )
         return self.p.copy(), self.x.copy(), info
 
 
 def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
     r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
+def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
+    r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
     out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
     if not out["solved"]:
         return np.array([1e3, 1e3, 1e3], float)
     return np.asarray(out["p_tip"], float).reshape(3,)
+
+
 
 
 def numerical_jacobian_tip_xyz_pose(p, forward_fn, eps):
@@ -694,7 +744,8 @@ def rollout_open_loop_from_plan(mpc, p_start, U_seq):
         P_nl.append(p.copy())
         X_nl.append(x.copy())
     return np.vstack(P_nl), np.vstack(X_nl)
-def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horizon=4, do_nl_rollout=True):
+def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc,
+                     print_horizon=4, do_nl_rollout=True):
     e = x_target - x_now
     err_mm = 1e3 * np.linalg.norm(e)
 
@@ -702,58 +753,67 @@ def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc, print_horiz
           f"||e||={err_mm:.2f}mm status={info['status']} infeas={info['infeasible']}")
 
     u0 = info["u0"]
-    X_pred = info["X_pred"]
-    U_seq = info["U_seq"]
-    x_now = info["x_now"]
+    X_pred = info.get("X_pred", None)   # (Np,3)
+    U_seq  = info.get("U_seq", None)    # (Np,7)
     pred_err = info.get("pred1_err", np.nan)
+
+    # Pose print
     r_src, q_src, L = unpack_pose_ur_rotvec_L(p_now)
-    print(f"Pose is : {r_src} and Q is : {q_src}")
     rvec = p_now[3:6]
     theta_deg = np.rad2deg(np.linalg.norm(rvec))
 
     print(f"   p_now: x={p_now[0]:+.3f} y={p_now[1]:+.3f} z={p_now[2]:+.3f}  "
-        f"rotvec=[{rvec[0]:+.3f},{rvec[1]:+.3f},{rvec[2]:+.3f}] |theta|={theta_deg:.1f}deg  "
-        f"L={p_now[6]:.3f}")
+          f"rotvec=[{rvec[0]:+.3f},{rvec[1]:+.3f},{rvec[2]:+.3f}] |theta|={theta_deg:.1f}deg  "
+          f"L={p_now[6]:.3f}")
 
     print("   u0:",
-        f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
-        f"d_rotvec=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}")
-<<<<<<< HEAD
-=======
+          f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
+          f"d_rotvec=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}")
 
->>>>>>> 541ec66 (update mpc control)
+    print(f"   pred1_err (one-step tip mismatch): {pred_err}")
 
-
+    # ---- internal consistency check: should be ~0 ----
     Mc_last = info.get("Mc_last", None)
     X_aff_last = info.get("X_aff_last", None)
-
-    if (Mc_last is not None) and (X_aff_last is not None) and np.all(np.isfinite(X_pred)):
+    if (Mc_last is not None) and (X_aff_last is not None) and (U_seq is not None):
         n = mpc.n
-        U_vec = info["U_seq"].reshape(-1, 1)           # (Np*m,1)
-        Mc0 = Mc_last[0:n, :]                          # (n, Np*m)
-        x1_from_blocks = X_aff_last[0:n, :] + Mc0 @ U_vec   # (n,1)
-        x1_from_blocks = x1_from_blocks.reshape(n,)
+        U_vec = U_seq.reshape(-1, 1)          # (Np*m,1)
+        Mc0 = Mc_last[0:n, :]                 # (n, Np*m)
+        x1_from_blocks = (X_aff_last[0:n, :] + Mc0 @ U_vec).reshape(n,)
+        if X_pred is not None and np.all(np.isfinite(X_pred)):
+            print("   |(X_aff0 + Mc0U) - X_pred[0]| =",
+                  np.linalg.norm(x1_from_blocks - X_pred[0]))
 
-        print("|(X_aff0 + Mc0 U) - X_pred[0]| =",
-            np.linalg.norm(x1_from_blocks - X_pred[0]))
+    # ---- horizon print: pred vs ref (and optional nominal nonlinear) ----
+    xref_seq = np.asarray(xref_seq, float)   # (Np,3)
+    Np = xref_seq.shape[0]
+    ph = min(print_horizon, Np)
 
+    X_nom_last = info.get("X_nom_last", None)   # optional (Np,3)
 
-<<<<<<< HEAD
-=======
+    if X_pred is None or not np.all(np.isfinite(X_pred)):
+        print("   X_pred NaNs or missing -> infeasible/failed QP")
+    else:
+        print("   Horizon:  pred (linear)              ref")
+        for i in range(ph):
+            print(f"   {i:02d}: {X_pred[i]}   {xref_seq[i]}")
+
+        if X_nom_last is not None and np.all(np.isfinite(X_nom_last)):
+            print("   Horizon:  nominal (nonlinear @ SQP lin point)")
+            for i in range(ph):
+                print(f"   {i:02d}: {X_nom_last[i]}")
+
+    # ---- nonlinear open-loop rollout under U_seq ----
     if do_nl_rollout and (U_seq is not None) and np.all(np.isfinite(U_seq)):
         P_nl, X_nl = rollout_open_loop_from_plan(mpc, p_now.copy(), U_seq)
-        ph2 = min(print_horizon, X_nl.shape[0])
-        for i in range(ph2):
-            print(f"   NL [{i}] ={X_nl[i]}   (vs lin pred {X_pred[i] if X_pred is not None else None})")
-        x_lin1 = x_pre + info["B_first"] @ info["u0"]
-        print("|x_lin1 - X_pred[0]| =", np.linalg.norm(x_lin1 - info["X_pred"][0]))
-        print("|p_first - p_pre| =", np.linalg.norm(info["p_first"] - info["p_lin"]))
+        print("   Horizon:  NL rollout (true f(p) along applied U_seq)")
+        for i in range(min(ph, X_nl.shape[0])):
+            if X_pred is not None and np.all(np.isfinite(X_pred)):
+                print(f"   {i:02d}: {X_nl[i]}   (lin {X_pred[i]})")
+            else:
+                print(f"   {i:02d}: {X_nl[i]}")
 
-
->>>>>>> 541ec66 (update mpc control)
-    print(f" X_now is: {x_now}")
     print("--------------------------------------------------------------------")
-
 
 def build_xref_from_path(path, k, Np):
     """
@@ -763,6 +823,7 @@ def build_xref_from_path(path, k, Np):
     N = path.shape[0]
     idx = np.clip(np.arange(k, k + Np), 0, N - 1)
     return path[idx]
+
 
 pivot_point = np.array([
     0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
@@ -809,33 +870,21 @@ w_du = np.array([1e-6, 1e-6, 1e-6,   1e-3, 1e-3, 1e-3,   1e-6])
 mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
-    dt=0.05,
+    dt=0.1,
     Np=10,
     n_out=3,
     n_u=7,
-<<<<<<< HEAD
     w_xy=(1, 1, 1),
     w_u=w_u,
     w_du=w_du,
-    model_mode="lti",
-=======
-    w_xy=(1e3, 1e3, 1e3),
-    w_u  = (1e-8,) * 7,
-    w_du = (0.0,) * 7,
-
-    model_mode= "lti",
->>>>>>> 541ec66 (update mpc control)
+    model_mode="ltv",
     u_max=u_max,
     p_min=p_min,
     p_max=p_max,
-    N_sqp=4,
+    N_sqp=10,
     use_offset_free=False
 )
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 541ec66 (update mpc control)
 
 mpc.set_initial_params(p0)
 x_target = np.array([ 0.74374346, -0.54484699 , 0.1895042])
@@ -845,15 +894,9 @@ p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
 x_start = mpc.x.copy()
-<<<<<<< HEAD
-n=30
-path = np.linspace(x_start, x_target, n)
-for k in range(40):
-=======
 n=10
 path = np.linspace(x_start, x_target, n)
 for k in range(10):
->>>>>>> 541ec66 (update mpc control)
     p_pre = mpc.p.copy()
     x_pre = mpc.x.copy()
 
@@ -863,11 +906,17 @@ for k in range(10):
     debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
                      print_horizon=mpc.Np, do_nl_rollout=True)
 
+
     error = np.linalg.norm(x_target-x_post)
     if error < 0.001:
         plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
         print("UR pose6:", repr(p_post))
         break
+print("UR pose6:", repr(p_post))
+plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
+
+    
+    
 print("UR pose6:", repr(p_post))
 
     

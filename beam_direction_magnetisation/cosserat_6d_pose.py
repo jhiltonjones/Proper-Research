@@ -29,6 +29,7 @@ def dipole_from_pose(q_src, m_body):
 
 def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u_star=None):
     e1 = np.array([-1.0, 0.0, 0.0])
+    e1 = np.array([-1.0, 0.0, 0.0])
     if u_star is None:
         u_star = np.zeros(3)
 
@@ -54,11 +55,9 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         )
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
-<<<<<<< HEAD
-        f_ext = f_ext + (f_g)
-=======
+
         f_ext = f_ext + f_g
->>>>>>> 541ec66 (update mpc control)
+
         # f_ext = np.zeros_like(p)       # same shape as p (3,N)
         # tau_ext = np.zeros_like(p)     # (3,N)
         n_s = -f_ext
@@ -155,6 +154,8 @@ class CosseratForwardModel:
         f_ext, tau_ext, B = magnetic_wrench_density_cosserat_profile(
             p, q, s_out, m_src, r_src, self.m_local_fun, self.m_moment, r_min=1e-6
         )
+        # f_ext = f_ext*0
+        # tau_ext = tau_ext*0
         # f_ext = f_ext*0
         # tau_ext = tau_ext*0
         Fy = np.trapezoid(f_ext[1, :], s_out)
@@ -391,6 +392,25 @@ if __name__ == "__main__":
         m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
         m_moment=0.0,
     )
+
+    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body)
+    print("tip in UR:", out["p_tip"])
+    print("tip bending y:", np.rad2deg(out["theta_y"]))
+    print("tip bending z:", np.rad2deg(out["theta_z"]))
+    print("Magnet position:", T_ur_mag)
+    print("Magnetic field", (out["B_tip"]))
+    print("Magnetic force this is the gradient force", (out["F_net"]))
+    print("Magnetic torque is the cross product", (out["T_net"]))
+
+
+    q = q0_ur  
+    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
+    print("Base tangent direction (UR) =", t0)
+    p_tip_pred = p0_ur + L_cmd * t0
+    print("Pred straight tip:", p_tip_pred)
+    print("Solved tip:", out["p_tip"])
+    print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
     out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body)
     print("tip in UR:", out["p_tip"])

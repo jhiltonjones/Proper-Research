@@ -22,6 +22,7 @@ if __name__ == "__main__":
         
         print("Current TCP:", robo.get_pose())
 
+<<<<<<< HEAD
         # robo.go_home_joint()
         # # posy[2]+=0.2
         new_pose = get_point(0,0)
@@ -32,16 +33,32 @@ if __name__ == "__main__":
         new_pose = get_point(0,-70)
         robo.moveL(new_pose)
         robo.get_pose()
+=======
+        robo.go_home_joint()
+        # posy[2]+=0.2
+        # new_pose = get_point(0,80)
+        # robo.moveL(new_pose)
+        # new_pose = get_point(0,40)
+        # robo.moveL(new_pose)
+        # robo.get_pose()
+>>>>>>> 541ec669c70ddfe322dedb4a3f806bc02de81573
         # posy = robo.get_joints()
         # posy[5]-=np.pi/2
         # robo.moveJ(posy)
         # robo.moveL(test)
+<<<<<<< HEAD
         # robo.moveJ(Sleeping_joints)
         # print("New pose is", repr(new_pose))
         # robo.moveL(np.array([0.65581355, -0.49516925,  0.2 +0.25      , -3.10005981, -0.2107622 ,
         # 0.31018698]))
         robo.moveL(np.array([0.6689019 , -0.50104476,  0.20000098+0.25, -3.10087771, -0.30750767,
         0.22952544]))
+=======
+        robo.moveJ(Sleeping_joints)
+        # print("New pose is", repr(new_pose))
+        # robo.moveL(np.array([0.6835281 , -0.61578068,  0.20809958+0.25, -3.08092646,  0.53438284,
+        # 0.02263484]))
+>>>>>>> 541ec669c70ddfe322dedb4a3f806bc02de81573
 
         print("Finished")
     finally:

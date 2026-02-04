@@ -118,6 +118,14 @@
             "module": "scrap",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run energy_minimal",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.cosserat_w_minimal_energy",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
 
     ]

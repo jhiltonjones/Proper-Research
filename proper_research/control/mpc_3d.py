@@ -111,7 +111,7 @@ class mpc_controller_tipxy_LTI:
                  n_u=7,
                  model_mode = "ltv",
                  d_min_tip_mag=0.10,  
-                 enable_tip_keepout=False,
+                 enable_tip_keepout=True,
                  d_alpha=0.15):
 
         self.n = int(n_out)
@@ -701,8 +701,8 @@ class mpc_controller_tipxy_LTI:
         return self.p.copy(), self.x.copy(), info
 
 
-def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
-    r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
+# def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
+#     r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
 def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
     r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
     out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
@@ -826,12 +826,13 @@ def build_xref_from_path(path, k, Np):
 
 
 pivot_point = np.array([
-    0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-    -3.116988654350607, 0.19059356279735162, 0.028215660130034903
-])
-start_point = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.116988654350607, 0.19059356279735162, 0.028215660130034903])
+0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+], float)
 
 
+start_point = np.array([
+0.6781328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+], float)
 T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
 p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
@@ -853,7 +854,7 @@ model = CosseratForwardModel(
 #     n_nodes=120,
 #     tol=1e-5    
 #     )
-m_body = np.array([mag_params.mag_epm*0.5, 0.0, 0.0], dtype=float)
+m_body = np.array([mag_params.mag_epm*2, 0.0, 0.0], dtype=float)
 L0 = 0.05      
 forward_tip_fn = lambda p: forward_cosserat_from_pose_ur_rotvec_L(p, model, m_body=m_body)
 J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
@@ -862,8 +863,8 @@ start_point_pose6 = start_point  # [x,y,z, rx,ry,rz]
 p0 = np.array([start_point_pose6[0], start_point_pose6[1], start_point_pose6[2],
                start_point_pose6[3], start_point_pose6[4], start_point_pose6[5],
                L0], float)
-p_min = np.array([ 0.2, -1, 0.2,  p0[3]-np.pi*2, p0[4]-np.pi*2, p0[5]-np.pi*2,  0.03])
-p_max = np.array([ 0.78,  1,  1.0,  p0[3]+np.pi*2, p0[4]+np.pi*2, p0[5]+np.pi*2,  0.08])
+p_min = np.array([ 0.2, -1, -0.2,  p0[3]-np.pi*2, p0[4]-np.pi*2, p0[5]-np.pi*2,  0.03])
+p_max = np.array([ 0.85,  1,  1.0,  p0[3]+np.pi*2, p0[4]+np.pi*2, p0[5]+np.pi*2,  0.08])
 w_u  = np.array([1e-6, 1e-6, 1e-3,   1e-6, 1e-6, 1e-6,   1e-6])
 w_du = np.array([1e-6, 1e-6, 1e-6,   1e-3, 1e-3, 1e-3,   1e-6])
 
@@ -871,7 +872,7 @@ mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
     dt=0.1,
-    Np=10,
+    Np=4,
     n_out=3,
     n_u=7,
     w_xy=(1, 1, 1),
@@ -881,20 +882,20 @@ mpc = mpc_controller_tipxy_LTI(
     u_max=u_max,
     p_min=p_min,
     p_max=p_max,
-    N_sqp=10,
+    N_sqp=4,
     use_offset_free=False
 )
 
 
 mpc.set_initial_params(p0)
-x_target = np.array([ 0.74374346, -0.54484699 , 0.1895042])
+x_target = np.array([ 0.80936455, -0.70098197, -0.10018981])
 Np = mpc.Np
 xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
 p_test = p0.copy()
 J_test = J_fn(p_test)
 print("J shape:", J_test.shape)  # must be (3,7)
 x_start = mpc.x.copy()
-n=10
+n=5
 path = np.linspace(x_start, x_target, n)
 for k in range(10):
     p_pre = mpc.p.copy()

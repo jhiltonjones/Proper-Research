@@ -1,4 +1,12 @@
 import numpy as np
+pivot_point = np.array([
+0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+], float)
+
+
+start_point = np.array([
+0.6781328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+], float)
 
 def rotz(theta):
     return np.array([
@@ -74,49 +82,7 @@ def rotate_around_point_transform(axis, pivot_pos, theta):
     t = (I - R) @ c                 
     return transGen(R, t)
 
-def get_point(theta_angle_x, theta_angle_z, 
-              start_point = np.array([0.633601454734283, -0.5654185162875351, 0.4570517315269843, -3.116988654350607, 0.19059356279735162, 0.028215660130034903]), 
-              pivot_point = np.array([0.7836091530378535, -0.5654053885267907, 0.20700816061967686, -3.116988654350607, 0.19059356279735162, 0.028215660130034903])):
-    # start_point = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
 
-    # pivot_point = np.array([0.823733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
-
-
-    ee_pos0 = start_point[:3]
-    ee_rvec0 = start_point[3:]
-    R_b_e0 = rotvec_to_R(ee_rvec0)
-    H_b_e0 = transGen(R_b_e0, ee_pos0)
-
-
-    mag_offset = np.array([0, 0, .2])
-    H_e_m = transGen(np.eye(3), mag_offset)   
-
-
-    H_b_m0 = H_b_e0 @ H_e_m
-
-
-    pivot_pos = pivot_point[:3]
-
-    theta_z = np.deg2rad(theta_angle_z)
-    H_rot_z = rotate_around_point_transform('z', pivot_pos, theta_z)
-    theta_x = np.deg2rad(theta_angle_x)
-    H_rot_x = rotate_around_point_transform('x', pivot_pos, theta_x)
-
-    H_rot = H_rot_x @ H_rot_z
-    H_b_m1 = H_rot @ H_b_m0
-
-    H_m_e = np.linalg.inv(H_e_m)
-    H_b_e1 = H_b_m1 @ H_m_e
-
-    new_pos = H_b_e1[:3, 3]
-    new_R   = H_b_e1[:3, :3]
-    new_rvec = R_to_rotvec(new_R)
-
-    new_pose_for_robot = np.hstack([new_pos, new_rvec])
-
-    # print("New EE pose to send to robot:")
-    # print(repr(new_pose_for_robot))
-    return new_pose_for_robot
 def quat_normalize(q):
     n = np.linalg.norm(q, axis=0)
     n = np.maximum(n, 1e-18)
@@ -202,17 +168,6 @@ def preprocess_update_pose(p):
     p[0], p[1] = p[1], p[0]  # swap x/y
     return p
 
-
-pivot_point = np.array([
-    0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
-
-
-start_point = np.array([
-    0.6336091530378535, -0.5654053885267907, 0.45700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
 
 T_R_G = np.eye(4)
 T_R_G[:3,:3] = rotvec_to_R(pivot_point[3:])   # include orientation!
@@ -436,14 +391,14 @@ def tcp_from_magnet_global(magnet_pose6_in_G, pivot_point, T_TCP_M):
 # 1) Use your calibrated T_TCP_M (built from p_TCP_M)
 # T_TCP_M[:3,3] = p_TCP_M
 
-tcp_com = get_point(0, 30)  # your "known-good" TCP
-mag_G   = pose6_in_G_from_tcp_pose6_in_R(tcp_com, pivot_point, T_TCP_M)
-tcp_rt  = tcp_from_magnet_global(mag_G, pivot_point, T_TCP_M)
+# tcp_com = get_point(0, 30)  # your "known-good" TCP
+# mag_G   = pose6_in_G_from_tcp_pose6_in_R(tcp_com, pivot_point, T_TCP_M)
+# tcp_rt  = tcp_from_magnet_global(mag_G, pivot_point, T_TCP_M)
 
-print("tcp_com:", tcp_com)
-print("mag_G:", mag_G)
-print("tcp_rt:", tcp_rt)
-print("tcp diff:", tcp_rt - tcp_com)
+# print("tcp_com:", tcp_com)
+# print("mag_G:", mag_G)
+# print("tcp_rt:", tcp_rt)
+# print("tcp diff:", tcp_rt - tcp_com)
 
 import numpy as np
 
@@ -522,8 +477,8 @@ def rotate_around_point_transform(axis, pivot_pos, theta):
     return transGen(R, t)
 
 def get_point(theta_angle_x, theta_angle_z, 
-              start_point = np.array([0.6336091530378535, -0.5654053885267907, 0.45700816061967686, -2.081278830177124, 2.3523542602060017, 0.040846003961920924]), 
-              pivot_point = np.array([0.7836091530378535, -0.5654053885267907, 0.20700816061967686, -2.081278830177124, 2.3523542602060017, 0.040846003961920924])):
+              start_point = start_point, 
+              pivot_point = pivot_point):
     # start_point = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
 
     # pivot_point = np.array([0.823733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
@@ -650,16 +605,7 @@ def preprocess_update_pose(p):
     return p
 
 
-pivot_point = np.array([
-    0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
 
-
-start_point = np.array([
-    0.6336091530378535, -0.5654053885267907, 0.45700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
 
 T_R_G = np.eye(4)
 T_R_G[:3,:3] = rotvec_to_R(pivot_point[3:])   # include orientation!
@@ -943,49 +889,49 @@ def rotate_around_point_transform(axis, pivot_pos, theta):
     t = (I - R) @ c                 
     return transGen(R, t)
 
-def get_point(theta_angle_x, theta_angle_z, 
-              start_point = np.array([0.633601454734283, -0.5654185162875351, 0.4570517315269843, -3.116988654350607, 0.19059356279735162, 0.028215660130034903]), 
-              pivot_point = np.array([0.7836091530378535, -0.5654053885267907, 0.20700816061967686, -3.116988654350607, 0.19059356279735162, 0.028215660130034903])):
-    # start_point = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
+# def get_point(theta_angle_x, theta_angle_z, 
+#               start_point = np.array([0.633601454734283, -0.5654185162875351, 0.4570517315269843, -3.116988654350607, 0.19059356279735162, 0.028215660130034903]), 
+#               pivot_point = np.array([0.7836091530378535, -0.5654053885267907, 0.20700816061967686, -3.116988654350607, 0.19059356279735162, 0.028215660130034903])):
+#     # start_point = np.array([0.6832139195419068, -0.5209069210505941, 0.42302409097655347, 2.443031645419655, -1.901367452027098, -0.01920900651044155])
 
-    # pivot_point = np.array([0.823733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
-
-
-    ee_pos0 = start_point[:3]
-    ee_rvec0 = start_point[3:]
-    R_b_e0 = rotvec_to_R(ee_rvec0)
-    H_b_e0 = transGen(R_b_e0, ee_pos0)
+#     # pivot_point = np.array([0.823733332875323, -0.5209069210505941, 0.20740971416415823, -2.086667151308778, 2.3466032555651344, 0.04533170327422023])
 
 
-    mag_offset = np.array([0, 0, .2])
-    H_e_m = transGen(np.eye(3), mag_offset)   
+#     ee_pos0 = start_point[:3]
+#     ee_rvec0 = start_point[3:]
+#     R_b_e0 = rotvec_to_R(ee_rvec0)
+#     H_b_e0 = transGen(R_b_e0, ee_pos0)
 
 
-    H_b_m0 = H_b_e0 @ H_e_m
+#     mag_offset = np.array([0, 0, .2])
+#     H_e_m = transGen(np.eye(3), mag_offset)   
 
 
-    pivot_pos = pivot_point[:3]
+#     H_b_m0 = H_b_e0 @ H_e_m
 
-    theta_z = np.deg2rad(theta_angle_z)
-    H_rot_z = rotate_around_point_transform('z', pivot_pos, theta_z)
-    theta_x = np.deg2rad(theta_angle_x)
-    H_rot_x = rotate_around_point_transform('x', pivot_pos, theta_x)
 
-    H_rot = H_rot_x @ H_rot_z
-    H_b_m1 = H_rot @ H_b_m0
+#     pivot_pos = pivot_point[:3]
 
-    H_m_e = np.linalg.inv(H_e_m)
-    H_b_e1 = H_b_m1 @ H_m_e
+#     theta_z = np.deg2rad(theta_angle_z)
+#     H_rot_z = rotate_around_point_transform('z', pivot_pos, theta_z)
+#     theta_x = np.deg2rad(theta_angle_x)
+#     H_rot_x = rotate_around_point_transform('x', pivot_pos, theta_x)
 
-    new_pos = H_b_e1[:3, 3]
-    new_R   = H_b_e1[:3, :3]
-    new_rvec = R_to_rotvec(new_R)
+#     H_rot = H_rot_x @ H_rot_z
+#     H_b_m1 = H_rot @ H_b_m0
 
-    new_pose_for_robot = np.hstack([new_pos, new_rvec])
+#     H_m_e = np.linalg.inv(H_e_m)
+#     H_b_e1 = H_b_m1 @ H_m_e
 
-    # print("New EE pose to send to robot:")
-    # print(repr(new_pose_for_robot))
-    return new_pose_for_robot
+#     new_pos = H_b_e1[:3, 3]
+#     new_R   = H_b_e1[:3, :3]
+#     new_rvec = R_to_rotvec(new_R)
+
+#     new_pose_for_robot = np.hstack([new_pos, new_rvec])
+
+#     # print("New EE pose to send to robot:")
+#     # print(repr(new_pose_for_robot))
+#     return new_pose_for_robot
 def quat_normalize(q):
     n = np.linalg.norm(q, axis=0)
     n = np.maximum(n, 1e-18)
@@ -1072,16 +1018,6 @@ def preprocess_update_pose(p):
     return p
 
 
-pivot_point = np.array([
-    0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
-
-
-start_point = np.array([
-    0.6336091530378535, -0.5654053885267907, 0.45700816061967686,
-    -2.081278830177124, 2.3523542602060017, 0.040846003961920924
-], float)
 
 T_R_G = np.eye(4)
 T_R_G[:3,:3] = rotvec_to_R(pivot_point[3:])   # include orientation!

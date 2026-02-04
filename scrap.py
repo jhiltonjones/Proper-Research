@@ -14,7 +14,9 @@ rho = 0.13
 p0 = np.array([0.0, 0.0, 0.0])
 r_tip_nominal = p0 + np.array([0.05, 0.0, 0.0])
 ROBOT_IP = "192.168.56.101"
-TCP_TARGET =  [0.7985173296917242, -0.538880495640068, 0.4502643054124873, -1.9773907947518439, 2.4202883191517617, -0.016116851148178644]
+TCP_TARGET =  [0.51361828, -0.69125716, -0.07205731, -3.05257941, -0.03533282,
+       -0.56879197]
+
 Sleeping_joints = [5.127925760461949e-06, -1.570810934106344, 1.889864076787262e-05, -1.5707822610205149, -6.500874654591371e-06, -1.699129213506012e-05]
 if __name__ == "__main__":
     robo = URRtde(ROBOT_IP)
@@ -22,43 +24,24 @@ if __name__ == "__main__":
         
         print("Current TCP:", robo.get_pose())
 
-<<<<<<< HEAD
         # robo.go_home_joint()
         # # posy[2]+=0.2
-        new_pose = get_point(0,0)
+        new_pose = get_point(0,-40)
         robo.moveL(new_pose)
         # new_pose = get_point(0,-70) 
         # robo.moveL(new_pose)
         
-        new_pose = get_point(0,-70)
-        robo.moveL(new_pose)
-        robo.get_pose()
-=======
-        robo.go_home_joint()
-        # posy[2]+=0.2
-        # new_pose = get_point(0,80)
-        # robo.moveL(new_pose)
-        # new_pose = get_point(0,40)
-        # robo.moveL(new_pose)
-        # robo.get_pose()
->>>>>>> 541ec669c70ddfe322dedb4a3f806bc02de81573
-        # posy = robo.get_joints()
+
+        posy = robo.get_pose
         # posy[5]-=np.pi/2
         # robo.moveJ(posy)
         # robo.moveL(test)
-<<<<<<< HEAD
         # robo.moveJ(Sleeping_joints)
         # print("New pose is", repr(new_pose))
         # robo.moveL(np.array([0.65581355, -0.49516925,  0.2 +0.25      , -3.10005981, -0.2107622 ,
         # 0.31018698]))
-        robo.moveL(np.array([0.6689019 , -0.50104476,  0.20000098+0.25, -3.10087771, -0.30750767,
-        0.22952544]))
-=======
-        robo.moveJ(Sleeping_joints)
-        # print("New pose is", repr(new_pose))
-        # robo.moveL(np.array([0.6835281 , -0.61578068,  0.20809958+0.25, -3.08092646,  0.53438284,
-        # 0.02263484]))
->>>>>>> 541ec669c70ddfe322dedb4a3f806bc02de81573
+        # TCP_TARGET[2] +=.25
+        # robo.moveL(TCP_TARGET)
 
         print("Finished")
     finally:

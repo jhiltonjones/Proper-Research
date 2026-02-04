@@ -56,8 +56,8 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
 
-        f_ext = f_ext + f_g
-
+        # f_ext = f_ext + f_g
+        # f_ext = f_ext
         # f_ext = np.zeros_like(p)       # same shape as p (3,N)
         # tau_ext = np.zeros_like(p)     # (3,N)
         n_s = -f_ext
@@ -370,14 +370,15 @@ def T_to_p_quat_wxyz(T):
 
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.049
-    m_body = np.array([mag_params.mag_epm*0.5, 0.0, 0.0])
+    L_cmd = 0.052
+    m_body = np.array([mag_params.mag_epm*3, 0.0, 0.0])
     pivot_point = np.array([
-        0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-       -3.116988654350607, 0.19059356279735162, 0.028215660130034903
-    ])
-    start_point = np.array([0.73219777858478, -0.4244994535611557, 0.45711152486163426-.25, -2.4384745401644454, 1.9397464487606495, 0.006339338326166586])
+    0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    ], float)
 
+
+    start_point = np.array([
+    0.7202484210250407, -0.5898397383336145, 0.15179146212163236-0.25, -2.895959881558942, 1.0805104453987653, 0.036263334219256906], float)
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)

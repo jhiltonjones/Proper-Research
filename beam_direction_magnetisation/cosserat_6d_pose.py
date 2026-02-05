@@ -8,7 +8,8 @@ from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
 from beam_direction_magnetisation.quarternions.shared_rotations import Ry, Rz
 from proper_research.parameters import default_magnet_params
 from scipy.spatial.transform import Rotation as Rot
-
+from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
+from beam_direction_magnetisation.magnetism.parameters_cosserat import s_m, ell_m, mu_line
 mag_params = default_magnet_params()
 def tip_bending_angles_from_tangent(sol, L, e1=np.array([1.0,0.0,0.0])):
     YL = sol.sol(np.array([L]))
@@ -201,14 +202,6 @@ def m_local_profile_axial(s, eps=1e-3):
     m[2, :] = 0.0
     return m * w[None, :]
 
-def make_m_local_fun_axial(eps=1e-3):
-    # must accept (s, second_arg) because magnetic_wrench_density_cosserat_profile calls it that way
-    def _m_local(s, _unused=None):
-        return m_local_profile_axial(s, eps=eps)
-    return _m_local
-import numpy as np
-from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
-from beam_direction_magnetisation.magnetism.parameters_cosserat import s_m, ell_m, mu_line
 
 def m_local_wire_plus_magnetised_tip(
     s,
@@ -255,24 +248,6 @@ def make_m_local_fun_wire_tip(*, alpha_end=0.0, mode="axial", eps=1e-3):
             s, alpha_end=alpha_end, mode=mode, eps=eps
         )
     return _m_local
-# def m_local_profile_ramped(s, alpha_end, eps=1e-3):
-#     s = np.atleast_1d(s)
-#     N = s.size
-#     w = smooth_top_hat(s, s_m, s_m + ell_m, eps)
-#     xi = np.clip((s - s_m) / (ell_m + 1e-12), 0.0, 1.0)
-#     alpha_s = xi * alpha_end
-#     m = np.zeros((3, N))
-#     m[0, :] = mu_line * np.cos(alpha_s)
-#     m[1, :] = mu_line * np.sin(alpha_s)
-#     m[2, :] = 0.0
-#     return m * w[None, :]
-
-# def make_m_local_fun(alpha_end_fixed, eps=1e-3):
-#     def _m_local(s, _m_unused=None):
-#         return m_local_profile_ramped(s, alpha_end=alpha_end_fixed, eps=eps)
-#     return _m_local
-
-# build model
 
 
 def quat_mul(q1, q2):
@@ -322,7 +297,7 @@ def epm_pose_orbit_and_spin(
 
     # Position: pivot about tip
     r_src = r_tip + R_orbit @ (rho * v0_body)
-
+    print(F"DEBUG r_src is: {r_src}")
     # Quaternion for orbit rotation.
     # Build it from axis-angles (world y then world z) to match R_orbit = Ry @ Rz.
     q_y = quat_from_axis_angle([0,1,0], theta_orbit_y)

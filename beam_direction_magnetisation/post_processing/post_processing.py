@@ -200,7 +200,7 @@ def extract_centerline_from_forward_output(out):
 
 
 # ---------- plotting ----------
-def plot_mpc_state_3d(model, m_body, p_pose7, x_tip,
+def plot_mpc_state_3d(model, m_body, p_pose7, x_tip, L, mag_len,
                       title=None,
                       dipole_scale=0.05,
                       show_tip_to_mag=True,
@@ -258,7 +258,8 @@ def plot_mpc_state_3d(model, m_body, p_pose7, x_tip,
 
     q_src = rot_to_quat(Rsrc)
 
-    out = model.forward(L=L, r_src=r_mag, q_src=q_src, m_body=m_body)
+    wire_len = L - mag_len
+    out = model.forward(L=L, r_src=r_mag, q_src=q_src, m_body=m_body, wire_len=wire_len)
 
     # Tip from model output (for sanity) if present; otherwise use x_tip provided
     x_tip_model = None
@@ -342,3 +343,31 @@ def plot_mpc_state_3d(model, m_body, p_pose7, x_tip,
         plt.show()
 
     return fig, ax
+
+def plot_target_and_final_tip_on_image(image_filename, target_px, tip_px, err_mm=None):
+    img_bgr = cv2.imread(image_filename)
+    if img_bgr is None:
+        raise FileNotFoundError(f"Could not read image '{image_filename}'")
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+    plt.figure(figsize=(7, 7))
+    plt.imshow(img_rgb)
+
+    # target
+    plt.scatter([target_px[0]], [target_px[1]], s=90, marker="x", color="yellow", label="Target", zorder=3)
+
+    # tip
+    plt.scatter([tip_px[0]], [tip_px[1]], s=70, marker="o", color="red", label="Final tip", zorder=3)
+
+    # line + annotation
+    plt.plot([target_px[0], tip_px[0]], [target_px[1], tip_px[1]],
+             linestyle="--", linewidth=1.5, color="white", zorder=2)
+
+    if err_mm is not None:
+        plt.text(tip_px[0] + 3, tip_px[1] + 3, f"{err_mm:.1f} mm",
+                 color="cyan", fontsize=10, ha="left", va="bottom", zorder=4)
+
+    plt.title("Target vs final measured tip")
+    plt.axis("off")
+    plt.legend()
+    plt.show()

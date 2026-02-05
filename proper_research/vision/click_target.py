@@ -652,6 +652,7 @@ def pick_multiple_target_points(image_bgr, n_points=None):
     if not pts:
         return []
     return [(float(x), float(y)) for (x, y) in pts]
+
 def compute_beam_targets_from_clicked_points(
     image_filename="focused_image.jpg",
     use_roi=True,

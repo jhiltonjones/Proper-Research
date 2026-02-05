@@ -23,20 +23,64 @@ ROI_CONFIG_FILE = "red_roi_box.json"
 # CAPTURE (reuse your capture if you want)
 # ============================================================
 
-def new_capture(filename="focused_image.jpg", cam_index=0, backend=cv2.CAP_V4L2, warmup_frames=10):
+# def new_capture(filename="focused_image.jpg", cam_index=0, backend=cv2.CAP_V4L2, warmup_frames=10):
+#     cap = cv2.VideoCapture(cam_index, backend)
+#     if not cap.isOpened():
+#         raise RuntimeError("Cannot open camera")
+#     for _ in range(warmup_frames):
+#         cap.read()
+#     ret, frame = cap.read()
+#     cap.release()
+#     if not ret or frame is None:
+#         raise RuntimeError("Failed to capture image")
+#     cv2.imwrite(filename, frame)
+#     return filename
+
+def new_capture(filename="focused_image.jpg",
+                cam_index=0,
+                backend=cv2.CAP_V4L2,
+                warmup_frames=15,
+                exposure=50.0,     # try 200..5000 initially
+                gain=0.0,
+                auto_exposure_manual=1.0,  # working for you
+                brightness=None,     # e.g. 0.0
+                gamma=None):         # e.g. 0.7
     cap = cv2.VideoCapture(cam_index, backend)
     if not cap.isOpened():
-        raise RuntimeError("Cannot open camera")
+        raise RuntimeError(f"Cannot open camera index {cam_index} with backend {backend}")
+
+    def try_set(prop, val, name):
+        ok = cap.set(prop, val)
+        got = cap.get(prop)
+        print(f"{name}: set({val}) -> {ok}, get() -> {got}")
+        return ok, got
+
+    # Put camera in manual exposure mode (as supported by your driver mapping)
+    try_set(cv2.CAP_PROP_AUTO_EXPOSURE, float(auto_exposure_manual), "AUTO_EXPOSURE(manual)")
+
+    # Reduce gain first
+    try_set(cv2.CAP_PROP_GAIN, float(gain), "GAIN")
+
+    # Set exposure (absolute value for your camera/driver)
+    try_set(cv2.CAP_PROP_EXPOSURE, float(exposure), "EXPOSURE(abs)")
+
+    # Optional tweaks if supported
+    if brightness is not None:
+        try_set(cv2.CAP_PROP_BRIGHTNESS, float(brightness), "BRIGHTNESS")
+    if gamma is not None:
+        try_set(cv2.CAP_PROP_GAMMA, float(gamma), "GAMMA")
+
     for _ in range(warmup_frames):
         cap.read()
+
     ret, frame = cap.read()
     cap.release()
+
     if not ret or frame is None:
         raise RuntimeError("Failed to capture image")
+
     cv2.imwrite(filename, frame)
     return filename
-
-
 # ============================================================
 # ROI helpers (from your code, shortened)
 # ============================================================
@@ -278,7 +322,7 @@ def pixel_to_plane_xy_mm(u, v, K, dist, rvec, tvec, plane_z_mm):
 def measure_lengths_mm(
     image_filename="focused_image.jpg",
     use_roi=True,
-    show=True,
+    show=False,
     cam_index=0
 ):
     # capture
@@ -430,7 +474,15 @@ def measure_lengths_mm(
         "tip_world_m": tuple(tip_world_m.tolist()),
         "angle_centerline_to_tip_deg": angle_deg,
 
-        "image_file": img_path
+        "image_file": img_path,
+        "rvec": rvec.reshape(-1).tolist(),
+        "tvec": tvec.reshape(-1).tolist(),
+        "K": K.tolist(),
+        "dist": dist.reshape(-1).tolist(),
+        "plane_z_mm": float(BEAM_Z_OFFSET_MM),
+        "A_2x2": A.tolist(),
+        "BASE_WORLD_M": BASE_WORLD_M.tolist(),
+
     }
 
 def signed_angle_deg(v_ref, v):
@@ -462,6 +514,125 @@ def mm_to_world_m(base_mm, pt_mm, base_world_m, A_2x2=None):
     return base_world_m + d_world_m
 
 
+def pick_multiple_target_points_world(
+    *,
+    n_points=None,
+    image_filename="focused_image.jpg",
+    cam_index=0,
+    use_roi=True,
+    show_debug=False,
+    # world mapping params (same as your measure_lengths_mm)
+    BASE_WORLD_M=np.array([0.8581328220229531, -0.7055298925316631], dtype=np.float64),
+    A_2x2=np.array([[-1.0, 0.0],
+                    [ 0.0, 1.0]], dtype=np.float64),
+    plane_z_mm=BEAM_Z_OFFSET_MM,
+):
+    """
+    Captures an image, lets user click multiple points, and converts each click
+    to world/global coordinates (meters) using:
+      pixel -> board plane (mm) via solvePnP + ray-plane intersection
+      board plane (mm) -> world (m) via mm_to_world_m anchored at detected base
+
+    Returns:
+      targets_world_m: list of (x_world, y_world) in meters
+      debug: dict with image, clicked px, base_px, base_mm, etc.
+    """
+
+    # --- 1) capture image ---
+    img_path = new_capture(image_filename, cam_index=cam_index)
+    img = cv2.imread(img_path)
+    if img is None:
+        raise FileNotFoundError(img_path)
+
+    # --- 2) load calibration ---
+    calib = load_calibration(CALIB_FILE)
+    if calib is None:
+        raise RuntimeError(
+            f"No camera calibration found at {CALIB_FILE}. "
+            "Run calibrate_camera_from_images(...) first."
+        )
+    K, dist, _ = calib
+
+    # --- 3) solve board pose from checkerboard ---
+    corners_img = find_checkerboard_corners(img)          # (N,2)
+    objp = make_checkerboard_object_points()              # (N,3)
+
+    ok, rvec, tvec = cv2.solvePnP(
+        objp.astype(np.float64),
+        corners_img.astype(np.float64),
+        K, dist,
+        flags=cv2.SOLVEPNP_ITERATIVE
+    )
+    if not ok:
+        raise RuntimeError("solvePnP failed.")
+
+    # --- 4) detect base marker (needed to anchor world transform) ---
+    base_px, mag_px, tip_px, roi_box = detect_red_markers_in_roi_simple(
+        img, use_roi=use_roi, expected_markers=3, show_debug=False
+    )
+
+    # base on beam plane in board-mm
+    base_xy_mm = pixel_to_plane_xy_mm(base_px[0], base_px[1], K, dist, rvec, tvec, plane_z_mm)
+    base_mm = np.array(base_xy_mm, dtype=np.float64)
+
+    # --- 5) click points (pixel coords) ---
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    plt.figure()
+    plt.imshow(img_rgb)
+    if n_points is None:
+        plt.title("Click targets (any number), then close window")
+        pts = plt.ginput(n=-1, timeout=0)
+    else:
+        plt.title(f"Click {n_points} targets, then close window")
+        pts = plt.ginput(n=n_points, timeout=0)
+    plt.close()
+
+    if not pts:
+        return [], {
+            "image_file": img_path,
+            "base_px": base_px,
+            "base_mm": base_mm,
+            "clicked_px": [],
+            "clicked_mm": [],
+            "clicked_world_m": [],
+        }
+
+    clicked_px = [(float(x), float(y)) for (x, y) in pts]
+
+    # --- 6) convert each click pixel -> board plane mm -> world m ---
+    clicked_mm = []
+    clicked_world_m = []
+
+    for (u, v) in clicked_px:
+        xy_mm = pixel_to_plane_xy_mm(u, v, K, dist, rvec, tvec, plane_z_mm)
+        pt_mm = np.array(xy_mm, dtype=np.float64)
+        clicked_mm.append(pt_mm)
+
+        pt_world_m = mm_to_world_m(base_mm, pt_mm, BASE_WORLD_M, A_2x2=A_2x2)
+        clicked_world_m.append(pt_world_m)
+
+    targets_world_m = [(float(p[0]), float(p[1])) for p in clicked_world_m]
+
+    if show_debug:
+        print("[CLICK] base_px:", base_px)
+        print("[CLICK] base_mm:", base_mm)
+        for i, (px, mm, wm) in enumerate(zip(clicked_px, clicked_mm, clicked_world_m)):
+            print(f"  {i:02d} px={px}  mm={mm}  world_m={wm}")
+
+    debug = {
+        "image_file": img_path,
+        "roi_box": roi_box,
+        "base_px": base_px,
+        "tip_px": tip_px,
+        "base_mm": base_mm,
+        "clicked_px": clicked_px,
+        "clicked_mm": [tuple(p.tolist()) for p in clicked_mm],
+        "clicked_world_m": [tuple(p.tolist()) for p in clicked_world_m],
+        "rvec": rvec.reshape(-1).tolist(),
+        "tvec": tvec.reshape(-1).tolist(),
+    }
+
+    return targets_world_m, debug
 
 # ============================================================
 # RUN
@@ -484,3 +655,13 @@ if __name__ == "__main__":
     print("\nResult dict:")
     for k, v in result.items():
         print(f"  {k}: {v}")
+    targets_world_m, dbg = pick_multiple_target_points_world(
+        n_points=None,          # or an int
+        cam_index=0,
+        use_roi=True,
+        show_debug=True
+    )
+
+    print("World targets (m):", targets_world_m)
+    # Example: pick first target
+    target_xy_world = np.array(targets_world_m[0])

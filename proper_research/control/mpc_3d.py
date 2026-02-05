@@ -9,9 +9,17 @@ from beam_direction_magnetisation.quarternions.shared_rotations import unpack_po
 from beam_direction_magnetisation.post_processing.post_processing import plot_mpc_state_3d
 from scipy.spatial.transform import Rotation as Rot
 mag_params = default_magnet_params()
+L_MAG = 0.04
 
 
 
+def wire_len_from_L(L, L_mag=L_MAG):
+    L = float(L)
+    wire_len = L - float(L_mag)
+    # if wire_len <= 0:
+    #     # if beam shorter than magnet segment, clamp or error
+    #     raise ValueError(f"L={L:.4f} must be > L_mag={L_mag:.4f}")
+    return wire_len
 
 u_max = np.array([ .05, .05, .05, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
@@ -111,7 +119,7 @@ class mpc_controller_tipxy_LTI:
                  n_u=7,
                  model_mode = "ltv",
                  d_min_tip_mag=0.10,  
-                 enable_tip_keepout=True,
+                 enable_tip_keepout=False,
                  d_alpha=0.15):
 
         self.n = int(n_out)
@@ -304,29 +312,32 @@ class mpc_controller_tipxy_LTI:
             Qtil[:(Np-1)*n, :(Np-1)*n] = np.kron(np.eye(Np-1), self.Q)
         Qtil[(Np-1)*n:, (Np-1)*n:] = self.Qf
         return Qtil
-
     def _disturbance_stack(self, d):
-        """
-        Build stacked contribution of constant disturbance d across horizon.
-        For A = I:
-          x1 gets +1*d
-          x2 gets +2*d
-          ...
-        For generic A:
-          d_acc_{i+1} = A d_acc_i + d
-        """
-        n = self.n
-        Np = self.Np
-        d = np.asarray(d, dtype=float).reshape(n,)
+        n, Np = self.n, self.Np
+        d = np.asarray(d, float).reshape(n, 1)         # (n,1)
+        return np.tile(d, (Np, 1)) 
+    # def _disturbance_stack(self, d):
+    #     """
+    #     Build stacked contribution of constant disturbance d across horizon.
+    #     For A = I:
+    #       x1 gets +1*d
+    #       x2 gets +2*d
+    #       ...
+    #     For generic A:
+    #       d_acc_{i+1} = A d_acc_i + d
+    #     """
+    #     n = self.n
+    #     Np = self.Np
+    #     d = np.asarray(d, dtype=float).reshape(n,)
 
-        d_stack = np.zeros((Np*n, 1))
-        d_acc = np.zeros(n)
+    #     d_stack = np.zeros((Np*n, 1))
+    #     d_acc = np.zeros(n)
 
-        for i in range(Np):
-            d_acc = self.A @ d_acc + d
-            d_stack[i*n:(i+1)*n, 0] = d_acc
+    #     for i in range(Np):
+    #         d_acc = self.A @ d_acc + d
+    #         d_stack[i*n:(i+1)*n, 0] = d_acc
 
-        return d_stack
+    #     return d_stack
 
 
 
@@ -457,8 +468,6 @@ class mpc_controller_tipxy_LTI:
         Mx, Mc = seq_mat_ltv(self.A, B_list)
         B0 = B_list[0]
         return p_seq, Mx, Mc, B0
-
-
     def step(self, xref_seq, x_meas=None):
         """
         xref_seq: (Np,2)
@@ -478,8 +487,9 @@ class mpc_controller_tipxy_LTI:
         # Use model residual to update d (low-pass filtered)
         if self.use_offset_free and x_meas is not None:
             x_model = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
-            r = self.x - x_model
-            self.d = (1.0 - self.d_alpha) * self.d + self.d_alpha * r
+            r = self.x - (x_model + self.d)      # <-- include current d
+            self.d = self.d + self.d_alpha * r   # simple integrator/LPF
+
 
         n = self.n
         m = self.m
@@ -530,9 +540,10 @@ class mpc_controller_tipxy_LTI:
             # baseline predicted state stack (no control)
             # X0_stack = (Mx @ xk).reshape(Np*n, 1)
 
-            # add disturbance contribution (offset-free)
+            X0_stack = (Mx @ xk).reshape(Np*n, 1)
             if self.use_offset_free:
                 X0_stack = X0_stack + self._disturbance_stack(self.d)
+
 
             # objective
             U_guess_vec = U_guess.reshape(-1, 1)  # (Np*m,1)
@@ -655,61 +666,312 @@ class mpc_controller_tipxy_LTI:
 
                 p_next_true = self._clamp_p(p_prev + self.dt*u0)
                 x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
-        p_next_true = self._clamp_p(p_prev + self.dt*u0)
-        x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
-        if self.use_offset_free:
-            x_next_true = x_next_true + self.d 
-        # update parameter state
-        self.p = self._clamp_p(self.p + u0 * self.dt)
 
-        # update plant state using nonlinear forward model
-        self.x = self.forward_tip_fn(self.p)
-        print(f"Pose inside mpc step is {self.p}")
-        print(f"X inside mpc step is {self.x}")
-        print(f"Pose inside mpc step is {self.p}")
-        print(f"X inside mpc step is {self.x}")
-        # store warm-start for next MPC step
-        if not infeas_final:
-            self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
+        # compute p_next (this is what you will command)
+        p_next_true = self._clamp_p(p_prev + self.dt * u0)
+
+        # OPTIONAL: model prediction of tip at p_next (for logging only)
+        x_next_model = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
+        if self.use_offset_free:
+            x_next_model = x_next_model + self.d
+
+        # --- update internal parameter state ONLY ---
+        self.p = p_next_true.copy()
+
+        # --- keep internal x as measurement, not model ---
+        # If x_meas was provided, keep that; otherwise fall back to model.
+        if x_meas is not None:
+            self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
         else:
-            self.U_warm = None
-        pred1_err = np.linalg.norm(x_next_true - X_pred[0])
+            self.x = x_next_model.copy()
+
+        # Warm start stays the same
+        self.U_warm = np.asarray(U_opt_vec, dtype=float).copy() if (U_opt_vec is not None and not infeas_final) else None
 
         info = dict(
             status=status_last,
             infeasible=int(infeas_final),
             u0=u0.copy(),
             p_now=self.p.copy(),
-            x_now=self.x.copy(),
+            x_now=self.x.copy(),              # <-- now this is measured if provided
+            x_next_model=x_next_model.copy(), # <-- keep model result for debugging
             d=self.d.copy(),
             X_pred=X_pred.copy(),
             U_seq=U_seq.copy(),
-            N_sqp=self.N_sqp,
-            pred1_err = pred1_err,
-            x_prev = x_prev.copy(),
-            x_next_true = x_next_true.copy(),
-            X_pred0 = X_pred[0].copy(),
-            pred0_vec_err = (x_next_true - X_pred[0]).copy(),
-            B_first=B_first.copy(),
-            p_lin=p_lin,
-            p_first=p_first,
-            X_aff_last = X_aff_last.copy() if X_aff_last is not None else None,
-            Mc_last    = Mc_last.copy()    if Mc_last is not None else None,
-            X_nom_last = X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
-            p_seq_last = p_seq_last.copy() if p_seq_last is not None else None,
+            # ... keep your other debug fields ...
         )
+
         return self.p.copy(), self.x.copy(), info
+
+
+    # def step(self, xref_seq, x_meas=None):
+    #     """
+    #     xref_seq: (Np,2)
+    #     x_meas: measured tip (2,) for offset-free update. If None, uses internal x.
+    #     """
+
+    #     if self.p is None:
+    #         raise ValueError("Call set_initial_params(...) before step().")
+
+    #     p_prev = self.p.copy()
+    #     x_prev = self.x.copy()
+    #     # measurement update
+    #     if x_meas is not None:
+    #         self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
+
+    #     # --- offset-free disturbance update ---
+    #     # Use model residual to update d (low-pass filtered)
+    #     if self.use_offset_free and x_meas is not None:
+    #         x_model = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
+    #         r = self.x - x_model
+    #         self.d = (1.0 - self.d_alpha) * self.d + self.d_alpha * r
+
+    #     n = self.n
+    #     m = self.m
+    #     Np = self.Np
+    #     Mc_last = None
+    #     X_aff_last = None
+    #     p_seq_last = None
+    #     X_nom_last = None
+
+    #     xref_seq = np.asarray(xref_seq, float).reshape(Np, self.n)
+    #     xref_stack = xref_seq.reshape(Np*self.n, 1)
+    #     xk = self.x.reshape(self.n, 1)
+
+    #     # --- SQP / successive linearization loop ---
+    #     # initial guess U: warm-start if available else zeros
+    #     if self.U_warm is not None and self.U_warm.size == Np*m:
+    #         U_opt_vec = self.U_warm.copy()
+    #         U_guess = U_opt_vec.reshape(Np, m)
+    #     else:
+    #         U_guess = np.zeros((Np, m))
+    #         U_opt_vec = None
+
+    #     status_last = "init"
+
+    #     for it in range(self.N_sqp):
+    #         # build LTV model based on current U_guess
+    #         p0 = self.p.copy()
+    #         p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
+
+    #         B_first = B0         
+    #         p_lin   = p_prev.copy()
+    #         p_first = p_seq[0].copy()
+
+    #         Qtil = self._compute_Qtil(B0)
+        
+            
+    #         Rtil = np.kron(np.eye(Np), self.R)
+
+    #         # delta-u penalty
+    #         if self.Np > 1 and np.any(np.diag(self.Rd) > 0):
+    #             Rd_til = np.kron(np.eye(Np-1), self.Rd)
+    #             H_du = self.Du.T @ Rd_til @ self.Du
+    #         else:
+    #             H_du = 0.0
+
+    #         xk = self.x.reshape(self.n, 1)
+
+    #         # baseline predicted state stack (no control)
+    #         # X0_stack = (Mx @ xk).reshape(Np*n, 1)
+
+    #         X0_stack = (Mx @ xk).reshape(Np*n, 1)
+    #         if self.use_offset_free:
+    #             X0_stack = X0_stack + self._disturbance_stack(self.d)
+
+
+    #         # objective
+    #         U_guess_vec = U_guess.reshape(-1, 1)  # (Np*m,1)
+
+    #         # Nominal nonlinear rollout along p_seq
+    #         X_nom = np.vstack([self.forward_tip_fn(p_seq[i]) for i in range(Np)]).reshape(Np*n, 1)
+
+    #         # Optional offset-free disturbance: add it consistently to nominal and prediction
+    #         if self.use_offset_free:
+    #             X_nom = X_nom + self._disturbance_stack(self.d)
+
+    #         # Affine offset so linear model matches nominal at U_guess
+    #         X_aff = X_nom - Mc @ U_guess_vec
+    #         Mc_last = Mc
+    #         X_aff_last = X_aff
+    #         p_seq_last = p_seq
+    #         X_nom_last = X_nom
+    #         # Now prediction is X_aff + Mc U
+    #         H = 2.0 * (Mc.T @ Qtil @ Mc + Rtil + H_du)
+    #         f = 2.0 * (Mc.T @ Qtil @ (X_aff - xref_stack))
+
+    #         # --- tip keep-out constraint (magnet must stay >= dmin from tip) ---
+    #         A_list, l_list, u_list = [], [], []
+    #         if self.enable_tip_keepout:
+    #             # Current iterate as vector
+    #             U_guess_vec = U_guess.reshape(-1)
+
+    #             A_ko, l_ko, u_ko = self._build_tip_keepout_constraints(
+    #                 Mc=Mc,
+    #                 X0_stack=X_aff,
+    #                 p0=self.p.copy(),
+    #                 U_guess_vec=U_guess_vec
+    #             )
+    #             if A_ko is not None:
+    #                 A_list.append(A_ko)
+    #                 l_list.append(l_ko)
+    #                 u_list.append(u_ko)
+    #         # constraints
+
+
+    #         # (1) input bounds
+    #         if np.all(np.isfinite(self.u_max)):
+    #             A_u = np.eye(Np * self.m)
+    #             umax_stack = np.tile(self.u_max, Np)
+    #             A_list.append(A_u)
+    #             l_list.append(-umax_stack)
+    #             u_list.append(+umax_stack)
+
+    #         # (2) parameter bounds across horizon (via integrated controls)
+    #         if np.all(np.isfinite(self.p_min)) and np.all(np.isfinite(self.p_max)):
+    #             A_p = np.kron(self.S_np, np.eye(self.m))
+    #             p0_stack = np.tile(self.p, Np)
+
+    #             l_p = np.tile(self.p_min, Np) - p0_stack
+    #             u_p = np.tile(self.p_max, Np) - p0_stack
+
+    #             A_list.append(A_p)
+    #             l_list.append(l_p)
+    #             u_list.append(u_p)
+
+    #         # (3) tube constraint around reference (optional)
+    #         if self.band_xy > 0.0:
+    #             band = float(self.band_xy)
+    #             band_stack = band * np.ones((Np*n,))
+    #             rhs_p = band_stack + (xref_stack - X_aff).reshape(-1)
+    #             rhs_n = band_stack + (X_aff - xref_stack).reshape(-1)
+
+
+    #             A_list.append(Mc)
+    #             l_list.append(-np.inf * np.ones(Np*n))
+    #             u_list.append(rhs_p)
+
+    #             A_list.append(-Mc)
+    #             l_list.append(-np.inf * np.ones(Np*n))
+    #             u_list.append(rhs_n)
+
+    #         # stack constraints for OSQP
+    #         if A_list:
+    #             A_osqp = np.vstack(A_list)
+    #             l_osqp = np.concatenate(l_list)
+    #             u_osqp = np.concatenate(u_list)
+    #         else:
+    #             A_osqp = np.zeros((0, Np*m))
+    #             l_osqp = np.zeros(0)
+    #             u_osqp = np.zeros(0)
+
+    #         # solve QP with warm-start (inside SQP loop we warm-start from last iterate)
+    #         U_warm_vec = U_opt_vec if U_opt_vec is not None else self.U_warm
+    #         U_opt_vec, _, status = solve_qp_osqp(H, f, A_osqp, l_osqp, u_osqp, U_warm=U_warm_vec)
+    #         status_last = status
+
+    #         infeas = (status not in ("solved", "solved inaccurate")) or (U_opt_vec is None)
+    #         if infeas:
+    #             # if infeasible, break SQP loop and apply zero control
+    #             U_guess = np.zeros((Np, m))
+    #             U_opt_vec = None
+    #             break
+
+    #         # update guess for next SQP iteration
+    #         U_guess = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
+
+    #     if U_opt_vec is None:
+    #         u0 = np.zeros(m)
+    #         U_seq = np.zeros((Np, m))
+    #         X_pred = np.full((Np, n), np.nan)
+    #         infeas_final = True
+    #     else:
+    #         U_seq = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
+    #         u0 = U_seq[0, :]
+
+    #         # Use SQP-consistent prediction baseline from the final linearization
+    #         if (Mc_last is None) or (X_aff_last is None):
+    #             X_pred = np.full((Np, n), np.nan)
+    #             infeas_final = True
+    #         else:
+    #             U_vec = U_opt_vec.reshape(-1, 1)                 # (Np*m,1)
+    #             X_pred_stack = X_aff_last + Mc_last @ U_vec      # (Np*n,1)
+    #             X_pred = X_pred_stack.reshape(Np, n)
+    #             infeas_final = False
+
+    #             p_next_true = self._clamp_p(p_prev + self.dt*u0)
+    #             x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
+    #     p_next_true = self._clamp_p(p_prev + self.dt*u0)
+    #     x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
+    #     if self.use_offset_free:
+    #         x_next_true = x_next_true + self.d 
+    #     # update parameter state
+    #     self.p = self._clamp_p(self.p + u0 * self.dt)
+
+    #     # update plant state using nonlinear forward model
+    #     self.x = self.forward_tip_fn(self.p)
+    #     print(f"Pose inside mpc step is {self.p}")
+    #     print(f"X inside mpc step is {self.x}")
+    #     print(f"Pose inside mpc step is {self.p}")
+    #     print(f"X inside mpc step is {self.x}")
+    #     # store warm-start for next MPC step
+    #     if not infeas_final:
+    #         self.U_warm = np.asarray(U_opt_vec, dtype=float).copy()
+    #     else:
+    #         self.U_warm = None
+    #     pred1_err = np.linalg.norm(x_next_true - X_pred[0])
+
+    #     info = dict(
+    #         status=status_last,
+    #         infeasible=int(infeas_final),
+    #         u0=u0.copy(),
+    #         p_now=self.p.copy(),
+    #         x_now=self.x.copy(),
+    #         d=self.d.copy(),
+    #         X_pred=X_pred.copy(),
+    #         U_seq=U_seq.copy(),
+    #         N_sqp=self.N_sqp,
+    #         pred1_err = pred1_err,
+    #         x_prev = x_prev.copy(),
+    #         x_next_true = x_next_true.copy(),
+    #         X_pred0 = X_pred[0].copy(),
+    #         pred0_vec_err = (x_next_true - X_pred[0]).copy(),
+    #         B_first=B_first.copy(),
+    #         p_lin=p_lin,
+    #         p_first=p_first,
+    #         X_aff_last = X_aff_last.copy() if X_aff_last is not None else None,
+    #         Mc_last    = Mc_last.copy()    if Mc_last is not None else None,
+    #         X_nom_last = X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
+    #         p_seq_last = p_seq_last.copy() if p_seq_last is not None else None,
+    #     )
+    #     return self.p.copy(), self.x.copy(), info
 
 
 # def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
 #     r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
-def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body):
+
+
+
+def forward_cosserat_from_pose_ur_rotvec_L(p, model, *, m_body, L_mag=L_MAG):
     r_src, q_src, L = unpack_pose_ur_rotvec_L(p)
-    out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body)
+
+    wire_len = wire_len_from_L(L, L_mag)
+
+    # rebuild magnetisation profile for this L
+    m_local_fun = make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0)
+
+    # run forward with per-call wire_len + per-call m_local_fun
+    # easiest: temporarily override model.m_local_fun
+    old_fun = model.m_local_fun
+    try:
+        model.m_local_fun = m_local_fun
+        out = model.forward(L=L, r_src=r_src, q_src=q_src, m_body=m_body, wire_len=wire_len)
+    finally:
+        model.m_local_fun = old_fun
+
     if not out["solved"]:
         return np.array([1e3, 1e3, 1e3], float)
     return np.asarray(out["p_tip"], float).reshape(3,)
-
 
 
 
@@ -824,101 +1086,93 @@ def build_xref_from_path(path, k, Np):
     idx = np.clip(np.arange(k, k + Np), 0, N - 1)
     return path[idx]
 
-
-pivot_point = np.array([
-0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
-], float)
-
-
-start_point = np.array([
-0.6781328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
-], float)
-T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
-p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+if __name__ == "__main__":
+    pivot_point = np.array([
+    0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    ], float)
 
 
-model = CosseratForwardModel(
-    p0=p0_ur,
-    q0=q0_ur,
-    Kinv_fun=Kbt_inv_profile,
-    m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
-    m_moment=0.0,
-)
+    start_point = np.array([
+    0.6781328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    ], float)
 
-# model = CosseratForwardModel(
-#     p0=np.array([0.0, 0.0, 0.0]),
-#     q0=np.array([1.0, 0.0, 0.0, 0.0]),
-#     Kinv_fun=Kbt_inv_profile,
-#     m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
-#     m_moment=0.0,  # not used by this m_local_fun
-#     n_nodes=120,
-#     tol=1e-5    
-#     )
-m_body = np.array([mag_params.mag_epm*2, 0.0, 0.0], dtype=float)
-L0 = 0.05      
-forward_tip_fn = lambda p: forward_cosserat_from_pose_ur_rotvec_L(p, model, m_body=m_body)
-J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
-# p0 = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.116988654350607, 0.19059356279735162, 0.028215660130034903,L0])
-start_point_pose6 = start_point  # [x,y,z, rx,ry,rz]
-p0 = np.array([start_point_pose6[0], start_point_pose6[1], start_point_pose6[2],
-               start_point_pose6[3], start_point_pose6[4], start_point_pose6[5],
-               L0], float)
-p_min = np.array([ 0.2, -1, -0.2,  p0[3]-np.pi*2, p0[4]-np.pi*2, p0[5]-np.pi*2,  0.03])
-p_max = np.array([ 0.85,  1,  1.0,  p0[3]+np.pi*2, p0[4]+np.pi*2, p0[5]+np.pi*2,  0.08])
-w_u  = np.array([1e-6, 1e-6, 1e-3,   1e-6, 1e-6, 1e-6,   1e-6])
-w_du = np.array([1e-6, 1e-6, 1e-6,   1e-3, 1e-3, 1e-3,   1e-6])
+    T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
+    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+    L0 = 0.05   
+    wire_len0 = wire_len_from_L(L0, L_MAG)
+    model = CosseratForwardModel(
+        p0=p0_ur,
+        q0=q0_ur,
+        Kinv_fun=Kbt_inv_profile,
+        m_local_fun=make_m_local_fun_wire_tip(wire_len0, mode="axial", alpha_end=0.0),
+        m_moment=0.0,
+        wire_len = wire_len0,
+    )
 
-mpc = mpc_controller_tipxy_LTI(
-    Jxy_fn=J_fn,
-    forward_tip_fn=forward_tip_fn,
-    dt=0.1,
-    Np=4,
-    n_out=3,
-    n_u=7,
-    w_xy=(1, 1, 1),
-    w_u=w_u,
-    w_du=w_du,
-    model_mode="ltv",
-    u_max=u_max,
-    p_min=p_min,
-    p_max=p_max,
-    N_sqp=4,
-    use_offset_free=False
-)
-
-
-mpc.set_initial_params(p0)
-x_target = np.array([ 0.80936455, -0.70098197, -0.10018981])
-Np = mpc.Np
-xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
-p_test = p0.copy()
-J_test = J_fn(p_test)
-print("J shape:", J_test.shape)  # must be (3,7)
-x_start = mpc.x.copy()
-n=5
-path = np.linspace(x_start, x_target, n)
-for k in range(10):
-    p_pre = mpc.p.copy()
-    x_pre = mpc.x.copy()
-
-    xref_seq = build_xref_from_path(path, k, mpc.Np)    
-    p_post, x_post, info = mpc.step(xref_seq, x_meas=None)
-
-    debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
-                     print_horizon=mpc.Np, do_nl_rollout=True)
-
-
-    error = np.linalg.norm(x_target-x_post)
-    if error < 0.001:
-        plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
-        print("UR pose6:", repr(p_post))
-        break
-print("UR pose6:", repr(p_post))
-plot_mpc_state_3d(model, m_body, p_post, x_post, title=f"MPC step {k}", dipole_scale=0.05)
-
+    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
     
-    
-print("UR pose6:", repr(p_post))
+    forward_tip_fn = lambda p: forward_cosserat_from_pose_ur_rotvec_L(p, model, m_body=m_body, L_mag=0.04)
+    J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
+
+    # p0 = np.array([ 0.63360145, -0.56541852,  0.20705173, -3.116988654350607, 0.19059356279735162, 0.028215660130034903,L0])
+    start_point_pose6 = start_point  # [x,y,z, rx,ry,rz]
+    p0 = np.array([start_point_pose6[0], start_point_pose6[1], start_point_pose6[2],
+                start_point_pose6[3], start_point_pose6[4], start_point_pose6[5],
+                L0], float)
+    p_min = np.array([ 0.2, -1, -0.2,  p0[3]-np.pi, p0[4]-np.pi, p0[5]-np.pi,  0.03])
+    p_max = np.array([ 0.85,  1,  1.0,  p0[3]+np.pi, p0[4]+np.pi, p0[5]+np.pi,  0.08])
+    w_u  = np.array([1e-6, 1e-6, 1e-6,   1e-6, 1e-6, 1e-6,   1e-6])
+    w_du = np.array([1e-6, 1e-6, 1e-6,   1e-3, 1e-3, 1e-3,   1e-6])
+
+    mpc = mpc_controller_tipxy_LTI(
+        Jxy_fn=J_fn,
+        forward_tip_fn=forward_tip_fn,
+        dt=0.1,
+        Np=4,
+        n_out=3,
+        n_u=7,
+        w_xy=(1, 1, 1),
+        w_u=w_u,
+        w_du=w_du,
+        model_mode="lti",
+        u_max=u_max,
+        p_min=p_min,
+        p_max=p_max,
+        N_sqp=4,
+        use_offset_free=False
+    )
+
+
+    mpc.set_initial_params(p0)
+    x_target = np.array([ 0.7936933881108881, -0.753998047249518, -0.1])
+    Np = mpc.Np
+    xref_seq = np.tile(x_target, (Np, 1))     # (Np,3)
+    p_test = p0.copy()
+    J_test = J_fn(p_test)
+    print("J shape:", J_test.shape)  # must be (3,7)
+    x_start = mpc.x.copy()
+    n=15
+    path = np.linspace(x_start, x_target, n)
+    for k in range(25):
+        p_pre = mpc.p.copy()
+        x_pre = mpc.x.copy()
+
+        xref_seq = build_xref_from_path(path, k, mpc.Np)    
+        p_post, x_post, info = mpc.step(xref_seq, x_meas=None)
+
+        debug_step_pose7(k, x_target, xref_seq, p_post, x_post, info, mpc,
+                        print_horizon=mpc.Np, do_nl_rollout=True)
+
+
+        error = np.linalg.norm(x_target-x_post)
+        if error < 0.001:
+
+            break
+    print("UR pose6:", repr(p_post))
+    plot_mpc_state_3d(model, m_body, p_post, x_post, p_post[-1], L_MAG , title=f"MPC step {k}", dipole_scale=0.05)
+
+        
+        
 
     
     

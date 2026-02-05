@@ -3,14 +3,14 @@ from scipy.integrate import solve_bvp
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
 from beam_direction_magnetisation.magnetism.parameters_cosserat import *
-from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
+from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
 from beam_direction_magnetisation.quarternions.shared_rotations import Ry, Rz
-from proper_research.parameters import default_magnet_params
+from proper_research.parameters import default_magnet_params, default_beam_params
 from scipy.spatial.transform import Rotation as Rot
-from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
-from beam_direction_magnetisation.magnetism.parameters_cosserat import s_m, ell_m, mu_line
 mag_params = default_magnet_params()
+beam_params = default_beam_params()
+
+
 def tip_bending_angles_from_tangent(sol, L, e1=np.array([1.0,0.0,0.0])):
     YL = sol.sol(np.array([L]))
     qL = quat_normalize(YL[3:7, :])
@@ -28,7 +28,7 @@ def dipole_from_pose(q_src, m_body):
     R = quat_to_R(q_src)
     return R @ m_body  # (3,)
 
-def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u_star=None):
+def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wire_len, u_star=None):
     e1 = np.array([-1.0, 0.0, 0.0])
     e1 = np.array([-1.0, 0.0, 0.0])
     if u_star is None:
@@ -46,7 +46,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         p_s = np.einsum('nij,j->ni', R, e1).T
 
         m_body = np.einsum('nij,jn->in', np.transpose(R,(0,2,1)), m)  # (3,N)
-        Kinv = Kinv_fun(s)                                           # (3,3,N)
+        Kinv = Kinv_fun(s, wire_len)                                           # (3,3,N)
         u = np.einsum('ijn,jn->in', Kinv, m_body) + u_star[:,None]    # (3,N)
 
         q_s = quat_derivative_body(qn, u)
@@ -57,8 +57,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment,  u
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
 
-        # f_ext = f_ext + f_g
-        # f_ext = f_ext
+        f_ext = f_ext + f_g
         # f_ext = np.zeros_like(p)       # same shape as p (3,N)
         # tau_ext = np.zeros_like(p)     # (3,N)
         n_s = -f_ext
@@ -84,7 +83,7 @@ def bc_cosserat(Ya, Yb, p0, q0):
         mb              
     ])
 class CosseratForwardModel:
-    def __init__(self, *, p0, q0, Kinv_fun, m_local_fun, m_moment,
+    def __init__(self, *, p0, q0, Kinv_fun, m_local_fun, m_moment, wire_len,
                  n_nodes=120, tol=1e-5, max_nodes=20000):
         self.p0 = np.asarray(p0, float)
         self.q0 = np.asarray(q0, float)
@@ -95,7 +94,7 @@ class CosseratForwardModel:
         self.tol = float(tol)
         self.max_nodes = int(max_nodes)
         self._sol_prev = None
-
+        self.wire_len = wire_len
     def _initial_guess(self, L):
         s = np.linspace(0.0, L, self.n_nodes)
         Y = np.zeros((13, self.n_nodes))
@@ -103,7 +102,7 @@ class CosseratForwardModel:
         Y[3, :] = 1.0        # quaternion w = 1
         return s, Y
 
-    def solve(self, *, L, r_src, m_src):
+    def solve(self, *, L, r_src, m_src, wire_len):
         L = float(L)
         r_src = np.asarray(r_src, float).reshape(3,)
         m_src = np.asarray(m_src, float).reshape(3,)
@@ -120,6 +119,7 @@ class CosseratForwardModel:
             Kinv_fun=self.Kinv_fun,
             m_local_fun=self.m_local_fun,
             m_moment=self.m_moment,
+            wire_len = wire_len,
         )
 
         sol = solve_bvp(
@@ -133,7 +133,7 @@ class CosseratForwardModel:
         self._sol_prev = sol
         return sol
 
-    def forward(self, *, L, r_src, q_src, m_body, s_out_n=300):
+    def forward(self, *, L, r_src, q_src, m_body, wire_len, s_out_n=300):
         """
         Inputs:
           L: beam length
@@ -143,8 +143,8 @@ class CosseratForwardModel:
 
         Outputs: dict with tip pose, bending, field at tip, net F/T, profiles (optional)
         """
-        m_src = dipole_from_pose(q_src, m_body)  # (3,)
-        sol = self.solve(L=L, r_src=r_src, m_src=m_src)
+        m_src = dipole_from_pose(q_src, m_body)
+        sol = self.solve(L=L, r_src=r_src, m_src=m_src, wire_len=wire_len)
 
         # Evaluate along rod for outputs
         s_out = np.linspace(0.0, float(L), int(s_out_n))
@@ -191,63 +191,6 @@ class CosseratForwardModel:
             profiles=dict(s=s_out, p=p, q=q, f_ext=f_ext, tau_ext=tau_ext, B=B),
         )
 
-def m_local_profile_axial(s, eps=1e-3):
-    s = np.atleast_1d(s)
-    N = s.size
-    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)  # only in magnetised region
-
-    m = np.zeros((3, N))
-    m[0, :] = mu_line               # axial only
-    m[1, :] = 0.0
-    m[2, :] = 0.0
-    return m * w[None, :]
-
-
-def m_local_wire_plus_magnetised_tip(
-    s,
-    *,
-    alpha_end=0.0,
-    mode="axial",          # "axial" | "constant" | "ramp"
-    eps=1e-3,
-):
-    """
-    Returns m_local(s) in BODY frame, shape (3,N).
-
-    Wire region: ~0 magnetisation (outside [s_m, s_m+ell_m])
-    Magnetised tip: direction in x-y plane
-      - axial    : alpha(s)=0
-      - constant : alpha(s)=alpha_end
-      - ramp     : alpha(s) = xi*alpha_end, xi in [0,1] over the tip region
-    """
-    s = np.atleast_1d(s)
-    N = s.size
-
-    # Smoothly gate magnetisation into tip region only
-    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)  # (N,)
-
-    if mode == "axial":
-        alpha_s = np.zeros_like(s)
-    elif mode == "constant":
-        alpha_s = alpha_end * np.ones_like(s)
-    elif mode == "ramp":
-        xi = (s - s_m) / (ell_m + 1e-12)
-        xi = np.clip(xi, 0.0, 1.0)
-        alpha_s = xi * alpha_end
-    else:
-        raise ValueError(f"Unknown mode='{mode}' (use 'axial','constant','ramp')")
-
-    m = np.zeros((3, N))
-    m[0, :] = mu_line * np.cos(alpha_s)
-    m[1, :] = mu_line * np.sin(alpha_s)
-    m[2, :] = 0.0
-
-    return m * w[None, :]
-def make_m_local_fun_wire_tip(*, alpha_end=0.0, mode="axial", eps=1e-3):
-    def _m_local(s, _unused=None):
-        return m_local_wire_plus_magnetised_tip(
-            s, alpha_end=alpha_end, mode=mode, eps=eps
-        )
-    return _m_local
 
 
 def quat_mul(q1, q2):
@@ -345,16 +288,19 @@ def T_to_p_quat_wxyz(T):
 
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.052
-    m_body = np.array([mag_params.mag_epm*3, 0.0, 0.0])
+    L_cmd = 0.055
+    mag_len = beam_params.length_of_mag
+    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
     0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], float)
 
 
     start_point = np.array([
-    0.7202484210250407, -0.5898397383336145, 0.15179146212163236-0.25, -2.895959881558942, 1.0805104453987653, 0.036263334219256906], float)
-
+    0.7358772138964855, -0.5598776116145038, 0.1517238977466137, -2.789117819519067, 1.3279582830421093, 0.029877471667822977], float)
+    start_point[2] -=0.25
+    wire_len = L_cmd - mag_len
+    # wire_len = 0.03
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
@@ -365,8 +311,9 @@ if __name__ == "__main__":
         p0=p0_ur,
         q0=q0_ur,
         Kinv_fun=Kbt_inv_profile,
-        m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
+        m_local_fun=make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0),
         m_moment=0.0,
+        wire_len = wire_len,
     )
 
     out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body)

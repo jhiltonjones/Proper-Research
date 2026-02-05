@@ -1,7 +1,9 @@
 import numpy as np 
-from beam_direction_magnetisation.magnetism.parameters_cosserat import mu_line, alpha, EI, GJ, ell_m,s_m,s_k
-
-mu_tip = mu_line
+from proper_research.parameters import MagnetParams, default_beam_params
+beam_params =default_beam_params()
+mu_tip = beam_params.mag * beam_params.A_cs
+EI  = beam_params.E * beam_params.I
+GJ = beam_params.G * beam_params.J
 # m_tip_local = np.array([mu_line*np.cos(alpha),0.0, mu_line*np.sin(alpha)])
 # def m_local_profile(s, m_tip_front_or_overhead):
 #     mask = ((s >= s_m) & (s <= s_m + ell_m)).astype(float)
@@ -9,14 +11,14 @@ mu_tip = mu_line
 def smooth_top_hat(s, s0, s1, eps):
     return 0.5*(np.tanh((s - s0)/eps) - np.tanh((s - s1)/eps))
 
-def m_local_profile(s, m_vec, eps=1e-3):
-    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)   # shape (N,)
+def m_local_profile(s, m_vec, s_m, eps=1e-3):
+    w = smooth_top_hat(s, s_m, s_m + beam_params.length_of_mag, eps)   # shape (N,)
     return m_vec[:, None] * w[None, :]
 
 EI1, GJ1 = EI, GJ        
 EI2, GJ2 = EI, GJ  
 
-def Kbt_inv_profile(s):
+def Kbt_inv_profile(s, s_k):
 
     mask = (s >= s_k)
     EI_s = np.where(mask, EI2, EI1)
@@ -27,3 +29,61 @@ def Kbt_inv_profile(s):
     Kinv[1,1,:] = 1.0 / EI_s
     Kinv[2,2,:] = 1.0 / EI_s
     return Kinv
+def m_local_profile_axial(s, eps=1e-3):
+    s = np.atleast_1d(s)
+    N = s.size
+    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)  # only in magnetised region
+
+    m = np.zeros((3, N))
+    m[0, :] = mu_line               # axial only
+    m[1, :] = 0.0
+    m[2, :] = 0.0
+    return m * w[None, :]
+
+
+def m_local_wire_plus_magnetised_tip(
+    s,
+    len_wire,
+    *,
+    alpha_end=0.0,
+    mode="axial",          # "axial" | "constant" | "ramp"
+    eps=1e-3,
+):
+    """
+    Returns m_local(s) in BODY frame, shape (3,N).
+
+    Wire region: ~0 magnetisation (outside [s_m, s_m+ell_m])
+    Magnetised tip: direction in x-y plane
+      - axial    : alpha(s)=0
+      - constant : alpha(s)=alpha_end
+      - ramp     : alpha(s) = xi*alpha_end, xi in [0,1] over the tip region
+    """
+    s = np.atleast_1d(s)
+    N = s.size
+
+    # Smoothly gate magnetisation into tip region only
+    w = smooth_top_hat(s, len_wire, len_wire + beam_params.length_of_mag, eps)  # (N,)
+
+    if mode == "axial":
+        alpha_s = np.zeros_like(s)
+    elif mode == "constant":
+        alpha_s = alpha_end * np.ones_like(s)
+    elif mode == "ramp":
+        xi = (s - len_wire) / (beam_params.length_of_mag + 1e-12)
+        xi = np.clip(xi, 0.0, 1.0)
+        alpha_s = xi * alpha_end
+    else:
+        raise ValueError(f"Unknown mode='{mode}' (use 'axial','constant','ramp')")
+
+    m = np.zeros((3, N))
+    m[0, :] = mu_tip * np.cos(alpha_s)
+    m[1, :] = mu_tip * np.sin(alpha_s)
+    m[2, :] = 0.0
+
+    return m * w[None, :]
+def make_m_local_fun_wire_tip(len_wire,*, alpha_end=0.0, mode="axial", eps=1e-3):
+    def _m_local(s, _unused=None):
+        return m_local_wire_plus_magnetised_tip(
+            s, len_wire, alpha_end=alpha_end, mode=mode, eps=eps
+        )
+    return _m_local

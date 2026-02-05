@@ -11,11 +11,12 @@ class BeamParams:
     E: float         # Young's modulus [Pa]
     A_cs: float      # cross-sectional area [m^2]
     I: float         # second moment of area [m^4]
-
+    J: float
+    G: float
     L_init: float    # initial L [m]
     B_init: float    # initial B [T]
     phi_init: float  # initial phi [rad]
-
+    length_of_mag: float
 @dataclass
 class MagnetParams:
     mu_0: float      # vacuum permeability
@@ -63,6 +64,10 @@ def default_beam_params():
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4
     phi_intit = np.deg2rad(10)
+    nu = 0.49
+    J = 0.5*np.pi*r**4
+    G = E / (2*(1+nu))
+    length_of_mag = 0.04
     return BeamParams(
         mag=mag,
         r=r,
@@ -71,12 +76,16 @@ def default_beam_params():
         I=I,
         L_init=0.05,
         B_init=0.025,
-        phi_init=phi_intit
+        phi_init=phi_intit,
+        G = G,
+        J=J,
+        length_of_mag = length_of_mag
+
     )
 
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
-    B_r = 1.2
+    B_r = 1.1
     r_epm = 0.03
     p_epm = 0.09
     m_hat = (1.0, 0.0, 0.0)

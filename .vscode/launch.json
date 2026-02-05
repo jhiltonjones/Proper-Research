@@ -18,7 +18,7 @@
             "name": "Run mpc",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.experiments.mpc_implementation",
+            "module": "proper_research.experiments.mpc_implementation_pose",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
@@ -31,10 +31,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run testing script 2",
+            "name": "Run single shot",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.experiments.testing_script2",
+            "module": "proper_research.experiments.single_shot",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

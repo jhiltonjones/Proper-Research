@@ -1,37 +1,55 @@
 import csv
 import time
 import numpy as np
+import os
 
 from proper_research.parameters import ROBOT_IP
 from proper_research.robot.ur_rtde import URRtde
 from proper_research.robot.transformations import get_point
-from proper_research.vision.camera import detect_red_points_and_angle, new_capture
-from proper_research.vision.measure_length import measure_beam_length_mm_with_checkerboard
-from proper_research.advancer_unit.advancer_control import advancer_go
+from proper_research.vision.vision_w_arco import measure_lengths_mm
 
+OUTPUT_CSV = "bending_results_55mm.csv"
 
-def safe_xy(pt):
-    """Convert a point to (x, y) if available; otherwise (None, None)."""
-    if pt is None:
-        return None, None
-    try:
-        return float(pt[0]), float(pt[1])
-    except Exception:
-        return None, None
+IMG_DIR = "bending_images_55"
+os.makedirs(IMG_DIR, exist_ok=True)
 
+CSV_FIELDS = [
+    "timestamp",
+    "commanded_angle_value",
+    "wire_length_mm",
+    "total_length_mm",
+    "angle_deg",
+    "tip_x_m",
+    "tip_y_m",
+    "image_file",
+]
 
-def safe_roi(roi):
-    """Convert ROI box to 4-tuple if available; otherwise (None, None, None, None)."""
-    if roi is None:
-        return None, None, None, None
-    try:
-        # expected (x, y, w, h) or similar
-        return tuple(roi[:4])
-    except Exception:
-        return None, None, None, None
+def make_image_filename(angle_deg):
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    ms = int((time.time() % 1) * 1000)
+    return os.path.join(IMG_DIR, f"img_a{angle_deg:+04d}_{ts}_{ms:03d}.jpg")
 
+def result_to_row(result, commanded_angle_value):
+    tip_x, tip_y = result["tip_world_m"]
+    return {
+        "timestamp": time.time(),
+        "commanded_angle_value": commanded_angle_value,
+        "wire_length_mm": result["wire_length_mm"],
+        "total_length_mm": result["total_length_mm"],
+        "angle_deg": result["angle_centerline_to_tip_deg"],
+        "tip_x_m": tip_x,
+        "tip_y_m": tip_y,
+        "image_file": result["image_file"],
+    }
 
-OUTPUT_CSV = "beam_calibration_results_diag_beam.csv"
+def append_result_row(csv_path, row_dict):
+    file_exists = os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row_dict)
+        f.flush()
 
 robo = URRtde(ROBOT_IP)
 
@@ -39,86 +57,31 @@ try:
     base_pose = get_point(0, 0)
     robo.moveL(base_pose)
 
-    values = np.arange(-90, 100, 10)
-    lengths = np.arange(25, 39, 2)
+    angles = np.arange(-70, 75, 5)
 
-    # Open CSV once, write header
-    with open(OUTPUT_CSV, "w", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "timestamp",
-                "commanded_length_mm",
-                "measured_length_mm",
-                "commanded_angle_value",
-                "detected_angle_deg",
-                "pt1_x",
-                "pt1_y",
-                "pt2_x",
-                "pt2_y",
-                "roi_x",
-                "roi_y",
-                "roi_w",
-                "roi_h",
-                "image_file",
-            ],
-        )
-        writer.writeheader()
+    for a in angles:
+        print("ANGLE", a)
+        pose = get_point(0, a)
+        robo.moveL(pose)
 
-        for l in lengths:
-            robo.moveL(base_pose)
-            print("LENGTH:", l)
-            advancer_go(l)
+        img_name = make_image_filename(a)
 
-            # Measure length after advancing
-            result = measure_beam_length_mm_with_checkerboard(
-                image_filename="focused_image.jpg",
+        try:
+            result = measure_lengths_mm(
+                image_filename=img_name,
                 use_roi=True,
                 show=False,
+                cam_index=0
             )
-            length_curr = result.get("length_mm", None)
-            print(f"Length after ADY is: {length_curr}")
+        except Exception as e:
+            print("[ERROR] measure failed:", repr(e))
+            continue
 
-            for i in values:
-                print("ANGLE", i)
-                pose = get_point(0, i)
-                robo.moveL(pose)
-
-                img_file = new_capture(filename="focused_image.jpg")
-
-                pt1, pt2, angle, roi_box = detect_red_points_and_angle(
-                    img_file,
-                    show=False,
-                    use_roi=True,
-                )
-
-                pt1_x, pt1_y = safe_xy(pt1)
-                pt2_x, pt2_y = safe_xy(pt2)
-                roi_x, roi_y, roi_w, roi_h = safe_roi(roi_box)
-
-                print(angle)
-
-                writer.writerow(
-                    {
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "commanded_length_mm": float(l),
-                        "measured_length_mm": float(length_curr) if length_curr is not None else None,
-                        "commanded_angle_value": float(i),
-                        "detected_angle_deg": float(angle) if angle is not None else None,
-                        "pt1_x": pt1_x,
-                        "pt1_y": pt1_y,
-                        "pt2_x": pt2_x,
-                        "pt2_y": pt2_y,
-                        "roi_x": roi_x,
-                        "roi_y": roi_y,
-                        "roi_w": roi_w,
-                        "roi_h": roi_h,
-                        "image_file": img_file,
-                    }
-                )
-                f.flush()
+        row = result_to_row(result, commanded_angle_value=a)
+        append_result_row(OUTPUT_CSV, row)
 
 finally:
     robo.shutdown()
 
 print(f"Saved results to: {OUTPUT_CSV}")
+print(f"Saved images to: {IMG_DIR}/")

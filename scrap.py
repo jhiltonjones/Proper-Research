@@ -14,32 +14,30 @@ rho = 0.13
 p0 = np.array([0.0, 0.0, 0.0])
 r_tip_nominal = p0 + np.array([0.05, 0.0, 0.0])
 ROBOT_IP = "192.168.56.101"
-TCP_TARGET =  [0.51361828, -0.69125716, -0.07205731, -3.05257941, -0.03533282,
-       -0.56879197]
+TCP_TARGET =  [0.76777671, -0.7604218 , -0.09978758, -3.08246699,  0.73638642,
+        0.04336743]
 
 Sleeping_joints = [5.127925760461949e-06, -1.570810934106344, 1.889864076787262e-05, -1.5707822610205149, -6.500874654591371e-06, -1.699129213506012e-05]
 if __name__ == "__main__":
     robo = URRtde(ROBOT_IP)
     try:
         
-        print("Current TCP:", robo.get_pose())
+        robo.get_pose()
 
         # robo.go_home_joint()
         # # posy[2]+=0.2
-        new_pose = get_point(0,-40)
+        new_pose = get_point(0,0)
         robo.moveL(new_pose)
-        # new_pose = get_point(0,-70) 
+        # new_pose = get_point(0,-40) 
         # robo.moveL(new_pose)
         
-
-        posy = robo.get_pose
+        robo.get_pose()
         # posy[5]-=np.pi/2
         # robo.moveJ(posy)
         # robo.moveL(test)
         # robo.moveJ(Sleeping_joints)
         # print("New pose is", repr(new_pose))
-        # robo.moveL(np.array([0.65581355, -0.49516925,  0.2 +0.25      , -3.10005981, -0.2107622 ,
-        # 0.31018698]))
+
         # TCP_TARGET[2] +=.25
         # robo.moveL(TCP_TARGET)
 

@@ -5,7 +5,7 @@ pivot_point = np.array([
 
 
 start_point = np.array([
-0.6781328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+0.6681328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
 ], float)
 
 def rotz(theta):
@@ -628,11 +628,11 @@ def tcp_from_global(pose6_in_G):
     return T_to_pose(T)
 
 
-tcp_start = tcp_from_global([-0.15, 0.0, 0.25, 0,0,0])
-tcp_start2 = tcp_from_global([-0.17, 0.2, 0.25, 0,0,0])
-print("tcp_start:", tcp_start)
-print("tcp_start:", tcp_start2)
-print("diff to start_point:", tcp_start - tcp_start2)
+# tcp_start = tcp_from_global([-0.15, 0.0, 0.25, 0,0,0])
+# tcp_start2 = tcp_from_global([-0.17, 0.2, 0.25, 0,0,0])
+# print("tcp_start:", tcp_start)
+# print("tcp_start:", tcp_start2)
+# print("diff to start_point:", tcp_start - tcp_start2)
 import numpy as np
 
 def quat_normalize_wxyz(q):
@@ -775,7 +775,7 @@ p_tcp_start = start_point[:3]
 p_mag_world_at_start = pivot_point[:3]  # magnet at catheter base
 
 p_TCP_M = R_start.T @ (p_mag_world_at_start - p_tcp_start)  # expressed in TCP frame
-print("p_TCP_M (in TCP frame):", p_TCP_M)
+# print("p_TCP_M (in TCP frame):", p_TCP_M)
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = p_TCP_M
 T_M_TCP = inv_T(T_TCP_M)
@@ -1040,11 +1040,11 @@ def tcp_from_global(pose6_in_G):
     return T_to_pose(T)
 
 
-tcp_start = tcp_from_global([-0.15, 0.0, 0.25, 0,0,0])
-tcp_start2 = tcp_from_global([-0.17, 0.2, 0.25, 0,0,0])
-print("tcp_start:", tcp_start)
-print("tcp_start:", tcp_start2)
-print("diff to start_point:", tcp_start - tcp_start2)
+# tcp_start = tcp_from_global([-0.15, 0.0, 0.25, 0,0,0])
+# tcp_start2 = tcp_from_global([-0.17, 0.2, 0.25, 0,0,0])
+# print("tcp_start:", tcp_start)
+# print("tcp_start:", tcp_start2)
+# print("diff to start_point:", tcp_start - tcp_start2)
 import numpy as np
 
 def quat_normalize_wxyz(q):
@@ -1187,7 +1187,7 @@ p_tcp_start = start_point[:3]
 p_mag_world_at_start = pivot_point[:3]  # magnet at catheter base
 
 p_TCP_M = R_start.T @ (p_mag_world_at_start - p_tcp_start)  # expressed in TCP frame
-print("p_TCP_M (in TCP frame):", p_TCP_M)
+# print("p_TCP_M (in TCP frame):", p_TCP_M)
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = p_TCP_M
 T_M_TCP = inv_T(T_TCP_M)
@@ -1264,10 +1264,10 @@ def tcp_cmd_from_sim_magnet(r_src_G, q_wxyz_G, pivot_point, T_TCP_M):
     mag_pose6_G = magnet_pose6_in_G_from_sim(r_src_G, q_wxyz_G)
     tcp_pose6_R = tcp_from_magnet_global(mag_pose6_G, pivot_point, T_TCP_M)
     return tcp_pose6_R
-r_src = np.array([0.08660254, 0.05, 0.0])
-q_src = np.array([0.96592583, 0.0, 0.0, 0.25881905])
+# r_src = np.array([0.08660254, 0.05, 0.0])
+# q_src = np.array([0.96592583, 0.0, 0.0, 0.25881905])
 
-tcp_cmd = tcp_cmd_from_sim_magnet(r_src, q_src, pivot_point, T_TCP_M)
-print("TCP command:", tcp_cmd)
-tcp_com = get_point(0, 30)
-print("tcp diff:", tcp_cmd - tcp_com)
+# tcp_cmd = tcp_cmd_from_sim_magnet(r_src, q_src, pivot_point, T_TCP_M)
+# print("TCP command:", tcp_cmd)
+# tcp_com = get_point(0, 30)
+# print("tcp diff:", tcp_cmd - tcp_com)

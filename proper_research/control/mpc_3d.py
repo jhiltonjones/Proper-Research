@@ -120,7 +120,8 @@ class mpc_controller_tipxy_LTI:
                  model_mode = "ltv",
                  d_min_tip_mag=0.10,  
                  enable_tip_keepout=False,
-                 d_alpha=0.15):
+                 d_alpha=0.15,
+                 ):
 
         self.n = int(n_out)
         self.m = int(n_u)
@@ -136,6 +137,8 @@ class mpc_controller_tipxy_LTI:
         # tube constraint 
         # tube constraint 
         self.band_xy = float(band_xy)
+        self.d_max = np.array([0.03, 0.03, 0.03])  # meters, tune
+        self.r_gate = 0.05                         # meters, tune
 
         self.U_warm = None
         self.model_mode = str(model_mode).lower()
@@ -188,12 +191,20 @@ class mpc_controller_tipxy_LTI:
         self.N_sqp = int(N_sqp)
         self.use_offset_free = bool(use_offset_free)
         self.d_alpha = float(d_alpha)
+        self.use_adaptive_J = True
+        self.G = np.zeros((self.n, self.m))
+        self.G_alpha = 0.1          # learning rate (start 0.05–0.3)
+        self.G_max = 5.0            # cap each element (units: output per param)
+        self.min_dp = 1e-5          # ignore tiny moves
+        self.G_beta = 0.2     # how much of G to apply in the MPC model
 
         # matrices
         self._rebuild_S()
         self.Du = self._build_Du_matrix()
         self.d_min_tip_mag = float(d_min_tip_mag)
         self.enable_tip_keepout = bool(enable_tip_keepout)
+        self.p_last_meas = None
+        self.x_last_meas = None
 
         self.Sel_pos = np.zeros((3, self.m))
         self.Sel_pos[0, 0] = 1.0
@@ -364,25 +375,7 @@ class mpc_controller_tipxy_LTI:
             p_list.append(p_running.copy())
         return np.array(p_list)
 
-    # def _build_ltv_prediction_mats(self, p0, U_guess):
-    #     """
-    #     Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
-    #     """
-    #     if U_guess is None:
-    #         U_guess = np.zeros((self.Np, self.m))
 
-    #     p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
-    #     B_list = []
-    #     J_list = []
-    #     for i in range(self.Np):
-    #         Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
-    #         if Ji.shape != (self.n, self.m):
-    #             raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
-    #         J_list.append(Ji)
-    #         B_list.append(self.dt * Ji)
-
-    #     Mx, Mc = seq_mat_ltv(self.A, B_list)
-    #     return p_seq, J_list, B_list, Mx, Mc
     def _build_prediction_mats(self, p0, U_guess):
         """
         Returns: p_seq, Mx, Mc, B0
@@ -394,10 +387,15 @@ class mpc_controller_tipxy_LTI:
 
         if self.model_mode == "lti":
             # Constant Jacobian at current p0
-            J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
-            if J0.shape != (n, m):
-                raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
+            # J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
+            # if J0.shape != (n, m):
+            #     raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
+            # B0 = self.dt * J0
+            J0 = np.asarray(self.Jxy_fn(p0), float)
+            if self.use_adaptive_J:
+                J0 = J0 + self.G_beta * self.G
             B0 = self.dt * J0
+
 
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
 
@@ -428,30 +426,30 @@ class mpc_controller_tipxy_LTI:
 
     #     Mx, Mc = seq_mat_ltv(self.A, B_list)
     #     return p_seq, J_list, B_list, Mx, Mc
-    def _build_prediction_mats(self, p0, U_guess):
-        """
-        Returns: p_seq, Mx, Mc, B0
-        - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
-        - Mx, Mc: stacked prediction matrices
-        - B0: first-step input matrix (for terminal cost DARE)
-        """
-        n, m, Np = self.n, self.m, self.Np
+    # def _build_prediction_mats(self, p0, U_guess):
+    #     """
+    #     Returns: p_seq, Mx, Mc, B0
+    #     - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
+    #     - Mx, Mc: stacked prediction matrices
+    #     - B0: first-step input matrix (for terminal cost DARE)
+    #     """
+    #     n, m, Np = self.n, self.m, self.Np
 
-        if self.model_mode == "lti":
-            # Constant Jacobian at current p0
-            J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
-            if J0.shape != (n, m):
-                raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
-            B0 = self.dt * J0
+    #     if self.model_mode == "lti":
+    #         # Constant Jacobian at current p0
+    #         J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
+    #         if J0.shape != (n, m):
+    #             raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
+    #         B0 = self.dt * J0
 
-            Mx, Mc = seq_mat_lti(self.A, B0, Np)
+    #         Mx, Mc = seq_mat_lti(self.A, B0, Np)
 
-            # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
-            if U_guess is None:
-                U_guess = np.zeros((Np, m))
-            p_seq = self._p_seq_from_U(p0, U_guess)
+    #         # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
+    #         if U_guess is None:
+    #             U_guess = np.zeros((Np, m))
+    #         p_seq = self._p_seq_from_U(p0, U_guess)
 
-            return p_seq, Mx, Mc, B0
+    #         return p_seq, Mx, Mc, B0
 
         # --- LTV ---
         if U_guess is None:
@@ -469,26 +467,45 @@ class mpc_controller_tipxy_LTI:
         B0 = B_list[0]
         return p_seq, Mx, Mc, B0
     def step(self, xref_seq, x_meas=None):
-        """
-        xref_seq: (Np,2)
-        x_meas: measured tip (2,) for offset-free update. If None, uses internal x.
-        """
-
         if self.p is None:
             raise ValueError("Call set_initial_params(...) before step().")
 
         p_prev = self.p.copy()
-        x_prev = self.x.copy()
-        # measurement update
-        if x_meas is not None:
-            self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
 
-        # --- offset-free disturbance update ---
-        # Use model residual to update d (low-pass filtered)
+        # 1) Inject measurement FIRST
+        if x_meas is not None:
+            self.x = np.asarray(x_meas, float).reshape(self.n,)
+
+        p_now = self.p.copy()
+        x_now = self.x.copy()
+
+        # 2) Adaptive J update using last realized transition (k-1 -> k)
+        if (self.use_adaptive_J and x_meas is not None
+            and self.p_last_meas is not None and self.x_last_meas is not None):
+
+            dp = (p_now - self.p_last_meas).reshape(self.m,)
+            dx = (x_now - self.x_last_meas).reshape(self.n,)
+
+            if np.linalg.norm(dp) > self.min_dp:
+                Jm = np.asarray(self.Jxy_fn(self.p_last_meas), float)
+                dx_hat = Jm @ dp
+                e = (dx - dx_hat).reshape(self.n, 1)
+                denom = float(dp @ dp + 1e-9)
+                self.G = self.G + (self.G_alpha / denom) * (e @ dp.reshape(1, -1))
+                self.G = np.clip(self.G, -self.G_max, self.G_max)
+
+        # 3) Store current measured pair for next time
+        if x_meas is not None:
+            self.p_last_meas = p_now.copy()
+            self.x_last_meas = x_now.copy()
+
+        # 4) Offset-free d update (if you want it) should use x_now vs model(p_now)
         if self.use_offset_free and x_meas is not None:
-            x_model = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
-            r = self.x - (x_model + self.d)      # <-- include current d
-            self.d = self.d + self.d_alpha * r   # simple integrator/LPF
+            x_model = np.asarray(self.forward_tip_fn(p_now), float).reshape(self.n,)
+            r = x_now - (x_model + self.d)
+            if np.linalg.norm(r) < self.r_gate:
+                self.d = np.clip(self.d + self.d_alpha * r, -self.d_max, self.d_max)
+
 
 
         n = self.n
@@ -520,7 +537,6 @@ class mpc_controller_tipxy_LTI:
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
 
             B_first = B0         
-            p_lin   = p_prev.copy()
             p_first = p_seq[0].copy()
 
             Qtil = self._compute_Qtil(B0)
@@ -669,6 +685,7 @@ class mpc_controller_tipxy_LTI:
 
         # compute p_next (this is what you will command)
         p_next_true = self._clamp_p(p_prev + self.dt * u0)
+
 
         # OPTIONAL: model prediction of tip at p_next (for logging only)
         x_next_model = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)

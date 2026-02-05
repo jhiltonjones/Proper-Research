@@ -285,20 +285,22 @@ def run_closed_loop_pose7_to_target_with_path(
         tip_px = dbg.get("tip_px", None)
         target_px = dbg.get("target_px", None)
         err_mm = 1000.0 * float(np.linalg.norm(target_xyz_ur - tip_xyz))
+
         hist.append(dict(
             k=k,
             tip=tip_xyz,
             err=err,
             err_mm=err_mm,
-            tip_px = tip_px,
-            target_px = target_px,
+            tip_px=tip_px,
+            target_px=target_px,
+            dbg=dbg,
             p_now=p_now,
             p_next=p_next,
             xref_seq=xref_seq,
             path_idx=path_idx,
             info=info,
-            dbg=dbg
         ))
+
 
         time.sleep(sleep_s)
 
@@ -387,15 +389,15 @@ def ensure_robo(robo):
             pass
         return URRtde(ROBOT_IP)
 # --- choose target (world frame) ---
-x_target = np.array([0.7939541748724427, -0.6899601828073002, -0.1], float)
+x_target = np.array([0.7936592193969759, -0.6915206145602086, -0.1], float)
 Z_TARGET = float(x_target[2])   # keep this z always
 
-# --- make vision measurement callback ---
 get_tip_xyz_meas = make_get_tip_xyz_meas_from_camera(
     cam_index=0,
     use_roi=True,
     z_target=Z_TARGET,
-    show=False
+    show=False,
+    target_world_xyz=x_target,   # <-- add this
 )
 
 # --- robot ---
@@ -415,7 +417,7 @@ hist = run_closed_loop_pose7_to_target_with_path(
     lookahead_mode="index",
     nearest_window=5,
 )
-robo.shutdown()
+advancer_go(length_des_mm=80)
 # find last iteration that has valid pixels
 last = next(h for h in reversed(hist) if h.get("tip_px") is not None and h.get("target_px") is not None)
 
@@ -425,5 +427,9 @@ plot_target_and_final_tip_on_image(
     tip_px=last["tip_px"],
     err_mm=last.get("err_mm", None),
 )
+robo.shutdown()
+
+# find last iteration that has valid pixels
+
 
 

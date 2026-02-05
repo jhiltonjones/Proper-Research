@@ -4,6 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_to_rot
 from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz
 from scipy.spatial.transform import Rotation as Rot
+import cv2 
 def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z_over):
     plt.figure()
     plt.plot(angles_deg, 1e3*np.array(tip_y_front), marker='o', label="Front magnetised at 30 deg")

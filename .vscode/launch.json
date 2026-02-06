@@ -31,10 +31,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run single shot",
+            "name": "Run multiple targets",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.experiments.single_shot",
+            "module": "proper_research.experiments.mpc_multiple_targets",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

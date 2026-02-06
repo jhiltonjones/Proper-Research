@@ -184,6 +184,7 @@ def run_closed_loop_pose7_to_target_with_path(
     lookahead_mode="index",    # "index" or "nearest"
     nearest_window=5,         # search window if lookahead_mode="nearest"
 ):
+    
     """
     Builds a straight-line waypoint path ONCE (from initial measured tip to target).
     Each iteration feeds MPC a horizon of Np waypoints ahead.
@@ -243,11 +244,11 @@ def run_closed_loop_pose7_to_target_with_path(
 
         if show_debug:
             print(f"[ITER {k}] path_idx={path_idx}/{path_xyz.shape[0]-1} xref0={xref_seq[0]} xref_last={xref_seq[-1]}")
-
+        robo = ensure_robo(robo)
         # --- 5) MPC step ---
         p_now = np.asarray(mpc_xyz.p, float).copy()
         p_next, x_used, info = mpc_xyz.step(xref_seq, x_meas=tip_xyz)
-
+        robo = ensure_robo(robo)
         if show_debug:
             print(f"[ITER {k}] meas tip     = {tip_xyz}")
             print(f"[ITER {k}] MPC x_used   = {x_used}   (should match meas)")
@@ -359,8 +360,8 @@ J_fn = lambda p: numerical_jacobian_tip_xyz_pose(p, forward_tip_fn, eps)
 mpc = mpc_controller_tipxy_LTI(
     Jxy_fn=J_fn,
     forward_tip_fn=forward_tip_fn,
-    dt=0.2,
-    Np=4,
+    dt=0.5,
+    Np=2,
     n_out=3,
     n_u=7,
     w_xy=(1, 1, 1),
@@ -371,7 +372,7 @@ mpc = mpc_controller_tipxy_LTI(
     p_min=p_min,
     p_max=p_max,
     N_sqp=4,
-    use_offset_free=False
+    use_offset_free=True
 )
 
 
@@ -389,7 +390,7 @@ def ensure_robo(robo):
             pass
         return URRtde(ROBOT_IP)
 # --- choose target (world frame) ---
-x_target = np.array([0.8047610486062917, -0.6744941100446145, -0.1], float)
+x_target = np.array([0.8209038310484722, -0.6851274560177184, -0.1], float)
 Z_TARGET = float(x_target[2])   
 
 get_tip_xyz_meas = make_get_tip_xyz_meas_from_camera(

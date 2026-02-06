@@ -45,13 +45,14 @@ def advancer_go(length_des_mm):
                 )
                 length_curr = result["total_length_mm"]
                 e = length_des_mm - length_curr
-
-                if e > 0:
-                    print(f"  Moving FORWARD by {e:.2f} mm")
-                    ady.forward(e)
-                else:
-                    print(f"  Moving BACKWARD by {abs(e):.2f} mm")
-                    ady.backward(abs(e))
+                print(f"Error is {e}")
+                if e<10:
+                    if e > 0:
+                        print(f"  Moving FORWARD by {e:.2f} mm")
+                        ady.forward(e)
+                    else:
+                        print(f"  Moving BACKWARD by {abs(e):.2f} mm")
+                        ady.backward(abs(e))
 
             # ---- SAME LOGIC: re-measure + PID refine ----
             result = measure_total_length_mm_new_vision(
@@ -103,4 +104,4 @@ def advancer_go(length_des_mm):
 
 
 if __name__ == '__main__':
-    advancer_go(length_des_mm=50)
+    advancer_go(length_des_mm=45)

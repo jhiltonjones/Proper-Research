@@ -329,8 +329,8 @@ eps = np.array([
 ])
 p_min = np.array([ 0.2, -1, -0.2,  p0[3]-np.pi*2, p0[4]-np.pi*2, p0[5]-np.pi*2,  0.03])
 p_max = np.array([ 0.85,  1,  1.0,  p0[3]+np.pi*2, p0[4]+np.pi*2, p0[5]+np.pi*2,  0.08])
-w_u  = np.array([1e-6, 1e-6, 1e-3,   1e-6, 1e-6, 1e-3,   1e-6])
-w_du = np.array([1e-6, 1e-6, 1e-6,   1e-3, 1e-3, 1e-3,   1e-6])
+w_u  = np.array([1e-8, 1e-8, 1e-3,   1e-5, 1e-5, 1e-3,   1e-4])
+w_du = np.array([1e-6, 1e-6, 1e-6,   1e-5, 1e-5, 1e-6,   1e-6])
 u_max = np.array([ .05, .05, .05, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
     1e-3, 1e-3, 1e-3,              # x,y,z
@@ -366,12 +366,12 @@ mpc = mpc_controller_tipxy_LTI(
     w_xy=(1, 1, 1),
     w_u=w_u,
     w_du=w_du,
-    model_mode="lti",
+    model_mode="ltv",
     u_max=u_max,
     p_min=p_min,
     p_max=p_max,
     N_sqp=4,
-    use_offset_free=True
+    use_offset_free=False
 )
 
 
@@ -389,8 +389,8 @@ def ensure_robo(robo):
             pass
         return URRtde(ROBOT_IP)
 # --- choose target (world frame) ---
-x_target = np.array([0.7936592193969759, -0.6915206145602086, -0.1], float)
-Z_TARGET = float(x_target[2])   # keep this z always
+x_target = np.array([0.8047610486062917, -0.6744941100446145, -0.1], float)
+Z_TARGET = float(x_target[2])   
 
 get_tip_xyz_meas = make_get_tip_xyz_meas_from_camera(
     cam_index=0,
@@ -405,19 +405,19 @@ robo = ensure_robo(robo)
 
 # --- run ---
 hist = run_closed_loop_pose7_to_target_with_path(
-    mpc_xyz=mpc,                      # <- your MPC instance
+    mpc_xyz=mpc,              
     get_tip_xyz_meas=get_tip_xyz_meas,
     target_xyz_ur=x_target,
     robo=robo,
     tol_m=1.5e-3,
-    max_iters=15,
+    max_iters=10,
     sleep_s=0.15,
     show_debug=True,
-    n_path_points=10,
+    n_path_points=5,
     lookahead_mode="index",
     nearest_window=5,
 )
-advancer_go(length_des_mm=80)
+# advancer_go(length_des_mm=80)
 # find last iteration that has valid pixels
 last = next(h for h in reversed(hist) if h.get("tip_px") is not None and h.get("target_px") is not None)
 

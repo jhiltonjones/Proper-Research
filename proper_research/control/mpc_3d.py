@@ -191,7 +191,7 @@ class mpc_controller_tipxy_LTI:
         self.N_sqp = int(N_sqp)
         self.use_offset_free = bool(use_offset_free)
         self.d_alpha = float(d_alpha)
-        self.use_adaptive_J = True
+        self.use_adaptive_J = False
         self.G = np.zeros((self.n, self.m))
         self.G_alpha = 0.1          # learning rate (start 0.05–0.3)
         self.G_max = 5.0            # cap each element (units: output per param)
@@ -451,7 +451,6 @@ class mpc_controller_tipxy_LTI:
 
     #         return p_seq, Mx, Mc, B0
 
-        # --- LTV ---
         if U_guess is None:
             U_guess = np.zeros((Np, m))
 
@@ -472,14 +471,12 @@ class mpc_controller_tipxy_LTI:
 
         p_prev = self.p.copy()
 
-        # 1) Inject measurement FIRST
         if x_meas is not None:
             self.x = np.asarray(x_meas, float).reshape(self.n,)
 
         p_now = self.p.copy()
         x_now = self.x.copy()
 
-        # 2) Adaptive J update using last realized transition (k-1 -> k)
         if (self.use_adaptive_J and x_meas is not None
             and self.p_last_meas is not None and self.x_last_meas is not None):
 
@@ -494,12 +491,10 @@ class mpc_controller_tipxy_LTI:
                 self.G = self.G + (self.G_alpha / denom) * (e @ dp.reshape(1, -1))
                 self.G = np.clip(self.G, -self.G_max, self.G_max)
 
-        # 3) Store current measured pair for next time
         if x_meas is not None:
             self.p_last_meas = p_now.copy()
             self.x_last_meas = x_now.copy()
 
-        # 4) Offset-free d update (if you want it) should use x_now vs model(p_now)
         if self.use_offset_free and x_meas is not None:
             x_model = np.asarray(self.forward_tip_fn(p_now), float).reshape(self.n,)
             r = x_now - (x_model + self.d)
@@ -520,8 +515,7 @@ class mpc_controller_tipxy_LTI:
         xref_stack = xref_seq.reshape(Np*self.n, 1)
         xk = self.x.reshape(self.n, 1)
 
-        # --- SQP / successive linearization loop ---
-        # initial guess U: warm-start if available else zeros
+
         if self.U_warm is not None and self.U_warm.size == Np*m:
             U_opt_vec = self.U_warm.copy()
             U_guess = U_opt_vec.reshape(Np, m)
@@ -532,7 +526,6 @@ class mpc_controller_tipxy_LTI:
         status_last = "init"
 
         for it in range(self.N_sqp):
-            # build LTV model based on current U_guess
             p0 = self.p.copy()
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
 
@@ -544,7 +537,6 @@ class mpc_controller_tipxy_LTI:
             
             Rtil = np.kron(np.eye(Np), self.R)
 
-            # delta-u penalty
             if self.Np > 1 and np.any(np.diag(self.Rd) > 0):
                 Rd_til = np.kron(np.eye(Np-1), self.Rd)
                 H_du = self.Du.T @ Rd_til @ self.Du
@@ -553,7 +545,6 @@ class mpc_controller_tipxy_LTI:
 
             xk = self.x.reshape(self.n, 1)
 
-            # baseline predicted state stack (no control)
             # X0_stack = (Mx @ xk).reshape(Np*n, 1)
 
             X0_stack = (Mx @ xk).reshape(Np*n, 1)
@@ -561,30 +552,23 @@ class mpc_controller_tipxy_LTI:
                 X0_stack = X0_stack + self._disturbance_stack(self.d)
 
 
-            # objective
             U_guess_vec = U_guess.reshape(-1, 1)  # (Np*m,1)
 
-            # Nominal nonlinear rollout along p_seq
             X_nom = np.vstack([self.forward_tip_fn(p_seq[i]) for i in range(Np)]).reshape(Np*n, 1)
 
-            # Optional offset-free disturbance: add it consistently to nominal and prediction
             if self.use_offset_free:
                 X_nom = X_nom + self._disturbance_stack(self.d)
 
-            # Affine offset so linear model matches nominal at U_guess
             X_aff = X_nom - Mc @ U_guess_vec
             Mc_last = Mc
             X_aff_last = X_aff
             p_seq_last = p_seq
             X_nom_last = X_nom
-            # Now prediction is X_aff + Mc U
             H = 2.0 * (Mc.T @ Qtil @ Mc + Rtil + H_du)
             f = 2.0 * (Mc.T @ Qtil @ (X_aff - xref_stack))
 
-            # --- tip keep-out constraint (magnet must stay >= dmin from tip) ---
             A_list, l_list, u_list = [], [], []
             if self.enable_tip_keepout:
-                # Current iterate as vector
                 U_guess_vec = U_guess.reshape(-1)
 
                 A_ko, l_ko, u_ko = self._build_tip_keepout_constraints(
@@ -597,10 +581,8 @@ class mpc_controller_tipxy_LTI:
                     A_list.append(A_ko)
                     l_list.append(l_ko)
                     u_list.append(u_ko)
-            # constraints
 
 
-            # (1) input bounds
             if np.all(np.isfinite(self.u_max)):
                 A_u = np.eye(Np * self.m)
                 umax_stack = np.tile(self.u_max, Np)
@@ -608,7 +590,6 @@ class mpc_controller_tipxy_LTI:
                 l_list.append(-umax_stack)
                 u_list.append(+umax_stack)
 
-            # (2) parameter bounds across horizon (via integrated controls)
             if np.all(np.isfinite(self.p_min)) and np.all(np.isfinite(self.p_max)):
                 A_p = np.kron(self.S_np, np.eye(self.m))
                 p0_stack = np.tile(self.p, Np)
@@ -620,7 +601,6 @@ class mpc_controller_tipxy_LTI:
                 l_list.append(l_p)
                 u_list.append(u_p)
 
-            # (3) tube constraint around reference (optional)
             if self.band_xy > 0.0:
                 band = float(self.band_xy)
                 band_stack = band * np.ones((Np*n,))
@@ -636,7 +616,6 @@ class mpc_controller_tipxy_LTI:
                 l_list.append(-np.inf * np.ones(Np*n))
                 u_list.append(rhs_n)
 
-            # stack constraints for OSQP
             if A_list:
                 A_osqp = np.vstack(A_list)
                 l_osqp = np.concatenate(l_list)
@@ -646,19 +625,16 @@ class mpc_controller_tipxy_LTI:
                 l_osqp = np.zeros(0)
                 u_osqp = np.zeros(0)
 
-            # solve QP with warm-start (inside SQP loop we warm-start from last iterate)
             U_warm_vec = U_opt_vec if U_opt_vec is not None else self.U_warm
             U_opt_vec, _, status = solve_qp_osqp(H, f, A_osqp, l_osqp, u_osqp, U_warm=U_warm_vec)
             status_last = status
 
             infeas = (status not in ("solved", "solved inaccurate")) or (U_opt_vec is None)
             if infeas:
-                # if infeasible, break SQP loop and apply zero control
                 U_guess = np.zeros((Np, m))
                 U_opt_vec = None
                 break
 
-            # update guess for next SQP iteration
             U_guess = np.asarray(U_opt_vec, dtype=float).reshape(Np, m)
 
         if U_opt_vec is None:

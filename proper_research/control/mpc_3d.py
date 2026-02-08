@@ -212,82 +212,79 @@ class mpc_controller_tipxy_LTI:
         self.Sel_pos[2, 2] = 1.0
     def _rebuild_S(self):
         self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
-    def _build_tip_keepout_constraints(self, *, Mc, X0_stack, p0, U_guess_vec):
-        """
-        Build linearized constraints enforcing ||r_i - x_i|| >= dmin for i=1..Np
-        using SQP linearization around current predicted (r0_i, x0_i).
+    # def _build_tip_keepout_constraints(self, *, Mc, X0_stack, p0, U_guess_vec):
+    #     """
+    #     Build linearized constraints enforcing ||r_i - x_i|| >= dmin for i=1..Np
+    #     using SQP linearization around current predicted (r0_i, x0_i).
 
-        Returns:
-          A_ko: (Np, Np*m)
-          l_ko: (Np,)
-          u_ko: (Np,)
-        """
-        if not self.enable_tip_keepout:
-            return None, None, None
+    #     Returns:
+    #       A_ko: (Np, Np*m)
+    #       l_ko: (Np,)
+    #       u_ko: (Np,)
+    #     """
+    #     if not self.enable_tip_keepout:
+    #         return None, None, None
 
-        dmin = self.d_min_tip_mag
-        n, m, Np = self.n, self.m, self.Np
+    #     dmin = self.d_min_tip_mag
+    #     n, m, Np = self.n, self.m, self.Np
 
-        # Map U -> stacked p along horizon (same as you used for bounds)
-        A_p = np.kron(self.S_np, np.eye(m))          # (Np*m, Np*m)
-        p0_stack = np.tile(p0, Np)                   # (Np*m,)
+    #     # Map U -> stacked p along horizon (same as you used for bounds)
+    #     A_p = np.kron(self.S_np, np.eye(m))          # (Np*m, Np*m)
+    #     p0_stack = np.tile(p0, Np)                   # (Np*m,)
 
-        # stacked magnet positions: r_stack = (I kron Sel_pos) (p0_stack + A_p U)
-        Spos = np.kron(np.eye(Np), self.Sel_pos)     # (Np*3, Np*m)
-        r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
-        Rmap = Spos @ A_p                            # (Np*3, Np*m)
+    #     # stacked magnet positions: r_stack = (I kron Sel_pos) (p0_stack + A_p U)
+    #     Spos = np.kron(np.eye(Np), self.Sel_pos)     # (Np*3, Np*m)
+    #     r0_stack_base = Spos @ p0_stack.reshape(-1, 1)   # (Np*3,1)
+    #     Rmap = Spos @ A_p                            # (Np*3, Np*m)
 
-        X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)
+    #     X_guess = X0_stack + Mc @ U_guess_vec.reshape(-1, 1)
 
-        # predicted p along horizon under current guess:
-        p_guess = p0_stack.reshape(-1, 1) + A_p @ U_guess_vec.reshape(-1, 1)  # (Np*m,1)
-        r_guess = (Spos @ p_guess).reshape(Np, 3)                              # (Np,3)
+    #     # predicted p along horizon under current guess:
+    #     p_guess = p0_stack.reshape(-1, 1) + A_p @ U_guess_vec.reshape(-1, 1)  # (Np*m,1)
+    #     r_guess = (Spos @ p_guess).reshape(Np, 3)                              # (Np,3)
 
-        # Extract x_guess per step
-        x_guess = X_guess.reshape(Np, n)[:, :3]  
-        x_guess = X_guess.reshape(Np, n)[:, :3]  
+    #     x_guess = X_guess.reshape(Np, n)[:, :3]  
+    #     x_guess = X_guess.reshape(Np, n)[:, :3]  
 
-        # Build one linear constraint per horizon step
-        A_rows = []
-        l_rows = []
-        u_rows = []
+    #     A_rows = []
+    #     l_rows = []
+    #     u_rows = []
 
-        for i in range(Np):
-            r0 = r_guess[i, :].reshape(3, 1)
-            x0 = x_guess[i, :].reshape(3, 1)
-            s0 = (r0 - x0).reshape(3, 1)
+    #     for i in range(Np):
+    #         r0 = r_guess[i, :].reshape(3, 1)
+    #         x0 = x_guess[i, :].reshape(3, 1)
+    #         s0 = (r0 - x0).reshape(3, 1)
 
-            s0n = float(np.linalg.norm(s0))
-            # If s0 is extremely small, the linearization direction is ill-defined.
-            # In that case, skip (or you can pick a fixed direction).
-            if s0n < 1e-8:
-                continue
+    #         s0n = float(np.linalg.norm(s0))
 
-            # Blocks mapping U -> r_i and U -> x_i
-            Rmap_i = Rmap[i*3:(i+1)*3, :]                  # (3, Np*m)
-            Mc_i   = Mc[i*n:(i+1)*n, :]                    # (n, Np*m)
-            Mc_i3  = Mc_i[:3, :]                           # (3, Np*m)
+    #         if s0n < 1e-8:
+    #             continue
 
-            # r_i - x_i = (r_base_i - X0_i) + (Rmap_i - Mc_i3) U
-            X0_i = X0_stack[i*n:(i+1)*n, :][:3, :]         # (3,1)
-            r_base_i = r0_stack_base[i*3:(i+1)*3, :]       # (3,1)
+    #         # Blocks mapping U -> r_i and U -> x_i
+    #         Rmap_i = Rmap[i*3:(i+1)*3, :]                  # (3, Np*m)
+    #         Mc_i   = Mc[i*n:(i+1)*n, :]                    # (n, Np*m)
+    #         Mc_i3  = Mc_i[:3, :]                           # (3, Np*m)
 
-            # Linearized constraint: 2 s0^T (r_i - x_i) >= dmin^2 + ||s0||^2
-            # => a_i U >= b_i
-            a_i = (2.0 * s0.T) @ (Rmap_i - Mc_i3)          # (1, Np*m)
-            b_i = (dmin**2 + (s0n**2)) - float((2.0 * s0.T) @ (r_base_i - X0_i))
+    #         # r_i - x_i = (r_base_i - X0_i) + (Rmap_i - Mc_i3) U
+    #         X0_i = X0_stack[i*n:(i+1)*n, :][:3, :]         # (3,1)
+    #         r_base_i = r0_stack_base[i*3:(i+1)*3, :]       # (3,1)
 
-            A_rows.append(a_i.reshape(1, -1))
-            l_rows.append(b_i)
-            u_rows.append(np.inf)
+    #         # Linearized constraint: 2 s0^T (r_i - x_i) >= dmin^2 + ||s0||^2
+    #         # => a_i U >= b_i
+    #         a_i = (2.0 * s0.T) @ (Rmap_i - Mc_i3)          # (1, Np*m)
+    #         b_i = (dmin**2 + (s0n**2)) - float((2.0 * s0.T) @ (r_base_i - X0_i))
 
-        if not A_rows:
-            return None, None, None
+    #         A_rows.append(a_i.reshape(1, -1))
+    #         l_rows.append(b_i)
+    #         u_rows.append(np.inf)
 
-        A_ko = np.vstack(A_rows)
-        l_ko = np.asarray(l_rows, dtype=float)
-        u_ko = np.asarray(u_rows, dtype=float)
-        return A_ko, l_ko, u_ko
+    #     if not A_rows:
+    #         return None, None, None
+
+    #     A_ko = np.vstack(A_rows)
+    #     l_ko = np.asarray(l_rows, dtype=float)
+    #     u_ko = np.asarray(u_rows, dtype=float)
+    #     return A_ko, l_ko, u_ko
     def _build_Du_matrix(self):
         Np = self.Np
         m = self.m
@@ -327,37 +324,13 @@ class mpc_controller_tipxy_LTI:
         n, Np = self.n, self.Np
         d = np.asarray(d, float).reshape(n, 1)         # (n,1)
         return np.tile(d, (Np, 1)) 
-    # def _disturbance_stack(self, d):
-    #     """
-    #     Build stacked contribution of constant disturbance d across horizon.
-    #     For A = I:
-    #       x1 gets +1*d
-    #       x2 gets +2*d
-    #       ...
-    #     For generic A:
-    #       d_acc_{i+1} = A d_acc_i + d
-    #     """
-    #     n = self.n
-    #     Np = self.Np
-    #     d = np.asarray(d, dtype=float).reshape(n,)
-
-    #     d_stack = np.zeros((Np*n, 1))
-    #     d_acc = np.zeros(n)
-
-    #     for i in range(Np):
-    #         d_acc = self.A @ d_acc + d
-    #         d_stack[i*n:(i+1)*n, 0] = d_acc
-
-    #     return d_stack
+ 
 
 
 
     def _clamp_p(self, p):
         p = np.minimum(np.maximum(p, self.p_min), self.p_max)
-        # optional: keep a canonical rotvec representation for continuity
-        # p[3:6] = canonicalize_rotvec(p[3:6])
-        # optional: keep a canonical rotvec representation for continuity
-        # p[3:6] = canonicalize_rotvec(p[3:6])
+
         return p
 
 
@@ -386,7 +359,6 @@ class mpc_controller_tipxy_LTI:
         n, m, Np = self.n, self.m, self.Np
 
         if self.model_mode == "lti":
-            # Constant Jacobian at current p0
             # J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
             # if J0.shape != (n, m):
             #     raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
@@ -399,62 +371,16 @@ class mpc_controller_tipxy_LTI:
 
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
 
-            # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
             if U_guess is None:
                 U_guess = np.zeros((Np, m))
             p_seq = self._p_seq_from_U(p0, U_guess)
 
             return p_seq, Mx, Mc, B0
 
-        # --- LTV ---
-    # def _build_ltv_prediction_mats(self, p0, U_guess):
-    #     """
-    #     Build LTV (time-varying) B_i = dt * J(p_i) along horizon based on U_guess.
-    #     """
-    #     if U_guess is None:
-    #         U_guess = np.zeros((self.Np, self.m))
-
-    #     p_seq = self._p_seq_from_U(p0, U_guess)  # (Np,4), these are p1..pNp
-    #     B_list = []
-    #     J_list = []
-    #     for i in range(self.Np):
-    #         Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)
-    #         if Ji.shape != (self.n, self.m):
-    #             raise ValueError(f"Jacobian must be {(self.n, self.m)} but got {Ji.shape}")
-    #         J_list.append(Ji)
-    #         B_list.append(self.dt * Ji)
-
-    #     Mx, Mc = seq_mat_ltv(self.A, B_list)
-    #     return p_seq, J_list, B_list, Mx, Mc
-    # def _build_prediction_mats(self, p0, U_guess):
-    #     """
-    #     Returns: p_seq, Mx, Mc, B0
-    #     - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
-    #     - Mx, Mc: stacked prediction matrices
-    #     - B0: first-step input matrix (for terminal cost DARE)
-    #     """
-    #     n, m, Np = self.n, self.m, self.Np
-
-    #     if self.model_mode == "lti":
-    #         # Constant Jacobian at current p0
-    #         J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
-    #         if J0.shape != (n, m):
-    #             raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
-    #         B0 = self.dt * J0
-
-    #         Mx, Mc = seq_mat_lti(self.A, B0, Np)
-
-    #         # p_seq only used for debugging / keepout linearization; compute by integrating guess (optional)
-    #         if U_guess is None:
-    #             U_guess = np.zeros((Np, m))
-    #         p_seq = self._p_seq_from_U(p0, U_guess)
-
-    #         return p_seq, Mx, Mc, B0
-
         if U_guess is None:
             U_guess = np.zeros((Np, m))
 
-        p_seq = self._p_seq_from_U(p0, U_guess)  # p1..pNp
+        p_seq = self._p_seq_from_U(p0, U_guess)  
         B_list = []
         for i in range(Np):
             Ji = np.asarray(self.Jxy_fn(p_seq[i]), dtype=float)

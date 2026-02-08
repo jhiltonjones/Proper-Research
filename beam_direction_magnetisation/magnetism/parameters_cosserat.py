@@ -33,4 +33,5 @@ m_ext_full = mag_epm * np.array([1.0, 0.0, 0.0])
 rho_mat = 1200          # kg/m^3 
 g = 9.8
 w = rho_mat * A_cs * g # N/m
-f_g = np.array([0.0, 0.0, -w])[:, None] 
+# f_g = np.array([0.0, 0.0, -w])[:, None] 
+f_g = np.array([0.0, 0.0, -w])

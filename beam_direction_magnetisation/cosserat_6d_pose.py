@@ -30,7 +30,6 @@ def dipole_from_pose(q_src, m_body):
 
 def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wire_len, u_star=None):
     e1 = np.array([-1.0, 0.0, 0.0])
-    e1 = np.array([-1.0, 0.0, 0.0])
     if u_star is None:
         u_star = np.zeros(3)
 
@@ -254,7 +253,7 @@ def epm_pose_orbit_and_spin(
     return r_src, quat_normalize_np(q_src)
 
 
-def ur_pose6_to_T(pose6):
+def  tricepur_pose6_to_T(pose6):
     """
     UR RTDE TCP pose6: [x, y, z, rx, ry, rz]
     where [rx,ry,rz] is rotation vector (axis-angle), radians.

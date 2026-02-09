@@ -41,3 +41,13 @@ def ur_pose6_to_T(pose6):
     T[:3, :3] = Rm
     T[:3, 3] = p
     return T
+def T_to_p_quat_wxyz(T):
+    """
+    Convert 4x4 transform -> position (3,) and quaternion [w,x,y,z].
+    """
+    p = T[:3, 3].copy()
+    Rm = T[:3, :3]
+    q_xyzw = Rot.from_matrix(Rm).as_quat()  # [x,y,z,w]
+    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+    q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
+    return p, q_wxyz

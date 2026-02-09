@@ -797,16 +797,7 @@ def solve_quasistatic_insertion(*,
         L += dL
 
     return hist
-def T_to_p_quat_wxyz(T):
-    """
-    Convert 4x4 transform -> position (3,) and quaternion [w,x,y,z].
-    """
-    p = T[:3, 3].copy()
-    Rm = T[:3, :3]
-    q_xyzw = Rot.from_matrix(Rm).as_quat()  # [x,y,z,w]
-    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
-    q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
-    return p, q_wxyz
+
 def make_initial_guess(L, n_nodes, *, bend_axis="y", bend_sign=0, m_seed=5e-4):
     """
     bend_sign: 0 (straight), +1, -1
@@ -1172,10 +1163,10 @@ if __name__ == "__main__":
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.12,              # make it longer than rod so distance queries behave well
+        length=0.08,              # make it longer than rod so distance queries behave well
         n_pts=80,
         bend_axis=np.array([0.0, 0.0, 1.0]),  # bend in x-y plane
-        bend_angle=np.deg2rad(50.0),
+        bend_angle=np.deg2rad(40.0),
         bend_start=0.01,
         bend_end=0.08
     )

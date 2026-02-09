@@ -104,10 +104,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run nmpc_3d",
+            "name": "Run sim energy",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.nmpc_3d",
+            "module": "proper_research.simulation.minimal_energy",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

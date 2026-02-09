@@ -1272,5 +1272,5 @@ def tcp_cmd_from_sim_magnet(r_src_G, q_wxyz_G, pivot_point, T_TCP_M):
 # tcp_com = get_point(0, 30)
 # print("tcp diff:", tcp_cmd - tcp_com)
 if __name__ == "__main__":
-    new_pose = get_point(0,20)
+    new_pose = get_point(0,60)
     print(f"New pose is: {repr(new_pose)}")

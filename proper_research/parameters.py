@@ -17,6 +17,7 @@ class BeamParams:
     B_init: float    # initial B [T]
     phi_init: float  # initial phi [rad]
     length_of_mag: float
+    f_g: float
 @dataclass
 class MagnetParams:
     mu_0: float      # vacuum permeability
@@ -68,6 +69,8 @@ def default_beam_params():
     J = 0.5*np.pi*r**4
     G = E / (2*(1+nu))
     length_of_mag = 0.04
+    w = 1200 * A_cs * 9.8
+    f_g = np.array([0.0, 0.0, -w])
     return BeamParams(
         mag=mag,
         r=r,
@@ -79,8 +82,8 @@ def default_beam_params():
         phi_init=phi_intit,
         G = G,
         J=J,
-        length_of_mag = length_of_mag
-
+        length_of_mag = length_of_mag,
+        f_g = f_g
     )
 
 def default_magnet_params():

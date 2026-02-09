@@ -1,20 +1,101 @@
 import numpy as np
 from scipy.integrate import solve_bvp
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_profile
-from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
-from beam_direction_magnetisation.magnetism.parameters_cosserat import *
-from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot, quat_to_R
+from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
 from beam_direction_magnetisation.quarternions.shared_rotations import Ry, Rz
+from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T
 from proper_research.parameters import default_magnet_params, default_beam_params
 from scipy.spatial.transform import Rotation as Rot
 import matplotlib.pyplot as plt
+beam_params = default_beam_params()
 def smoothstep01(x):
     x = np.clip(x, 0.0, 1.0)
     return x*x*(3 - 2*x)
-def wall_penalty_quadratic(viol, k):
-    v = np.maximum(viol, 0.0)
-    return 0.5 * k * v * v
+from scipy.interpolate import CubicSpline
+from scipy.spatial import cKDTree
+
+class LumenQuery:
+    def __init__(self, C, R):
+        self.C = np.asarray(C, float)
+        self.R = np.asarray(R, float)
+        self.kdt = cKDTree(self.C)
+
+    def closest(self, p, window=3):
+        # p: (3,)
+        _, k = self.kdt.query(p)
+        i0 = max(0, k-window)
+        i1 = min(len(self.C)-2, k+window)
+        dmin = np.inf
+        best = None
+        for i in range(i0, i1+1):
+            q, t = closest_point_on_segment(p, self.C[i], self.C[i+1])
+            d = np.linalg.norm(p-q)
+            if d < dmin:
+                dmin = d
+                best = (i, t, q)
+        i, t, q = best
+        Rloc = (1-t)*self.R[i] + t*self.R[i+1]
+        return dmin, Rloc, q
+def contact_barrier_energy_and_force_fast(
+    p, lumen_query: LumenQuery, *,
+    Kc=5e4,
+    d_tilde=1e-3,
+    eps=1e-9,
+    penalize_outside=True,
+    k_out=5e4,
+    window=3
+):
+    p = np.asarray(p, float)
+    N = p.shape[1]
+    C = np.zeros(N, float)
+    F = np.zeros((3, N), float)
+    d_arr = np.zeros(N, float)
+
+    for j in range(N):
+        x = p[:, j]
+        delta, Rloc, q_closest = lumen_query.closest(x, window=window)
+        d = Rloc - delta
+        d_arr[j] = d
+
+        if delta > eps:
+            n = (x - q_closest) / delta
+        else:
+            n = np.array([1.0, 0.0, 0.0])
+
+        if (d > 0.0) and (d < d_tilde):
+            log_term = np.log(max(d, eps) / d_tilde)
+            Cj = -Kc * (d - d_tilde)**2 * log_term
+            C[j] = Cj
+
+            dC_dd = -Kc * (2.0*(d - d_tilde)*log_term + (d - d_tilde)**2 * (1.0 / max(d, eps)))
+            F[:, j] = dC_dd * n
+
+        elif d >= d_tilde:
+            pass
+        else:
+            if penalize_outside:
+                pen = -d
+                C[j] = 0.5 * k_out * pen * pen
+                F[:, j] = -k_out * pen * n
+
+    return C, F, d_arr
+def u_flat_from_ctrl(u_ctrl, s):
+    """
+    u_ctrl: (K,3) control values along s_ctrl
+    returns u_flat for (N-1) segments -> shape (3*(N-1),)
+    """
+    N = len(s)
+    s_seg = 0.5*(s[:-1] + s[1:])          # segment midpoints
+    K = u_ctrl.shape[0]
+    s_ctrl = np.linspace(s_seg[0], s_seg[-1], K)
+
+    u_seg = np.zeros((N-1, 3))
+    for k in range(3):
+        cs = CubicSpline(s_ctrl, u_ctrl[:, k], bc_type="natural")
+        u_seg[:, k] = cs(s_seg)
+
+    return u_seg.reshape(-1)
 def point_to_polyline_closest(p, C):
     """
     p: (3,)
@@ -104,12 +185,7 @@ def contact_friction_density(p, lumen_C, lumen_R, *,
         w[j] = phi_out + phi_shell + phi_fric
 
     return w
-def contact_weight_profile(s, s_on, s_off):
-    """
-    Weight = 0 before s_on, ramps to 1 by s_off.
-    """
-    xi = (s - s_on) / (s_off - s_on + 1e-12)
-    return smoothstep01(xi)
+
 def lumen_violation_profile(p, lumen_C, lumen_R):
     """
     p: (3,N)
@@ -122,86 +198,13 @@ def lumen_violation_profile(p, lumen_C, lumen_R):
         rloc = interpolate_radius(lumen_R, i, t)
         viol[j] = d - rloc
     return viol
-def solve_energy_with_wall_continuation(
-    *,
-    p0, q0, L, wire_len, Kinv_fun, u_star,
-    r_src, m_src, m_local_fun, m_moment,
-    lumen_C, lumen_R,
-    N=60,
-    u0_flat=None,
-    stages=None,
-    maxiter=150,
-):
-    """
-    stages: list of dicts, e.g.
-      dict(mode="tip", k=1e3, beta=20, delta=5e-4)
-    Returns final (p,q,u_seg,info).
-    """
-    if stages is None:
-        stages = [
-            dict(contact_mode="tip", k=5e2,  beta=10.0, delta=1e-3, s_on=0.0,   s_off=0.0),
-            dict(contact_mode="tip", k=2e3,  beta=20.0, delta=7e-4, s_on=0.0,   s_off=0.0),
-            dict(contact_mode="all", k=5e3,  beta=20.0, delta=7e-4, s_on=L-0.005, s_off=L),   # last 5mm
-            dict(contact_mode="all", k=1e4,  beta=25.0, delta=5e-4, s_on=L-0.020, s_off=L),   # last 20mm
-            dict(contact_mode="all", k=2e4,  beta=30.0, delta=4e-4, s_on=0.0,   s_off=L),     # full length
-        ]
 
-    u_init = u0_flat
-    last = None
-
-    for st in stages:
-        p, q, u_seg, info = solve_energy_min_3d(
-            p0=p0, q0=q0, L=L, wire_len=wire_len, Kinv_fun=Kinv_fun,
-            u_star=u_star, r_src=r_src, m_src=m_src,
-            m_local_fun=m_local_fun, m_moment=m_moment,
-            N=N, u0_flat=u_init, maxiter=maxiter,
-            lumen_C=lumen_C, lumen_R=lumen_R,
-            contact_k=st["k"],
-            contact_beta=st["beta"],
-            contact_delta=st["delta"],
-            contact_mode=st["contact_mode"],
-            contact_s_on=st.get("s_on", 0.0),
-            contact_s_off=st.get("s_off", 0.0),
-        )
-        last = (p, q, u_seg, info)
-        if not info["success"]:
-            # if a stage fails, stop and return the best you have
-            return last
-        u_init = info["u_opt"]  # warm-start next stage
-
-    return last
-def wall_penalty_huber(viol, k, delta):
-    v = np.maximum(viol, 0.0)
-    return np.where(v <= delta,
-                    0.5 * k * (v**2),
-                    k * delta * (v - 0.5*delta))
 def get_centerline_bvp(sol, s):
     Y = sol.sol(s)
     p = Y[0:3, :]          # (3,N)
     return p
 
-def get_centerline_energy(pE):
-    # pE already (3,N)
-    return pE
-def plot_centerlines_3d(p_bvp, p_energy, p0=None, p_straight=None):
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
 
-    ax.plot(p_bvp[0], p_bvp[1], p_bvp[2], label="Cosserat BVP")
-    ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
-
-    if p_straight is not None:
-        ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
-
-    if p0 is not None:
-        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
-
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
-    ax.legend()
-    ax.set_title("Centerline comparison")
-    plt.show()
 def plot_error_vs_s(s, p_bvp, p_energy):
     err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
     plt.figure()
@@ -211,15 +214,7 @@ def plot_error_vs_s(s, p_bvp, p_energy):
     plt.title("Centerline deviation vs arclength")
     plt.grid(True)
     plt.show()
-def plot_error_vs_s(s, p_bvp, p_energy):
-    err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
-    plt.figure()
-    plt.plot(s, err)
-    plt.xlabel("s (m)")
-    plt.ylabel("||p_bvp(s) - p_energy(s)|| (m)")
-    plt.title("Centerline deviation vs arclength")
-    plt.grid(True)
-    plt.show()
+
 def make_lumen_centerline_turning(
     p_start,
     t0,
@@ -310,29 +305,50 @@ def plot_lumen_rings(ax, C, R, n_theta=24, alpha=0.15, linewidth=0.5):
             ax.plot(ring[0], ring[1], ring[2], alpha=alpha, linewidth=linewidth)
 
 
+def _set_axes_equal_about_data(ax, X):
+    """
+    X: (M,3) array of all points you want in view.
+    Sets equal aspect and recenters.
+    """
+    X = np.asarray(X, float)
+    mins = X.min(axis=0)
+    maxs = X.max(axis=0)
+    ctr  = 0.5 * (mins + maxs)
+    ranges = maxs - mins
+    r = 0.5 * np.max(ranges)
+    if r < 1e-9:
+        r = 1.0  # fallback
+
+    ax.set_xlim(ctr[0] - r, ctr[0] + r)
+    ax.set_ylim(ctr[1] - r, ctr[1] + r)
+    ax.set_zlim(ctr[2] - r, ctr[2] + r)
+
+    # Matplotlib >=3.3 supports set_box_aspect
+    try:
+        ax.set_box_aspect([1, 1, 1])
+    except Exception:
+        pass
+
 
 def plot_centerlines_with_lumen_3d(p_bvp, p_energy, lumen_C=None, lumen_R=None,
                                   p0=None, p_straight=None, title="Centerline + Lumen"):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    # centerlines
+    # --- plot ---
     ax.plot(p_bvp[0], p_bvp[1], p_bvp[2], label="Cosserat BVP")
     ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
 
-    # baseline / base
     if p_straight is not None:
         ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
     if p0 is not None:
         ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
 
-    # lumen
     if (lumen_C is not None) and (lumen_R is not None):
         C = np.asarray(lumen_C, float)
         ax.plot(C[:,0], C[:,1], C[:,2], label="Lumen centerline")
         plot_lumen_rings(ax, C, np.asarray(lumen_R, float), n_theta=28, alpha=0.2)
 
-        # show closest point on lumen centerline from energy tip
         p_tip = p_energy[:, -1]
         d, i, t, q = point_to_polyline_distance(p_tip, C)
         ax.scatter([p_tip[0]], [p_tip[1]], [p_tip[2]], marker="^", label="Energy tip")
@@ -344,6 +360,21 @@ def plot_centerlines_with_lumen_3d(p_bvp, p_energy, lumen_C=None, lumen_R=None,
     ax.set_zlabel("z")
     ax.legend()
     ax.set_title(title)
+
+    # --- set view AFTER plotting, using all data ---
+    pts = []
+    pts.append(p_bvp.T)
+    pts.append(p_energy.T)
+    if p_straight is not None:
+        pts.append(p_straight.T)
+    if p0 is not None:
+        pts.append(np.asarray(p0, float).reshape(1,3))
+    if lumen_C is not None:
+        pts.append(np.asarray(lumen_C, float))
+
+    all_pts = np.vstack(pts)
+    _set_axes_equal_about_data(ax, all_pts)
+
     plt.show()
 def closest_point_on_segment(p, a, b):
     ab = b - a
@@ -383,24 +414,7 @@ def tip_bending_angles_from_tangent(sol, L, e1=np.array([1.0,0.0,0.0])):
     theta_z = np.arctan2(tL[2], tL[0])
     theta_total = np.arccos(np.clip(tL[0] / np.linalg.norm(tL), -1.0, 1.0))
     return theta_y, theta_z, theta_total
-def softplus(x, beta=50.0):
-    z = beta * x
-    # stable: log(1+exp(z)) = max(z,0) + log(1+exp(-abs(z)))
-    return (np.maximum(z, 0) + np.log1p(np.exp(-np.abs(z)))) / beta
 
-def tip_contact_energy(p_tip, C, R, k=1e3, beta=50.0):
-    """
-    Penalize if tip is outside lumen: d_tip > r_local
-    Returns scalar Wc_tip.
-    """
-    d, i, t, _ = point_to_polyline_distance(p_tip, C)
-    rloc = interpolate_radius(R, i, t)
-    viol = d - rloc                      # >0 means outside tube
-    v = softplus(viol, beta=beta)        # smooth max(0, viol)
-    return 0.5 * k * v * v
-def quat_to_R(q):
-    qn = quat_normalize(q.reshape(4, 1))
-    return quat_to_rot(qn)[0]  # now correct: (1,3,3)[0] -> (3,3)
 def _as_scalar(x, name="value"):
     x = np.asarray(x)
     if x.ndim == 0:
@@ -439,7 +453,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wi
         )
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
-        fg = np.asarray(f_g, float)
+        fg = np.asarray(beam_params.f_g, float)
         if fg.ndim == 1:
             f_ext = f_ext + fg[:, None]   # (3,N) + (3,1)
         else:
@@ -652,90 +666,6 @@ class CosseratForwardModel:
             profiles=dict(s=s_out, p=p, q=q, f_ext=f_ext, tau_ext=tau_ext, B=B),
         )
 
-def m_local_profile_axial(s, eps=1e-3):
-    s = np.atleast_1d(s)
-    N = s.size
-    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)  # only in magnetised region
-
-    m = np.zeros((3, N))
-    m[0, :] = mu_line               # axial only
-    m[1, :] = 0.0
-    m[2, :] = 0.0
-    return m * w[None, :]
-
-def make_m_local_fun_axial(eps=1e-3):
-    # must accept (s, second_arg) because magnetic_wrench_density_cosserat_profile calls it that way
-    def _m_local(s, _unused=None):
-        return m_local_profile_axial(s, eps=eps)
-    return _m_local
-import numpy as np
-from beam_direction_magnetisation.magnetism.beam_geometry import smooth_top_hat
-from beam_direction_magnetisation.magnetism.parameters_cosserat import s_m, ell_m, mu_line
-
-def m_local_wire_plus_magnetised_tip(
-    s,
-    *,
-    alpha_end=0.0,
-    mode="axial",          # "axial" | "constant" | "ramp"
-    eps=1e-3,
-):
-    """
-    Returns m_local(s) in BODY frame, shape (3,N).
-
-    Wire region: ~0 magnetisation (outside [s_m, s_m+ell_m])
-    Magnetised tip: direction in x-y plane
-      - axial    : alpha(s)=0
-      - constant : alpha(s)=alpha_end
-      - ramp     : alpha(s) = xi*alpha_end, xi in [0,1] over the tip region
-    """
-    s = np.atleast_1d(s)
-    N = s.size
-
-    # Smoothly gate magnetisation into tip region only
-    w = smooth_top_hat(s, s_m, s_m + ell_m, eps)  # (N,)
-
-    if mode == "axial":
-        alpha_s = np.zeros_like(s)
-    elif mode == "constant":
-        alpha_s = alpha_end * np.ones_like(s)
-    elif mode == "ramp":
-        xi = (s - s_m) / (ell_m + 1e-12)
-        xi = np.clip(xi, 0.0, 1.0)
-        alpha_s = xi * alpha_end
-    else:
-        raise ValueError(f"Unknown mode='{mode}' (use 'axial','constant','ramp')")
-
-    m = np.zeros((3, N))
-    m[0, :] = mu_line * np.cos(alpha_s)
-    m[1, :] = mu_line * np.sin(alpha_s)
-    m[2, :] = 0.0
-
-    return m * w[None, :]
-def make_m_local_fun_wire_tip(*, alpha_end=0.0, mode="axial", eps=1e-3):
-    def _m_local(s, _unused=None):
-        return m_local_wire_plus_magnetised_tip(
-            s, alpha_end=alpha_end, mode=mode, eps=eps
-        )
-    return _m_local
-# def m_local_profile_ramped(s, alpha_end, eps=1e-3):
-#     s = np.atleast_1d(s)
-#     N = s.size
-#     w = smooth_top_hat(s, s_m, s_m + ell_m, eps)
-#     xi = np.clip((s - s_m) / (ell_m + 1e-12), 0.0, 1.0)
-#     alpha_s = xi * alpha_end
-#     m = np.zeros((3, N))
-#     m[0, :] = mu_line * np.cos(alpha_s)
-#     m[1, :] = mu_line * np.sin(alpha_s)
-#     m[2, :] = 0.0
-#     return m * w[None, :]
-
-# def make_m_local_fun(alpha_end_fixed, eps=1e-3):
-#     def _m_local(s, _m_unused=None):
-#         return m_local_profile_ramped(s, alpha_end=alpha_end_fixed, eps=eps)
-#     return _m_local
-
-# build model
-
 
 def quat_mul(q1, q2):
     # Hamilton product, q = q1 ⊗ q2, with q = [w,x,y,z]
@@ -754,48 +684,8 @@ def quat_from_axis_angle(axis, angle):
     h = 0.5 * angle
     return np.array([np.cos(h), *(np.sin(h) * axis)], dtype=float)
 
-def quat_normalize_np(q):
-    return q / (np.linalg.norm(q) + 1e-12)
-def epm_pose_orbit_and_spin(
-    r_tip,
-    rho,
-    theta_orbit_z,
-    beta_spin,
-    *,
-    theta_orbit_y=0.0,
-    v0_body=np.array([-1.0, 0.0, 0.0]),
-):
-    """
-    Returns:
-      r_src: magnet position (3,) in world frame
-      q_src: magnet orientation quaternion [w,x,y,z] in world frame
-
-    Semantics:
-      - orbit about r_tip with R_orbit = Ry(theta_orbit_y) @ Rz(theta_orbit_z)
-      - position: r_tip + R_orbit @ (rho * v0_body)
-      - orientation: q_orbit (from R_orbit) then spin about LOCAL z: q_src = q_orbit ⊗ q_spin_local_z
-    """
-
-    r_tip = np.asarray(r_tip, float).reshape(3,)
-    v0_body = np.asarray(v0_body, float).reshape(3,)
-
-    # Orbit rotation in world
-    R_orbit = Ry(theta_orbit_y) @ Rz(theta_orbit_z)
-
-    # Position: pivot about tip
-    r_src = r_tip + R_orbit @ (rho * v0_body)
-
-    # Quaternion for orbit rotation.
-    # Build it from axis-angles (world y then world z) to match R_orbit = Ry @ Rz.
-    q_y = quat_from_axis_angle([0,1,0], theta_orbit_y)
-    q_z = quat_from_axis_angle([0,0,1], theta_orbit_z)
-    q_orbit = quat_mul(q_y, q_z)  # consistent with Ry @ Rz
-
-    # Spin about magnet's OWN z (local z): post-multiply
-    q_spin = quat_from_axis_angle([0,0,1], beta_spin)
-    q_src = quat_mul(q_orbit, q_spin)
-
-    return r_src, quat_normalize_np(q_src)
+# def quat_normalize_np(q):
+#     return q / (np.linalg.norm(q) + 1e-12)
 
 def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_moment, wire_len,
                          u_star=np.zeros(3), contact_penalty_fun=None, s_out_n=400):
@@ -856,7 +746,7 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
         W_v = np.trapezoid(w_v, s)
 
     # after computing p (3,N)
-    W_g = -np.trapezoid(np.sum(f_g[:, None] * p, axis=0), s)   # scalar
+    W_g = -np.trapezoid(np.sum(beam_params.f_g[:, None] * p, axis=0), s)   # scalar
     parts = dict(W_s=W_s, W_m=W_m, W_v=W_v, W_g=W_g)
     W_s = _as_scalar(W_s, "W_s")
     W_m = _as_scalar(W_m, "W_m")
@@ -866,24 +756,7 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
     W_total = W_s + W_m + W_v + W_g
     W_total = _as_scalar(W_total, "W_total")
     return W_total, parts
-def ur_pose6_to_T(pose6):
-    """
-    UR RTDE TCP pose6: [x, y, z, rx, ry, rz]
-    where [rx,ry,rz] is rotation vector (axis-angle), radians.
-    Returns 4x4 transform.
-    """
-    pose6 = np.asarray(pose6, float).ravel()
-    if pose6.size != 6:
-        raise ValueError("Expected UR pose6 = [x,y,z,rx,ry,rz]")
 
-    p = pose6[:3]
-    rvec = pose6[3:6]
-    Rm = Rot.from_rotvec(rvec).as_matrix()
-
-    T = np.eye(4)
-    T[:3, :3] = Rm
-    T[:3, 3] = p
-    return T
 
 def solve_quasistatic_insertion(*,
     p0, q0,
@@ -892,8 +765,9 @@ def solve_quasistatic_insertion(*,
     Kinv_fun, u_star,
     r_src, m_src, m_local_fun, m_moment,
     lumen_C, lumen_R,
-    N=80, maxiter=200,
-    u_init=None
+    N=30, maxiter=200,
+    u_init=None,
+    use_lumen=True
 ):
     """
     Returns history list of dicts for each step.
@@ -911,7 +785,7 @@ def solve_quasistatic_insertion(*,
             r_src=r_src, m_src=m_src,
             m_local_fun=m_local_fun, m_moment=m_moment,
             N=N, u0_flat=u0, maxiter=maxiter,
-            lumen_C=lumen_C, lumen_R=lumen_R,
+            lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
             # you can keep your continuation on k_n, mu, etc by wrapping solve_energy_min_3d
         )
 
@@ -919,7 +793,7 @@ def solve_quasistatic_insertion(*,
         if not info["success"]:
             break
 
-        u0 = info["u_opt"]   # warm start
+        u0 = info["u_flat_opt"]        
         L += dL
 
     return hist
@@ -988,14 +862,14 @@ def integrate_pq_from_u(u_flat, *, p0, q0, s, e1=np.array([-1.0,0.0,0.0])):
     p = np.zeros((3, N), float)
     q = np.zeros((4, N), float)
     p[:, 0] = np.asarray(p0, float).reshape(3,)
-    q[:, 0] = quat_normalize_np(np.asarray(q0, float).reshape(4,))
+    q[:, 0] = quat_normalize(np.asarray(q0, float).reshape(4,))
 
     for i in range(N-1):
         R = quat_to_R(q[:, i])
         p[:, i+1] = p[:, i] + ds[i] * (R @ e1)
 
         dq = quat_exp_body(u_seg[i], ds[i])
-        q[:, i+1] = quat_normalize_np(quat_mul(q[:, i], dq))
+        q[:, i+1] = quat_normalize(quat_mul(q[:, i], dq))
 
     return p, q, u_seg
 
@@ -1021,7 +895,8 @@ def energy_from_u(u_flat, *, p0, q0, s, K_seg, u_star,
                   m_src, r_src, m_local_fun, m_moment, wire_len,
                   lumen_C=None, lumen_R=None,
                   contact_k=1e3, contact_beta=50.0,contact_delta=5e-4,
-                  contact_mode="tip", include_gravity=True, contact_s_on=0.0, contact_s_off=0.0):
+                  contact_mode="tip", include_gravity=True, contact_s_on=0.0, contact_s_off=0.0,
+                  lumen_query=None,use_lumen=True):
     """
     Computes total potential energy Π(u) in 3D.
     """
@@ -1051,103 +926,185 @@ def energy_from_u(u_flat, *, p0, q0, s, K_seg, u_star,
     # Gravity potential to match your BVP force term (+f_g in f_ext):
     W_g = 0.0
     if include_gravity:
-        fg = np.asarray(f_g, float).reshape(3,)
+        fg = np.asarray(beam_params.f_g, float).reshape(3,)
         W_g = -np.trapezoid(np.sum(fg[:, None] * p, axis=0), s)
 
-    W_c = 0.0
-    # if (lumen_C is not None) and (lumen_R is not None):
-    #     if contact_mode == "tip":
-    #         p_tip = p[:, -1]
-    #         d, i, t, _ = point_to_polyline_distance(p_tip, lumen_C)
-    #         rloc = interpolate_radius(lumen_R, i, t)
-    #         viol = d - rloc
-    #         W_c = float(wall_penalty_quadratic(viol, contact_k))
-
-    #     elif contact_mode == "all":
-    #         # turn contact on only near the tip (continuation will expand this window)
-    #         w_s = contact_weight_profile(s, s_on=contact_s_on, s_off=contact_s_off)  # (N,)
-
-    #         w = np.zeros(p.shape[1])
-    #         for j in range(p.shape[1]):
-    #             d, i, t, _ = point_to_polyline_distance(p[:, j], lumen_C)
-    #             rloc = interpolate_radius(lumen_R, i, t)
-    #             viol = d - rloc
-    #             w[j] = w_s[j] * wall_penalty_quadratic(viol, contact_k)
-
-    #         W_c = float(np.trapezoid(w, s))
-    #     else:
-    #         raise ValueError("contact_mode must be 'tip' or 'all'")
     W_cf = 0.0
-    if (lumen_C is not None) and (lumen_R is not None):
-        w_cf = contact_friction_density(
-            p, lumen_C, lumen_R,
-            k_n=5e4,
-            g0=2e-4,
-            k_shell=0.0,
-            mu=0.05,
-            ins_dir=INSERTION_DIR_WORLD
+    if use_lumen and (lumen_query is not None):
+        C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
+            p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e4
         )
-        W_cf = np.trapezoid(w_cf, s)
+        W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))   # integrate approx
+
     W_total = W_s + W_m + W_g + W_cf
-    # W_total = float(W_s + W_m + W_g + W_c)
-    # parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_c=float(W_c))
     parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_cf=float(W_cf))
     return W_total, parts
+    # W_total = float(W_s + W_m + W_g + W_c)
+    # parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_c=float(W_c))
 
+def contact_barrier_energy_and_force(
+    p, lumen_C, lumen_R, *,
+    Kc=1e-2,          # stiffness parameter (tune!)
+    d_tilde=5e-4,     # barrier distance (m)
+    eps=1e-9,         # numerical safety
+    penalize_outside=True,
+    k_out=5e4         # fallback penalty if d <= 0
+):
+    """
+    Implements paper Eq. (34)-(36): barrier energy based on clearance d = R - delta.
+    p: (3,N) node positions.
+
+    Returns:
+      C: (N,)   barrier energy per node (sum these, not integrate)
+      F: (3,N)  contact force per node (world), from analytic gradient (optional use)
+      d: (N,)   clearance d_j
+    """
+    p = np.asarray(p, float)
+    N = p.shape[1]
+    C = np.zeros(N, float)
+    F = np.zeros((3, N), float)
+    d_arr = np.zeros(N, float)
+
+    for j in range(N):
+        x = p[:, j]
+        delta, i, t, q_closest = point_to_polyline_distance(x, lumen_C)
+        Rloc = interpolate_radius(lumen_R, i, t)
+
+        d = Rloc - delta   # clearance to wall
+        d_arr[j] = d
+
+        # outward radial unit vector from centerline to point
+        if delta > eps:
+            n = (x - q_closest) / delta
+        else:
+            n = np.array([1.0, 0.0, 0.0])
+
+        # --- barrier region: 0 < d < d_tilde ---
+        if (d > 0.0) and (d < d_tilde):
+            # C(d) = -Kc * (d - d_tilde)^2 * log(d/d_tilde)
+            log_term = np.log(max(d, eps) / d_tilde)
+            Cj = -Kc * (d - d_tilde)**2 * log_term
+            C[j] = Cj
+
+            # dC/dd = -Kc * [ 2(d-dt)*log(d/dt) + (d-dt)^2*(1/d) ]
+            dC_dd = -Kc * (2.0*(d - d_tilde)*log_term + (d - d_tilde)**2 * (1.0 / max(d, eps)))
+
+            # Force: F = -∂C/∂x = (dC/dd) * n  because d = R - delta, ∂d/∂x = -n
+            F[:, j] = dC_dd * n
+
+        elif d >= d_tilde:
+            # no contact energy/force
+            pass
+
+        else:
+            # d <= 0: outside/penetrating -> barrier undefined; add robust fallback
+            if penalize_outside:
+                pen = -d  # penetration amount
+                C[j] = 0.5 * k_out * pen * pen
+                # penalty force pushes inward (toward centerline): -k_out*pen * n
+                F[:, j] = -k_out * pen * n
+
+    return C, F, d_arr
 def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
                         r_src, m_src, m_local_fun, m_moment,
-                        N=60, u0_flat=None, maxiter=200, lumen_C=None, 
-                        lumen_R=None,
-                        contact_k=1e3, contact_beta=50.0,
-                        contact_delta=5e-4,
-                        contact_mode="tip",
-                        contact_s_on=0.0, contact_s_off=0.0):
+                        N=20, u0_flat=None, maxiter=200, lumen_C=None, lumen_R=None,use_lumen=True,
+                        contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
+                        contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0, u_ctrl_init=None,
+                        K=8):
     """
-    Minimises Π(u) and returns (p,q,u_seg, info).
+    Minimises Π(u) using K control points for u(s).
+    Returns (p, q, u_seg, info).
     """
     s = np.linspace(0.0, float(L), int(N))
     K_seg = precompute_K_segments(s, Kinv_fun, wire_len)
 
-    if u0_flat is None:
-        u0_flat = np.zeros(3*(N-1), float)
+    # ----- init control points -----
+    # default: zeros
+    u_ctrl0 = np.zeros((K, 3), float)
 
-    def obj(u_flat):
+    # if you have a warm start in segment space, compress it to control points
+    if u0_flat is not None:
+        u0_flat = np.asarray(u0_flat, float).reshape(-1)
+        # expect segment strains
+        if u0_flat.size == 3*(N-1):
+            u0_seg = u0_flat.reshape(N-1, 3)
+            # sample K points from the segment midpoints
+            s_seg = 0.5*(s[:-1] + s[1:])
+            s_ctrl = np.linspace(s_seg[0], s_seg[-1], K)
+            # simple nearest sampling (good enough); you can spline-fit too
+            idx = np.clip(np.searchsorted(s_seg, s_ctrl), 0, len(s_seg)-1)
+            u_ctrl0 = u0_seg[idx, :]
+        else:
+            # if caller already passes control warm start, allow it
+            if u0_flat.size == 3*K:
+                u_ctrl0 = u0_flat.reshape(K, 3)
+
+    u_ctrl0_flat = u_ctrl0.reshape(-1)
+    lumen_query = None
+    if lumen_C is not None and lumen_R is not None:
+        lumen_query = LumenQuery(lumen_C, lumen_R)
+    # ----- objective in control space -----
+    u_scale = 30.0   # start with 5; try 10, 20 if needed
+
+    def obj_ctrl(z_flat):
+        z = z_flat.reshape(K, 3)
+        u_ctrl = u_scale * z
+        u_flat = u_flat_from_ctrl(u_ctrl, s)
+
         W, _ = energy_from_u(
-            u_flat, p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
+            u_flat,
+            p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
             m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
             wire_len=wire_len, include_gravity=True,
-            lumen_C=lumen_C, lumen_R=lumen_R,
-            contact_k=contact_k,
-            contact_beta=contact_beta,
-            contact_delta=contact_delta,
-            contact_mode=contact_mode,
-            contact_s_on=contact_s_on,
-            contact_s_off=contact_s_off
+            lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen
         )
         return W
+    z0_flat = (u_ctrl0_flat / u_scale)
+    # u_test = u_ctrl0_flat.copy()
+    # u_test[0] = 5.0  # curvature-ish magnitude (1/m); try also 1.0, 10.0
 
-    res = minimize(obj, u0_flat, method="L-BFGS-B",
-                   options=dict(maxiter=maxiter, ftol=1e-10))
+    # print("W(u0)   =", obj_ctrl(u_ctrl0_flat))
+    # print("W(pert) =", obj_ctrl(u_test))
+    res = minimize(
+        obj_ctrl,
+        z0_flat,
+        method="L-BFGS-B",
+        options=dict(
+            maxiter=maxiter,
+            ftol=1e-9,
+            eps=1e-2,     # try 1e-2 then 1e-1
+            maxls=80
+        )
+    ) 
+    z_opt = res.x.reshape(K,3)
+    u_ctrl_opt = u_scale * z_opt
+    u_flat_opt = u_flat_from_ctrl(u_ctrl_opt, s)# ----- reconstruct final solution in segment space -----
+    # u_ctrl_opt = res.x.reshape(K, 3)
+    # u_flat_opt = u_flat_from_ctrl(u_ctrl_opt, s)   # shape (3*(N-1),)
+    p, q, u_seg = integrate_pq_from_u(u_flat_opt, p0=p0, q0=q0, s=s)
 
-    # reconstruct final shape
-    p, q, u_seg = integrate_pq_from_u(res.x, p0=p0, q0=q0, s=s)
-
-    # recompute energies consistently
+    # recompute energies consistently (IMPORTANT: use u_flat_opt)
     W, parts = energy_from_u(
-        res.x, p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
+        u_flat_opt,
+        p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
         m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
         wire_len=wire_len, include_gravity=True,
         lumen_C=lumen_C, lumen_R=lumen_R,
-        contact_k=contact_k,
-        contact_beta=contact_beta,
-        contact_delta=contact_delta,
-        contact_mode=contact_mode,
-        contact_s_on=contact_s_on,
-        contact_s_off=contact_s_off
+        contact_k=contact_k, contact_beta=contact_beta, contact_delta=contact_delta,
+        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off
     )
 
-    info = dict(success=bool(res.success), message=str(res.message),
-                nit=int(res.nit), W=float(W), parts=parts, s=s, u_opt=res.x)
+    info = dict(
+        success=bool(res.success),
+        message=str(res.message),
+        nit=int(res.nit),
+        W=float(W),
+        parts=parts,
+        s=s,
+        # store BOTH so you can choose what to warm-start with
+        u_ctrl_opt=res.x.copy(),        # (3*K,)
+        u_flat_opt=u_flat_opt.copy(),   # (3*(N-1),)
+    )
     return p, q, u_seg, info
 def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     s = np.linspace(0.0, float(L), int(N))
@@ -1163,16 +1120,20 @@ def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     # segment strains: average adjacent nodes
     u_seg = 0.5*(u[:, :-1] + u[:, 1:]).T  # (N-1,3)
     return u_seg.reshape(-1)
+
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.049
+    L_cmd = 0.055
     mag_len = beam_params.length_of_mag
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
-        0.7836091530378535, -0.5654053885267907, 0.20700816061967686,
-       -3.116988654350607, 0.19059356279735162, 0.028215660130034903
-    ])
-    start_point = np.array([0.73219777858478, -0.4244994535611557, 0.45711152486163426-.25, -2.4384745401644454, 1.9397464487606495, 0.006339338326166586])
+    0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    ], float)
+
+
+    start_point = np.array([ 0.67959122, -0.77051372,  0.15178538, -3.06585824, -0.5152215 ,
+        0.0707897 ])
+    start_point[2] -=0.25
     wire_len = L_cmd - mag_len
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -1184,7 +1145,7 @@ if __name__ == "__main__":
         p0=p0_ur,
         q0=q0_ur,
         Kinv_fun=Kbt_inv_profile,
-        m_local_fun=make_m_local_fun_wire_tip(mode="axial", alpha_end=0.0),
+        m_local_fun=make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0),
         m_moment=0.0,
         wire_len=wire_len,
     )
@@ -1211,10 +1172,10 @@ if __name__ == "__main__":
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.05,              # make it longer than rod so distance queries behave well
+        length=0.12,              # make it longer than rod so distance queries behave well
         n_pts=80,
         bend_axis=np.array([0.0, 0.0, 1.0]),  # bend in x-y plane
-        bend_angle=np.deg2rad(120.0),
+        bend_angle=np.deg2rad(50.0),
         bend_start=0.01,
         bend_end=0.08
     )
@@ -1264,7 +1225,7 @@ if __name__ == "__main__":
         r_src=r_src_ur, m_src=m_src,
         m_local_fun=model.m_local_fun, m_moment=0.0,
         lumen_C=lumen_C, lumen_R=lumen_R,
-        N=60, maxiter=200,
+        N=8, maxiter=15, use_lumen = True,
         u_init=u0
     )
     # take final
@@ -1293,4 +1254,5 @@ if __name__ == "__main__":
         p0=p0_ur, p_straight=p_straight,
         title="Cosserat vs Energy-min + Lumen constraint"
     )
+
     plot_error_vs_s(s_cmp, p_bvp, p_energy)

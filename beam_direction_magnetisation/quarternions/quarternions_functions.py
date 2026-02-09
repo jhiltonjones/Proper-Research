@@ -37,3 +37,7 @@ def quat_derivative_body(q, u):
     dq[2] =  0.5*(qw*uy + qz*ux - qx*uz)
     dq[3] =  0.5*(qw*uz + qx*uy - qy*ux)
     return dq
+
+def quat_to_R(q):
+    qn = quat_normalize(q.reshape(4, 1))
+    return quat_to_rot(qn)[0]  # now correct: (1,3,3)[0] -> (3,3)

@@ -2,7 +2,7 @@ import numpy as np
 from scipy.integrate import solve_bvp
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_derivative_body, quat_normalize, quat_to_rot
-from beam_direction_magnetisation.magnetism.parameters_cosserat import *
+# from beam_direction_magnetisation.magnetism.parameters_cosserat import *
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
 from beam_direction_magnetisation.quarternions.shared_rotations import Ry, Rz
 from proper_research.parameters import default_magnet_params, default_beam_params
@@ -10,7 +10,24 @@ from scipy.spatial.transform import Rotation as Rot
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 
+def ur_pose6_to_T(pose6):
+    """
+    UR RTDE TCP pose6: [x, y, z, rx, ry, rz]
+    where [rx,ry,rz] is rotation vector (axis-angle), radians.
+    Returns 4x4 transform.
+    """
+    pose6 = np.asarray(pose6, float).ravel()
+    if pose6.size != 6:
+        raise ValueError("Expected UR pose6 = [x,y,z,rx,ry,rz]")
 
+    p = pose6[:3]
+    rvec = pose6[3:6]
+    Rm = Rot.from_rotvec(rvec).as_matrix()
+
+    T = np.eye(4)
+    T[:3, :3] = Rm
+    T[:3, 3] = p
+    return T
 def tip_bending_angles_from_tangent(sol, L, e1=np.array([1.0,0.0,0.0])):
     YL = sol.sol(np.array([L]))
     qL = quat_normalize(YL[3:7, :])
@@ -56,8 +73,11 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wi
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
 
-        f_ext = f_ext + f_g
-        # f_ext = np.zeros_like(p)       # same shape as p (3,N)
+        fg = np.asarray(beam_params.f_g, float)
+        if fg.ndim == 1:
+            f_ext = f_ext + fg[:, None]   # (3,N) + (3,1)
+        else:
+            f_ext = f_ext + fg            # if you intentionally supply (3,N)        # f_ext = np.zeros_like(p)       # same shape as p (3,N)
         # tau_ext = np.zeros_like(p)     # (3,N)
         n_s = -f_ext
         m_s = -(np.cross(p_s.T, n.T).T) - tau_ext
@@ -315,7 +335,7 @@ if __name__ == "__main__":
         wire_len = wire_len,
     )
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body)
+    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
     print("tip in UR:", out["p_tip"])
     print("tip bending y:", np.rad2deg(out["theta_y"]))
     print("tip bending z:", np.rad2deg(out["theta_z"]))
@@ -334,7 +354,7 @@ if __name__ == "__main__":
     print("Solved tip:", out["p_tip"])
     print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body)
+    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)    
     print("tip in UR:", out["p_tip"])
     print("tip bending y:", np.rad2deg(out["theta_y"]))
     print("tip bending z:", np.rad2deg(out["theta_z"]))

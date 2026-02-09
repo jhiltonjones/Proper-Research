@@ -1,5 +1,5 @@
 import numpy as np 
-from proper_research.parameters import MagnetParams, default_beam_params
+from proper_research.parameters import default_beam_params
 beam_params =default_beam_params()
 mu_tip = beam_params.mag * beam_params.A_cs
 EI  = beam_params.E * beam_params.I
@@ -18,16 +18,26 @@ def m_local_profile(s, m_vec, s_m, eps=1e-3):
 EI1, GJ1 = EI, GJ        
 EI2, GJ2 = EI, GJ  
 
-def Kbt_inv_profile(s, s_k):
+# def Kbt_inv_profile(s, s_k):
 
+#     mask = (s >= s_k)
+#     EI_s = np.where(mask, EI2, EI1)
+#     GJ_s = np.where(mask, GJ2, GJ1)
+
+#     Kinv = np.zeros((3,3,s.size))
+#     Kinv[0,0,:] = 1.0 / GJ_s
+#     Kinv[1,1,:] = 1.0 / EI_s
+#     Kinv[2,2,:] = 1.0 / EI_s
+#     return Kinv
+def Kbt_inv_profile(s, s_k, bend_soft=2, tors_soft=2):
     mask = (s >= s_k)
     EI_s = np.where(mask, EI2, EI1)
     GJ_s = np.where(mask, GJ2, GJ1)
 
     Kinv = np.zeros((3,3,s.size))
-    Kinv[0,0,:] = 1.0 / GJ_s
-    Kinv[1,1,:] = 1.0 / EI_s
-    Kinv[2,2,:] = 1.0 / EI_s
+    Kinv[0,0,:] = tors_soft / GJ_s
+    Kinv[1,1,:] = bend_soft / EI_s
+    Kinv[2,2,:] = bend_soft / EI_s
     return Kinv
 def m_local_profile_axial(s, eps=1e-3):
     s = np.atleast_1d(s)

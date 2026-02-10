@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
-L_min_energy = 0.05
+L_min_energy = 0.06
 mag_len = beam_params.length_of_mag
 m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
 pivot_point = np.array([
@@ -24,8 +24,7 @@ pivot_point = np.array([
 # start_point = np.array([
 # 0.6681328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
 # ], float)
-start_point = np.array([ 0.76313282, -0.87007472,  0.15178538, -2.71969114, -1.54120301,
-        0.08396749])
+start_point = np.array([0.7631313246488017, -0.870082950066627, 0.1518113820878254, -2.719732313656889, -1.5411971725531977, 0.08397869991910313])
 start_point[2] -=0.25
 wire_len = L_min_energy - mag_len
 T_ur_pivot = ur_pose6_to_T(pivot_point)   
@@ -70,7 +69,7 @@ hist = solve_quasistatic_insertion(
     r_src=r_src_ur, m_src=m_src,
     m_local_fun=model.m_local_fun, m_moment=0.0,
     lumen_C=lumen_C, lumen_R=lumen_R,
-    N=15, maxiter=15, use_lumen = True,
+    N=15, maxiter=15, use_lumen = False,
     u_init=u0
 )
 
@@ -92,6 +91,6 @@ p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
 plot_energy_only_3d(
     p_energy,
     lumen_C=lumen_C, lumen_R=lumen_R,
-    p0=p0_ur, p_straight=p_straight,
+    p0=p0_ur, p_straight=None,
     title="Energy-min + Lumen"
 )

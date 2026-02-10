@@ -41,3 +41,13 @@ def quat_derivative_body(q, u):
 def quat_to_R(q):
     qn = quat_normalize(q.reshape(4, 1))
     return quat_to_rot(qn)[0]  # now correct: (1,3,3)[0] -> (3,3)
+def T_to_p_quat_wxyz(T):
+    """
+    Convert 4x4 transform -> position (3,) and quaternion [w,x,y,z].
+    """
+    p = T[:3, 3].copy()
+    Rm = T[:3, :3]
+    q_xyzw = Rot.from_matrix(Rm).as_quat()  # [x,y,z,w]
+    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+    q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
+    return p, q_wxyz

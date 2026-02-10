@@ -372,3 +372,236 @@ def plot_target_and_final_tip_on_image(image_filename, target_px, tip_px, err_mm
     plt.axis("off")
     plt.legend()
     plt.show()
+def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,
+                        title="Energy-min centerline", show_rings=True):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Energy-min centerline
+    ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
+
+    # Optional straight baseline + base
+    if p_straight is not None:
+        ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
+    if p0 is not None:
+        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
+
+    # Vessel visualization
+    if (lumen_C is not None) and (lumen_R is not None):
+        C = np.asarray(lumen_C, float)
+        R = np.asarray(lumen_R, float)
+        ax.plot(C[:, 0], C[:, 1], C[:, 2], label="Lumen centerline")
+
+        if show_rings:
+            # You already have plot_lumen_rings defined below in your file,
+            # OR import it from your module and delete the local copy.
+            plot_lumen_rings(ax, C, R, n_theta=28, alpha=0.2, linewidth=0.6)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.set_title(title)
+    ax.legend()
+
+    # Nice equal aspect (optional) using all plotted points
+    pts = [p_energy.T]
+    if p_straight is not None: pts.append(p_straight.T)
+    if p0 is not None: pts.append(np.asarray(p0, float).reshape(1,3))
+    if lumen_C is not None: pts.append(np.asarray(lumen_C, float))
+    _set_axes_equal_about_data(ax, np.vstack(pts))
+
+    plt.show()
+def plot_error_vs_s(s, p_bvp, p_energy):
+    err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
+    plt.figure()
+    plt.plot(s, err)
+    plt.xlabel("s (m)")
+    plt.ylabel("||p_bvp(s) - p_energy(s)|| (m)")
+    plt.title("Centerline deviation vs arclength")
+    plt.grid(True)
+    plt.show()
+
+def make_lumen_centerline_turning(
+    p_start,
+    t0,
+    *,
+    length=0.12,
+    n_pts=60,
+    bend_axis=np.array([0.0, 0.0, 1.0]),  # rotate t about this axis
+    bend_angle=np.deg2rad(25.0),          # total bend (radians)
+    bend_start=0.02,                      # where bending begins along arc (m)
+    bend_end=0.09,                        # where bending ends along arc (m)
+):
+    """
+    Returns C: (n_pts,3) polyline points.
+    Tangent starts as t0, then smoothly rotates by bend_angle around bend_axis.
+    """
+    p_start = np.asarray(p_start, float).reshape(3,)
+    t0 = np.asarray(t0, float).reshape(3,)
+    t0 = t0 / (np.linalg.norm(t0) + 1e-12)
+
+    a = np.asarray(bend_axis, float).reshape(3,)
+    a = a / (np.linalg.norm(a) + 1e-12)
+
+    s = np.linspace(0.0, float(length), int(n_pts))
+    ds = np.diff(s)
+
+    def smoothstep(x):
+        x = np.clip(x, 0.0, 1.0)
+        return x*x*(3 - 2*x)
+
+    # bend progress 0->1 between bend_start and bend_end
+    xi = (s - bend_start) / (bend_end - bend_start + 1e-12)
+    g = smoothstep(xi)  # (n_pts,)
+    theta = bend_angle * g
+
+    def rodrigues(v, axis, ang):
+        # rotate vector v about axis by ang (scalar)
+        v = np.asarray(v, float)
+        axis = np.asarray(axis, float)
+        return (v*np.cos(ang)
+                + np.cross(axis, v)*np.sin(ang)
+                + axis*np.dot(axis, v)*(1 - np.cos(ang)))
+
+    # integrate centerline
+    C = np.zeros((s.size, 3), float)
+    C[0] = p_start
+    for i in range(s.size - 1):
+        ti = rodrigues(t0, a, theta[i])
+        ti = ti / (np.linalg.norm(ti) + 1e-12)
+        C[i+1] = C[i] + ds[i] * ti
+
+    return C
+def plot_lumen_rings(ax, C, R, n_theta=24, alpha=0.15, linewidth=0.5):
+    """
+    Draw translucent rings (circles) along a polyline centerline C with radii R.
+    Uses a local normal basis per segment.
+    """
+    C = np.asarray(C, float)
+    R = np.asarray(R, float)
+
+    thetas = np.linspace(0, 2*np.pi, n_theta, endpoint=True)
+
+    for i in range(len(C)-1):
+        a = C[i]
+        b = C[i+1]
+        t = b - a
+        t_norm = np.linalg.norm(t)
+        if t_norm < 1e-12:
+            continue
+        t = t / t_norm
+
+        # pick a reference vector not parallel to t
+        ref = np.array([1.0, 0.0, 0.0])
+        if abs(np.dot(ref, t)) > 0.9:
+            ref = np.array([0.0, 1.0, 0.0])
+
+        n1 = np.cross(t, ref)
+        n1 = n1 / (np.linalg.norm(n1) + 1e-12)
+        n2 = np.cross(t, n1)
+
+        # radius at segment endpoints
+        r0 = R[i]
+        r1 = R[i+1]
+
+        # draw ring at start and end of the segment
+        for center, rr in [(a, r0), (b, r1)]:
+            ring = center[:, None] + rr*(n1[:,None]*np.cos(thetas)[None,:] +
+                                         n2[:,None]*np.sin(thetas)[None,:])
+            ax.plot(ring[0], ring[1], ring[2], alpha=alpha, linewidth=linewidth)
+
+
+def _set_axes_equal_about_data(ax, X):
+    """
+    X: (M,3) array of all points you want in view.
+    Sets equal aspect and recenters.
+    """
+    X = np.asarray(X, float)
+    mins = X.min(axis=0)
+    maxs = X.max(axis=0)
+    ctr  = 0.5 * (mins + maxs)
+    ranges = maxs - mins
+    r = 0.5 * np.max(ranges)
+    if r < 1e-9:
+        r = 1.0  # fallback
+
+    ax.set_xlim(ctr[0] - r, ctr[0] + r)
+    ax.set_ylim(ctr[1] - r, ctr[1] + r)
+    ax.set_zlim(ctr[2] - r, ctr[2] + r)
+
+    # Matplotlib >=3.3 supports set_box_aspect
+    try:
+        ax.set_box_aspect([1, 1, 1])
+    except Exception:
+        pass
+
+
+def plot_centerlines_with_lumen_3d(p_bvp, p_energy, lumen_C=None, lumen_R=None,
+                                  p0=None, p_straight=None, title="Centerline + Lumen"):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # --- plot ---
+    ax.plot(p_bvp[0], p_bvp[1], p_bvp[2], label="Cosserat BVP")
+    ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
+
+    if p_straight is not None:
+        ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
+    if p0 is not None:
+        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
+
+    if (lumen_C is not None) and (lumen_R is not None):
+        C = np.asarray(lumen_C, float)
+        ax.plot(C[:,0], C[:,1], C[:,2], label="Lumen centerline")
+        plot_lumen_rings(ax, C, np.asarray(lumen_R, float), n_theta=28, alpha=0.2)
+
+        p_tip = p_energy[:, -1]
+        d, i, t, q = point_to_polyline_distance(p_tip, C)
+        ax.scatter([p_tip[0]], [p_tip[1]], [p_tip[2]], marker="^", label="Energy tip")
+        ax.scatter([q[0]], [q[1]], [q[2]], marker="x", label="Closest lumen point")
+        ax.plot([p_tip[0], q[0]], [p_tip[1], q[1]], [p_tip[2], q[2]], linewidth=1.0)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.legend()
+    ax.set_title(title)
+
+    # --- set view AFTER plotting, using all data ---
+    pts = []
+    pts.append(p_bvp.T)
+    pts.append(p_energy.T)
+    if p_straight is not None:
+        pts.append(p_straight.T)
+    if p0 is not None:
+        pts.append(np.asarray(p0, float).reshape(1,3))
+    if lumen_C is not None:
+        pts.append(np.asarray(lumen_C, float))
+
+    all_pts = np.vstack(pts)
+    _set_axes_equal_about_data(ax, all_pts)
+
+    plt.show()
+
+def point_to_polyline_distance(p, C):
+    """
+    p: (3,)
+    C: (M,3) polyline points
+    Returns: d_min, seg_idx, t_on_segment, q_closest
+    """
+    d_min = np.inf
+    best = (None, None, None)
+    for i in range(len(C) - 1):
+        q, t = closest_point_on_segment(p, C[i], C[i+1])
+        d = np.linalg.norm(p - q)
+        if d < d_min:
+            d_min = d
+            best = (i, t, q)
+    i, t, q = best
+    return d_min, i, t, q
+def closest_point_on_segment(p, a, b):
+    ab = b - a
+    t = np.dot(p - a, ab) / (np.dot(ab, ab) + 1e-12)
+    t = np.clip(t, 0.0, 1.0)
+    q = a + t * ab
+    return q, t

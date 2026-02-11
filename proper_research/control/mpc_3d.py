@@ -28,7 +28,7 @@ def wire_len_from_L(L, L_mag=L_MAG):
 
 u_max = np.array([ .2, .2, .2, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
 eps = np.array([
-    1e-3, 1e-3, 1e-3,              # x,y,z
+    1e-2, 1e-2, 1e-2,              # x,y,z
     np.deg2rad(1), np.deg2rad(1), np.deg2rad(1),  
     5e-4                              # L
 ], dtype=float)

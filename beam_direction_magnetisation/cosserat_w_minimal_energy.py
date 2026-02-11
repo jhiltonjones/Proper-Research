@@ -315,8 +315,8 @@ class CosseratForwardModel:
     def _initial_guess(self, L):
         s = np.linspace(0.0, L, self.n_nodes)
         Y = np.zeros((13, self.n_nodes))
-        Y[0, :] = -s          # x ~ s
-        Y[3, :] = 1.0        # quaternion w = 1
+        Y[0, :] = -s   
+        Y[3, :] = 1.0        
         return s, Y
 
 
@@ -860,7 +860,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
             u_flat,
             p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
             m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
-            wire_len=wire_len, include_gravity=True,
+            wire_len=wire_len, include_gravity=False,
             lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen
         )
         return W
@@ -896,7 +896,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
         wire_len=wire_len, include_gravity=True,
         lumen_C=lumen_C, lumen_R=lumen_R,
         contact_k=contact_k, contact_beta=contact_beta, contact_delta=contact_delta,
-        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off
+        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off, lumen_query=lumen_query, use_lumen=use_lumen
     )
 
     info = dict(
@@ -910,6 +910,8 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
         u_ctrl_opt=res.x.copy(),        # (3*K,)
         u_flat_opt=u_flat_opt.copy(),   # (3*(N-1),)
     )
+    info["z_opt"] = res.x.copy()
+    info["u_ctrl_opt"] = u_ctrl_opt.reshape(-1).copy()
     return p, q, u_seg, info
 def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     s = np.linspace(0.0, float(L), int(N))

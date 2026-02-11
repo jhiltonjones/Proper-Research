@@ -36,8 +36,7 @@ r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
 q = q0_ur
 R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
 t0 = R0 @ np.array([-1.0, 0.0, 0.0])   
-global INSERTION_DIR_WORLD
-INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
+
 lumen_C = make_lumen_centerline_turning(
     p_start=p0_ur,
     t0=t0,
@@ -69,7 +68,7 @@ hist = solve_quasistatic_insertion(
     r_src=r_src_ur, m_src=m_src,
     m_local_fun=model.m_local_fun, m_moment=0.0,
     lumen_C=lumen_C, lumen_R=lumen_R,
-    N=15, maxiter=15, use_lumen = False,
+    N=15, maxiter=15, use_lumen = True,
     u_init=u0
 )
 

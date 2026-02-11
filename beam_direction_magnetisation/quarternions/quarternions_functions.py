@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.transform import Rotation as Rot
 
 def quat_normalize(q, eps=1e-12):
     n = np.linalg.norm(q, axis=0, keepdims=True)

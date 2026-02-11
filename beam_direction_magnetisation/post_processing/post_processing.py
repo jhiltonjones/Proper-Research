@@ -373,41 +373,48 @@ def plot_target_and_final_tip_on_image(image_filename, target_px, tip_px, err_mm
     plt.legend()
     plt.show()
 def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,
-                        title="Energy-min centerline", show_rings=True):
+                        title="Energy-min centerline", show_rings=True,
+                        targets=None, tip=None, tip_from_centerline=None):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    # Energy-min centerline
     ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
 
-    # Optional straight baseline + base
     if p_straight is not None:
         ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
     if p0 is not None:
         ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
-
-    # Vessel visualization
+    if tip_from_centerline is not None:
+        ax.scatter([tip_from_centerline[0]], [tip_from_centerline[1]], [tip_from_centerline[2]],
+                marker="o", s=40, label="Centerline end")
     if (lumen_C is not None) and (lumen_R is not None):
         C = np.asarray(lumen_C, float)
         R = np.asarray(lumen_R, float)
         ax.plot(C[:, 0], C[:, 1], C[:, 2], label="Lumen centerline")
-
         if show_rings:
-            # You already have plot_lumen_rings defined below in your file,
-            # OR import it from your module and delete the local copy.
             plot_lumen_rings(ax, C, R, n_theta=28, alpha=0.2, linewidth=0.6)
 
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
+    # --- NEW: plot current tip ---
+    if tip is not None:
+        tip = np.asarray(tip, float).reshape(3,)
+        ax.scatter([tip[0]], [tip[1]], [tip[2]], marker="x", s=60, label="Tip")
+
+    # --- NEW: plot MPC targets / horizon ---
+    if targets is not None:
+        T = np.asarray(targets, float).reshape(-1, 3)
+        ax.scatter(T[:, 0], T[:, 1], T[:, 2], marker="^", s=30, label="MPC targets")
+        ax.plot(T[:, 0], T[:, 1], T[:, 2], "-", linewidth=1.0, label="Target horizon")
+
+    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
     ax.set_title(title)
     ax.legend()
 
-    # Nice equal aspect (optional) using all plotted points
     pts = [p_energy.T]
     if p_straight is not None: pts.append(p_straight.T)
     if p0 is not None: pts.append(np.asarray(p0, float).reshape(1,3))
     if lumen_C is not None: pts.append(np.asarray(lumen_C, float))
+    if targets is not None: pts.append(np.asarray(targets, float))
+    if tip is not None: pts.append(np.asarray(tip, float).reshape(1,3))
     _set_axes_equal_about_data(ax, np.vstack(pts))
 
     plt.show()

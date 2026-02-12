@@ -96,10 +96,18 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run mpc_3d",
+            "name": "Run mpc w boundary",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.mpc_3d",
+            "module": "proper_research.control.mpc_boundary",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "mpc sig bound",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.control.mpc_sig_bound",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

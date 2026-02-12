@@ -9,23 +9,24 @@ from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
 import numpy as np
 import matplotlib.pyplot as plt
-
+from proper_research.control.mpc_boundary import resample_polyline
 
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
-L_min_energy = 0.06
+L_min_energy = 0.118
 mag_len = beam_params.length_of_mag
 m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
 pivot_point = np.array([
-0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+0.67, -0.719, -0.093, -3.087, 0.341, 0.067
 ], float)
 
 
 # start_point = np.array([
 # 0.6681328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
 # ], float)
-start_point = np.array([0.7631313246488017, -0.870082950066627, 0.1518113820878254, -2.719732313656889, -1.5411971725531977, 0.08397869991910313])
-start_point[2] -=0.25
+start_point = np.array([ 0.680, -0.739,  0.092, -2.937, 1.041 ,
+    0.078 ])
+# start_point[2] -=0.25
 wire_len = L_min_energy - mag_len
 T_ur_pivot = ur_pose6_to_T(pivot_point)   
 p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -37,16 +38,23 @@ q = q0_ur
 R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
 t0 = R0 @ np.array([-1.0, 0.0, 0.0])   
 
+s_straight = 0.05
+
 lumen_C = make_lumen_centerline_turning(
     p_start=p0_ur,
     t0=t0,
-    length=0.08,          
-    n_pts=80,
-    bend_axis=np.array([0.0, 0.0, 1.0]),  
+    length=0.08 + s_straight,     
+    n_pts=130,               
+    bend_axis=np.array([0.0, 0.0, 1.0]),
     bend_angle=np.deg2rad(40.0),
-    bend_start=0.01,
-    bend_end=0.08
+    bend_start=0.01 + s_straight,    
+    bend_end=0.08 + s_straight       
 )
+
+lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
+lumen_R = np.full(len(lumen_C), 0.004)
+lumen_path = lumen_C
+
 model = CosseratForwardModel(
     p0=p0_ur,
     q0=q0_ur,
@@ -62,13 +70,13 @@ m_src = dipole_from_pose(q_src_ur, m_body)
 u0 = None  
 hist = solve_quasistatic_insertion(
     p0=p0_ur, q0=q0_ur,
-    L0=L_min_energy, Lf=L_min_energy, dL=0.001,
+    L0=0.03, Lf=L_min_energy, dL=0.001,
     wire_len_fun=lambda L: L - mag_len,
     Kinv_fun=Kbt_inv_profile, u_star=np.zeros(3),
     r_src=r_src_ur, m_src=m_src,
     m_local_fun=model.m_local_fun, m_moment=0.0,
     lumen_C=lumen_C, lumen_R=lumen_R,
-    N=15, maxiter=15, use_lumen = True,
+    N=30, maxiter=50, use_lumen = True,
     u_init=u0
 )
 

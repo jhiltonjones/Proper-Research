@@ -938,9 +938,9 @@ if __name__ == "__main__":
     ], float)
 
 
-    start_point = np.array([ 0.67959122, -0.77051372,  0.15178538, -3.06585824, -0.5152215 ,
-        0.0707897 ])
-    start_point[2] -=0.25
+    start_point = np.array([ 0.670, -0.740,  0.099, -3.088, 0.328 ,
+        0.067 ])
+    # start_point[2] -=0.25
     wire_len = L_cmd - mag_len
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)

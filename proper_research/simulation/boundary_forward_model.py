@@ -132,6 +132,7 @@ class EnergyMinForwardWithLumen:
         self._last["p_centerline"] = pE.copy()
         self._last["info"] = info
         self._last["hist"] = hist
+        
         # your solve_quasistatic_insertion stores warm-start in info["u_flat_opt"] (per your earlier code)
         # warm-start extraction: try common keys
         u_next = None

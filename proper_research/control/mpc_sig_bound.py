@@ -1,6 +1,10 @@
 import numpy as np
 import osqp
 import copy
+import json
+import csv
+from pathlib import Path
+import matplotlib.pyplot as plt
 import scipy.sparse as sp
 from scipy.linalg import solve_discrete_are
 from proper_research.parameters import default_magnet_params, default_beam_params
@@ -29,7 +33,7 @@ class DebugCfg:
 
 DBG = DebugCfg(level=2, every=1, every_heavy=25)
 
-def dbg_print(level, *args, **kwargs):
+def dbg_print(level, *args, **kwargs): 
     if DBG.level >= level:
         print(*args, **kwargs)
 
@@ -80,6 +84,48 @@ def _split_pred_errors(x_true, x_lin):
         c = float(np.clip(np.dot(tan_true/nt, tan_lin/np_), -1.0, 1.0))
         tan_ang_deg = float(np.degrees(np.arccos(c)))
     return pos_err_mm, tan_err, tan_ang_deg
+
+def forward_repeatability_test(forward6d, p8, n_rep=3, label=""):
+    """
+    Evaluates forward6d(p8, commit=False) multiple times inside the same frozen step baseline.
+    """
+    print(f"\n[CONSISTENCY] repeatability test {label} reps={n_rep}")
+    forward6d.start_step()  # freeze baseline
+    ys = []
+    for k in range(n_rep):
+        y = np.asarray(forward6d(p8, commit=False), float).reshape(6,)
+        ys.append(y)
+        print(f"  rep{k}: pos={y[:3]} tan={y[3:6]}")
+    y0 = ys[0]
+    for k in range(1, n_rep):
+        dp = np.linalg.norm(ys[k][:3] - y0[:3])
+        da = _angle_deg(ys[k][3:6], y0[3:6])
+        print(f"  Δ(rep{k}-rep0): pos={dp*1e3:.6f} mm, tan={da:.6f} deg")
+def _angle_deg(u, v, eps=1e-12):
+    u = unit(u, eps)
+    v = unit(v, eps)
+    # clamp for numerical safety
+    c = float(np.clip(np.dot(u, v), -1.0, 1.0))
+    return float(np.degrees(np.arccos(c)))
+
+def horizon_pred_errors(X_nl, X_pred, ph=None):
+    """
+    X_nl, X_pred: (Np,6) arrays (pos xyz + tangent tx ty tz)
+    Returns:
+      e_pos_m: (ph,) position L2 error in meters
+      e_tan_deg: (ph,) tangent angle error in degrees
+    """
+    X_nl = np.asarray(X_nl, float)
+    X_pred = np.asarray(X_pred, float)
+    Np = min(X_nl.shape[0], X_pred.shape[0])
+    ph = Np if ph is None else min(int(ph), Np)
+
+    e_pos = np.zeros(ph, float)
+    e_tan = np.zeros(ph, float)
+    for i in range(ph):
+        e_pos[i] = np.linalg.norm(X_nl[i, 0:3] - X_pred[i, 0:3])
+        e_tan[i] = _angle_deg(X_nl[i, 3:6], X_pred[i, 3:6])
+    return e_pos, e_tan
 def update_progress_cursor(
     path, x_prev, x_now, i_ref,
     window=80,
@@ -125,12 +171,17 @@ def update_progress_cursor(
         state["stall"] += 1
         i_ref_new = i_ref
 
-    # 5) stall escape: force cursor forward occasionally
+    dist_near = float(np.linalg.norm(path[i_near] - x_now))
+    # pick a sane bound: e.g. 2–3 lumen radii
+    dist_ok = dist_near < 0.010  # 10 mm (tune; 2*R is 8mm)
+
     if state["stall"] >= stall_steps:
-        i_ref_new = min(M-1, i_ref_new + int(force_advance_pts))
+        if dist_ok:
+            i_ref_new = min(M-1, i_ref_new + int(force_advance_pts))
+        # else: do NOT force-advance; instead re-localize (see section C)
         state["stall"] = 0
 
-    return int(i_ref_new), state, {"i_near": i_near, "prog": prog, "t_hat": t_hat}
+    return int(i_near), state, {"i_near": i_near, "prog": prog, "t_hat": t_hat}
 def unit(v, eps=1e-12):
     v = np.asarray(v, float).ravel()
     n = np.linalg.norm(v)
@@ -287,10 +338,12 @@ def build_yref_from_centerline_tipanchored(
     M = C.shape[0]
     x_tip = np.asarray(x_now, float).ravel()
     t_tip = unit(t_tip_now)
-
-    # ---- horizon indices on centerline ----
-    idx = i_ref + step_idx * np.arange(Np)
+    i0 = closest_index_in_window_monotone(C, x_tip, i_ref, window=120)  # or 80
+    idx = i0 + step_idx*np.arange(Np)
     idx = np.clip(idx, 0, M-1).astype(int)
+    # ---- horizon indices on centerline ----
+    # idx = i_ref + step_idx * np.arange(Np)
+    # idx = np.clip(idx, 0, M-1).astype(int)
 
     c0 = C[idx[0]]
     R0 = float(R[idx[0]])
@@ -527,12 +580,6 @@ def wire_len_from_L(L, L_mag=L_MAG):
     #     raise ValueError(f"L={L:.4f} must be > L_mag={L_mag:.4f}")
     return wire_len
 
-u_max = np.array([ .2, .2, .2, np.deg2rad(60), np.deg2rad(60), np.deg2rad(60),  0.02])
-eps_u = np.array([
-    1e-2, 1e-2, 1e-2,          # m/s perturbations
-    np.deg2rad(1), np.deg2rad(1), np.deg2rad(1),  # rad/s perturbations
-    1e-3                        # L rate (m/s)
-], float)
 
 
 def seq_mat_ltv(A, B_list):
@@ -710,8 +757,8 @@ class mpc_controller_tipxy_LTI:
         self.theta_crit_deg = 40.0
 
         # per-step tangent inflation with g_k
-        self.q_tan_scale = 50.0         # you already have this
-        self.q_pos_scale = 0.0          # optional
+        self.q_tan_scale = 0        # you already have this
+        self.q_pos_scale = 0          # optional
         self.debug = True
         self._dbg_last = {}
     def _rebuild_S(self):
@@ -739,7 +786,7 @@ class mpc_controller_tipxy_LTI:
         self.p = np.asarray(p0, float).reshape(self.np,)
         if hasattr(self.forward_tip_fn, "start_step"):
             self.forward_tip_fn.start_step()
-            self.x = np.asarray(self.forward_tip_fn(self.p, commit=True), float).reshape(self.n,)
+            self.x = np.asarray(self.forward_tip_fn(self.p, commit=False), float).reshape(self.n,)
         else:
             self.x = np.asarray(self.forward_tip_fn(self.p), float).reshape(self.n,)
         self.d = np.zeros(self.n, float)
@@ -892,7 +939,78 @@ class mpc_controller_tipxy_LTI:
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
 
             B_first = B0         
-            p_lin   = p_prev.copy()
+            if it % 1 == 0:
+                # ---- DEBUG: print Jacobian / B0 ----
+                B = np.asarray(B0, float)
+                n, m = B.shape
+                umax = np.asarray(self.u_max, float)
+
+                # bound on |Δy_i| ≈ sum_j |B_ij| * umax_j
+                delta_max = np.sum(np.abs(B) * umax.reshape(1,-1), axis=1)
+
+                print("max |Δx| per step (mm):", 1e3*delta_max[0])
+                print("max |Δy| per step (mm):", 1e3*delta_max[1])
+                print("max |Δz| per step (mm):", 1e3*delta_max[2])
+                col_names = ["vx","vy","vz","wx","wy","wz","dL"]
+                row_names = [f"y{i}" for i in range(n)]
+                if n >= 6:
+                    row_names = ["x","y","z","tx","ty","tz"] + [f"y{i}" for i in range(6, n)]
+
+                print(f"\n[DBG] SQP it={it}  B0 shape = {B.shape}")
+                print("[DBG] B0 column norms:")
+                for j in range(m):
+                    print(f"  {col_names[j]:>2s}: {np.linalg.norm(B[:, j]):.3e}")
+
+                print("[DBG] B0 rows (scientific):")
+                for i in range(n):
+                    vals = " ".join([f"{B[i,j]:+10.3e}" for j in range(m)])
+                    print(f"  {row_names[i]:>3s}: {vals}")
+                print("       " + " ".join([f"{c:>10s}" for c in col_names]))
+
+                Bt = B[:, 0:3]      # vx vy vz
+                Bw = B[:, 3:6]      # wx wy wz
+                BdL = B[:, 6:7]     # dL
+
+                print("[DBG] authority norms:")
+                print(f"  ||B_trans||_F = {np.linalg.norm(Bt, 'fro'):.3e}")
+                print(f"  ||B_omega||_F = {np.linalg.norm(Bw, 'fro'):.3e}")
+                print(f"  ||B_dL||_F    = {np.linalg.norm(BdL, 'fro'):.3e}")
+
+                # optional: ratios
+                eps = 1e-12
+                print("[DBG] ratios:")
+                print(f"  trans/omega = {np.linalg.norm(Bt,'fro')/(np.linalg.norm(Bw,'fro')+eps):.3f}")
+                print(f"  dL/omega    = {np.linalg.norm(BdL,'fro')/(np.linalg.norm(Bw,'fro')+eps):.3f}")
+                # ---- DEBUG: SVD / conditioning ----
+                U, S, Vt = np.linalg.svd(B, full_matrices=False)
+                cond = (S[0] / max(S[-1], 1e-16)) if S.size else np.inf
+                rank = int(np.sum(S > 1e-10))
+                # ---- NEW: cache Jacobian SVD stats for this MPC step ----
+                self._jac_svd_last = dict(
+                    S=S.copy(),
+                    cond=float(cond),
+                    rank=int(rank),
+                    # optional: store norms you already compute
+                    trans_norm=float(np.linalg.norm(B[:, 0:3], 'fro')),
+                    omega_norm=float(np.linalg.norm(B[:, 3:6], 'fro')),
+                    dL_norm=float(np.linalg.norm(B[:, 6:7], 'fro')),
+                )
+                print("[DBG] svd singular values:", np.array2string(S, precision=3, suppress_small=False))
+                print(f"[DBG] rank≈{rank}/{min(B.shape)}   cond≈{cond:.3e}")
+
+                # Right-singular vectors show combinations of inputs that matter
+                # (rows of Vt correspond to singular directions in input space)
+                print("[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):")
+                for k_show in range(min(3, Vt.shape[0])):
+                    v = Vt[k_show, :]
+                    print(f"  mode{k_show}: " + " ".join([f"{col_names[j]}:{v[j]:+0.3f}" for j in range(m)]))
+                print("[DBG] top output directions (U cols -> [x y z tx ty tz]):")
+                names = ["x","y","z","tx","ty","tz"]
+                for k_show in range(3):
+                    uk = U[:, k_show]
+                    print("  out_mode%d:"%k_show, " ".join([f"{names[i]}:{uk[i]:+0.3f}" for i in range(6)]))
+            p_lin   = p_prev.copy()           
+
             p_first = p_seq[0].copy()
             Y_nom = np.vstack([self.forward_tip_fn(p_seq[i]) for i in range(Np)]).reshape(Np, n)
             X_nom = Y_nom.reshape(Np*n, 1)
@@ -927,8 +1045,8 @@ class mpc_controller_tipxy_LTI:
                 Q_seq = []
                 for kq in range(self.Np - 1):
                     gk = float(g_seq[kq])
-                    s_tan = 1.0 + self.q_tan_scale * gk
-                    s_pos = 1.0 + self.q_pos_scale * gk
+                    s_tan = 0.1 + self.q_tan_scale * gk
+                    s_pos = 10.0 + self.q_pos_scale * gk
 
                     Qk = Q_base.copy()
                     Qk[0:3, 0:3] *= s_pos
@@ -936,7 +1054,7 @@ class mpc_controller_tipxy_LTI:
                     Q_seq.append(Qk)
 
                 # Debug summary ONCE
-                s_tan_list = [float(1.0 + self.q_tan_scale * float(g_seq[kq])) for kq in range(self.Np - 1)]
+                s_tan_list = [float(0.1 + self.q_tan_scale * float(g_seq[kq])) for kq in range(self.Np - 1)]
                 s_pos_list = [float(1.0 + self.q_pos_scale * float(g_seq[kq])) for kq in range(self.Np - 1)]
                 self._dbg_last = dict(
                     mpc_mode="predictive_Q",
@@ -958,7 +1076,7 @@ class mpc_controller_tipxy_LTI:
                 # fallback: your old scalar gating (still works)
                 g0 = float(getattr(self, "g0_last", 0.0))
                 Q_base = self.Q.copy()
-                s_tan = 1.0 + self.q_tan_scale * g0
+                s_tan = 0.1 + self.q_tan_scale * g0
                 s_pos = 1.0 + self.q_pos_scale * g0
                 Q_seq = []
                 for kq in range(self.Np - 1):
@@ -1003,7 +1121,7 @@ class mpc_controller_tipxy_LTI:
             # Optional offset-free disturbance: add it consistently to nominal and prediction
             if self.use_offset_free:
                 X_nom = X_nom + self._disturbance_stack(self.d)
-
+            X_base = (Mx @ xk)
             # Affine offset so linear model matches nominal at U_guess
             X_aff = X_nom - Mc @ U_guess_vec
             Mc_last = Mc
@@ -1044,9 +1162,12 @@ class mpc_controller_tipxy_LTI:
             if self.band_xy > 0.0:
                 band = float(self.band_xy)
                 band_stack = band * np.ones((Np*n,))
-                rhs_p = band_stack + (xref_stack - X_aff).reshape(-1)
-                rhs_n = band_stack + (X_aff - xref_stack).reshape(-1)
+                X_base_stack = (Mx @ xk).reshape(Np*n, 1)
+                if self.use_offset_free:
+                    X_base_stack += self._disturbance_stack(self.d)
 
+                rhs_p = band_stack + (xref_stack - X_base_stack).reshape(-1)
+                rhs_n = band_stack + (X_base_stack - xref_stack).reshape(-1)
 
                 A_list.append(Mc)
                 l_list.append(-np.inf * np.ones(Np*n))
@@ -1104,7 +1225,7 @@ class mpc_controller_tipxy_LTI:
         # --- evaluate forward model once ---
         if hasattr(self.forward_tip_fn, "__call__"):
             try:
-                x_next_true = np.asarray(self.forward_tip_fn(p_next_true, commit=True), float).reshape(self.n,)
+                x_next_true = np.asarray(self.forward_tip_fn(p_next_true, commit=False), float).reshape(self.n,)
             except TypeError:
                 x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(self.n,)
         else:
@@ -1123,10 +1244,14 @@ class mpc_controller_tipxy_LTI:
         # safe pred1_err
         pred1_err = np.nan
         if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
-            pred1_err = float(np.linalg.norm(x_next_true - X_pred[0]))
+            pred1_err = np.linalg.norm(x_next_true[:3] - X_pred[0][:3])
+            tan1_err   = np.linalg.norm(x_next_true[3:6] - X_pred[0][3:6])
         pos_err_mm = tan_err = tan_ang_deg = np.nan
-        if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
-            pos_err_mm, tan_err, tan_ang_deg = _split_pred_errors(x_next_true, X_pred[0])
+        if self.debug and (Mc_last is not None):
+            xref0 = xref_stack[0:n].ravel()
+            xbase0 = X0_stack[0:n].ravel()
+            xaff0  = X_aff_last[0:n].ravel()
+            print("xref0", xref0[:3], "xbase0", xbase0[:3], "xaff0", xaff0[:3])
 
         info = dict(
             status=status_last,
@@ -1153,6 +1278,8 @@ class mpc_controller_tipxy_LTI:
             X_nom_last = X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
             p_seq_last = p_seq_last.copy() if p_seq_last is not None else None,
         )
+        info["xref_seq"] = xref_seq.copy()
+        info["X_base"]   = X_base.reshape(Np, n).copy()
         if self.debug:
             # quick health metrics
             pred1 = float(pred1_err) if np.isfinite(pred1_err) else np.nan
@@ -1175,6 +1302,18 @@ class mpc_controller_tipxy_LTI:
 
             if np.isfinite(pred1_err) and (pred1_err > DBG.tol_pred1):
                 dbg_print(1, f"[WARN] pred1_err is large ({pred1_err:.4e} m). Model/J or dt scaling may be off.")
+            jac = getattr(self, "_jac_svd_last", None)
+            if jac is not None:
+                info["jac_svd_S"] = np.asarray(jac["S"], float).copy()
+                info["jac_svd_cond"] = float(jac["cond"])
+                info["jac_svd_rank"] = int(jac["rank"])
+                info["jac_trans_norm"] = float(jac["trans_norm"])
+                info["jac_omega_norm"] = float(jac["omega_norm"])
+                info["jac_dL_norm"] = float(jac["dL_norm"])
+            else:
+                info["jac_svd_S"] = None
+                info["jac_svd_cond"] = np.nan
+                info["jac_svd_rank"] = -1
         return self.p.copy(), self.x.copy(), info
 
 
@@ -1243,83 +1382,188 @@ def rollout_open_loop_from_plan(mpc, p_start, U_seq):
         P_nl.append(p.copy())
         X_nl.append(x.copy())
     return np.vstack(P_nl), np.vstack(X_nl)
-def debug_step_pose7(k, x_target, xref_seq, p_now, x_now, info, mpc,i_ref=None,
-                     print_horizon=4, do_nl_rollout=True):
-    xref_seq = np.asarray(xref_seq, float).reshape(-1, 3)
-    e_ref0 = xref_seq[0] - x_now
-    err_ref0_mm = 1e3 * np.linalg.norm(e_ref0)
+def debug_step_pose7(
+    k,
+    x_target,
+    xref_seq,
+    p_now,
+    x_now,
+    info,
+    mpc,
+    i_ref=None,
+    print_horizon=4,
+    do_nl_rollout=True,
+):
+    """
+    Robust debug print for a 6D output MPC:
+      y = [x,y,z, tx,ty,tz]
+    Inputs:
+      xref_seq: typically (Np,3) positional refs (kept for compatibility)
+      info["xref_seq"]: (Np,6) full refs (pos+tangent)  <-- preferred
+      x_now: can be (3,) or (6,) (kept for compatibility)
+      info["x_now"]: should be (6,) if MPC tracks 6D
+    """
 
-    # optional: also show along-horizon terminal ref error
-    e_ref_end = xref_seq[-1] - x_now
-    err_ref_end_mm = 1e3 * np.linalg.norm(e_ref_end)
+    # ---- pull reference ----
+    xref_full = info.get("xref_seq", None)
+    if xref_full is not None:
+        xref_full = np.asarray(xref_full, float)
+        if xref_full.ndim != 2 or xref_full.shape[1] < 3:
+            xref_full = None
+
+    # fallback: user-provided xref_seq (pos only)
+    xref_pos_only = np.asarray(xref_seq, float)
+    if xref_pos_only.ndim == 1:
+        xref_pos_only = xref_pos_only.reshape(1, -1)
+    if xref_pos_only.shape[1] != 3:
+        # last-ditch: try reshape to (-1,3)
+        xref_pos_only = xref_pos_only.reshape(-1, 3)
+
+    # Determine horizon length
+    Np = int(getattr(mpc, "Np", xref_pos_only.shape[0]))
+    ph = min(int(print_horizon), Np)
+
+    if xref_full is not None and xref_full.shape[0] != Np:
+        # keep it usable if caller stored a different length
+        Np = xref_full.shape[0]
+        ph = min(ph, Np)
+
+    # pos/tan references
+    if xref_full is not None and xref_full.shape[1] >= 6:
+        xref_pos = xref_full[:, :3]
+        xref_tan = xref_full[:, 3:6]
+    else:
+        xref_pos = xref_pos_only[:Np, :3]
+        xref_tan = None
+
+    # ---- pull current state/output ----
+    x_now6 = info.get("x_now", None)
+    if x_now6 is None:
+        x_now6 = np.asarray(x_now, float).ravel()
+    else:
+        x_now6 = np.asarray(x_now6, float).ravel()
+
+    # If only 3D provided, pad tangent with NaNs so printing still works
+    if x_now6.size >= 6:
+        pos_now = x_now6[:3]
+        tan_now = x_now6[3:6]
+    else:
+        pos_now = x_now6[:3]
+        tan_now = np.full(3, np.nan)
+
+    # ---- errors at step 0 and terminal ----
+    e_pos0 = xref_pos[0] - pos_now
+    err_pos0_mm = 1e3 * np.linalg.norm(e_pos0)
+
+    if xref_tan is not None and np.all(np.isfinite(tan_now)):
+        e_tan0 = xref_tan[0] - tan_now
+        err_tan0 = np.linalg.norm(e_tan0)
+    else:
+        e_tan0 = None
+        err_tan0 = np.nan
+
+    e_posN = xref_pos[min(Np - 1, ph - 1)] - pos_now
+    err_posN_mm = 1e3 * np.linalg.norm(e_posN)
+
+    # ---- header ----
+    status = info.get("status", "?")
+    infeas = info.get("infeasible", -1)
 
     print(
-        f"k={k:02d} tip=[{x_now[0]:+.4f},{x_now[1]:+.4f},{x_now[2]:+.4f}] "
-        f"||e_ref0||={err_ref0_mm:.2f}mm ||e_refN||={err_ref_end_mm:.2f}mm "
-        f"status={info['status']} infeas={info['infeasible']}"
+        f"k={k:02d} tip=[{pos_now[0]:+.4f},{pos_now[1]:+.4f},{pos_now[2]:+.4f}] "
+        f"e_pos0={err_pos0_mm:.2f}mm e_posN={err_posN_mm:.2f}mm "
+        f"e_tan0={err_tan0:.4f} "
+        f"status={status} infeas={infeas}"
     )
-    u0 = info["u0"]
-    X_pred = info.get("X_pred", None)   # (Np,3)
-    U_seq  = info.get("U_seq", None)    # (Np,7)
-    pred_err = info.get("pred1_err", np.nan)
 
+    # ---- pose ----
     p7 = pose8_quat_to_pose7_rotvec(p_now)
-    r_src, q_src, L = unpack_pose_ur_rotvec_L(p7)
     rvec = p7[3:6]
     theta_deg = np.rad2deg(np.linalg.norm(rvec))
-
-    print(f"   p_now: x={p7[0]:+.3f} y={p7[1]:+.3f} z={p7[2]:+.3f}  "
+    print(
+        f"   p_now: x={p7[0]:+.3f} y={p7[1]:+.3f} z={p7[2]:+.3f}  "
         f"rotvec=[{rvec[0]:+.3f},{rvec[1]:+.3f},{rvec[2]:+.3f}] |theta|={theta_deg:.1f}deg  "
-        f"L={p7[6]:.3f}")
+        f"L={p7[6]:.3f}"
+    )
 
-    print("   u0:",
-          f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
-          f"omega_body=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}")
+    # ---- control ----
+    u0 = np.asarray(info.get("u0", np.zeros(getattr(mpc, "m", 7))), float).ravel()
+    if u0.size >= 7:
+        print(
+            "   u0:",
+            f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
+            f"omega_body=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}",
+        )
+    else:
+        print("   u0:", u0)
 
+    pred_err = float(info.get("pred1_err", np.nan))
     print(f"   pred1_err (one-step tip mismatch): {pred_err}")
     if i_ref is not None:
         print(f"   path index i_ref={i_ref}")
-    # ---- internal consistency check: should be ~0 ----
+
+    # ---- internal consistency check: (X_aff0 + Mc0U) vs X_pred[0] ----
+    X_pred = info.get("X_pred", None)      # expected (Np,6)
+    U_seq = info.get("U_seq", None)        # expected (Np,7)
     Mc_last = info.get("Mc_last", None)
     X_aff_last = info.get("X_aff_last", None)
+
+    if X_pred is not None:
+        X_pred = np.asarray(X_pred, float)
+    if U_seq is not None:
+        U_seq = np.asarray(U_seq, float)
+
     if (Mc_last is not None) and (X_aff_last is not None) and (U_seq is not None):
-        n = mpc.n
-        U_vec = U_seq.reshape(-1, 1)          # (Np*m,1)
-        Mc0 = Mc_last[0:n, :]                 # (n, Np*m)
+        Mc_last = np.asarray(Mc_last, float)
+        X_aff_last = np.asarray(X_aff_last, float)
+
+        n = int(getattr(mpc, "n", 6))
+        U_vec = U_seq.reshape(-1, 1)             # (Np*m,1)
+        Mc0 = Mc_last[0:n, :]                    # (n, Np*m)
         x1_from_blocks = (X_aff_last[0:n, :] + Mc0 @ U_vec).reshape(n,)
-        if X_pred is not None and np.all(np.isfinite(X_pred)):
-            print("   |(X_aff0 + Mc0U) - X_pred[0]| =",
-                  np.linalg.norm(x1_from_blocks - X_pred[0]))
+        if X_pred is not None and X_pred.size >= n:
+            xpred0 = X_pred.reshape(Np, -1)[0, :n]
+            print("   |(X_aff0 + Mc0U) - X_pred[0]| =", np.linalg.norm(x1_from_blocks - xpred0))
 
-    # ---- horizon print: pred vs ref (and optional nominal nonlinear) ----
-    xref_seq = np.asarray(xref_seq, float)   # (Np,3)
-    Np = xref_seq.shape[0]
-    ph = min(print_horizon, Np)
-
-    X_nom_last = info.get("X_nom_last", None)   # optional (Np,3)
-
+    # ---- horizon print: pred vs ref ----
     if X_pred is None or not np.all(np.isfinite(X_pred)):
         print("   X_pred NaNs or missing -> infeasible/failed QP")
     else:
-        print("   Horizon:  pred (linear)              ref")
+        X_pred = X_pred.reshape(Np, -1)
+        print("   Horizon:  pred(pos)                    ref(pos)")
         for i in range(ph):
-            print(f"   {i:02d}: {X_pred[i]}   {xref_seq[i]}")
+            print(f"   {i:02d}: {X_pred[i, :3]}   {xref_pos[i]}")
 
-        if X_nom_last is not None and np.all(np.isfinite(X_nom_last)):
-            print("   Horizon:  nominal (nonlinear @ SQP lin point)")
+        # optional tangent display
+        if (xref_tan is not None) and (X_pred.shape[1] >= 6):
+            print("   Horizon:  pred(tan)                    ref(tan)")
             for i in range(ph):
-                print(f"   {i:02d}: {X_nom_last[i]}")
+                print(f"   {i:02d}: {X_pred[i, 3:6]}   {xref_tan[i]}")
 
-    # ---- nonlinear open-loop rollout under U_seq ----
+        X_nom_last = info.get("X_nom_last", None)
+        if X_nom_last is not None:
+            X_nom_last = np.asarray(X_nom_last, float)
+            if X_nom_last.ndim == 2 and X_nom_last.shape[0] >= ph:
+                print("   Horizon:  nominal (nonlinear @ SQP lin point) pos")
+                for i in range(ph):
+                    print(f"   {i:02d}: {X_nom_last[i, :3]}")
+
+    # ---- nonlinear open-loop rollout ----
     if do_nl_rollout and (U_seq is not None) and np.all(np.isfinite(U_seq)):
-        p_start = info["p_prev"]
-        P_nl, X_nl = rollout_open_loop_from_plan(mpc, p_start, U_seq)
-        print("   Horizon:  NL rollout (true f(p) along applied U_seq)")
-        for i in range(min(ph, X_nl.shape[0])):
+        p_start = info.get("p_prev", None)
+        if p_start is not None:
+            P_nl, X_nl = rollout_open_loop_from_plan_commit(mpc, p_start, U_seq)
+            print("   Horizon:  NL rollout COMMIT (plant-like along U_seq)")
+            ph2 = min(ph, X_nl.shape[0])
+            for i in range(ph2):
+                print(f"   {i:02d}: {X_nl[i, :3]}")
+
             if X_pred is not None and np.all(np.isfinite(X_pred)):
-                print(f"   {i:02d}: {X_nl[i]}   (lin {X_pred[i]})")
-            else:
-                print(f"   {i:02d}: {X_nl[i]}")
+                ph2 = min(ph, X_nl.shape[0], X_pred.shape[0])
+                e_pos_m, e_tan_deg = horizon_pred_errors(X_nl, X_pred, ph=ph2)
+                print("   Horizon errors vs linear (commit rollout):")
+                for i in range(ph2):
+                    print(f"   {i:02d}: pos={1e3*e_pos_m[i]:.3f}mm  tan={e_tan_deg[i]:.2f}deg")
 
     print("--------------------------------------------------------------------")
 
@@ -1448,7 +1692,105 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
+def save_step_artifacts(
+    *,
+    k: int,
+    frames_dir,
+    log_csv_path,
+    u0, p_now, y_now,
+    i_ref: int,
+    info: dict,
+    ref_info: dict,
+    centerline_tip,
+    lumen_C, lumen_R, p0_ur,
+    tip_pos,
+    yref_seq_pos,
+    tip_from_centerline=None,
+):
+    # ---------- 1) save plot frame ----------
+    # Put u0 in title (compact)
+    u0 = np.asarray(u0, float).ravel()
+    title = (f"k={k:04d} i_ref={i_ref} "
+             f"u0=[{u0[0]:+.3f},{u0[1]:+.3f},{u0[2]:+.3f},"
+             f"{u0[3]:+.2f},{u0[4]:+.2f},{u0[5]:+.2f},{u0[6]:+.3f}] "
+             f"status={info.get('status','?')} infeas={info.get('infeasible',-1)}")
 
+    # Your plotting function (assumed to create a matplotlib figure)
+    plot_energy_only_3d(
+        centerline_tip,
+        lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
+        targets=yref_seq_pos,
+        tip=tip_pos,
+        tip_from_centerline=tip_from_centerline,
+        p_mag=p_post,                 # NEW
+        mag_axis="x",                 # or "z" depending on how your magnet is defined
+        mag_arrow_len=0.02,           # 2 cm arrow; tune for visibility
+        title=f"Energy-min centreline (k={k}, i_ref={i_ref})",
+        show=False,
+    )
+
+    # Grab current figure and save
+    fig = plt.gcf()
+    fig_path = frames_dir / f"frame_{k:06d}.png"
+    fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+    # ---------- 2) append one row to CSV ----------
+    p_now = np.asarray(p_now, float).ravel()
+    y_now = np.asarray(y_now, float).ravel()
+
+    row = [
+        int(k), int(i_ref),
+        *u0.tolist(),
+        *p_now.tolist(),
+        *y_now.tolist(),
+        str(info.get("status","")),
+        int(info.get("infeasible", -1)),
+        float(info.get("pred1_err", np.nan)),
+    ]
+    with open(log_csv_path, "a", newline="") as f:
+        csv.writer(f).writerow(row)
+def rollout_open_loop_from_plan_commit(mpc, p_start, U_seq):
+    """
+    Roll forward the nonlinear 'plant' using U_seq, committing solver state each step.
+    Returns:
+        P_nl: (Np, n_p)  parameter trajectory (p1..pNp)
+        X_nl: (Np, n)    output trajectory
+    """
+    p = np.asarray(p_start, float).copy()
+    U_seq = np.asarray(U_seq, float)
+
+    # Freeze baseline ONCE for this open-loop simulation
+    if hasattr(mpc.forward_tip_fn, "start_step"):
+        mpc.forward_tip_fn.start_step()
+
+    P_nl = []
+    X_nl = []
+
+    for i in range(U_seq.shape[0]):
+        p = mpc._clamp_p(integrate_pose8_body(p, U_seq[i], mpc.dt))
+        # IMPORTANT: commit=True so warm-start continues along the trajectory
+        try:
+            x = np.asarray(mpc.forward_tip_fn(p, commit=True), float).reshape(mpc.n,)
+        except TypeError:
+            # if forward doesn't accept commit kwarg
+            x = np.asarray(mpc.forward_tip_fn(p), float).reshape(mpc.n,)
+
+        P_nl.append(p.copy())
+        X_nl.append(x.copy())
+
+    return np.vstack(P_nl), np.vstack(X_nl)
+def snapshot_forward(forward6d, p8, *, commit=False):
+    """
+    Returns a self-consistent snapshot from ONE forward call.
+    """
+    y = np.asarray(forward6d(p8, commit=commit), float).reshape(6,)
+    C = getattr(forward6d, "last_p_centerline", None)
+    C = None if C is None else np.asarray(C, float).copy()
+
+    tip = y[:3].copy()
+    tan = y[3:6].copy()
+    return tip, tan, C, y
 if __name__ == "__main__":
     pivot_point = np.array([
     0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
@@ -1456,9 +1798,9 @@ if __name__ == "__main__":
 
 
     start_point = np.array([
-    0.6681328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    0.7081328220229531, -0.7055298925316631, -0.09 ,-3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], float)
-    start_point[2] -=0.25
+    # start_point[2] -=0.25
     T_ur_pivot = ur_pose6_to_T(pivot_point)     # UR TCP pose at catheter base
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
     L0 = 0.049 
@@ -1477,7 +1819,7 @@ if __name__ == "__main__":
     q = q0_ur
     R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])  
-    s_straight = 0.02
+    s_straight = 0.03
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
@@ -1485,9 +1827,9 @@ if __name__ == "__main__":
         length=0.08 + s_straight,     
         n_pts=130,                      
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(120.0),
+        bend_angle=np.deg2rad(40.0),
         bend_start=0.01 + s_straight,    
-        bend_end=0.04 + s_straight       
+        bend_end=0.08 + s_straight       
     )
 
     lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
@@ -1501,7 +1843,7 @@ if __name__ == "__main__":
             mag_len=beam_params.length_of_mag,
             m_body=m_body,
             lumen_C=lumen_C, lumen_R=lumen_R,
-            N_nodes=15, maxiter=15,
+            N_nodes=25, maxiter=25,
             L0_init=0.01, dL_internal=0.002
         )
 
@@ -1514,43 +1856,54 @@ if __name__ == "__main__":
 
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)   # now 8D
     p_min = np.array([0.2, -1, -0.2,  -np.inf, -np.inf, -np.inf, -np.inf, 0.03])
-    p_max = np.array([0.85,  1,  1.0,  +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
+    p_max = np.array([0.75,  1.5,  1.0,  +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
     w_u = np.array([
-        1e-3, 1e-3, 1e-2,     # vx,vy,vz
-        1e-2, 1e-2, 1e-6,     # wx,wy,wz  (encourage wz)
-        1e-3                 # dL
+        1e-4, 1e-4, 1e-4,     # vx,vy,vz
+        5e-1, 5e-1, 1e-6,     # wx,wy,wz  (encourage wz)
+        1e-4                 # dL
     ])    
     w_du = np.array([
-    1e-3, 1e-3, 1e-3,     # vx,vy,vz
-    1e-2, 1e-2, 1e-4,     # wx,wy,wz  (encourage wz)
-    1e-3                 # dL
+    1e-8, 1e-8, 1e-8,     # vx,vy,vz
+    1e-8, 1e-8, 1e-8,     # wx,wy,wz  (encourage wz)
+    1e-8                 # dL
     ])
 
-    w_pos = 1.0
-    w_tan = 0.1   # base tangent weight (will be gated up near wall)
+    u_max = np.array([ 1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(90),  1.5])
+    eps_u = np.array([
+        1e-3, 1e-3, 1e-3,          # m/s perturbations
+        np.deg2rad(2), np.deg2rad(2), np.deg2rad(2),  # rad/s perturbations
+        1e-3                        # L rate (m/s)
+    ], float)
+    w_pos = 5.0
+    # w_tan = 0.1   # base tangent weight (will be gated up near wall)
     forward6d = DeterministicForward6D(forward_model)
 
     # Use forward6d everywhere: MPC + Jacobian + debug rollouts
     J_fn = lambda p8: numerical_B_y_wrt_u(
-        p8, forward6d, dt=0.05, eps_u=eps_u, n_out=6
+        p8, forward6d, dt=0.01, eps_u=eps_u, n_out=6
     )
+
+    w_pos_x = 5.0
+    w_pos_y = 5.0   # <-- 10x stronger y penalty (tune this)
+    w_pos_z = 0.0
+    w_tan   = 0.0
 
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
-        forward_tip_fn=forward6d, 
-        dt=0.05,
-        Np=4,
+        forward_tip_fn=forward6d,
+        dt=0.01,
+        Np=3,
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(w_pos, w_pos, w_pos,  w_tan, w_tan, w_tan),
+        w_xy=(w_pos_x, w_pos_y, w_pos_z,  w_tan, w_tan, w_tan),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
-        N_sqp=4,
+        N_sqp=1,
         use_offset_free=False
     )
 
@@ -1570,71 +1923,117 @@ if __name__ == "__main__":
     x_start = mpc.x.copy()
     n=15
     # path = np.linspace(x_start, x_target, n)
-    # path is lumen_path (already resampled ~1mm)
     M = lumen_path.shape[0]
-
+    print(f"print path {M}")
+    ds = np.linalg.norm(np.diff(lumen_C, axis=0), axis=1)
+    print("M =", lumen_C.shape[0])
+    print("Arc length (m) =", ds.sum())
+    print("Expected (m)   =", 0.08 + s_straight)
+    print("Mean ds (m)    =", ds.mean(), "min", ds.min(), "max", ds.max())
     i_ref = 0              # start at beginning (or compute once from initial x)
     max_steps = 5000       # safety limit so it doesn't run forever
     window = 80            # search ahead only (50mm if ds=1mm)
 
     cursor_state = {"stall": 0}
     x_prev = mpc.x[:3].copy()
+    out_root = Path("mpc_run_01")
+    frames_dir = out_root / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
 
+    log_csv_path = out_root / "log.csv"
+    log_meta_path = out_root / "meta.json"
+
+    # # Save run metadata once (optional)
+    meta = dict(
+        dt=float(mpc.dt),
+        Np=int(mpc.Np),
+        u_max=u_max.tolist(),
+        p_min=p_min.tolist(),
+        p_max=p_max.tolist(),
+    )
+    with open(log_meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    # CSV header (write once)
+    with open(log_csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "k", "i_ref",
+            "u0_vx","u0_vy","u0_vz","u0_wx","u0_wy","u0_wz","u0_dL",
+            "p_x","p_y","p_z","p_qw","p_qx","p_qy","p_qz","p_L",
+            "y_x","y_y","y_z","y_tx","y_ty","y_tz",
+            "status","infeasible","pred1_err"
+        ])
+    svd_S_hist = []
+    svd_cond_hist = []
+    svd_rank_hist = []
+    pred1_hist = []
+    k_hist = []
+    trans_hist, omega_hist, dL_hist = [], [], []
     for k in range(max_steps):
         y_now = mpc.x.copy()
         x_now = y_now[:3].copy()
         if k == 0:
+            # at current i_ref:
+
             i_ref_start = advance_cursor_monotone(lumen_path, x_now, i_ref, window=window)
             # progress-based update (instead of only "close to ref" rule)
             i_ref, cursor_state, cur_dbg = update_progress_cursor(
                 lumen_path, x_prev, x_now, i_ref_start,
                 window=window,
-                ds_path=1e-3,
-                s_advance=0.2e-3,       # 0.2 mm forward motion counts
-                stall_steps=10,
+                ds_path=5e-4,
+                s_advance=0.3e-3,       # 0.2 mm forward motion counts
+                stall_steps=5,
                 force_advance_pts=1
             )
         else:
             i_ref, cursor_state, cur_dbg = update_progress_cursor(
                 lumen_path, x_prev, x_now, i_ref,
                 window=window,
-                ds_path=1e-3,
-                s_advance=0.2e-3,       # 0.2 mm forward motion counts
-                stall_steps=10,
-                force_advance_pts=1
+                ds_path=1e-4,
+                s_advance=1e-4,       # 0.2 mm forward motion counts
+                stall_steps=15,
+                force_advance_pts=1,
+                state=cursor_state,
             )
+        p_prev = mpc.p.copy()          # pose before step
+        tip_prev, tan_prev, C_prev, y_prev = snapshot_forward(forward6d, p_prev, commit=False)
+
+        x_now = tip_prev               
+        t_tip_now = tan_prev
         mpc.i_ref_last = i_ref
         if (k % DBG.every) == 0:
             dbg_print(1,
                 f"[CURSOR] k={k:04d} i_ref={i_ref:4d} i_near={cur_dbg['i_near']:4d} "
                 f"prog={cur_dbg['prog']*1e3:+6.3f}mm stall={cursor_state['stall']:2d}"
             )
-
-        t_tip_now = y_now[3:6].copy()
-
+        if k!= (M-2):
+            t_tip_now = y_now[3:6].copy()
+            t0 = unit(lumen_C[i_ref+1] - lumen_C[i_ref])
+            print("dot(t0, tip_tangent) =", float(t0 @ unit(t_tip_now)))
         yref_seq, ref_info = build_yref_from_centerline_tipanchored(
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             x_now=x_now,
-            t_tip_now=t_tip_now,     # NEW
+            t_tip_now=t_tip_now,
             Np=mpc.Np,
             i_ref=i_ref,
             step_idx=1,
-            delta=5e-4,
+            delta=1e-4,
             sigma_m=5e-4,
-            d_pull=2e-3,
-            p_pull=1.5,
+            p_pull=3,
             lam_max=0.9,
             lam_tau=2.0,
             dt=mpc.dt,
             u_max=u_max,
-            step_min=5e-4,
-            step_max=3e-3,
+            step_min=1e-4,
+            step_max=1e-3,
             theta_crit_deg=40.0,  
             unsafe_ds_scale=0.15,   
             unsafe_lam_max=0.2,      
             freeze_lookahead=True,   
         )
+        targets_pre = yref_seq[:, :3].copy()
         if (k % DBG.every) == 0:
             dbg_ref = ref_info["dbg"]
             dbg_print(1,
@@ -1654,17 +2053,72 @@ if __name__ == "__main__":
             dbg_print(2, f"      x_now={fmt_vec(x_now,4)} c0={fmt_vec(ref_info['c0'],4)} d_ref={fmt_vec(ref_info['d_ref'],4)}")
         mpc.g0_last = ref_info["g_wall"]
         p_post, y_post, info = mpc.step(yref_seq, x_meas=None)
+        p_fd = p_post.copy()   # or mpc.p.copy()
+        eps = np.zeros(7); eps[1] = 1e-3
+        forward6d.start_step()
+        y_plus  = forward6d(integrate_pose8_body(p_fd, +eps, mpc.dt), commit=False)[1]
+        y_minus = forward6d(integrate_pose8_body(p_fd, -eps, mpc.dt), commit=False)[1]
+        print("finite diff dy/dvy =", (y_plus - y_minus) / (2e-3))
+        tip_post, tan_post, C_post, y_post2 = snapshot_forward(forward6d, p_post, commit=False)
+        # forward_repeatability_test(forward6d, p_post, n_rep=3, label=f"@k={k} p_post")
+        k_hist.append(k)
+        pred1_hist.append(float(info.get("pred1_err", np.nan)))
+
+        S = info.get("jac_svd_S", None)
+        if S is None:
+            svd_S_hist.append(np.full((6,), np.nan))
+        else:
+            S = np.asarray(S, float).ravel()
+            # pad/truncate to 6 for consistent plotting (since B is 6x7 -> S length is 6)
+            if S.size < 6:
+                S = np.hstack([S, np.full((6 - S.size,), np.nan)])
+            elif S.size > 6:
+                S = S[:6]
+            svd_S_hist.append(S)
+
+        svd_cond_hist.append(float(info.get("jac_svd_cond", np.nan)))
+        svd_rank_hist.append(int(info.get("jac_svd_rank", -1)))
+
+        trans_hist.append(float(info.get("jac_trans_norm", np.nan)))
+        omega_hist.append(float(info.get("jac_omega_norm", np.nan)))
+        dL_hist.append(float(info.get("jac_dL_norm", np.nan)))
         x_post = y_post[:3].copy()
         dbg = getattr(mpc, "_dbg_last", {})
         if isinstance(dbg, dict) and dbg.get("mpc_mode") == "predictive_Q":
             if dbg["g_seq"][0] > 0.5 and dbg["s_tan_seq"][0] <= 1.0 + DBG.tol_q_scale:
                 dbg_print(1, "[WARN] g high but s_tan not inflated -> check q_tan_scale and Q dims (n>=6).")
         # update x_prev for next iteration
-        x_prev = x_now.copy()
+        x_prev = tip_post.copy()
+        print("Δtip (mm) =", 1e3*np.linalg.norm(tip_post - tip_prev))
+        print("Δs_proj (mm) =", 1e3 * float(unit(lumen_C[i_ref+1]-lumen_C[i_ref]) @ (tip_post - tip_prev)))
+        u0 = info["u0"]
+        centerline_tip = info["C"]
+        tip_from_centerline = None
+        if centerline_tip is not None:
+            ct = np.asarray(centerline_tip)
+            tip_from_centerline = ct[:, -1] if (ct.ndim == 2 and ct.shape[0] == 3) else ct[-1, :]
 
+        save_step_artifacts(
+            k=k,
+            frames_dir=frames_dir,
+            log_csv_path=log_csv_path,
+            u0=u0,
+            p_now=p_post,
+            y_now=y_post,         
+            i_ref=i_ref,
+            info=info,
+            ref_info=ref_info,
+            centerline_tip=C_prev,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            p0_ur=p0_ur,
+            tip_pos = tip_prev,
+            yref_seq_pos=targets_pre,
+            tip_from_centerline=(C_prev[:, -1] if (C_prev is not None and C_prev.shape[0]==3) else (C_prev[-1] if C_prev is not None else None)),
+        )
         centerline_tip = info["C"]
         centerline_tip_end_test = None if centerline_tip is None else centerline_tip[:, -1]
-        # debug expects xref_seq as (Np,3)
+        # # debug expects xref_seq as (Np,3)
         debug_step_pose7(
             k, lumen_path[-1], yref_seq[:, :3],
             p_post, x_post, info, mpc,
@@ -1674,25 +2128,94 @@ if __name__ == "__main__":
         print("a_dist, a, g_wall =", ref_info["a_dist"], ref_info["a"], ref_info["g_wall"])
         print("d_ref =", ref_info["d_ref"], "ds =", ref_info["ds"])
         print("c0 =", ref_info["c0"], "xref0 =", yref_seq[0,:3])
-        # progress check should use position reference
-        if np.linalg.norm(yref_seq[0, :3] - x_post) < 3e-3:
-            i_ref = min(i_ref + 1, M-1)
+
 
         # and also:
         c0 = lumen_C[ref_info["idx"][0]]
         print("c0", c0, "xref0", yref_seq[0, :3], "delta", yref_seq[0,:3]-c0)
-        if k % 5==0: 
+        if (i_ref >= M-2):
+            dbg_print(1, "[DONE] reached final point")
+            break
+        if k % 20==0: 
             y_dbg = forward6d(p_post, commit=False)
             C_dbg = forward6d.last_p_centerline
             tip_centerline_end = None if C_dbg is None else (C_dbg[:, -1] if C_dbg.shape[0] == 3 else C_dbg[-1, :])
-
             plot_energy_only_3d(
-                centerline_tip,
+                C_prev,
                 lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
-                targets=yref_seq[:, :3],
-                tip=x_post, tip_from_centerline=centerline_tip_end_test,
-                title=f"Energy-min centreline (k={k}, i_ref={i_ref})"
+                targets=targets_pre,
+                tip=tip_prev,
+                tip_from_centerline=(C_prev[:, -1] if (C_prev is not None and C_prev.shape[0]==3) else (C_prev[-1] if C_prev is not None else None)),
+                p_mag=p_prev,
+                title=f"PRE step k={k} i_ref={i_ref}",
+                show=True,
             )
+            K = np.asarray(k_hist)
+            pred1 = np.asarray(pred1_hist)              # meters
+            Smat = np.asarray(svd_S_hist)               # (T,6)
+            cond = np.asarray(svd_cond_hist)
+
+            # # 1) pred1_err vs k
+            plt.figure()
+            plt.plot(K, 1e3*pred1)  # mm
+            plt.xlabel("k")
+            plt.ylabel("pred1_err (mm)")
+            plt.title("One-step prediction error vs step")
+            plt.grid(True)
+            plt.show()
+
+            # 2) singular values vs k (log scale is usually essential)
+            plt.figure()
+            for i in range(Smat.shape[1]):
+                plt.plot(K, Smat[:, i], label=f"σ{i+1}")
+            plt.yscale("log")
+            plt.xlabel("k")
+            plt.ylabel("singular values of B (log)")
+            plt.title("Jacobian singular values vs step")
+            plt.grid(True)
+            plt.legend()
+            plt.show()
+
+            # 3) condition number vs k (log)
+            plt.figure()
+            plt.plot(K, cond)
+            plt.yscale("log")
+            plt.xlabel("k")
+            plt.ylabel("cond(B) (log)")
+            plt.title("Jacobian conditioning vs step")
+            plt.grid(True)
+            plt.show()
+
+            # 4) Overlay pred1_err and cond(B) on the same plot (two y-axes)
+            fig, ax1 = plt.subplots()
+
+            l1, = ax1.plot(K, 1e3*pred1, color="tab:blue", label="pred1_err (mm)")
+            ax1.set_xlabel("k")
+            ax1.set_ylabel("pred1_err (mm)", color="tab:blue")
+            ax1.tick_params(axis="y", labelcolor="tab:blue")
+            ax1.grid(True)
+
+            ax2 = ax1.twinx()
+            l2, = ax2.plot(K, cond, color="tab:orange", label="cond(B)")
+            ax2.set_yscale("log")
+            ax2.set_ylabel("cond(B) (log)", color="tab:orange")
+            ax2.tick_params(axis="y", labelcolor="tab:orange")
+
+            # optional combined legend
+            ax1.legend(handles=[l1, l2], loc="best")
+
+            plt.title("pred1_err vs Jacobian conditioning")
+
+
+            ax2 = ax1.twinx()
+            ax2.plot(K, cond)
+            ax2.set_yscale("log")
+            ax2.set_ylabel("cond(B) (log)")
+
+            plt.title("pred1_err vs Jacobian conditioning")
+            plt.show()
+        print("END OF STEP ----------------------------------------------------------------")
+
     print("UR pose6:", repr(p_post))
     y_dbg = forward6d(p_post, commit=False)
     C_dbg = forward6d.last_p_centerline
@@ -1700,14 +2223,73 @@ if __name__ == "__main__":
 
 
     plot_energy_only_3d(
-        C_dbg,
+        C_prev,
         lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
-        targets=yref_seq[:, :3],
-        tip=x_post, tip_from_centerline=C_dbg[:, -1].copy(),
-        title="Energy-min centreline at final MPC pose"
+        targets=targets_pre,
+        tip=tip_prev,
+        tip_from_centerline=(C_prev[:, -1] if (C_prev is not None and C_prev.shape[0]==3) else (C_prev[-1] if C_prev is not None else None)),
+        p_mag=p_prev,
+        title=f"PRE step k={k} i_ref={i_ref}",
+        show=True,
     )
-        
-        
+    plt.figure()
+    plt.plot(K, 1e3*pred1)  # mm
+    plt.xlabel("k")
+    plt.ylabel("pred1_err (mm)")
+    plt.title("One-step prediction error vs step")
+    plt.grid(True)
+    plt.show()
 
+    # 2) singular values vs k (log scale is usually essential)
+    plt.figure()
+    for i in range(Smat.shape[1]):
+        plt.plot(K, Smat[:, i], label=f"σ{i+1}")
+    plt.yscale("log")
+    plt.xlabel("k")
+    plt.ylabel("singular values of B (log)")
+    plt.title("Jacobian singular values vs step")
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+    # 3) condition number vs k (log)
+    plt.figure()
+    plt.plot(K, cond)
+    plt.yscale("log")
+    plt.xlabel("k")
+    plt.ylabel("cond(B) (log)")
+    plt.title("Jacobian conditioning vs step")
+    plt.grid(True)
+    plt.show()
+
+    # 4) Overlay pred1_err and cond(B) on the same plot (two y-axes)
+    fig, ax1 = plt.subplots()
+
+    l1, = ax1.plot(K, 1e3*pred1, color="tab:blue", label="pred1_err (mm)")
+    ax1.set_xlabel("k")
+    ax1.set_ylabel("pred1_err (mm)", color="tab:blue")
+    ax1.tick_params(axis="y", labelcolor="tab:blue")
+    ax1.grid(True)
+
+    ax2 = ax1.twinx()
+    l2, = ax2.plot(K, cond, color="tab:orange", label="cond(B)")
+    ax2.set_yscale("log")
+    ax2.set_ylabel("cond(B) (log)", color="tab:orange")
+    ax2.tick_params(axis="y", labelcolor="tab:orange")
+
+    # optional combined legend
+    ax1.legend(handles=[l1, l2], loc="best")
+
+    plt.title("pred1_err vs Jacobian conditioning")
+
+
+    ax2 = ax1.twinx()
+    ax2.plot(K, cond)
+    ax2.set_yscale("log")
+    ax2.set_ylabel("cond(B) (log)")
+
+    plt.title("pred1_err vs Jacobian conditioning")
+    plt.show()
     
-    
+
+

@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np 
 from mpl_toolkits.mplot3d import Axes3D  
+# from proper_research.control.mpc_sig_bound import pose7_rotvec_to_pose8_quat
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_to_rot
 from beam_direction_magnetisation.quarternions.shared_rotations import Rx, Ry, Rz
 from scipy.spatial.transform import Rotation as Rot
@@ -372,21 +373,61 @@ def plot_target_and_final_tip_on_image(image_filename, target_px, tip_px, err_mm
     plt.axis("off")
     plt.legend()
     plt.show()
+def _ensure_centerline_shape(C):
+    """
+    Accepts C in either shape (3,N) or (N,3) and returns (N,3).
+    """
+    C = np.asarray(C, float)
+    if C.ndim != 2:
+        return None
+    if C.shape[0] == 3 and C.shape[1] > 3:
+        return C.T
+    if C.shape[1] == 3:
+        return C
+    return None
+
+def quat_wxyz_to_R(qwxyz):
+    """
+    q = [qw, qx, qy, qz] -> 3x3 rotation matrix
+    """
+    qw, qx, qy, qz = map(float, qwxyz)
+    # normalize to be safe
+    n = (qw*qw + qx*qx + qy*qy + qz*qz) ** 0.5
+    if n < 1e-12:
+        return np.eye(3)
+    qw, qx, qy, qz = qw/n, qx/n, qy/n, qz/n
+
+    # standard quaternion -> R
+    R = np.array([
+        [1-2*(qy*qy+qz*qz),   2*(qx*qy-qz*qw),   2*(qx*qz+qy*qw)],
+        [  2*(qx*qy+qz*qw), 1-2*(qx*qx+qz*qz),   2*(qy*qz-qx*qw)],
+        [  2*(qx*qz-qy*qw),   2*(qy*qz+qx*qw), 1-2*(qx*qx+qy*qy)],
+    ], float)
+    return R
 def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,
                         title="Energy-min centerline", show_rings=True,
-                        targets=None, tip=None, tip_from_centerline=None):
+                        targets=None, tip=None, tip_from_centerline=None,
+                        p_mag=None, mag_axis="x", mag_arrow_len=0.02,
+                        show_tangent_segment=True, show=False):
+
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
+    # --- energy-min centerline (beam) ---
+    C_energy = _ensure_centerline_shape(p_energy)
+    if C_energy is None:
+        raise ValueError("p_energy must be (3,N) or (N,3)")
+    ax.plot(C_energy[:, 0], C_energy[:, 1], C_energy[:, 2], "--", label="Energy-min (3D)")
 
     if p_straight is not None:
-        ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
+        C_st = _ensure_centerline_shape(p_straight)
+        if C_st is not None:
+            ax.plot(C_st[:, 0], C_st[:, 1], C_st[:, 2], ":", label="Straight baseline")
+
     if p0 is not None:
         ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
-    if tip_from_centerline is not None:
-        ax.scatter([tip_from_centerline[0]], [tip_from_centerline[1]], [tip_from_centerline[2]],
-                marker="o", s=40, label="Centerline end")
+
+    # --- lumen ---
     if (lumen_C is not None) and (lumen_R is not None):
         C = np.asarray(lumen_C, float)
         R = np.asarray(lumen_R, float)
@@ -394,30 +435,92 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
         if show_rings:
             plot_lumen_rings(ax, C, R, n_theta=28, alpha=0.2, linewidth=0.6)
 
-    # --- NEW: plot current tip ---
+    # --- tip marker (your existing) ---
     if tip is not None:
         tip = np.asarray(tip, float).reshape(3,)
         ax.scatter([tip[0]], [tip[1]], [tip[2]], marker="x", s=60, label="Tip")
 
-    # --- NEW: plot MPC targets / horizon ---
+    # --- tangent point + tangent segment (NEW) ---
+    if show_tangent_segment and C_energy.shape[0] >= 2:
+        p_prev = C_energy[-2, :]
+        p_end  = C_energy[-1, :]
+
+        # "tangent point" (end)
+        ax.scatter([p_end[0]], [p_end[1]], [p_end[2]], marker="o", s=50, label="Tangent point")
+
+        # segment used to compute tangent
+        ax.plot([p_prev[0], p_end[0]],
+                [p_prev[1], p_end[1]],
+                [p_prev[2], p_end[2]],
+                linewidth=3.0, label="Tangent segment")
+
+    # --- centerline end (your existing; keep if you want both) ---
+    if tip_from_centerline is not None:
+        tip_from_centerline = np.asarray(tip_from_centerline, float).reshape(3,)
+        ax.scatter([tip_from_centerline[0]], [tip_from_centerline[1]], [tip_from_centerline[2]],
+                   marker="o", s=40, label="Centerline end")
+
+    # --- MPC targets (your existing) ---
     if targets is not None:
         T = np.asarray(targets, float).reshape(-1, 3)
         ax.scatter(T[:, 0], T[:, 1], T[:, 2], marker="^", s=30, label="MPC targets")
         ax.plot(T[:, 0], T[:, 1], T[:, 2], "-", linewidth=1.0, label="Target horizon")
+        if T.shape[0] > 0:
+            ax.text(T[0,0], T[0,1], T[0,2] + 0.0002, "0")
+        if T.shape[0] > 1:
+            ax.text(T[1,0], T[1,1], T[1,2] + 0.0002, "1")
+
+    # --- external magnet pose (NEW) ---
+    if p_mag is not None:
+        p_mag = np.asarray(p_mag, float).ravel()
+
+        # supports pose8=[x,y,z,qw,qx,qy,qz,L] or pose7=[x,y,z,rx,ry,rz,L]
+        # If pose7 rotvec, you can convert to quat first if you already have a helper.
+        # if p_mag.size >= 7 and p_mag.size != 8:
+        #     # assume [x,y,z,rx,ry,rz,L] -> convert using your existing helper if available
+        #     # comment this out if you don't want the conversion
+        #     p8 = pose7_rotvec_to_pose8_quat(p_mag)  # you already have this in your code
+        #     p_mag = p8
+
+        if p_mag.size >= 7:
+            pm = p_mag[:3]
+            q = p_mag[3:7]  # qw,qx,qy,qz
+            Rm = quat_wxyz_to_R(q)
+
+            # choose axis in magnet frame
+            if mag_axis == "x":
+                a_local = np.array([1.0, 0.0, 0.0])
+            elif mag_axis == "y":
+                a_local = np.array([0.0, 1.0, 0.0])
+            else:
+                a_local = np.array([0.0, 0.0, 1.0])
+
+            a_world = Rm @ a_local
+            p2 = pm + mag_arrow_len * a_world
+
+            ax.scatter([pm[0]], [pm[1]], [pm[2]], marker="s", s=60, label="Magnet position")
+            ax.plot([pm[0], p2[0]], [pm[1], p2[1]], [pm[2], p2[2]], linewidth=3.0,
+                    label=f"Magnet {mag_axis}-axis")
 
     ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
     ax.set_title(title)
-    ax.legend()
+    # ax.legend()
 
-    pts = [p_energy.T]
-    if p_straight is not None: pts.append(p_straight.T)
+    # axis equal
+    pts = [C_energy]
+    if p_straight is not None:
+        C_st = _ensure_centerline_shape(p_straight)
+        if C_st is not None: pts.append(C_st)
     if p0 is not None: pts.append(np.asarray(p0, float).reshape(1,3))
     if lumen_C is not None: pts.append(np.asarray(lumen_C, float))
     if targets is not None: pts.append(np.asarray(targets, float))
     if tip is not None: pts.append(np.asarray(tip, float).reshape(1,3))
+    if p_mag is not None and np.asarray(p_mag).size >= 3: pts.append(np.asarray(p_mag[:3], float).reshape(1,3))
     _set_axes_equal_about_data(ax, np.vstack(pts))
 
-    plt.show()
+    if show:
+        plt.show()
+
 def plot_error_vs_s(s, p_bvp, p_energy):
     err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
     plt.figure()

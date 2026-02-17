@@ -41,6 +41,69 @@ class LumenQuery:
         i, t, q = best
         Rloc = (1-t)*self.R[i] + t*self.R[i+1]
         return dmin, Rloc, q
+def contact_penalty_softplus(p, lumen_query, *,
+                             k_in=5e4,      # near-wall stiffness
+                             k_out=5e5,     # outside stiffness (bigger!)
+                             g0=5e-4,       # activation thickness (0.5mm)
+                             alpha=80.0,    # softplus sharpness
+                             window=3, eps=1e-9):
+    """
+    Returns:
+      C: (N,) penalty energy per node
+      F: (3,N) penalty force per node (negative gradient wrt p)
+      g: (N,) clearance g = R - delta
+    """
+    p = np.asarray(p, float)
+    N = p.shape[1]
+    C = np.zeros(N)
+    F = np.zeros((3,N))
+    g_arr = np.zeros(N)
+
+    for j in range(N):
+        x = p[:,j]
+        delta, Rloc, q = lumen_query.closest(x, window=window)
+        g = Rloc - delta
+        g_arr[j] = g
+
+        # outward normal (from centerline to point)
+        if delta > eps:
+            n = (x - q) / delta
+        else:
+            n = np.array([1.0,0.0,0.0])
+
+        # penetration amount (>=0 outside)
+        pen = max(-g, 0.0)
+
+        # softplus near-wall barrier (active when g < g0)
+        # z = (g0 - g) / g0  (0 deep inside, 1 at wall, >1 outside)
+        z = (g0 - g) / (g0 + 1e-12)
+
+        # softplus(z) ~ 0 for z<<0, ~ z for z>>0
+        sp = (1.0/alpha) * np.log1p(np.exp(alpha*z))
+
+        # energy:
+        # - inside near wall: k_in * sp^2
+        # - outside: add strong quadratic on penetration
+        Cj = 0.5 * k_in * sp*sp + 0.5 * k_out * pen*pen
+        C[j] = Cj
+
+        # derivative wrt g:
+        # z = (g0-g)/g0 => dz/dg = -1/g0
+        # d(sp)/dz = sigmoid(alpha*z)
+        sig = 1.0 / (1.0 + np.exp(-alpha*z))
+        dsp_dg = sig * (-1.0/(g0 + 1e-12))
+
+        dC_dg = k_in * sp * dsp_dg  # from 0.5*k_in*sp^2
+        if pen > 0.0:
+            # pen = -g => d(0.5*k_out*pen^2)/dg = -k_out*pen
+            dC_dg += -k_out * pen
+
+        # g = R - delta, delta increases outward:
+        # ∂g/∂x = -∂delta/∂x = -n
+        # Force = -∂C/∂x = - (dC/dg) * ∂g/∂x = - dC/dg * (-n) = (dC/dg)*n
+        F[:,j] = dC_dg * n
+
+    return C, F, g_arr
 def contact_barrier_energy_and_force_fast(
     p, lumen_query: LumenQuery, *,
     Kc=5e4,
@@ -696,54 +759,119 @@ def precompute_K_segments(s, Kinv_fun, wire_len):
         K_seg[i] = np.linalg.inv(Kinv[:, :, i])
     return K_seg
 
-def energy_from_u(u_flat, *, p0, q0, s, K_seg, u_star,
-                  m_src, r_src, m_local_fun, m_moment, wire_len,
-                  lumen_C=None, lumen_R=None,
-                  contact_k=1e3, contact_beta=50.0,contact_delta=5e-4,
-                  contact_mode="tip", include_gravity=True, contact_s_on=0.0, contact_s_off=0.0,
-                  lumen_query=None,use_lumen=True):
+def energy_from_u(
+    u_flat, *, p0, q0, s, K_seg, u_star,
+    m_src, r_src, m_local_fun, m_moment, wire_len,
+    lumen_C=None, lumen_R=None,
+    contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
+    contact_mode="tip", include_gravity=False,  # <- set default False for safety
+    contact_s_on=0.0, contact_s_off=0.0,
+    lumen_query=None, use_lumen=True,
+    debug_mag=True, debug_every=1, debug_head=8
+):
     """
     Computes total potential energy Π(u) in 3D.
+    If debug_mag=True: prints per-node magnetic energy density info.
     """
-    p, q, u_seg = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)
+    p, q, u_seg = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)  # p: (3,N), q: (N,4) or (4,N)
+    s = np.asarray(s, float).ravel()
+    N = s.size
 
     ds = np.diff(s)
     u_star = np.asarray(u_star, float).reshape(3,)
 
-    # Elastic energy: sum 0.5 * du^T K du * ds
+    # Elastic energy
     W_s = 0.0
     for i in range(len(ds)):
         du = (u_seg[i] - u_star)
         W_s += 0.5 * du @ K_seg[i] @ du * ds[i]
 
-    # Magnetic potential: -∫ m_world · B ds   (node quadrature)
-    # Get B at nodes using your existing routine (it already handles full 3D)
-    _, _, B = magnetic_wrench_density_cosserat_profile(
+    # Magnetic field at nodes
+    f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
     )  # B: (3,N)
+    if debug_mag:
+        fz = f_mag[2, :]
+        print("[DBG-MAG] fz min/max:", fz.min(), fz.max())
+        print("[DBG-MAG] f at tip:", f_mag[:, -1], "tau at tip:", tau_mag[:, -1])
+    # Build m_world at nodes
+    R_all = quat_to_rot(quat_normalize(q))     # expect (N,3,3)
+    m_body = np.asarray(m_local_fun(s, None), float)  # (3,N)
+    m_world = np.einsum('nij,jn->in', R_all, m_body)  # (3,N)
 
-    R_all = quat_to_rot(quat_normalize(q))     # (N,3,3)
-    m_body = m_local_fun(s, None)              # (3,N) body-frame magnetisation distribution
-    m_world = np.einsum('nij,jn->in', R_all, m_body)
-    w_m = -np.sum(m_world * B, axis=0)         # (N,)
+    m_dot_B = np.sum(m_world * B, axis=0)      # (N,)
+    w_m = -m_dot_B                              # (N,) magnetic energy density (per unit length-ish)
     W_m = np.trapezoid(w_m, s)
 
-    # Gravity potential to match your BVP force term (+f_g in f_ext):
+    # Gravity (disable unless you really want it)
     W_g = 0.0
     if include_gravity:
         fg = np.asarray(beam_params.f_g, float).reshape(3,)
         W_g = -np.trapezoid(np.sum(fg[:, None] * p, axis=0), s)
 
+    # Contact / lumen
     W_cf = 0.0
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
             p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e4
         )
-        W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))   # integrate approx
+        W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
 
     W_total = W_s + W_m + W_g + W_cf
+
+    if debug_mag:
+        Bnorm = np.linalg.norm(B, axis=0) + 1e-16
+        mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
+
+        # alignment cos and angle
+        cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
+        cos_th = np.clip(cos_th, -1.0, 1.0)
+        th_deg = np.degrees(np.arccos(cos_th))
+
+        # torque density proxy (direction + magnitude)
+        tau = np.cross(m_world.T, B.T).T          # (3,N)
+        tau_norm = np.linalg.norm(tau, axis=0)    # (N,)
+
+        # scalar energy density and cumulative
+        m_dot_B = np.sum(m_world * B, axis=0)
+        w_m = -m_dot_B
+        Wm_cum = np.zeros(N, float)
+        for i in range(1, N):
+            Wm_cum[i] = np.trapezoid(w_m[:i+1], s[:i+1])
+
+        print("\n[DBG-MAG] per-node magnetic + alignment")
+        print(" i  s(mm)  x(mm)  y(mm)  z(mm)   |B|     Bx      By      Bz      "
+            "m·B     theta(deg)  |m×B|     w_m      Wm_cum")
+
+        head = int(debug_head)
+        step = int(debug_every)
+
+        def _row(i):
+            return (f"{i:2d} {1e3*s[i]:6.2f} "
+                    f"{1e3*p[0,i]:6.2f} {1e3*p[1,i]:6.2f} {1e3*p[2,i]:6.2f} "
+                    f"{Bnorm[i]:+7.2e} {B[0,i]:+7.2e} {B[1,i]:+7.2e} {B[2,i]:+7.2e} "
+                    f"{m_dot_B[i]:+7.2e} {th_deg[i]:8.2f} {tau_norm[i]:+7.2e} "
+                    f"{w_m[i]:+8.2e} {Wm_cum[i]:+8.2e}")
+
+        # head
+        count = 0
+        for i in range(0, N, step):
+            print(_row(i))
+            count += 1
+            if count >= head:
+                break
+
+        # tail
+        if N > head:
+            print(" ...")
+            for i in range(max(0, N - head), N, step):
+                print(_row(i))
+
+        print(f"[DBG-MAG] max theta(deg) = {np.max(th_deg):.3f}")
+        print(f"[DBG-MAG] max |m×B|      = {np.max(tau_norm):.3e}")
+
     parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_cf=float(W_cf))
-    return W_total, parts
+    return float(W_total), parts
     # W_total = float(W_s + W_m + W_g + W_c)
     # parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_c=float(W_c))
 
@@ -861,7 +989,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
             p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
             m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
             wire_len=wire_len, include_gravity=False,
-            lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen
+            lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen, debug_mag=False,
         )
         return W
     z0_flat = (u_ctrl0_flat / u_scale)
@@ -893,11 +1021,13 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
         u_flat_opt,
         p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
         m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
-        wire_len=wire_len, include_gravity=True,
+        wire_len=wire_len, include_gravity=False,
         lumen_C=lumen_C, lumen_R=lumen_R,
         contact_k=contact_k, contact_beta=contact_beta, contact_delta=contact_delta,
-        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off, lumen_query=lumen_query, use_lumen=use_lumen
+        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off, lumen_query=lumen_query, 
+        use_lumen=use_lumen, debug_mag=False,
     )
+    # print("parts:", parts)
 
     info = dict(
         success=bool(res.success),
@@ -930,7 +1060,7 @@ def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
 
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.055
+    L_cmd = 0.089
     mag_len = beam_params.length_of_mag
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
@@ -938,8 +1068,8 @@ if __name__ == "__main__":
     ], float)
 
 
-    start_point = np.array([ 0.670, -0.740,  0.099, -3.088, 0.328 ,
-        0.067 ])
+    start_point = np.array([ 0.681, -0.649,  0.092, -3.054, -0.476 ,
+        0.05 ])
     # start_point[2] -=0.25
     wire_len = L_cmd - mag_len
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
@@ -976,15 +1106,17 @@ if __name__ == "__main__":
     global INSERTION_DIR_WORLD
     INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
     # lumen centerline starts at pivot base and bends
+    s_straight = 0.01
+
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.08,              # make it longer than rod so distance queries behave well
-        n_pts=80,
-        bend_axis=np.array([0.0, 0.0, 1.0]),  # bend in x-y plane
-        bend_angle=np.deg2rad(40.0),
-        bend_start=0.01,
-        bend_end=0.08
+        length=0.08 + s_straight,     
+        n_pts=130,                      
+        bend_axis=np.array([0.0, 0.0, 1.0]),
+        bend_angle=np.deg2rad(-40.0),
+        bend_start=0.01 + s_straight,    
+        bend_end=0.08 + s_straight       
     )
 
     lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
@@ -1026,13 +1158,13 @@ if __name__ == "__main__":
     # )
     hist = solve_quasistatic_insertion(
         p0=p0_ur, q0=q0_ur,
-        L0=0.010, Lf=L_cmd, dL=0.001,
+        L0=0.010, Lf=L_cmd, dL=0.002,
         wire_len_fun=lambda L: L - mag_len,
         Kinv_fun=Kbt_inv_profile, u_star=np.zeros(3),
         r_src=r_src_ur, m_src=m_src,
         m_local_fun=model.m_local_fun, m_moment=0.0,
         lumen_C=lumen_C, lumen_R=lumen_R,
-        N=8, maxiter=15, use_lumen = True,
+        N=20, maxiter=20, use_lumen = True,
         u_init=u0
     )
     # take final

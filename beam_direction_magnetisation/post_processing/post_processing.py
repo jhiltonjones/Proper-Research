@@ -404,7 +404,7 @@ def quat_wxyz_to_R(qwxyz):
         [  2*(qx*qz-qy*qw),   2*(qy*qz+qx*qw), 1-2*(qx*qx+qy*qy)],
     ], float)
     return R
-def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,
+def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,lumen_others=None,
                         title="Energy-min centerline", show_rings=True,
                         targets=None, tip=None, tip_from_centerline=None,
                         p_mag=None, mag_axis="x", mag_arrow_len=0.02,
@@ -427,14 +427,27 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     if p0 is not None:
         ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
 
-    # --- lumen ---
+    # --- lumen (active) ---
     if (lumen_C is not None) and (lumen_R is not None):
         C = np.asarray(lumen_C, float)
         R = np.asarray(lumen_R, float)
-        ax.plot(C[:, 0], C[:, 1], C[:, 2], label="Lumen centerline")
+        ax.plot(C[:, 0], C[:, 1], C[:, 2], label="Lumen centerline (active)")
         if show_rings:
             plot_lumen_rings(ax, C, R, n_theta=28, alpha=0.2, linewidth=0.6)
 
+    # --- lumen (other branches) ---
+    if lumen_others is not None:
+        for item in lumen_others:
+            if len(item) == 2:
+                Cb, Rb = item
+                lbl = "Lumen branch"
+            else:
+                Cb, Rb, lbl = item
+            Cb = np.asarray(Cb, float)
+            Rb = np.asarray(Rb, float)
+            ax.plot(Cb[:, 0], Cb[:, 1], Cb[:, 2], label=lbl)
+            if show_rings:
+                plot_lumen_rings(ax, Cb, Rb, n_theta=28, alpha=0.12, linewidth=0.5)
     # --- tip marker (your existing) ---
     if tip is not None:
         tip = np.asarray(tip, float).reshape(3,)
@@ -514,6 +527,10 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     if p0 is not None: pts.append(np.asarray(p0, float).reshape(1,3))
     if lumen_C is not None: pts.append(np.asarray(lumen_C, float))
     if targets is not None: pts.append(np.asarray(targets, float))
+    if lumen_others is not None:
+        for item in lumen_others:
+            Cb = np.asarray(item[0], float)
+            pts.append(Cb)
     if tip is not None: pts.append(np.asarray(tip, float).reshape(1,3))
     if p_mag is not None and np.asarray(p_mag).size >= 3: pts.append(np.asarray(p_mag[:3], float).reshape(1,3))
     _set_axes_equal_about_data(ax, np.vstack(pts))
@@ -531,6 +548,67 @@ def plot_error_vs_s(s, p_bvp, p_energy):
     plt.grid(True)
     plt.show()
 
+def make_lumen_centerline_double_turn(
+    p_start,
+    t0,
+    *,
+    length=0.12,
+    n_pts=60,
+    bend_axis=np.array([0.0, 0.0, 1.0]),
+    # first turn
+    bend1_angle=np.deg2rad(25.0),
+    bend1_start=0.02,
+    bend1_end=0.03,
+    # second turn
+    bend2_angle=np.deg2rad(-25.0),   
+    bend2_start=0.03,
+    bend2_end=0.04,
+):
+    """
+    Returns C: (n_pts,3) polyline points.
+    Tangent starts as t0, then does two smooth turns by rotating about bend_axis.
+    """
+    p_start = np.asarray(p_start, float).reshape(3,)
+    t0 = np.asarray(t0, float).reshape(3,)
+    t0 = t0 / (np.linalg.norm(t0) + 1e-12)
+
+    a = np.asarray(bend_axis, float).reshape(3,)
+    a = a / (np.linalg.norm(a) + 1e-12)
+
+    s = np.linspace(0.0, float(length), int(n_pts))
+    ds = np.diff(s)
+
+    def smoothstep(x):
+        x = np.clip(x, 0.0, 1.0)
+        return x*x*(3 - 2*x)
+
+    def window_theta(s, s0, s1, angle):
+        # progress 0->1 inside [s0,s1], 0 before, 1 after
+        xi = (s - s0) / (s1 - s0 + 1e-12)
+        g = smoothstep(xi)
+        return angle * g
+
+    # total bend angle vs arc length
+    theta = (
+        window_theta(s, bend1_start, bend1_end, bend1_angle) +
+        window_theta(s, bend2_start, bend2_end, bend2_angle)
+    )
+
+    def rodrigues(v, axis, ang):
+        v = np.asarray(v, float)
+        axis = np.asarray(axis, float)
+        return (v*np.cos(ang)
+                + np.cross(axis, v)*np.sin(ang)
+                + axis*np.dot(axis, v)*(1 - np.cos(ang)))
+
+    C = np.zeros((s.size, 3), float)
+    C[0] = p_start
+    for i in range(s.size - 1):
+        ti = rodrigues(t0, a, theta[i])
+        ti = ti / (np.linalg.norm(ti) + 1e-12)
+        C[i+1] = C[i] + ds[i] * ti
+
+    return C
 def make_lumen_centerline_turning(
     p_start,
     t0,
@@ -620,7 +698,67 @@ def plot_lumen_rings(ax, C, R, n_theta=24, alpha=0.15, linewidth=0.5):
                                          n2[:,None]*np.sin(thetas)[None,:])
             ax.plot(ring[0], ring[1], ring[2], alpha=alpha, linewidth=linewidth)
 
+def make_lumen_centerline_double_turn(
+    p_start,
+    t0,
+    *,
+    length=0.08,
+    n_pts=60,
+    bend_axis=np.array([0.0, 0.0, 1.0]),
+    # first turn
+    bend1_angle=np.deg2rad(25.0),
+    bend1_start=0.02,
+    bend1_end=0.03,
+    # second turn
+    bend2_angle=np.deg2rad(-25.0),   # negative = opposite direction
+    bend2_start=0.035,
+    bend2_end=0.6,
+):
+    """
+    Returns C: (n_pts,3) polyline points.
+    Tangent starts as t0, then does two smooth turns by rotating about bend_axis.
+    """
+    p_start = np.asarray(p_start, float).reshape(3,)
+    t0 = np.asarray(t0, float).reshape(3,)
+    t0 = t0 / (np.linalg.norm(t0) + 1e-12)
 
+    a = np.asarray(bend_axis, float).reshape(3,)
+    a = a / (np.linalg.norm(a) + 1e-12)
+
+    s = np.linspace(0.0, float(length), int(n_pts))
+    ds = np.diff(s)
+
+    def smoothstep(x):
+        x = np.clip(x, 0.0, 1.0)
+        return x*x*(3 - 2*x)
+
+    def window_theta(s, s0, s1, angle):
+        # progress 0->1 inside [s0,s1], 0 before, 1 after
+        xi = (s - s0) / (s1 - s0 + 1e-12)
+        g = smoothstep(xi)
+        return angle * g
+
+    # total bend angle vs arc length
+    theta = (
+        window_theta(s, bend1_start, bend1_end, bend1_angle) +
+        window_theta(s, bend2_start, bend2_end, bend2_angle)
+    )
+
+    def rodrigues(v, axis, ang):
+        v = np.asarray(v, float)
+        axis = np.asarray(axis, float)
+        return (v*np.cos(ang)
+                + np.cross(axis, v)*np.sin(ang)
+                + axis*np.dot(axis, v)*(1 - np.cos(ang)))
+
+    C = np.zeros((s.size, 3), float)
+    C[0] = p_start
+    for i in range(s.size - 1):
+        ti = rodrigues(t0, a, theta[i])
+        ti = ti / (np.linalg.norm(ti) + 1e-12)
+        C[i+1] = C[i] + ds[i] * ti
+
+    return C
 def _set_axes_equal_about_data(ax, X):
     """
     X: (M,3) array of all points you want in view.

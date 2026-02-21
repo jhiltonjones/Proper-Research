@@ -813,7 +813,7 @@ def energy_from_u(
     W_cf = 0.0
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
-            p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e4
+            p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e5
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
 

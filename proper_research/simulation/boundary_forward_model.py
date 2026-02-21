@@ -23,7 +23,7 @@ class EnergyMinForwardWithLumen:
                  mag_len, m_body,
                  lumen_C, lumen_R,
                  N_nodes=15, maxiter=15,
-                 L0_init=0.01, dL_internal=0.002):
+                 L0_init=0.01, dL_internal=0.002, use_lumen_jac = True):
         self.p0_ur = np.asarray(p0_ur, float)
         self.q0_ur = np.asarray(q0_ur, float)
 
@@ -42,7 +42,7 @@ class EnergyMinForwardWithLumen:
         # internal continuation controls
         self.L0_init = float(L0_init)
         self.dL_internal = float(dL_internal)
-
+        self.use_lumen_jac = use_lumen_jac
         # cache
         self._last = dict(
             p=None,
@@ -112,7 +112,7 @@ class EnergyMinForwardWithLumen:
             m_local_fun=m_local_fun, m_moment=0.0,
             lumen_C=self.lumen_C, lumen_R=self.lumen_R,
             N=self.N_nodes, maxiter=self.maxiter,
-            use_lumen=True,
+            use_lumen=self.use_lumen_jac,
             u_init=u_init
         )
 

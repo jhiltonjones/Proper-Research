@@ -548,67 +548,6 @@ def plot_error_vs_s(s, p_bvp, p_energy):
     plt.grid(True)
     plt.show()
 
-def make_lumen_centerline_double_turn(
-    p_start,
-    t0,
-    *,
-    length=0.12,
-    n_pts=60,
-    bend_axis=np.array([0.0, 0.0, 1.0]),
-    # first turn
-    bend1_angle=np.deg2rad(25.0),
-    bend1_start=0.02,
-    bend1_end=0.03,
-    # second turn
-    bend2_angle=np.deg2rad(-25.0),   
-    bend2_start=0.03,
-    bend2_end=0.04,
-):
-    """
-    Returns C: (n_pts,3) polyline points.
-    Tangent starts as t0, then does two smooth turns by rotating about bend_axis.
-    """
-    p_start = np.asarray(p_start, float).reshape(3,)
-    t0 = np.asarray(t0, float).reshape(3,)
-    t0 = t0 / (np.linalg.norm(t0) + 1e-12)
-
-    a = np.asarray(bend_axis, float).reshape(3,)
-    a = a / (np.linalg.norm(a) + 1e-12)
-
-    s = np.linspace(0.0, float(length), int(n_pts))
-    ds = np.diff(s)
-
-    def smoothstep(x):
-        x = np.clip(x, 0.0, 1.0)
-        return x*x*(3 - 2*x)
-
-    def window_theta(s, s0, s1, angle):
-        # progress 0->1 inside [s0,s1], 0 before, 1 after
-        xi = (s - s0) / (s1 - s0 + 1e-12)
-        g = smoothstep(xi)
-        return angle * g
-
-    # total bend angle vs arc length
-    theta = (
-        window_theta(s, bend1_start, bend1_end, bend1_angle) +
-        window_theta(s, bend2_start, bend2_end, bend2_angle)
-    )
-
-    def rodrigues(v, axis, ang):
-        v = np.asarray(v, float)
-        axis = np.asarray(axis, float)
-        return (v*np.cos(ang)
-                + np.cross(axis, v)*np.sin(ang)
-                + axis*np.dot(axis, v)*(1 - np.cos(ang)))
-
-    C = np.zeros((s.size, 3), float)
-    C[0] = p_start
-    for i in range(s.size - 1):
-        ti = rodrigues(t0, a, theta[i])
-        ti = ti / (np.linalg.norm(ti) + 1e-12)
-        C[i+1] = C[i] + ds[i] * ti
-
-    return C
 def make_lumen_centerline_turning(
     p_start,
     t0,
@@ -698,21 +637,23 @@ def plot_lumen_rings(ax, C, R, n_theta=24, alpha=0.15, linewidth=0.5):
                                          n2[:,None]*np.sin(thetas)[None,:])
             ax.plot(ring[0], ring[1], ring[2], alpha=alpha, linewidth=linewidth)
 
+import numpy as np
+
 def make_lumen_centerline_double_turn(
     p_start,
     t0,
     *,
-    length=0.08,
+    length=0.12,
     n_pts=60,
     bend_axis=np.array([0.0, 0.0, 1.0]),
     # first turn
     bend1_angle=np.deg2rad(25.0),
     bend1_start=0.02,
-    bend1_end=0.03,
+    bend1_end=0.06,
     # second turn
     bend2_angle=np.deg2rad(-25.0),   # negative = opposite direction
-    bend2_start=0.035,
-    bend2_end=0.6,
+    bend2_start=0.06,
+    bend2_end=0.10,
 ):
     """
     Returns C: (n_pts,3) polyline points.

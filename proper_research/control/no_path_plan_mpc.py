@@ -2889,12 +2889,12 @@ if __name__ == "__main__":
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.08 + s_straight,     
+        length=0.07 + s_straight,     
         n_pts=130,                      
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(40.0),
+        bend_angle=np.deg2rad(60.0),
         bend_start=0.01 + s_straight,    
-        bend_end=0.08 + s_straight       
+        bend_end=0.07 + s_straight       
     )
     # lumen_C = make_lumen_centerline_double_turn(
     #     p0_ur, t0,
@@ -3014,7 +3014,7 @@ if __name__ == "__main__":
 
     cursor_state = {"stall": 0}
     x_prev = mpc.x[:3].copy()
-    out_root = Path("mpc_run_027")
+    out_root = Path("mpc_run_028")
     frames_dir = out_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 

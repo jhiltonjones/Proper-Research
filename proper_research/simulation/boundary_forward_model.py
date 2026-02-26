@@ -81,7 +81,7 @@ class EnergyMinForwardWithLumen:
         wire_len = L - self.mag_len
         if wire_len <= 1e-6:
             # infeasible: return large value to discourage
-            return np.array([1e3, 1e3, 1e3], float)
+            return np.array([1e2, 1e2, 1e2], float)
 
         # magnet pose
         q_src = self._quat_from_rotvec_ur(rvec)
@@ -117,7 +117,7 @@ class EnergyMinForwardWithLumen:
         )
 
         if not hist or ("p" not in hist[-1]) or (hist[-1]["p"] is None):
-            return np.array([1e3, 1e3, 1e3], float)
+            return np.array([1e4, 1e4, 1e4], float)
 
         pE = hist[-1]["p"]          # (3,N)
         tip = pE[:, -1].copy()

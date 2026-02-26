@@ -16,26 +16,126 @@ from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
 from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
-from scipy.stats import skew
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
 
 from dataclasses import dataclass
-def build_Pomega_world(p_seq, dt, Np, m=7):
+
+def stage_cost_wall_progress(
+    x_prev, x_now, lumen_C, lumen_R, s_path, i_ref,
+    delta=1e-3, w_wall=1e6, w_prog=1.0
+):
     """
-    Map stacked U -> stacked delta-theta in WORLD, using p_seq[j] orientation.
-    Returns: (3Np, mNp)
+    Lower is better.
+    - wall penalty: hinge on negative margin (quadratic)
+    - progress reward: forward progress along centerline (subtract)
     """
-    Nu = m*Np
-    P = np.zeros((3*Np, Nu), float)
+    C = np.asarray(lumen_C, float)
+    R = np.asarray(lumen_R, float).ravel()
+    s_path = np.asarray(s_path, float).ravel()
+
+    x_prev = np.asarray(x_prev, float).reshape(3,)
+    x_now  = np.asarray(x_now,  float).reshape(3,)
+
+    # progress along centerline (monotone projection)
+    s0, i0, _, _ = project_to_polyline_s_monotone(C, s_path, x_prev, i_ref, window=120)
+    s1, i1, _, _ = project_to_polyline_s_monotone(C, s_path, x_now,  i0,   window=120)
+    prog = max(0.0, float(s1 - s0))
+
+    # wall margin at x_now (use local tangent at closest index)
+    ik = closest_index_in_window_monotone(C, x_now, i_ref, window=120)
+    m, g, tv = wall_margin_and_gate(C, R, x_now, ik, delta=delta, sigma_m=5e-4)
+    viol = max(0.0, -m)  # meters
+
+    J = (w_wall * (viol**2)) - (w_prog * prog)
+    return float(J), int(i1)
+def quat_rotate_about_body_axis(q_wxyz, axis_body, angle_rad):
+    """
+    Right-multiply by body-frame rotation: q_new = q ⊗ dq(axis_body, angle).
+    Matches your integrate_pose8_body convention (body-frame increment).
+    """
+    axis_body = np.asarray(axis_body, float).ravel()
+    axis_body = axis_body / (np.linalg.norm(axis_body) + 1e-12)
+    dq = small_rot_quat_wxyz(axis_body * float(angle_rad))
+    return quat_wxyz_normalize(quat_wxyz_mul(q_wxyz, dq))
+
+def quat_rotate_about_body_z(q_wxyz, angle_rad):
+    return quat_rotate_about_body_axis(q_wxyz, axis_body=[0.0, 0.0, 1.0], angle_rad=angle_rad)
+
+def quat_flip_about_body_z(q_wxyz):
+    # 180 deg around body z
+    return quat_rotate_about_body_z(q_wxyz, np.pi)
+
+def rollout_open_loop_fixed_mode(
+    *,
+    mpc,
+    p_start,
+    U_seq,
+    lumen_C, lumen_R, s_path,
+    i_ref_start,
+    delta_wall=1e-3,
+    w_wall=1e6,
+    w_prog=1.0,
+):
+    """
+    Rollout with a FIXED mode (p_start already flipped or not).
+    Uses stage_cost_wall_progress(...) to score the horizon.
+    Returns: P_nl (Np,8), X_nl (Np,n), J_total (float)
+    """
+    p = np.asarray(p_start, float).copy()
+    U_seq = np.asarray(U_seq, float)
+    Np = U_seq.shape[0]
+
+    # Freeze baseline once for deterministic forward
+    if hasattr(mpc.forward_tip_fn, "start_step"):
+        mpc.forward_tip_fn.start_step()
+
+    P_nl = []
+    X_nl = []
+    J = 0.0
+
+    i_ref = int(i_ref_start)
+
+    # --- initial tip position for progress computation ---
+    try:
+        y0 = np.asarray(mpc.forward_tip_fn(p, commit=False), float).reshape(mpc.n,)
+    except TypeError:
+        y0 = np.asarray(mpc.forward_tip_fn(p), float).reshape(mpc.n,)
+    x_prev = y0[:3].copy()
+
     for k in range(Np):
-        for j in range(k+1):
-            qj = np.asarray(p_seq[j][3:7], float)
-            Rj = quat_wxyz_to_R(qj)  # (3,3)
-            # world increment: dt * Rj * ω_body
-            P[3*k:3*k+3, m*j+3:m*j+6] += dt * Rj
-    return P
+        # integrate 1 step
+        p = mpc._clamp_p(integrate_pose8_body(p, U_seq[k], mpc.dt))
+
+        # evaluate (pure)
+        try:
+            y = np.asarray(mpc.forward_tip_fn(p, commit=False), float).reshape(mpc.n,)
+        except TypeError:
+            y = np.asarray(mpc.forward_tip_fn(p), float).reshape(mpc.n,)
+
+        x_now = y[:3].copy()
+
+        # score stage
+        Jk, i_ref = stage_cost_wall_progress(
+            x_prev=x_prev,
+            x_now=x_now,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            s_path=s_path,
+            i_ref=i_ref,
+            delta=delta_wall,   # <-- map name
+            w_wall=w_wall,
+            w_prog=w_prog,
+        )
+
+        J += float(Jk)
+        P_nl.append(p.copy())
+        X_nl.append(y.copy())
+
+        x_prev = x_now  # advance for next stage
+
+    return np.vstack(P_nl), np.vstack(X_nl), float(J)
 @dataclass
 class DebugCfg:
     level: int = 1
@@ -1271,20 +1371,12 @@ class mpc_controller_tipxy_LTI:
         self.enable_soft_progress = True
         self.w_slack_wall = 1e5      # tune
         self.w_slack_prog = 1e3      # tune
-
-
-        self.mag_center_use_pred_idx = True     # use risk idx_k (monotone) if available
-        self.enable_dipole_align = True
-        self.w_dipole_align = 1        # start small: 0.1..10
-        self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
-
-        self.enable_mag_center_standoff = True
-        self.w_mag_center_standoff = 1.0
-        self.mag_center_standoff_m = 0.15
-        self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
-        self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
-        self.enable_mag_inline_centerline = True
-        self.w_mag_inline_centerline = 1e-4  # start here; tune 1e-4..1e-2
+        # --- flip rollout mode selection ---
+        self.enable_flip_rollout = True
+        self.flip_spin_per_step_rad = 0.0   # optional: spin around body-z during rollout (rad/step)
+        self.flip_w_wall = 1e6              # wall violation weight used in stage_cost_wall_progress
+        self.flip_w_prog = 1.0              # progress weight used in stage_cost_wall_progress
+        self.s_path = None                  # must be set externally: mpc.s_path = s_path
     def _rebuild_S(self):
         self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
 
@@ -1658,14 +1750,6 @@ class mpc_controller_tipxy_LTI:
             info_thetamax = float(np.max(theta_seq))
             g_seq = np.asarray(risk["g_k"], float)
             t_vessel = np.asarray(risk["t_vessel_k"], float)  # (Np,3)
-            # ---- shared centerline mapping for penalties ----
-            Cc = np.asarray(self.lumen_C, float)
-            M = Cc.shape[0]
-            idx_k = np.asarray(risk.get("idx_k", np.zeros(Np, dtype=int)), dtype=int).reshape(-1)
-            if idx_k.size != Np:
-                i_ref0 = int(getattr(self, "i_ref_last", 0))
-                idx_k = i_ref0 + np.arange(Np)
-            idx_k = np.clip(idx_k, 0, M-1)
             # disturbance consistent injection
             if self.use_offset_free:
                 X_nom = X_nom + self._disturbance_stack(self.d)
@@ -1743,219 +1827,44 @@ class mpc_controller_tipxy_LTI:
             else:
                 s_des_eff_local = self.s_des
 
-            # ---- penalty: magnet standoff to centerline ALONG THE HORIZON (keep ~d0 meters) ----
-            if self.enable_mag_center_standoff and (self.w_mag_center_standoff > 0.0):
-                w  = float(self.w_mag_center_standoff)
-                d0 = float(self.mag_center_standoff_m)   # e.g. 0.15
+            # ---- overhead magnet quadratic term (must happen BEFORE lifting to z) ----
+            if bool(getattr(self, "overhead_magnet", False)) and float(getattr(self, "w_mag_xy", 0.0)) > 0.0:
+                w_mag = float(self.w_mag_xy)
+                r0 = p0[:3].copy()
+                r0_stack = np.tile(r0, self.Np)
 
-                Nu = Np*m
+                Pm = build_Pm_world(self.dt, self.Np, m=self.m)
 
-                # Use the same horizon centerline indices as the risk mapping (preferred)
-                risk = getattr(self, "_risk_last", None)
-                Cc = np.asarray(self.lumen_C, float)
-                M  = Cc.shape[0]
+                idx_pos = _pos_row_idx(n, Np)
+                Mc_pos = Mc[idx_pos, :]
+                Xaff_pos = X_aff[idx_pos, :].ravel()
 
-                if (risk is not None) and ("idx_k" in risk):
-                    idx_k = np.asarray(risk["idx_k"], dtype=int).reshape(-1)
-                    if idx_k.size != Np:
-                        # fallback if something odd happens
-                        i_ref0 = int(getattr(self, "i_ref_last", 0))
-                        idx_k = np.clip(i_ref0 + np.arange(Np), 0, M-1)
-                    else:
-                        idx_k = np.clip(idx_k, 0, M-1)
-                else:
-                    # fallback: just march forward from current cursor
-                    i_ref0 = int(getattr(self, "i_ref_last", 0))
-                    idx_k = np.clip(i_ref0 + np.arange(Np), 0, M-1)
+                keep_xy = np.array([3*k + i for k in range(self.Np) for i in (0, 1)], dtype=int)
 
-                # Magnet position over horizon: r(U) = r0_stack + Pm U
-                Pm = build_Pm_world(self.dt, Np, m=m)    # (3Np, Nu)
+                Pm_xy = Pm[keep_xy, :]
+                Mc_xy = Mc_pos[keep_xy, :]
+                r0_xy = r0_stack[keep_xy]
+                xaff_xy = Xaff_pos[keep_xy]
 
-                # Nominal U (SQP iterate) for linearization
-                U_guess_vec = U_guess.reshape(-1, 1)     # (Nu,1)
+                A_xy = (Pm_xy - Mc_xy)
+                b_xy = (r0_xy - xaff_xy).reshape(-1, 1)
 
-                r0 = p0[:3].copy().reshape(3,1)
-                r0_stack = np.tile(r0, (Np, 1))          # (3Np,1)
-                r_nom = r0_stack + Pm @ U_guess_vec      # (3Np,1)
+                H = H + 2.0 * w_mag * (A_xy.T @ A_xy)
+                f = f + 2.0 * w_mag * (A_xy.T @ b_xy)
 
-                # Build A_s, b_s for residual e_k(U) ≈ a_k U + b_k, then penalize sum ||e||^2
-                A_s = np.zeros((Np, Nu), float)
-                b_s = np.zeros((Np, 1), float)
-
-                eps = 1e-9
-                for k in range(Np):
-                    ck = Cc[idx_k[k], :3].reshape(3,)    # centerline point for this horizon stage
-
-                    rk = r_nom[3*k:3*k+3, 0]             # nominal magnet position at stage k
-                    vk = rk - ck
-                    dk = float(np.linalg.norm(vk))
-
-                    if dk < eps:
-                        # if magnet sits exactly on ck, choose any direction to avoid NaNs
-                        uk = np.array([1.0, 0.0, 0.0], float)
-                        dk = eps
-                    else:
-                        uk = vk / dk                      # unit radial direction from ck to magnet
-
-                    Pm_k = Pm[3*k:3*k+3, :]              # (3,Nu)
-
-                    # Linearized distance error:
-                    # e_k ≈ dk - d0 + uk^T * (Pm_k (U - U_guess))
-                    # => e_k ≈ (uk^T Pm_k) U + [dk - d0 - (uk^T Pm_k) U_guess]
-                    a_k = (uk.reshape(1,3) @ Pm_k).reshape(Nu,)         # (Nu,)
-                    b_k = (dk - d0) - float(a_k @ U_guess_vec[:,0])
-
-                    A_s[k, :] = a_k
-                    b_s[k, 0] = b_k
-                                    # ---- small penalty: magnet position inline with centerline station (zero tangential offset) ----
-                if getattr(self, "enable_mag_inline_centerline", False) and (float(getattr(self, "w_mag_inline_centerline", 0.0)) > 0.0):
-
-                    w_inl = float(self.w_mag_inline_centerline)  # small: 1e-4 .. 1e-2
-
-                    # centerline points (Np,3) and tangents (Np,3) corresponding to idx_k
-                    Ck = Cc[idx_k, :3].reshape(Np, 3)            # (Np,3)
-                    Tk = np.asarray(t_vessel, float).reshape(Np, 3)  # (Np,3)
-                    # normalize just to be safe
-                    Tk = Tk / (np.linalg.norm(Tk, axis=1, keepdims=True) + 1e-12)
-
-                    # magnet affine model: r(U) = r0_stack + Pm U
-                    # Pm: (3Np, Nu), r0_stack: (3Np,1)
-                    Nu = Np*m
-
-                    A_inl = np.zeros((Np, Nu), float)
-                    b_inl = np.zeros((Np, 1), float)
-
-                    for k in range(Np):
-                        tk = Tk[k].reshape(1, 3)                 # (1,3)
-
-                        Pm_k = Pm[3*k:3*k+3, :]                  # (3,Nu)
-                        r0_k = r0_stack[3*k:3*k+3, :]            # (3,1)
-                        ck   = Ck[k].reshape(3,1)                # (3,1)
-
-                        # e_k(U) = t_k^T (r0_k - c_k) + t_k^T Pm_k U
-                        A_inl[k, :] = (tk @ Pm_k).reshape(-1)    # (Nu,)
-                        b_inl[k, 0] = float(tk @ (r0_k - ck))    # scalar
-
-                    # add quadratic: w * ||A_inl U + b_inl||^2
-                    H = H + 2.0*w_inl*(A_inl.T @ A_inl)
-                    f = f + 2.0*w_inl*(A_inl.T @ b_inl)
-                # ---- DEBUG: store standoff context for printing after solve ----
-                if self.debug:
-                    # store the actual per-stage centerline points used by the penalty
-                    Ck = Cc[idx_k, :3].copy()  # (Np,3)
-
-                    d_nom = np.zeros(Np, float)
-                    for k in range(Np):
-                        d_nom[k] = float(np.linalg.norm(r_nom[3*k:3*k+3, 0] - Ck[k]))
-
-                    self._standoff_dbg = dict(
-                        d0=float(d0),
-                        Ck=Ck,                 # (Np,3) per-stage centerline points
-                        idx_k=idx_k.copy(),    # indices used
-                        d_nom=d_nom,           # nominal distances to Ck
-                        A=A_s.copy(),
-                        b=b_s.copy(),
-                        Pm=Pm.copy(),
-                        r0_stack=r0_stack.copy(),
-                    )
-                # Add quadratic: w * ||A_s U + b_s||^2
-                H = H + 2.0*w*(A_s.T @ A_s)
-                f = f + 2.0*w*(A_s.T @ b_s)
-            def skew3(v):
-                v = np.asarray(v, float).reshape(3,)
-                x, y, z = v
-                return np.array([[0.0, -z,  y],
-                                [z,  0.0, -x],
-                                [-y, x,  0.0]], float)
-
-            # ---- penalty: align dipole with vessel centerline tangent ----
-            if self.enable_dipole_align and (self.w_dipole_align > 0.0) and (t_vessel is not None):
-
-                w = float(self.w_dipole_align)
-                d_body = np.asarray(self.dipole_body_axis, float).reshape(3,)
-                d_body /= (np.linalg.norm(d_body) + 1e-12)
-
-                d_nom = np.zeros((3*Np, 1), float)
-                t_tar = np.zeros((3*Np, 1), float)
-                # --- after building d_nom and t_tar ---
-                if self.debug:
-                    # angle(dipole, tangent) in degrees at the NOMINAL trajectory (pre-QP)
-                    ang_nom_deg = np.zeros(Np, float)
-                    for k in range(Np):
-                        dk = d_nom[3*k:3*k+3, 0]
-                        tk = t_tar[3*k:3*k+3, 0]
-                        c = float(np.clip(np.dot(dk, tk), -1.0, 1.0))
-                        ang_nom_deg[k] = float(np.degrees(np.arccos(c)))
-
-                    # store for printing after solve
-                    self._dipole_dbg = dict(
-                        w_dipole=float(w),
-                        ang_nom_deg=ang_nom_deg,
-                        # store these so we can compute an "opt" estimate if desired
-                        d_body=np.asarray(self.dipole_body_axis, float).reshape(3,),
-                        idx_k=np.asarray(idx_k, int).copy(),
-                        t_tar=t_tar.copy(),         # (3Np,1)
-                        p_seq=p_seq.copy(),         # pose seq (nominal)
-                    )
-                for k in range(Np):
-                    qk = np.asarray(p_seq[k][3:7], float).reshape(4,)
-                    Rk = quat_wxyz_to_R(qk)
-                    dk = (Rk @ d_body).reshape(3,)
-                    dk /= (np.linalg.norm(dk) + 1e-12)
-
-                    tk = np.asarray(t_vessel[k], float).reshape(3,)
-                    tk /= (np.linalg.norm(tk) + 1e-12)
-
-                    if float(np.dot(dk, tk)) < 0.0:
-                        tk = -tk
-
-                    d_nom[3*k:3*k+3, 0] = dk
-                    t_tar[3*k:3*k+3, 0] = tk
-
-                Pomega_w = build_Pomega_world(p_seq, self.dt, Np, m=m)  # (3Np, Nu)
-                Pomega_w = np.asarray(Pomega_w, float)
-                Nu = Np*m
-
-                assert Pomega_w.shape == (3*Np, Nu), f"Pomega_w shape {Pomega_w.shape} expected {(3*Np, Nu)}"
-
-                A_align = np.zeros((3*Np, Nu), float)
-
-                for k in range(Np):
-                    dk = d_nom[3*k:3*k+3, 0].reshape(3,)
-                    Sk = skew3(dk)
-                    Pk = Pomega_w[3*k:3*k+3, :]   # (3,Nu)
-
-                    # sanity checks
-                    assert Sk.shape == (3,3), f"Sk shape {Sk.shape}, dk={dk}"
-                    assert Pk.shape == (3,Nu), f"Pk shape {Pk.shape}"
-
-                    A_align[3*k:3*k+3, :] = -Sk @ Pk
-
-                b_align = (d_nom - t_tar)  # (3Np,1)
-
-                H = H + 2.0*w*(A_align.T @ A_align)
-                f = f + 2.0*w*(A_align.T @ b_align)
             # -----------------------
             # Build all U-only constraints FIRST
             # -----------------------
             A_list, l_list, u_list = [], [], []
 
-            # (1) symmetric input bounds (only if finite)
+            # (1) input bounds
             if np.all(np.isfinite(self.u_max)):
-                A_u = np.eye(Np*m)
+                A_u = np.eye(Np * m)
                 umax_stack = np.tile(self.u_max, Np)
                 A_list.append(A_u)
                 l_list.append(-umax_stack)
                 u_list.append(+umax_stack)
 
-            # (2) dL lower bound: dL_k >= -dL_back_max
-            dL_back_max = float(getattr(self, "dL_back_max", 0.0))
-            A_dL = np.zeros((Np, Np*m), float)
-            for k in range(Np):
-                A_dL[k, k*m + 6] = 1.0
-            A_list.append(A_dL)
-            l_list.append(-dL_back_max * np.ones(Np))
-            u_list.append(np.full(Np, np.inf))
             # (3) optional minimum progress constraint: t0^T(x1-x0) >= s_min
             s_min = float(getattr(self, "s_min_progress", 0.0))
             if s_min > 0.0 and (t_vessel is not None):
@@ -2126,7 +2035,6 @@ class mpc_controller_tipxy_LTI:
                     A_osqp = np.vstack([A_osqp, A_prog])
                     l_osqp = np.concatenate([l_osqp, l_prog])
                     u_osqp = np.concatenate([u_osqp, u_prog])
-
             # -----------------------
             # Solve QP in z-space (or U-space if ns=0)
             # -----------------------
@@ -2137,41 +2045,6 @@ class mpc_controller_tipxy_LTI:
 
             Z_opt, _, status = solve_qp_osqp(H_z, f_z.ravel(), A_osqp, l_osqp, u_osqp, U_warm=Z_warm)
             status_last = status
-            # ---- DEBUG print standoff distances at the QP solution ----
-            if getattr(self, "_standoff_dbg", None) is not None and self.debug:
-                dbg = self._standoff_dbg
-                d0_dbg = dbg["d0"]
-                Ck = dbg["Ck"]              # (Np,3)
-                idx_k_dbg = dbg["idx_k"]
-                Pm_dbg = dbg["Pm"]
-                r0_stack_dbg = dbg["r0_stack"]
-                d_nom = dbg["d_nom"]
-
-                # Extract U from solved z
-                if ns > 0:
-                    U_vec = np.asarray(Z_opt[:Nu], float).reshape(Nu, 1)
-                else:
-                    U_vec = np.asarray(Z_opt, float).reshape(Nu, 1)
-
-                r_opt = r0_stack_dbg + Pm_dbg @ U_vec  # (3Np,1)
-
-                d_opt = np.zeros(Np, float)
-                for k in range(Np):
-                    rk = r_opt[3*k:3*k+3, 0]
-                    d_opt[k] = float(np.linalg.norm(rk - Ck[k]))
-
-                e_lin = (dbg["A"] @ U_vec + dbg["b"]).reshape(Np,)
-
-                print(f"[STANDOFF] target d0 = {d0_dbg:.4f} m")
-                for k in range(Np):
-                    print(
-                        f"  k={k:02d} idx={int(idx_k_dbg[k]):4d} "
-                        f"d_nom={d_nom[k]:.4f} d_opt={d_opt[k]:.4f} "
-                        f"(d_opt-d0)={(d_opt[k]-d0_dbg):+.4f} e_lin={e_lin[k]:+.4f}"
-                    )
-
-                print("[STANDOFF] idx_k:", idx_k_dbg.tolist())
-                print("[STANDOFF] Ck[0]:", Ck[0], "Ck[-1]:", Ck[-1])
             if status in ("solved","solved inaccurate") and Z_opt is not None and self.debug:
                 self._debug_objective_breakdown(
                     Z_opt=Z_opt,
@@ -2204,28 +2077,7 @@ class mpc_controller_tipxy_LTI:
 
             # update SQP iterate
             U_guess = U_opt_vec.reshape(Np, m)
-        # ---- DEBUG dipole alignment + weights summary ----
-        if self.debug:
-            # weights summary (what is active right now)
-            w_sum = dict(
-                w_adv=float(getattr(self, "w_adv", 0.0)),
-                w_adv_eff=float(w_adv_eff) if "w_adv_eff" in locals() else float(getattr(self, "w_adv", 0.0)),
-                w_standoff=float(getattr(self, "w_mag_center_standoff", 0.0)),
-                d0=float(getattr(self, "mag_center_standoff_m", np.nan)),
-                w_inline=float(getattr(self, "w_mag_inline_centerline", 0.0)),
-                w_dipole=float(getattr(self, "w_dipole_align", 0.0)),
-                w_slack_wall=float(getattr(self, "w_slack_wall", 0.0)),
-                w_slack_prog=float(getattr(self, "w_slack_prog", 0.0)),
-            )
-            print("[WEIGHTS]", w_sum)
 
-        if getattr(self, "_dipole_dbg", None) is not None and self.debug:
-            ddbg = self._dipole_dbg
-            ang = np.asarray(ddbg["ang_nom_deg"], float)
-            print("[DIPOLE] alignment to vessel tangent (nominal, pre-QP):")
-            for k in range(min(Np, 5)):  # print first few
-                print(f"  k={k:02d}  angle={ang[k]:6.2f} deg")
-            print(f"  max={np.max(ang):.2f} deg  mean={np.mean(ang):.2f} deg  w_dipole={ddbg['w_dipole']:.3g}")
         # -----------------------
         # Apply first control
         # -----------------------
@@ -2245,8 +2097,117 @@ class mpc_controller_tipxy_LTI:
             X_pred_stack = X_aff_last + Mc_last @ U_vec
             X_pred = X_pred_stack.reshape(Np, n)
 
-        # plant update (one step)
-        p_next_true = self._clamp_p(integrate_pose8_body(p_prev, u0, self.dt))
+        # -----------------------
+        # Plant update (one step) WITH 2-mode horizon evaluation
+        # -----------------------
+        flip_stage0 = False
+        flip_status = "skipped"
+        J_no = np.inf
+        J_fl = np.inf
+        P_no = X_no = P_fl = X_fl = None
+
+        enable_flip = bool(getattr(self, "enable_flip_rollout", False))
+        s_path_local = getattr(self, "s_path", None)
+        C = getattr(self, "lumen_C", None)
+        R = getattr(self, "lumen_R", None)
+        have_lumen = (C is not None) and (R is not None)
+
+        if enable_flip and (not infeas_final) and have_lumen and (s_path_local is not None):
+            try:
+                i0 = int(getattr(self, "i_ref_last", 0))
+
+                # Mode 0: no flip
+                P_no, X_no, J_no = rollout_open_loop_fixed_mode(
+                    mpc=self,
+                    p_start=p_prev,
+                    U_seq=U_seq,
+                    lumen_C=C, lumen_R=R, s_path=s_path_local,
+                    i_ref_start=i0,
+                    delta_wall=float(getattr(self, "delta_wall", 1e-3)),
+                    w_wall=float(getattr(self, "flip_w_wall", 1e6)),
+                    w_prog=float(getattr(self, "flip_w_prog", 1.0)),
+                )
+
+                # Mode 1: flip at START (this is the important convention)
+                p_prev_flip = p_prev.copy()
+                p_prev_flip[3:7] = quat_flip_about_body_z(p_prev_flip[3:7])
+                p_prev_flip = self._clamp_p(p_prev_flip)
+
+                P_fl, X_fl, J_fl = rollout_open_loop_fixed_mode(
+                    mpc=self,
+                    p_start=p_prev_flip,
+                    U_seq=U_seq,
+                    lumen_C=C, lumen_R=R, s_path=s_path_local,
+                    i_ref_start=i0,
+                    delta_wall=float(getattr(self, "delta_wall", 1e-3)),
+                    w_wall=float(getattr(self, "flip_w_wall", 1e6)),
+                    w_prog=float(getattr(self, "flip_w_prog", 1.0)),
+                )
+
+                flip_stage0 = bool(J_fl < J_no)
+                flip_status = "ok"
+            except Exception as e:
+                flip_status = f"error:{type(e).__name__}"
+
+        # EXECUTION MUST MATCH ROLLOUT CONVENTION:
+        # flip BEFORE integrate
+        p_exec0 = p_prev.copy()
+        if flip_stage0:
+            p_exec0[3:7] = quat_flip_about_body_z(p_exec0[3:7])
+        p_exec0 = self._clamp_p(p_exec0)
+        # -----------------------
+        # Mode-consistent prediction recompute (DEBUG SANITY)
+        # -----------------------
+        X_pred_mode = None          # (Np,n) predicted horizon consistent with chosen flip mode
+        pred1_err_mode = np.nan     # error vs X_pred_mode[0]
+        pred1_err_raw  = np.nan     # keep old one too (computed later)
+
+        try:
+            if (not infeas_final) and (U_opt_vec is not None):
+                # Ensure deterministic forward is frozen for this recompute
+                if hasattr(self.forward_tip_fn, "start_step"):
+                    self.forward_tip_fn.start_step()
+
+                # 1) Mode-consistent "current output" is y(p_exec0), not y(p_prev)
+                try:
+                    xk_mode = np.asarray(self.forward_tip_fn(p_exec0, commit=False), float).reshape(n, 1)
+                except TypeError:
+                    xk_mode = np.asarray(self.forward_tip_fn(p_exec0), float).reshape(n, 1)
+
+                if self.use_offset_free:
+                    xk_mode = xk_mode + self.d.reshape(n, 1)
+
+                # 2) Build prediction matrices at the executed mode start pose
+                #    (Use U_seq as the "guess" so affine matches this plan)
+                p_seq_mode, Mx_mode, Mc_mode, _B0_mode = self._build_prediction_mats(p_exec0, U_seq)
+
+                # 3) Nominal nonlinear outputs along that parameter rollout (commit=False)
+                Y_nom_mode = np.vstack([self.forward_tip_fn(p_seq_mode[i]) for i in range(Np)]).reshape(Np, n)
+                X_nom_mode = Y_nom_mode.reshape(Np * n, 1)
+                if self.use_offset_free:
+                    X_nom_mode = X_nom_mode + self._disturbance_stack(self.d)
+
+                # 4) Affine term consistent with THIS planned control
+                U_vec = U_opt_vec.reshape(-1, 1)  # same as U_seq.reshape(-1,1)
+                X_aff_mode = X_nom_mode - Mc_mode @ U_vec
+
+                # 5) Final mode-consistent predicted horizon
+                X_pred_mode_stack = X_aff_mode + Mc_mode @ U_vec
+                X_pred_mode = X_pred_mode_stack.reshape(Np, n)
+
+                # Store for debugging
+                # (Optional) also store the mode-consistent baseline open-loop stack:
+                X_base_mode = (Mx_mode @ xk_mode).reshape(Np, n)
+                if self.use_offset_free:
+                    X_base_mode = X_base_mode + self._disturbance_stack(self.d).reshape(Np, n)
+
+        except Exception as e:
+            # Don't break the step if debug recompute fails
+            X_pred_mode = None
+            pred1_err_mode = np.nan
+        p_next_true = self._clamp_p(integrate_pose8_body(p_exec0, u0, self.dt))
+
+        # evaluate plant
         try:
             x_next_true = np.asarray(self.forward_tip_fn(p_next_true, commit=False), float).reshape(n,)
         except TypeError:
@@ -2255,7 +2216,6 @@ class mpc_controller_tipxy_LTI:
         if self.use_offset_free:
             x_next_true = x_next_true + self.d
 
-        # commit internal state
         self.p = p_next_true.copy()
         self.x = x_next_true.copy()
 
@@ -2263,11 +2223,20 @@ class mpc_controller_tipxy_LTI:
         self.U_warm = None if infeas_final else U_opt_vec.copy()
 
         # one-step prediction error (pos only)
-        pred1_err = np.nan
+        # -----------------------
+        # Prediction errors: raw vs mode-consistent
+        # -----------------------
+        pred1_err_raw = np.nan
+        pred1_err_mode = np.nan
+
         if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
-            pred1_err = np.linalg.norm(x_next_true[:3] - X_pred[0][:3])
-            tan1_err   = np.linalg.norm(x_next_true[3:6] - X_pred[0][3:6])
-        
+            pred1_err_raw = np.linalg.norm(x_next_true[:3] - X_pred[0][:3])
+
+        if (X_pred_mode is not None) and (X_pred_mode.shape[0] > 0) and np.all(np.isfinite(X_pred_mode[0])):
+            pred1_err_mode = np.linalg.norm(x_next_true[:3] - X_pred_mode[0][:3])
+
+        # Choose which one you want to report as pred1_err (I recommend mode-consistent)
+        pred1_err = pred1_err_mode if np.isfinite(pred1_err_mode) else pred1_err_raw
         if self.debug and (Mc_last is not None):
             xbase0 = X0_stack[0:n].ravel()
             xaff0  = X_aff_last[0:n].ravel()
@@ -2334,6 +2303,15 @@ class mpc_controller_tipxy_LTI:
             info["theta_seq_deg"] = theta_seq.copy()
             info["theta0_deg"] = info_theta0
             info["theta_max_deg"] = info_thetamax
+            info["flip_status"] = flip_status
+            info["flip_stage0"] = int(flip_stage0)
+            info["flip_J_no"] = float(J_no) if np.isfinite(J_no) else np.nan
+            info["flip_J_fl"] = float(J_fl) if np.isfinite(J_fl) else np.nan
+            info["flip_rollout_no"] = None if X_no is None else X_no.copy()
+            info["flip_rollout_fl"] = None if X_fl is None else X_fl.copy()
+            pred1_err_raw=float(pred1_err_raw) if np.isfinite(pred1_err_raw) else np.nan,
+            pred1_err_mode=float(pred1_err_mode) if np.isfinite(pred1_err_mode) else np.nan,
+            X_pred_mode=None if X_pred_mode is None else X_pred_mode.copy(),
         return self.p.copy(), self.x.copy(), info
 
 
@@ -2362,30 +2340,7 @@ def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     B[:, 6] = dt * dy_dL   # because u[6] is dL/dt
 
     return B
-# def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
-#     """
-#     Returns B (n_out x 7) s.t. y_next ≈ y_now + B u
-#     """
-#     p8 = np.asarray(p8, float).ravel()
-#     eps_u = np.asarray(eps_u, float).ravel()
-#     assert eps_u.size == 7
 
-#     y0 = np.asarray(forward_y_fn(p8), float).reshape(n_out,)
-#     B = np.zeros((n_out, 7), float)
-
-#     for i in range(7):
-#         du = np.zeros(7)
-#         du[i] = eps_u[i]
-
-#         p_plus  = integrate_pose8_body(p8, +du, dt)
-#         p_minus = integrate_pose8_body(p8, -du, dt)
-
-#         y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-#         y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-
-#         B[:, i] = (y_plus - y_minus) / (2.0 * eps_u[i])
-    
-#     return B
 def predicted_targets_from_info(info, Np=None):
     X_pred = info.get("X_pred", None)
     if X_pred is None:
@@ -2417,7 +2372,7 @@ def rollout_open_loop_from_plan(mpc, p_start, U_seq):
         P_nl.append(p.copy())
         X_nl.append(x.copy())
     return np.vstack(P_nl), np.vstack(X_nl)
-def debug_step_pose7_no_targets(
+def debug_step_pose7_flip_compare(
     k,
     p_now,
     x_now,
@@ -2425,191 +2380,218 @@ def debug_step_pose7_no_targets(
     mpc,
     i_ref=None,
     print_horizon=4,
-    do_nl_rollout=True,
-    ):
+    do_mode_rollouts=True,
+):
     """
-    Reference-free debug print for a 6D output MPC:
-      y = [x,y,z, tx,ty,tz]
+    Debug print that compares the TWO fixed modes for THIS MPC step:
+      - Mode NO-FLIP  : start pose = p_prev
+      - Mode FLIP     : start pose = flip_about_body_z(p_prev)
+    and shows:
+      - the two NL rollouts (positions + tangents)
+      - the total rollout cost for each
+      - which mode was chosen for stage-0
+      - whether the executed next pose matches the chosen convention (flip-before-integrate)
 
-    Prints:
-      - current measured/estimated tip position + tangent (x_now / info["x_now"])
-      - current pose p_now (pose8 -> pose7 rotvec + L)
-      - applied first control u0
-      - one-step prediction mismatch pred1_err (if provided)
-      - controller's predicted horizon X_pred (pos + tan)
-      - nominal nonlinear at SQP lin point X_nom_last (if provided)
-      - internal consistency check: (X_aff0 + Mc0U) vs X_pred[0]
-      - optional nonlinear open-loop rollout using U_seq (commit rollout)
+    Requirements / assumptions:
+      - mpc has: lumen_C, lumen_R, s_path, delta_wall
+      - info contains at least: p_prev, U_seq, flip_stage0 (optional), flip_J_no/flip_J_fl (optional)
+      - You have:
+          quat_flip_about_body_z(qwxyz) OR quat_flip_180_about_body_axis(q, axis=[0,0,1])
+          rollout_open_loop_fixed_mode(...)  -> (P_nl, X_nl, J_total)
+        If you don't, see notes at bottom for drop-in fallbacks.
     """
+
+    def _fmt3(v, prec=4):
+        v = np.asarray(v, float).ravel()
+        return f"[{v[0]:+.{prec}f},{v[1]:+.{prec}f},{v[2]:+.{prec}f}]"
+
+    def _fmt_tan(t, prec=3):
+        t = np.asarray(t, float).ravel()
+        return f"[{t[0]:+.{prec}f},{t[1]:+.{prec}f},{t[2]:+.{prec}f}]"
 
     # -----------------------
-    # Horizon sizes
+    # Basics / header
     # -----------------------
     Np = int(getattr(mpc, "Np", 0))
     ph = min(int(print_horizon), Np) if Np > 0 else int(print_horizon)
 
-    # -----------------------
-    # Current output (measured/estimated)
-    # -----------------------
     x_now6 = info.get("x_now", None)
-    if x_now6 is None:
-        x_now6 = np.asarray(x_now, float).ravel()
-    else:
-        x_now6 = np.asarray(x_now6, float).ravel()
+    x_now6 = np.asarray(x_now6 if x_now6 is not None else x_now, float).ravel()
 
-    if x_now6.size >= 6:
-        pos_now = x_now6[:3]
-        tan_now = x_now6[3:6]
-    else:
-        pos_now = x_now6[:3]
-        tan_now = np.full(3, np.nan)
+    pos_now = x_now6[:3]
+    tan_now = x_now6[3:6] if x_now6.size >= 6 else np.full(3, np.nan)
 
-    # -----------------------
-    # Header
-    # -----------------------
     status = info.get("status", "?")
-    infeas = info.get("infeasible", -1)
+    infeas = int(info.get("infeasible", -1))
     pred_err = float(info.get("pred1_err", np.nan))
 
     print(
-        f"k={k:04d} "
-        f"tip=[{pos_now[0]:+.4f},{pos_now[1]:+.4f},{pos_now[2]:+.4f}] "
-        f"tan=[{tan_now[0]:+.3f},{tan_now[1]:+.3f},{tan_now[2]:+.3f}] "
-        f"status={status} infeas={infeas} pred1_err={pred_err:.4e}"
+        f"\n[DBG-FLIP] k={k:04d} status={status} infeas={infeas} pred1_err={pred_err:.3e} "
+        f"tip={_fmt3(pos_now)} tan={_fmt_tan(tan_now)}"
     )
     if i_ref is not None:
-        print(f"   path index i_ref={int(i_ref)}")
+        print(f"   i_ref={int(i_ref)}")
 
-    # -----------------------
-    # Pose (magnet pose + insertion)
-    # -----------------------
-    p7 = pose8_quat_to_pose7_rotvec(p_now)
+    # Pose info (current)
+    p7 = pose8_quat_to_pose7_rotvec(np.asarray(p_now, float))
     rvec = p7[3:6]
     theta_deg = np.rad2deg(np.linalg.norm(rvec))
     print(
-        f"   p_now: x={p7[0]:+.3f} y={p7[1]:+.3f} z={p7[2]:+.3f}  "
-        f"rotvec=[{rvec[0]:+.3f},{rvec[1]:+.3f},{rvec[2]:+.3f}] |theta|={theta_deg:.1f}deg  "
-        f"L={p7[6]:.3f}"
+        f"   p_now: xyz={_fmt3(p7[0:3],3)} rotvec={_fmt3(rvec,3)} |theta|={theta_deg:.1f}deg L={p7[6]:.4f}"
     )
 
+    # Control / planned horizon
+    U_seq = info.get("U_seq", None)
+    if U_seq is None:
+        print("   [DBG-FLIP] No U_seq in info -> cannot do rollouts.")
+        print("--------------------------------------------------------------------")
+        return
+    U_seq = np.asarray(U_seq, float)
+    if U_seq.ndim != 2 or U_seq.shape[0] != Np:
+        print(f"   [DBG-FLIP] U_seq shape unexpected: {U_seq.shape}, expected (Np,m)=({Np},{getattr(mpc,'m',7)})")
+        print("--------------------------------------------------------------------")
+        return
+
+    u0 = U_seq[0].copy()
+    print(
+        "   u0:",
+        f"v={_fmt3(u0[0:3],4)}  "
+        f"omega_body={_fmt3(u0[3:6],4)}  dL={u0[6]:+.5f}"
+    )
+
+    p_prev = info.get("p_prev", None)
+    if p_prev is None:
+        print("   [DBG-FLIP] No p_prev in info -> cannot do mode comparison.")
+        print("--------------------------------------------------------------------")
+        return
+    p_prev = np.asarray(p_prev, float).copy()
+
     # -----------------------
-    # Control applied
+    # Rollouts: NO-FLIP vs FLIP (fixed mode over horizon)
     # -----------------------
-    u0 = np.asarray(info.get("u0", np.zeros(getattr(mpc, "m", 7))), float).ravel()
-    if u0.size >= 7:
-        print(
-            "   u0:",
-            f"dx={u0[0]:+.4f} dy={u0[1]:+.4f} dz={u0[2]:+.4f}  "
-            f"omega_body=[{u0[3]:+.4f},{u0[4]:+.4f},{u0[5]:+.4f}]  dL={u0[6]:+.5f}",
+    have_geom = (getattr(mpc, "lumen_C", None) is not None) and (getattr(mpc, "lumen_R", None) is not None)
+    have_s = getattr(mpc, "s_path", None) is not None
+    enable = bool(getattr(mpc, "enable_flip_rollout", True))
+
+    if not (do_mode_rollouts and enable and have_geom and have_s):
+        print("   [DBG-FLIP] Mode rollouts skipped (missing geometry/s_path or disabled).")
+        print("--------------------------------------------------------------------")
+        return
+
+    C = np.asarray(mpc.lumen_C, float)
+    R = np.asarray(mpc.lumen_R, float).ravel()
+    s_path = np.asarray(mpc.s_path, float).ravel()
+
+    i0 = int(getattr(mpc, "i_ref_last", i_ref if i_ref is not None else 0))
+
+    # Flip helper: prefer quat_flip_about_body_z if present, else fall back to generic
+    def _flip_q(q):
+        if "quat_flip_about_body_z" in globals():
+            return quat_flip_about_body_z(q)
+        return quat_flip_180_about_body_axis(q, np.array([0.0, 0.0, 1.0]))
+
+    # Build start poses (important: flip BEFORE any integration)
+    p0_no = p_prev.copy()
+    p0_fl = p_prev.copy()
+    p0_fl[3:7] = _flip_q(p0_fl[3:7])
+    p0_no = mpc._clamp_p(p0_no)
+    p0_fl = mpc._clamp_p(p0_fl)
+
+    # Run rollouts
+    try:
+        P_no, X_no, J_no = rollout_open_loop_fixed_mode(
+            mpc=mpc,
+            p_start=p0_no,
+            U_seq=U_seq,
+            lumen_C=C, lumen_R=R, s_path=s_path,
+            i_ref_start=i0,
+            delta_wall=float(getattr(mpc, "delta_wall", 1e-3)),
+            w_wall=float(getattr(mpc, "flip_w_wall", 1e6)),
+            w_prog=float(getattr(mpc, "flip_w_prog", 1.0)),
         )
-    else:
-        print("   u0:", u0)
-
-    # -----------------------
-    # Predicted horizon (linear MPC prediction)
-    # -----------------------
-    X_pred = info.get("X_pred", None)      # expected (Np,n)
-    U_seq  = info.get("U_seq", None)       # expected (Np,m)
-
-    if X_pred is None:
-        print("   X_pred missing -> infeasible/failed QP or not stored.")
+        P_fl, X_fl, J_fl = rollout_open_loop_fixed_mode(
+            mpc=mpc,
+            p_start=p0_fl,
+            U_seq=U_seq,
+            lumen_C=C, lumen_R=R, s_path=s_path,
+            i_ref_start=i0,
+            delta_wall=float(getattr(mpc, "delta_wall", 1e-3)),
+            w_wall=float(getattr(mpc, "flip_w_wall", 1e6)),
+            w_prog=float(getattr(mpc, "flip_w_prog", 1.0)),
+        )
+    except Exception as e:
+        print(f"   [DBG-FLIP] rollout_open_loop_fixed_mode failed: {type(e).__name__}: {e}")
         print("--------------------------------------------------------------------")
         return
 
-    X_pred = np.asarray(X_pred, float)
-    if X_pred.ndim == 1:
-        # try reshape if flat
-        if Np > 0:
-            X_pred = X_pred.reshape(Np, -1)
+    X_no = np.asarray(X_no, float)
+    X_fl = np.asarray(X_fl, float)
+
+    # decision: prefer info’s flip_stage0 if present, else infer from costs
+    flip_stage0_info = info.get("flip_stage0", None)
+    flip_stage0 = bool(flip_stage0_info) if flip_stage0_info is not None else bool(J_fl < J_no)
+
+    # costs summary
+    print(f"   Mode costs:  J_no_flip={J_no:.6e}   J_flip={J_fl:.6e}   -> chosen={'FLIP' if flip_stage0 else 'NO-FLIP'}")
+    if "flip_status" in info:
+        print(f"   flip_status(info)={info['flip_status']}  flip_stage0(info)={info.get('flip_stage0', None)}")
+
+    # -----------------------
+    # Print the two rollouts side-by-side (first ph stages)
+    # -----------------------
+    ph2 = min(ph, X_no.shape[0], X_fl.shape[0])
+
+    print("   Horizon NL rollouts (fixed-mode)   [k:  NO-FLIP  |  FLIP ]")
+    for j in range(ph2):
+        p_no = X_no[j, 0:3]
+        t_no = X_no[j, 3:6] if X_no.shape[1] >= 6 else np.full(3, np.nan)
+        p_fl = X_fl[j, 0:3]
+        t_fl = X_fl[j, 3:6] if X_fl.shape[1] >= 6 else np.full(3, np.nan)
+
+        tag = "<-- chosen" if ((j == 0) and flip_stage0) else ("<-- chosen" if ((j == 0) and (not flip_stage0)) else "")
+        # show tag only on stage-0 line:
+        if j == 0:
+            tag = "<-- chosen FLIP" if flip_stage0 else "<-- chosen NO-FLIP"
         else:
-            X_pred = X_pred.reshape(1, -1)
+            tag = ""
 
-    if not np.all(np.isfinite(X_pred)):
-        print("   X_pred contains NaNs -> infeasible/failed QP.")
-        print("--------------------------------------------------------------------")
-        return
-
-    # Ensure ph is valid
-    if Np <= 0:
-        Np = X_pred.shape[0]
-        ph = min(ph, Np)
-
-    print("   Horizon: predicted (linear MPC)")
-    for i in range(min(ph, X_pred.shape[0])):
-        p = X_pred[i, :3]
-        if X_pred.shape[1] >= 6:
-            t = X_pred[i, 3:6]
-            print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]  "
-                  f"tan=[{t[0]:+.3f},{t[1]:+.3f},{t[2]:+.3f}]")
-        else:
-            print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]")
+        print(
+            f"   {j:02d}: "
+            f"pos={_fmt3(p_no)} tan={_fmt_tan(t_no)}  |  "
+            f"pos={_fmt3(p_fl)} tan={_fmt_tan(t_fl)}  {tag}"
+        )
 
     # -----------------------
-    # Internal consistency check: (X_aff0 + Mc0U) vs X_pred[0]
+    # Verify executed pose is consistent with “flip-before-integrate”
     # -----------------------
-    Mc_last   = info.get("Mc_last", None)
-    X_aff_last = info.get("X_aff_last", None)
+    # Expected executed next pose depending on chosen mode:
+    p_exec0 = p_prev.copy()
+    if flip_stage0:
+        p_exec0[3:7] = _flip_q(p_exec0[3:7])
+    p_exec0 = mpc._clamp_p(p_exec0)
+    p_next_expected = mpc._clamp_p(integrate_pose8_body(p_exec0, U_seq[0], mpc.dt))
 
-    if (Mc_last is not None) and (X_aff_last is not None) and (U_seq is not None):
-        Mc_last = np.asarray(Mc_last, float)
-        X_aff_last = np.asarray(X_aff_last, float)
-        U_seq = np.asarray(U_seq, float)
-        n_out = int(getattr(mpc, "n", X_pred.shape[1]))
-        m_in  = int(getattr(mpc, "m", U_seq.shape[1] if U_seq.ndim == 2 else 7))
+    p_now_internal = np.asarray(info.get("p_now", p_now), float).copy()
+    # Note: p_now in info is after the step; compare to p_next_expected
+    dx = np.linalg.norm(p_now_internal[0:3] - p_next_expected[0:3])
+    dq = np.linalg.norm(quat_wxyz_normalize(p_now_internal[3:7]) - quat_wxyz_normalize(p_next_expected[3:7]))
 
-        U_vec = U_seq.reshape(-1, 1)                  # (Np*m,1)
-        Mc0 = Mc_last[0:n_out, :]                     # (n, Np*m)
-        x1_from_blocks = (X_aff_last[0:n_out, :] + Mc0 @ U_vec).reshape(n_out,)
+    print(f"   Exec check vs expected (flip-before-integrate): |Δpos|={1e3*dx:.3f}mm  |Δquat|={dq:.3e}")
 
-        xpred0 = X_pred[0, :n_out]
-        print("   |(X_aff0 + Mc0U) - X_pred[0]| =", float(np.linalg.norm(x1_from_blocks - xpred0)))
-
-    # -----------------------
-    # Nominal nonlinear at SQP linearization point (optional)
-    # -----------------------
-    X_nom_last = info.get("X_nom_last", None)  # typically (Np,n)
-    if X_nom_last is not None:
-        X_nom_last = np.asarray(X_nom_last, float)
-        if X_nom_last.ndim == 2 and X_nom_last.shape[0] >= 1:
-            print("   Horizon: nominal nonlinear (SQP lin point eval)")
-            for i in range(min(ph, X_nom_last.shape[0])):
-                p = X_nom_last[i, :3]
-                if X_nom_last.shape[1] >= 6:
-                    t = X_nom_last[i, 3:6]
-                    print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]  "
-                          f"tan=[{t[0]:+.3f},{t[1]:+.3f},{t[2]:+.3f}]")
-                else:
-                    print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]")
-
-    # -----------------------
-    # Nonlinear open-loop rollout following planned U_seq (optional)
-    # -----------------------
-    if do_nl_rollout and (U_seq is not None):
-        U_seq = np.asarray(U_seq, float)
-        if U_seq.ndim == 2 and np.all(np.isfinite(U_seq)):
-            p_start = info.get("p_prev", None)
-            if p_start is not None:
-                P_nl, X_nl = rollout_open_loop_from_plan_commit(mpc, p_start, U_seq)
-                print("   Horizon: NL rollout COMMIT (plant-like along planned U)")
-                ph2 = min(ph, X_nl.shape[0])
-                for i in range(ph2):
-                    p = X_nl[i, :3]
-                    if X_nl.shape[1] >= 6:
-                        t = X_nl[i, 3:6]
-                        print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]  "
-                              f"tan=[{t[0]:+.3f},{t[1]:+.3f},{t[2]:+.3f}]")
-                    else:
-                        print(f"   {i:02d}: pos=[{p[0]:+.4f},{p[1]:+.4f},{p[2]:+.4f}]")
-
-                # linear vs nonlinear horizon mismatch
-                if X_pred is not None and X_pred.shape[0] >= 1:
-                    ph3 = min(ph, X_nl.shape[0], X_pred.shape[0])
-                    e_pos_m, e_tan_deg = horizon_pred_errors(X_nl, X_pred, ph=ph3)
-                    print("   Horizon errors (NL commit rollout vs linear pred):")
-                    for i in range(ph3):
-                        print(f"   {i:02d}: pos={1e3*e_pos_m[i]:.3f}mm  tan={e_tan_deg[i]:.2f}deg")
+    # Also compare executed x_now vs the chosen rollout stage-0 output (if dimensions match)
+    x_post = np.asarray(info.get("x_now", x_now), float).ravel()
+    if x_post.size >= 3 and ph2 > 0:
+        x0_chosen = (X_fl[0] if flip_stage0 else X_no[0])
+        dx_y = np.linalg.norm(x_post[:3] - x0_chosen[:3])
+        print(f"   Output check vs chosen rollout stage0: |Δtip|={1e3*dx_y:.3f}mm")
 
     print("--------------------------------------------------------------------")
+    """C: (M,3) -> s: (M,) cumulative arc-length."""
+    C = np.asarray(C, float)
+    ds = np.linalg.norm(np.diff(C, axis=0), axis=1)
+    s = np.zeros(len(C))
+    s[1:] = np.cumsum(ds)
+    return s
 def arc_length_param(C):
     """C: (M,3) -> s: (M,) cumulative arc-length."""
     C = np.asarray(C, float)
@@ -2617,7 +2599,6 @@ def arc_length_param(C):
     s = np.zeros(len(C))
     s[1:] = np.cumsum(ds)
     return s
-
 
 def resample_polyline(C, ds_target=1e-3):
     """
@@ -2735,7 +2716,6 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
-
 def save_step_artifacts(
     *,
     k: int,
@@ -2763,7 +2743,7 @@ def save_step_artifacts(
         lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
         tip=tip_pos,
         tip_from_centerline=tip_from_centerline,
-        p_mag=p_post,                 # NEW
+        p_mag=p_now,                 # NEW
         mag_axis="x",                 # or "z" depending on how your magnet is defined
         mag_arrow_len=0.02,           # 2 cm arrow; tune for visibility
         title=f"Energy-min centreline (k={k}, i_ref={i_ref})",
@@ -2849,7 +2829,7 @@ if __name__ == "__main__":
     L0 = 0.041 
     dt=0.01
     start_point = np.array([
-    0.6781328220229531, -0.6755298925316631, -0.09 ,-3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    0.7081328220229531, -0.7055298925316631, -0.09 ,-3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], float)
     # start_point = np.array([
     #     0.8581328220229531-L0, -0.7055298925316631, -0.1,
@@ -2884,17 +2864,17 @@ if __name__ == "__main__":
     q = q0_ur
     R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])  
-    s_straight = 0.03
+    s_straight = 0.01
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.08 + s_straight,     
+        length=0.06 + s_straight,     
         n_pts=130,                      
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(40.0),
+        bend_angle=np.deg2rad(-30.0),
         bend_start=0.01 + s_straight,    
-        bend_end=0.08 + s_straight       
+        bend_end=0.06 + s_straight       
     )
     # lumen_C = make_lumen_centerline_double_turn(
     #     p0_ur, t0,
@@ -2938,9 +2918,9 @@ if __name__ == "__main__":
 
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)   # now 8D
     p_min = np.array([0.2, -1, start_point[2],  -np.inf, -np.inf, -np.inf, -np.inf, 0.03])
-    p_max = np.array([start_point[0]+0.1,  1.5,  start_point[2],  +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
+    p_max = np.array([start_point[0],  1.5,  start_point[2],  +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
     w_u = np.array([
-        1e-5, 1e-5, 1e-4,     # vx,vy,vz
+        1e-4, 1e-4, 1e-4,     # vx,vy,vz
         5e-1, 5e-1, 1e-6,     # wx,wy,wz  (encourage wz)
         1e-4                # dL
     ])    
@@ -2950,7 +2930,7 @@ if __name__ == "__main__":
     1e-8                 # dL
     ])
 
-    u_max = np.array([ 1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(90),  0.2])
+    u_max = np.array([ 1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(90),  0.5])
     dr = 2e-3          # 1 mm
     dtheta = np.deg2rad(50.0)
     dL = 1e-4          # 0.5 mm
@@ -2994,6 +2974,8 @@ if __name__ == "__main__":
     mpc.lumen_C = lumen_C
     mpc.lumen_R = lumen_R
     mpc.set_initial_params(p0)
+
+    mpc.s_path  = s_path   # <-- REQUIRED for flip rollout
     Np = mpc.Np
     p_test = p0.copy()
     # J_test = J_fn(p_test)
@@ -3009,12 +2991,12 @@ if __name__ == "__main__":
     print("Arc length (m) =", ds.sum())
     print("Expected (m)   =", 0.08 + s_straight)
     print("Mean ds (m)    =", ds.mean(), "min", ds.min(), "max", ds.max())
-    max_steps = 500       # safety limit so it doesn't run forever
+    max_steps = 5000       # safety limit so it doesn't run forever
     window = 20            # search ahead only (50mm if ds=1mm)
 
     cursor_state = {"stall": 0}
     x_prev = mpc.x[:3].copy()
-    out_root = Path("mpc_run_027")
+    out_root = Path("mpc_run_025")
     frames_dir = out_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3066,20 +3048,20 @@ if __name__ == "__main__":
         _, _, _, B0 = mpc._build_prediction_mats(p_pre, U_guess=None)
 
 
-
-        # D) Set forcing parameters for THIS solve (use last cursor info)
-        stalling = (cur_dbg["prog"] <= 1e-4)           # meters
-        near_centerline = (cur_dbg["d_now"] <= 0.010)  # meters
-
-        # force_ok = stalling and near_centerline
-        force_ok = stalling 
-
+        # D) forcing params
+        stalling = (cur_dbg["prog"] <= 1e-4)
+        near_centerline = (cur_dbg["d_now"] <= 0.010)
+        force_ok = stalling and near_centerline
         stall_cnt = int(cursor_state.get("stall", 0))
 
-        mpc.s_min_progress = (0.2e-3 if (force_ok and stall_cnt >= 4) else 0.0)
-        mpc.w_adv = (mpc.w_adv * (1.0 + 2.0 * max(0, stall_cnt - 3))) if force_ok else mpc.w_adv
+        mpc.s_min_progress = (0.2e-3 if (force_ok and stall_cnt >= 10) else 0.0)
 
-        # E) Step MPC
+        # IMPORTANT: actually affects step()
+        mpc.w_adv = (mpc.w_adv_base * (1.0 + 2.0 * max(0, stall_cnt - 3))) if force_ok else mpc.w_adv_base
+
+        mpc.i_ref_last = int(i_ref)
+
+        # E) step once
         p_post, y_post, info = mpc.step(x_meas=None)
         theta0_hist.append(float(info.get("theta0_deg", np.nan)))
         thetaMax_hist.append(float(info.get("theta_max_deg", np.nan)))
@@ -3138,11 +3120,6 @@ if __name__ == "__main__":
         # post-step tip (you already have tip_post = mpc.x[:3])
         x_post = y_post[:3].copy()
 
-        # predictive-Q sanity warning (unchanged)
-        dbg = getattr(mpc, "_dbg_last", {})
-        if isinstance(dbg, dict) and dbg.get("mpc_mode") == "predictive_Q":
-            if dbg["g_seq"][0] > 0.5 and dbg["s_tan_seq"][0] <= 1.0 + DBG.tol_q_scale:
-                dbg_print(1, "[WARN] g high but s_tan not inflated -> check q_tan_scale and Q dims (n>=6).")
 
         # --- progress diagnostics (use actual pre→post motion) ---
         print("Δtip (mm) =", 1e3 * np.linalg.norm(tip_post - tip_pre))
@@ -3181,15 +3158,15 @@ if __name__ == "__main__":
             ),
         )
 
-        debug_step_pose7_no_targets(
+        debug_step_pose7_flip_compare(
             k=k,
             p_now=p_post,
-            x_now=y_post,      # or mpc.x
+            x_now=y_post,
             info=info,
             mpc=mpc,
             i_ref=i_ref,
             print_horizon=mpc.Np,
-            do_nl_rollout=True,
+            do_mode_rollouts=True,
         )
         pred_targets = predicted_targets_from_info(info, Np=mpc.Np)  # (Np,3) = x1..xNp
         if pred_targets is None:
@@ -3204,8 +3181,7 @@ if __name__ == "__main__":
                 lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
                 targets=pred_plus_actual,
                 tip=tip_pre,
-                tip_from_centerline=(C_pre[:, -1] if C_pre is not None and C_pre.shape[0]==3 else (C_pre[-1] if C_pre is not None else None)),
-                p_mag=p_pre,
+                tip_from_centerline=C_post,
                 title=f"PRE step k={k} i_ref={i_ref} (tip_pre + actual x1 + predicted horizon)",
                 show=True,
             )
@@ -3264,36 +3240,36 @@ if __name__ == "__main__":
             plt.title("pred1_err vs Jacobian conditioning")
             plt.show()
             break
-        # if (k % 2) == 0:
-        #     theta0 = float(info.get("theta0_deg", np.nan))
-        #     g0 = float(np.asarray(info.get("g_seq", [np.nan]))[0]) if "g_seq" in info else np.nan
-        #     title = f"PRE k={k} i_ref={i_ref}  theta0={theta0:.1f}deg"
-        #     # --- PRE-step visualization: use the "pre" snapshot variables ---
-        #     plot_energy_only_3d(
-        #         C_pre,
-        #         lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
-        #         targets=pred_plus_actual,
-        #         tip=tip_pre,
-        #         tip_from_centerline=(C_pre[:, -1] if C_pre is not None and C_pre.shape[0]==3 else (C_pre[-1] if C_pre is not None else None)),
-        #         p_mag=p_pre,
-        #         title=title,
-        #         show=True,
-        #     )
-        #     pred_targets = predicted_targets_from_info(info, Np=mpc.Np)
-        #     print("tip_pre", tip_pre)
-        #     print("pred[0]", pred_targets[0])
-        #     print("tip_post", tip_post)
-        #     print("||pred[0]-tip_post|| (mm)", 1e3*np.linalg.norm(pred_targets[0]-tip_post))
-        #     plt.figure()
-        #     plt.plot(k_hist, theta0_hist, label="theta0 (deg)")
-        #     plt.plot(k_hist, thetaMax_hist, label="theta_max over horizon (deg)")
-        #     plt.axhline(40.0, linestyle="--", label="theta_crit=40deg")
-        #     plt.xlabel("k")
-        #     plt.ylabel("theta (deg)")
-        #     plt.title("Tip–vessel tangent misalignment")
-        #     plt.grid(True)
-        #     plt.legend()
-        #     plt.show()
+        if (k % 2) == 0:
+            theta0 = float(info.get("theta0_deg", np.nan))
+            g0 = float(np.asarray(info.get("g_seq", [np.nan]))[0]) if "g_seq" in info else np.nan
+            title = f"PRE k={k} i_ref={i_ref}  theta0={theta0:.1f}deg"
+            # --- PRE-step visualization: use the "pre" snapshot variables ---
+            plot_energy_only_3d(
+                C_pre,
+                lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
+                targets=pred_plus_actual,
+                tip=tip_pre,
+                tip_from_centerline=(C_pre[:, -1] if C_pre is not None and C_pre.shape[0]==3 else (C_pre[-1] if C_pre is not None else None)),
+                p_mag=p_post,
+                title=title,
+                show=True,
+            )
+            pred_targets = predicted_targets_from_info(info, Np=mpc.Np)
+            print("tip_pre", tip_pre)
+            print("pred[0]", pred_targets[0])
+            print("tip_post", tip_post)
+            print("||pred[0]-tip_post|| (mm)", 1e3*np.linalg.norm(pred_targets[0]-tip_post))
+            plt.figure()
+            plt.plot(k_hist, theta0_hist, label="theta0 (deg)")
+            plt.plot(k_hist, thetaMax_hist, label="theta_max over horizon (deg)")
+            plt.axhline(40.0, linestyle="--", label="theta_crit=40deg")
+            plt.xlabel("k")
+            plt.ylabel("theta (deg)")
+            plt.title("Tip–vessel tangent misalignment")
+            plt.grid(True)
+            plt.legend()
+            plt.show()
             # # --- histories (safe if lists exist, even if short) ---
             # K = np.asarray(k_hist)
             # pred1 = np.asarray(pred1_hist)        # meters

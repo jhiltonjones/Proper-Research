@@ -79,7 +79,7 @@ def dipole_world_dir_from_pose(qwxyz, m_body):
     return R0 @ np.asarray(m_body, float).reshape(3,)
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
-L_min_energy = 0.053
+L_min_energy = 0.01
 mag_len = beam_params.length_of_mag
 m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
 pivot_point = np.array([
@@ -91,7 +91,7 @@ pivot_point = np.array([
 # 0.6681328220229531, -0.7055298925316631, 0.1517853768068757, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
 # ], float)
 start_point = np.array([
-0.704,-0.704,-0.090 ,-3.090,-0.231,0.056
+0.6781328220229531, -0.6755298925316631, -0.09 ,-3.10153453698904, 0.024928591141737892, 0.06094868352765547
 ], float)
 
 
@@ -118,25 +118,25 @@ t0 = R0 @ np.array([-1.0, 0.0, 0.0])
 
 s_straight = 0.01
 
-lumen_C = make_lumen_centerline_turning(
-    p_start=p0_ur,
-    t0=t0,
-    length=0.06 + s_straight,     
-    n_pts=130,                      
-    bend_axis=np.array([0.0, 0.0, 1.0]),
-    bend_angle=np.deg2rad(-85.0),
-    bend_start=0.01 + s_straight,    
-    bend_end=0.06 + s_straight       
-)
-# lumen_C = make_lumen_centerline_double_turn(
-#     p0_ur, t0,
-#     length=0.08, n_pts=60,
-#     bend_axis=np.array([0., 0., 1.]),
-#     bend1_angle=np.deg2rad(90.0),
-#     bend1_start=0.01, bend1_end=0.03,
-#     bend2_angle=np.deg2rad(-90.0),
-#     bend2_start=0.03, bend2_end=0.05,  # <= length (0.08)
+# lumen_C = make_lumen_centerline_turning(
+#     p_start=p0_ur,
+#     t0=t0,
+#     length=0.06 + s_straight,     
+#     n_pts=130,                      
+#     bend_axis=np.array([0.0, 0.0, 1.0]),
+#     bend_angle=np.deg2rad(-85.0),
+#     bend_start=0.01 + s_straight,    
+#     bend_end=0.06 + s_straight       
 # )
+lumen_C = make_lumen_centerline_double_turn(
+    p0_ur, t0,
+    length=0.09, n_pts=60,
+    bend_axis=np.array([0., 0., 1.]),
+    bend1_angle=np.deg2rad(-90.0),
+    bend1_start=0.03, bend1_end=0.04,
+    bend2_angle=np.deg2rad(115.0),
+    bend2_start=0.06, bend2_end=0.07,  # <= length (0.08)
+)
 lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
 lumen_R = np.full(len(lumen_C), 0.004)
 lumen_path = lumen_C
@@ -162,7 +162,7 @@ hist = solve_quasistatic_insertion(
     r_src=r_src_ur, m_src=m_src,
     m_local_fun=model.m_local_fun, m_moment=0.0,
     lumen_C=lumen_C, lumen_R=lumen_R,
-    N=35, maxiter=70, use_lumen = True,
+    N=35, maxiter=70, use_lumen = False,
     u_init=u0
 )
 

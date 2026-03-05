@@ -638,39 +638,57 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
 def solve_quasistatic_insertion(*,
     p0, q0,
     L0, Lf, dL,
-    wire_len_fun,          # function wire_len(L) or constant
+    wire_len_fun,          # function wire_len(L_model)
     Kinv_fun, u_star,
     r_src, m_src, m_local_fun, m_moment,
     lumen_C, lumen_R,
     N=30, maxiter=200,
     u_init=None,
-    use_lumen=True
+    use_lumen=True,
+    tip_len_fun=None,      # OPTIONAL: function tip_len(L_model)
+    debug=False
 ):
     """
-    Returns history list of dicts for each step.
+    Continuation in model length L (NOT insertion length).
     """
     hist = []
     u0 = u_init
 
-    L = L0
+    L = float(L0)
+    Lf = float(Lf)
+    dL = float(dL)
+
     while L <= Lf + 1e-12:
-        wire_len = wire_len_fun(L)
+        L_model = float(L)  # <-- the loop variable is the model length
+        len_wire = float(wire_len_fun(L_model))
+
+        if tip_len_fun is None:
+            # If you don't provide one, infer tip length as remainder
+            len_tip = max(L_model - len_wire, 0.0)
+        else:
+            len_tip = float(tip_len_fun(L_model))
+
+        if debug:
+            print(f"[CONT] L_model={L_model:.3f} len_wire={len_wire:.3f} len_tip={len_tip:.3f}")
+
+        # IMPORTANT: regenerate m_local_fun per step so tip magnetisation window moves correctly
+        m_local_fun_k = make_m_local_fun_wire_tip(len_wire, len_tip=len_tip, mode="axial", eps=1e-3)
 
         p, q, u_seg, info = solve_energy_min_3d(
-            p0=p0, q0=q0, L=L,
-            wire_len=wire_len, Kinv_fun=Kinv_fun, u_star=u_star,
+            p0=p0, q0=q0, L=L_model,
+            wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
             r_src=r_src, m_src=m_src,
-            m_local_fun=m_local_fun, m_moment=m_moment,
+            m_local_fun=m_local_fun_k, m_moment=m_moment,
             N=N, u0_flat=u0, maxiter=maxiter,
             lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
-            # you can keep your continuation on k_n, mu, etc by wrapping solve_energy_min_3d
         )
 
-        hist.append(dict(L=L, p=p, q=q, info=info))
-        if not info["success"]:
+        hist.append(dict(L=L_model, p=p, q=q, info=info, len_wire=len_wire, len_tip=len_tip))
+
+        if not info.get("success", False):
             break
 
-        u0 = info["u_flat_opt"]        
+        u0 = info.get("u_flat_opt", u0)
         L += dL
 
     return hist
@@ -740,7 +758,16 @@ def integrate_pq_from_u(u_flat, *, p0, q0, s, e1=np.array([-1.0,0.0,0.0])):
         q[:, i+1] = quat_normalize(quat_mul(q[:, i], dq))
 
     return p, q, u_seg
-
+def effective_wire_and_tip(L_ins, *, L_tip_full=0.04, L_tip_stub=0.01):
+    L_ins = float(L_ins)
+    if L_ins < L_tip_full:
+        # dead-zone: only a 1cm tip, no wire
+        return 0.0, L_tip_stub, L_tip_stub   # (len_wire, len_tip, L_model)
+    else:
+        len_wire = L_ins - L_tip_full
+        len_tip  = L_tip_full
+        L_model  = len_wire + len_tip        # = L_ins
+        return len_wire, len_tip, L_model
 def precompute_K_segments(s, Kinv_fun, wire_len):
     """
     Returns K_seg: (N-1, 3, 3) stiffness per segment midpoint.
@@ -785,11 +812,19 @@ def energy_from_u(
     for i in range(len(ds)):
         du = (u_seg[i] - u_star)
         W_s += 0.5 * du @ K_seg[i] @ du * ds[i]
-
+    # m_body = np.asarray(m_local_fun(s, None), float)  # (3,N)
+    # mag_mask = np.linalg.norm(m_body, axis=0) > 1e-12
+    # if np.any(mag_mask):
+    #     print("[MAG] region s in [%.4f, %.4f], len=%.4f" % (s[mag_mask][0], s[mag_mask][-1], s[mag_mask][-1]-s[mag_mask][0]))
+    # else:
+    #     print("[MAG] no magnetisation active")
     # Magnetic field at nodes
+    # print("[DBG-energy] r_src used:", np.asarray(r_src).ravel())
+    # print("[DBG-energy] m_src used:", np.asarray(m_src).ravel())
     f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
     )  # B: (3,N)
+    
     if debug_mag:
         fz = f_mag[2, :]
         print("[DBG-MAG] fz min/max:", fz.min(), fz.max())
@@ -817,8 +852,8 @@ def energy_from_u(
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
 
-    W_total = W_s + W_m + W_g + W_cf
-
+    W_total = W_s + W_m*1.2+ W_g + W_cf
+    # W_total = W_m
     if debug_mag:
         Bnorm = np.linalg.norm(B, axis=0) + 1e-16
         mnorm = np.linalg.norm(m_world, axis=0) + 1e-16

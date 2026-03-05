@@ -191,7 +191,7 @@ plot_energy_only_3d(
     p_mag=p_mag,               # <-- ADD THIS
     mag_axis="x",              # matches your m_body = [mag_epm,0,0] convention
     mag_arrow_len=0.02,
-    title="Energy-min + Lumen", show=True
+    title="Energy-min + Lumen", show=False
 )
 # import matplotlib.pyplot as plt
 # import numpy as np

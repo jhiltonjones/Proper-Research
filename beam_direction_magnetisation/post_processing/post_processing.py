@@ -408,7 +408,7 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
                         title="Energy-min centerline", show_rings=True,
                         targets=None, tip=None, tip_from_centerline=None,
                         p_mag=None, mag_axis="x", mag_arrow_len=0.02,
-                        show_tangent_segment=True, show=False):
+                        show_tangent_segment=True, show=False, fixed_limits=None, zoom_out=1.25):
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -529,15 +529,38 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     if targets is not None: pts.append(np.asarray(targets, float))
     if lumen_others is not None:
         for item in lumen_others:
-            Cb = np.asarray(item[0], float)
-            pts.append(Cb)
+            pts.append(np.asarray(item[0], float))
     if tip is not None: pts.append(np.asarray(tip, float).reshape(1,3))
-    if p_mag is not None and np.asarray(p_mag).size >= 3: pts.append(np.asarray(p_mag[:3], float).reshape(1,3))
-    _set_axes_equal_about_data(ax, np.vstack(pts))
+    if p_mag is not None and np.asarray(p_mag).size >= 3:
+        pts.append(np.asarray(p_mag[:3], float).reshape(1,3))
+
+    P = np.vstack(pts)
+
+    # ---- FIX LIMITS ONCE ----
+    if fixed_limits is None:
+        pmin = P.min(axis=0)
+        pmax = P.max(axis=0)
+        c = 0.5*(pmin + pmax)
+        half = 0.5*np.max(pmax - pmin)
+
+        # Zoom out (1.0 = tight; 1.25 = 25% more; 2.0 = 2x bigger)
+        half *= float(zoom_out)
+
+        pmin = c - half
+        pmax = c + half
+        fixed_limits = (pmin, pmax)
+
+    # Always apply the same limits
+    pmin, pmax = fixed_limits
+    ax.set_xlim(pmin[0], pmax[0])
+    ax.set_ylim(pmin[1], pmax[1])
+    ax.set_zlim(pmin[2], pmax[2])
+    ax.set_box_aspect((1, 1, 1))
 
     if show:
         plt.show()
 
+    return fixed_limits
 def plot_error_vs_s(s, p_bvp, p_energy):
     err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
     plt.figure()

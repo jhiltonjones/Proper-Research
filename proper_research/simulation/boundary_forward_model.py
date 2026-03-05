@@ -129,7 +129,7 @@ class EnergyMinForwardWithLumen:
         def wire_len_fun(LL):
             # wire exists only after full tip is inside
             return max(float(LL) - self.L_tip_full, 0.0)
-
+        
         hist = solve_quasistatic_insertion(
             p0=self.p0_ur, q0=self.q0_ur,
             L0=L_start, Lf=L_model, dL=self.dL_internal,

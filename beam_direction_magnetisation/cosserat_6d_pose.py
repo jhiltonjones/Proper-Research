@@ -163,10 +163,14 @@ class CosseratForwardModel:
         Outputs: dict with tip pose, bending, field at tip, net F/T, profiles (optional)
         """
         m_src = dipole_from_pose(q_src, m_body)
-        sol = self.solve(L=L, r_src=r_src, m_src=m_src, wire_len=wire_len)
+        # sol = self.solve(L=L, r_src=r_src, m_src=m_src, wire_len=wire_len)
+        L_model, wire_len_model = effective_lengths(L, L_tip_full=0.04, L_tip_model=0.01)
 
+        sol = self.solve(L=L_model, r_src=r_src, m_src=m_src, wire_len=wire_len_model)
+
+        s_out = np.linspace(0.0, float(L_model), int(s_out_n))
         # Evaluate along rod for outputs
-        s_out = np.linspace(0.0, float(L), int(s_out_n))
+        # s_out = np.linspace(0.0, float(L), int(s_out_n))
         Y = sol.sol(s_out)
         p = Y[0:3, :]
         q = quat_normalize(Y[3:7, :])
@@ -211,7 +215,12 @@ class CosseratForwardModel:
         )
 
 
-
+def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_model=0.01):
+    L_ins = float(L_ins)
+    if L_ins < L_tip_full:
+        return float(L_tip_model), 0.0
+    else:
+        return float(L_ins), float(L_ins - L_tip_full)
 def quat_mul(q1, q2):
     # Hamilton product, q = q1 ⊗ q2, with q = [w,x,y,z]
     w1,x1,y1,z1 = q1

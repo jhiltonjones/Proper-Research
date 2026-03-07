@@ -59,86 +59,6 @@ def closest_point_polyline(C, x):
     i_seg = int(np.argmin(d2))
     return i_seg, float(u[i_seg]), P[i_seg], float(d2[i_seg])
 
-def tnb_from_centerline(C, i_seg, t_prev=None):
-    """
-    Build a consistent-ish TNB frame at segment i_seg using local tangent and a propagated normal.
-    - t = unit(C[i+1]-C[i])
-    - n chosen to be perpendicular to t, consistent with previous n if provided
-    - b = t x n
-    """
-    C = np.asarray(C, float)
-    t = unit(C[i_seg+1] - C[i_seg])
-
-    if t_prev is not None and np.dot(t, t_prev) < 0.0:
-        t = -t  # keep tangent direction consistent
-
-    # pick a normal: use previous if available; otherwise choose any vector not parallel to t
-    if t_prev is None or t_prev is None:
-        pass
-
-    if t_prev is None:
-        # choose a reference axis not parallel to t
-        ref = np.array([1.0, 0.0, 0.0])
-        if abs(np.dot(ref, t)) > 0.9:
-            ref = np.array([0.0, 1.0, 0.0])
-        n = unit(ref - np.dot(ref, t)*t)
-    else:
-        # propagate normal: remove component along t
-        n = t_prev  # (not correct: we need previous n; so pass prev_n in practice)
-        # If you have prev_n, use it instead.
-
-    # If you want true propagation: pass prev_n. Here's a safer approach:
-    # We'll just recompute from a fixed ref each time if you don't pass prev_n.
-    b = unit(np.cross(t, n))
-    n = unit(np.cross(b, t))
-    return t, n, b
-
-def tip_in_vessel_frame(x_tip, C, R, s_path, t_prev=None, n_prev=None):
-    """
-    Returns dict with:
-      idx_seg, u, s, c (closest point), t,n,b, x_perp,y_perp,rho, clearance, R_here
-    """
-    i_seg, u, c, d2 = closest_point_polyline(C, x_tip)
-
-    # arc-length at closest point
-    s = float(s_path[i_seg] + u * (s_path[i_seg+1] - s_path[i_seg]))
-
-    # tangent
-    t = unit(C[i_seg+1] - C[i_seg])
-    if t_prev is not None and np.dot(t, t_prev) < 0.0:
-        t = -t
-
-    # normal/binormal: propagate prev normal if given; otherwise build from fixed reference
-    if n_prev is None:
-        ref = np.array([1.0, 0.0, 0.0])
-        if abs(np.dot(ref, t)) > 0.9:
-            ref = np.array([0.0, 1.0, 0.0])
-        n = unit(ref - np.dot(ref, t)*t)
-    else:
-        n = unit(n_prev - np.dot(n_prev, t)*t)
-        if np.linalg.norm(n) < 1e-9:
-            # fallback
-            ref = np.array([0.0, 0.0, 1.0])
-            if abs(np.dot(ref, t)) > 0.9:
-                ref = np.array([0.0, 1.0, 0.0])
-            n = unit(ref - np.dot(ref, t)*t)
-
-    b = unit(np.cross(t, n))
-    n = unit(np.cross(b, t))  # re-orthonormalize
-
-    r = np.asarray(x_tip, float).reshape(3,) - np.asarray(c, float).reshape(3,)
-    x_perp = float(np.dot(n, r))
-    y_perp = float(np.dot(b, r))
-    rho = float(np.hypot(x_perp, y_perp))
-
-    # radius at this segment (linear interp if you want; simplest: take R[i_seg])
-    R_here = float(R[i_seg]) if np.ndim(R) > 0 else float(R)
-    clearance = float(R_here - rho)
-
-    return dict(
-        idx_seg=i_seg, u=u, s=s, c=c, t=t, n=n, b=b,
-        x_perp=x_perp, y_perp=y_perp, rho=rho, clearance=clearance, R=R_here
-    )
 def build_Pomega_world(p_seq, dt, Np, m=7):
     """
     Map stacked U -> stacked delta-theta in WORLD, using p_seq[j] orientation.
@@ -168,44 +88,15 @@ def dbg_print(level, *args, **kwargs):
     if DBG.level >= level:
         print(*args, **kwargs)
 
-def fmt_vec(v, prec=4):
-    v = np.asarray(v).ravel()
-    return "[" + ",".join([f"{x:+.{prec}f}" for x in v]) + "]"
 
-def assert_finite(name, arr):
-    arr = np.asarray(arr)
-    if not np.all(np.isfinite(arr)):
-        dbg_print(0, f"[FATAL] {name} has non-finite values.")
-        return False
-    return True
 def quat_wxyz_normalize(qwxyz):
     q = np.asarray(qwxyz, float).copy()
     n = np.linalg.norm(q)
     if n < 1e-12:
         return np.array([1.0, 0.0, 0.0, 0.0])
     return q / n
-def nearest_index_in_window(path, x, i_ref, window=80):
-    """Closest index to x within [i_ref, i_ref+window)."""
-    M = path.shape[0]
-    i_lo = int(np.clip(i_ref, 0, M-1))
-    i_hi = int(min(M, i_ref + window))
-    seg = path[i_lo:i_hi]
-    if seg.shape[0] == 0:
-        return M - 1
-    d2 = np.sum((seg - x.reshape(1, 3))**2, axis=1)
-    return i_lo + int(np.argmin(d2))
 
-def _angle_deg(u, v):
-    u = np.asarray(u, float).ravel()
-    v = np.asarray(v, float).ravel()
-    if u.size != 3 or v.size != 3:
-        raise ValueError(f"_angle_deg expects 3-vectors; got u.shape={u.shape}, v.shape={v.shape}")
-    un = np.linalg.norm(u)
-    vn = np.linalg.norm(v)
-    if un < 1e-12 or vn < 1e-12:
-        return np.nan
-    c = float(np.clip(np.dot(u, v) / (un * vn), -1.0, 1.0))
-    return float(np.degrees(np.arccos(c)))
+
 def horizon_pred_errors(X_nl, X_pred, ph=None):
     """
     X_nl, X_pred: (Np,6) arrays (pos xyz + tangent tx ty tz)
@@ -288,12 +179,7 @@ def update_progress_cursor_s(
         stall=int(state["stall"]),
     )
     return int(i_ref_new), state, dbg
-def unit(v, eps=1e-12):
-    v = np.asarray(v, float).ravel()
-    n = np.linalg.norm(v)
-    if n < eps:
-        return np.zeros_like(v)
-    return v / n
+
 
 def sigmoid(z):
     z = float(z)
@@ -490,22 +376,7 @@ def forward_y_live(p8):
 
     return np.hstack([x_tip, t_tip])
 forward_y_live.last_p_centerline = None
-def forward_y_det(p8):
-    import copy
-    last = copy.deepcopy(forward_model._last)
-    last_centerline = None if forward_model.last_p_centerline is None else forward_model.last_p_centerline.copy()
-    last_tip = None if forward_model.last_tip is None else forward_model.last_tip.copy()
-    last_info = copy.deepcopy(getattr(forward_model, "last_info", None))
-    last_hist = getattr(forward_model, "last_hist", None)
 
-    y = forward_y_live(p8)
-
-    forward_model._last = last
-    forward_model.last_p_centerline = last_centerline
-    forward_model.last_tip = last_tip
-    forward_model.last_info = last_info
-    forward_model.last_hist = last_hist
-    return y
 def quat_wxyz_mul(q1, q2):
     # (w,x,y,z) ⊗ (w,x,y,z)
     w1,x1,y1,z1 = q1
@@ -890,7 +761,7 @@ class mpc_controller_tipxy_LTI:
         self.x_last_meas = None
 
         # --- adaptive Q gating params ---
-        self.enable_adaptive_Q = True
+        self.enable_adaptive_Q = False
         self.sigma_m = 5e-4           # margin softness (m)
         self.delta_wall = 1e-3        # safety margin (m)
         # --- predictive wall/tangent shaping ---
@@ -904,7 +775,8 @@ class mpc_controller_tipxy_LTI:
         self.q_tan_gain = 100        # tangent inflation at wall (try 10–100)
         self.q_pos_drop = 0         # fraction to drop position weight at wall (0..0.95)
         self.q_gate_pow = 2.0         # make it kick in mostly near contact (1..4)
-        self.w_adv = 5e-5     # start tiny (1e-5 .. 1e-3)
+        self.w_adv = 1e-2    # start tiny (1e-5 .. 1e-3)
+        # self.w_adv = 0
         self.w_adv_gate_pow = 0  # optional: reduce reward near wall
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.q_pos_base = 1.0
@@ -1680,8 +1552,8 @@ class mpc_controller_tipxy_LTI:
                         dbg_terms["standoff"] = (H_standoff.copy(), f_standoff.copy())
             # ---- penalty: position inline with forward tangent + forward offset ----
             if enable_inline_eff:
-                w_lat   = float(getattr(self, "w_mag_lat_inline", 10.0))  # lateral (n,b) penalty
-                w_fwd   = float(getattr(self, "w_mag_fwd", 1.0))          # forward penalty
+                w_lat   = float(getattr(self, "w_mag_lat_inline", 3.0))  # lateral (n,b) penalty
+                w_fwd   = float(getattr(self, "w_mag_fwd", 0.0))          # forward penalty
                 s_ahead = float(getattr(self, "s_inline_ahead_m", .12))    # meters
 
                 if (w_lat > 0.0) or (w_fwd > 0.0):
@@ -1719,9 +1591,7 @@ class mpc_controller_tipxy_LTI:
                         # nearest vertex only for frame helper
                         idx = int(np.clip(i_seg + (u_seg >= 0.5), 0, Cc.shape[0]-1))
 
-                        # IMPORTANT: use a basis consistent with t_k (preferred: build from t_k)
-                        # If using forward_tnb, at least take its tangent consistently:
-                        # keep t_k from segment, then:
+
                         ref = np.array([1.0,0.0,0.0])
                         if abs(np.dot(ref, t_k)) > 0.9:
                             ref = np.array([0.0,1.0,0.0])
@@ -1763,8 +1633,8 @@ class mpc_controller_tipxy_LTI:
                         if w_fwd > 0.0:
                             H_inline_fwd = 2.0*w_fwd*(A_fwd.T @ A_fwd)
                             f_inline_fwd = 2.0*w_fwd*(A_fwd.T @ b_fwd)
-                            H += H_inline_fwd
-                            f += f_inline_fwd
+                            # H += H_inline_fwd
+                            # f += f_inline_fwd
                             if dbg_terms is not None:
                                 dbg_terms["inline_fwd"] = (H_inline_fwd.copy(), f_inline_fwd.copy())
                     if self.debug:
@@ -1843,7 +1713,6 @@ class mpc_controller_tipxy_LTI:
                     self._dipole_dbg = dict(
                         w_dipole=float(w),
                         ang_nom_deg=ang_nom_deg,
-                        # store these so we can compute an "opt" estimate if desired
                         d_body=d_body.copy(),
                         idx_k=idx_k_epm.copy(),
                         t_tar=t_tar.copy(),         # (3Np,1)
@@ -1862,7 +1731,6 @@ class mpc_controller_tipxy_LTI:
                     Sk = skew3(dk)
                     Pk = Pomega_w[3*k:3*k+3, :]   # (3,Nu)
 
-                    # sanity checks
                     assert Sk.shape == (3,3), f"Sk shape {Sk.shape}, dk={dk}"
                     assert Pk.shape == (3,Nu), f"Pk shape {Pk.shape}"
 
@@ -1877,12 +1745,10 @@ class mpc_controller_tipxy_LTI:
                     if dbg_terms is not None:
                         dbg_terms["dipole"] = (H_dip.copy(), f_dip.copy())
 
-            # -----------------------
-            # Build all U-only constraints FIRST
-            # -----------------------
+
             A_list, l_list, u_list = [], [], []
 
-            # (1) symmetric input bounds (only if finite)
+            # (1) symmetric input bounds
             if np.all(np.isfinite(self.u_max)):
                 A_u = np.eye(Np*m)
                 umax_stack = np.tile(self.u_max, Np)
@@ -1890,201 +1756,165 @@ class mpc_controller_tipxy_LTI:
                 l_list.append(-umax_stack)
                 u_list.append(+umax_stack)
 
-            # (2) dL lower bound: dL_k >= -dL_back_max
-            dL_back_max = float(getattr(self, "dL_back_max", 0.0))
+            # (2) dL lower bound
+            dL_back_max = float(getattr(self, "dL_back_max", 0.03))
             A_dL = np.zeros((Np, Np*m), float)
             for k in range(Np):
                 A_dL[k, k*m + 6] = 1.0
             A_list.append(A_dL)
             l_list.append(-dL_back_max * np.ones(Np))
             u_list.append(np.full(Np, np.inf))
-            # (3) optional minimum progress constraint: t0^T(x1-x0) >= s_min
-            s_min = float(getattr(self, "s_min_progress", 0.0))
-            if s_min > 0.0 and (t_vessel is not None):
-                x0 = xk[0:3, :]  # (3,1)
-                idx_x1 = np.array([0*n + 0, 0*n + 1, 0*n + 2], dtype=int)
-                Mc_x1 = Mc[idx_x1, :]                 # (3, Np*m)
-                x1_aff = X_aff[idx_x1, :].reshape(3, 1)
 
-                t0 = np.asarray(t_vessel[0], float).reshape(1, 3)
-                a = (t0 @ Mc_x1)                      # (1, Np*m)
-                b = float(s_min - (t0 @ (x1_aff - x0))[0, 0])
+        # -----------------------
+        # Lift to z = [U; s_prog]
+        # -----------------------
+        enable_theta_eff = bool(getattr(self, "enable_hard_theta", True)) and (t_vessel is not None)
 
-                A_list.append(a)
-                l_list.append(np.array([b], float))
-                u_list.append(np.array([+np.inf], float))
+        # threshold: 0.8 mm = 0.0008 m
+        theta_clearance_thresh_m = float(getattr(self, "theta_clearance_thresh_m", 0.8e-3))
 
-            # -----------------------
-            # OPTION A: Lift to z=[U;s] and add soft lumen constraints
-            # -----------------------
-            ns_wall = Np if enable_soft_wall_eff else 0
-            ns_prog = Np if enable_soft_progress_eff else 0
-            ns = ns_wall + ns_prog
-            Nu = Np*m
-            nz = Nu + ns
+        # nominal tip-to-wall clearance at each stage
+        clearance_m = np.full(Np, np.inf, float)
 
-            H_z = np.zeros((nz, nz), float)
-            H_z[:Nu,:Nu] = H
+        if enable_theta_eff and (self.lumen_R is not None):
+            Cc = np.asarray(self.lumen_C, float)
+            Rr = np.asarray(self.lumen_R, float).reshape(-1,)
 
-            f_z = np.zeros((nz, 1), float)
-            f_z[:Nu,:] = f
+            for k in range(Np):
+                x_tip_k = X_nom[k*n:k*n+3, 0].reshape(3,)
 
-            # ---- wall slack penalty (adaptive per stage) ----
-            if ns_wall > 0:
-                g_wall = np.asarray(g_seq, float).reshape(Np,)
-                theta  = np.asarray(theta_seq, float).reshape(Np,)
+                i_seg, u_seg, c_closest, _ = closest_point_polyline(Cc[:, :3], x_tip_k)
+                i_seg = int(np.clip(i_seg, 0, Cc.shape[0] - 2))
 
-                theta_crit = float(self.theta_crit_deg)
-                theta_band = float(getattr(self, "theta_gate_band_deg", 5.0))
-                g_theta = 1.0 / (1.0 + np.exp(-(theta - theta_crit) / max(theta_band, 1e-6)))
+                rho_k = float(np.linalg.norm(x_tip_k - c_closest.reshape(3,)))
 
-                p = float(getattr(self, "wall_gate_pow", 2.0))
-                q = float(getattr(self, "theta_gate_pow", 2.0))
-                gate = (g_wall**p) * (g_theta**q)
+                idx_v = int(np.clip(i_seg + (u_seg >= 0.5), 0, Rr.shape[0] - 1))
+                R_k = float(Rr[idx_v])
 
-                w_min = float(getattr(self, "w_slack_wall_min", 1e2))
-                w_max = float(getattr(self, "w_slack_wall_max", self.w_slack_wall))
-                w_stage = w_min + (w_max - w_min) * gate
+                clearance_m[k] = R_k - rho_k
 
-                H_z[Nu:Nu+ns_wall, Nu:Nu+ns_wall] = 2.0 * np.diag(w_stage)
+            hard_theta_mask = (clearance_m < theta_clearance_thresh_m)
+        else:
+            hard_theta_mask = np.zeros(Np, dtype=bool)
 
-            # ---- progress slack penalty (unchanged, independent) ----
-            if ns_prog > 0:
-                i0 = Nu + ns_wall
-                H_z[i0:i0+ns_prog, i0:i0+ns_prog] = 2.0 * self.w_slack_prog * np.eye(ns_prog)
+        ns_prog = Np if enable_soft_progress_eff else 0
+        ns = ns_prog
 
-            # nonnegativity of slacks
-            # s_wall >= 0
-            # s_prog >= 0
+        Nu = Np * m
+        nz = Nu + ns
+
+        # objective
+        H_z = np.zeros((nz, nz), float)
+        H_z[:Nu, :Nu] = H
+
+        f_z = np.zeros((nz, 1), float)
+        f_z[:Nu, :] = f
+
+        if ns_prog > 0:
+            i0 = Nu
+            H_z[i0:i0+ns_prog, i0:i0+ns_prog] = 2.0 * float(self.w_slack_prog) * np.eye(ns_prog)
+
+        # existing hard constraints
+        if A_list:
+            A_osqp = np.vstack([_pad_A(Ai, nz, Nu) for Ai in A_list])
+            l_osqp = np.concatenate(l_list).astype(float)
+            u_osqp = np.concatenate(u_list).astype(float)
+        else:
+            A_osqp = np.zeros((0, nz), float)
+            l_osqp = np.zeros(0, float)
+            u_osqp = np.zeros(0, float)
+
+        # slack nonnegativity for prog slack only
+        if ns > 0:
             A_s = np.zeros((ns, nz), float)
             A_s[:, Nu:] = np.eye(ns)
-            l_s = np.zeros(ns)
-            u_s = np.full(ns, np.inf)
-            # stack existing constraints (pad to nz if needed)
-            if A_list:
-                A_osqp = np.vstack([_pad_A(Ai, nz, Nu) for Ai in A_list])
-                l_osqp = np.concatenate(l_list).astype(float)
-                u_osqp = np.concatenate(u_list).astype(float)
-            else:
-                A_osqp = np.zeros((0, nz), float)
-                l_osqp = np.zeros(0, float)
-                u_osqp = np.zeros(0, float)
+            A_osqp = np.vstack([A_osqp, A_s])
+            l_osqp = np.concatenate([l_osqp, np.zeros(ns)])
+            u_osqp = np.concatenate([u_osqp, np.full(ns, np.inf)])
 
-            # slack nonnegativity: s >= 0
-            if ns > 0:
-                A_s = np.zeros((ns, nz), float)
-                A_s[:, Nu:] = np.eye(ns)
-                A_osqp = np.vstack([A_osqp, A_s])
-                l_osqp = np.concatenate([l_osqp, np.zeros(ns)])
-                u_osqp = np.concatenate([u_osqp, np.full(ns, np.inf)])
+        # -----------------------
+        # HARD angle constraint only when clearance < 0.8 mm
+        # -----------------------
+        if np.any(hard_theta_mask):
+            theta_max_deg = float(getattr(self, "theta_max_deg", 40.0))
+            cos_max = float(np.cos(np.deg2rad(theta_max_deg)))
 
-            # lumen soft margin constraints: aU*U + s_k >= -mbar_k
-            if ns_wall > 0:
-                risk = getattr(self, "_risk_last", None)
-                if risk is None:
-                    risk = predictive_risk_along_horizon(
-                        Y_seq=Y_nom,
-                        lumen_C=self.lumen_C,
-                        lumen_R=self.lumen_R,
-                        i_ref=int(getattr(self, "i_ref_last", 0)),
-                        window=int(self.risk_window),
-                        delta=float(self.delta_wall),
-                        sigma_m=float(self.sigma_m),
-                        theta_crit_deg=float(self.theta_crit_deg),
-                    )
-                    self._risk_last = risk
+            active_k = np.flatnonzero(hard_theta_mask)
+            A_theta = np.zeros((active_k.size, nz), float)
+            l_theta = np.full(active_k.size, -np.inf, float)
+            u_theta = np.full(active_k.size, +np.inf, float)
 
-                idx_k = np.asarray(risk["idx_k"], int)
-                Cc = np.asarray(self.lumen_C, float)
-                Rr = np.asarray(self.lumen_R, float)
+            for row, k in enumerate(active_k):
+                tv = np.asarray(t_vessel[k], float).reshape(3,)
+                tv /= (np.linalg.norm(tv) + 1e-12)
 
-                soft_wall_delta = float(getattr(self, "soft_wall_delta", getattr(self, "delta_wall", 5e-4)))
-                soft_eps = float(getattr(self, "soft_margin_eps", 1e-9))
+                rows_t = np.array([k*n + 3, k*n + 4, k*n + 5], dtype=int)
+                Mc_tk = Mc[rows_t, :]
+                t_aff = X_aff[rows_t, 0].reshape(3,)
 
-                A_marg = np.zeros((Np, nz), float)
-                l_marg = np.full(Np, -np.inf, float)
-                u_marg = np.full(Np, +np.inf, float)
+                aU = (tv.reshape(1, 3) @ Mc_tk).reshape(-1)
+                b = float(cos_max - (tv @ t_aff))
 
-                for kcon in range(Np):
-                    # affine predicted position at stage k
-                    xbar = np.asarray(X_nom[kcon*n:kcon*n+3, 0], float)
+                A_theta[row, :Nu] = aU
+                l_theta[row] = b
+                u_theta[row] = np.inf
 
-                    ik = int(idx_k[kcon])
-                    tv = centerline_tangent(Cc, ik)
-                    c = Cc[ik]
-                    r = xbar - c
-                    r_perp = r - (r @ tv) * tv
-                    d = float(np.linalg.norm(r_perp))
+            A_osqp = np.vstack([A_osqp, A_theta])
+            l_osqp = np.concatenate([l_osqp, l_theta])
+            u_osqp = np.concatenate([u_osqp, u_theta])
 
-                    # margin at linearization point
-                    mbar = float((Rr[ik] - soft_wall_delta) - d)
+        if self.debug:
+            self._theta_dbg = dict(
+                clearance_m=clearance_m.copy(),
+                clearance_mm=1e3 * clearance_m.copy(),
+                hard_theta_mask=hard_theta_mask.copy(),
+                theta_clearance_thresh_m=float(theta_clearance_thresh_m),
+                theta_clearance_thresh_mm=1e3 * float(theta_clearance_thresh_m),
+            )
+            # # --- progress soft constraints (unchanged, but slack index shifts by ns_theta) ---
+            # if ns_prog > 0 and (t_vessel is not None) and (s_des_eff_local > 0.0):
 
-                    # dm/dx = -u_perp where u_perp is outward unit direction in cross-section
-                    if d < soft_eps:
-                        u_perp = np.zeros(3)
-                    else:
-                        u_perp = r_perp / d
-                    dm_dx = (-u_perp).reshape(1, 3)  # (1,3)
+            #     idx_pos = _pos_row_idx(n, Np)
+            #     Mc_pos = Mc[idx_pos, :]                 # (3Np, Nu)
+            #     Xaff_pos = X_aff[idx_pos, :].reshape(3*Np, 1)
 
-                    Mc_k = _Mc_pos_stage(Mc, n, m, Np, kcon)  # (3, Nu)
-                    aU = (dm_dx @ Mc_k).reshape(-1)          # (Nu,)
+            #     D1_inc = np.zeros((Np, Np))
+            #     D1_inc[0, 0] = +1.0
+            #     for k in range(1, Np):
+            #         D1_inc[k, k-1] = -1.0
+            #         D1_inc[k, k]   = +1.0
+            #     Dpos = np.kron(D1_inc, np.eye(3))      # (3Np,3Np)
 
-                    A_marg[kcon, :Nu] = aU
-                    A_marg[kcon, Nu + kcon] = 1.0    # wall slack
-                    l_marg[kcon] = -mbar
+            #     x_now = xk[0:3, :].reshape(3,1)
+            #     b0 = np.zeros((3*Np,1))
+            #     b0[0:3,:] = -x_now
 
-                A_osqp = np.vstack([A_osqp, A_marg])
-                l_osqp = np.concatenate([l_osqp, l_marg])
-                u_osqp = np.concatenate([u_osqp, u_marg])
+            #     A_dX = Dpos @ Mc_pos                   # (3Np, Nu)
+            #     dX_aff = Dpos @ Xaff_pos + b0          # (3Np,1)
 
-            # final dimension sanity
-            assert A_osqp.shape[1] == nz
-            assert H_z.shape[0] == H_z.shape[1] == nz
-            if ns_prog > 0 and (t_vessel is not None):
+            #     A_prog = np.zeros((Np, nz), float)
+            #     l_prog = np.full(Np, -np.inf, float)
+            #     u_prog = np.full(Np, +np.inf, float)
 
-                if s_des_eff_local > 0.0:
-                    # stacked affine positions
-                    idx_pos = _pos_row_idx(n, Np)
-                    Mc_pos = Mc[idx_pos, :]                 # (3Np, Nu)
-                    Xaff_pos = X_aff[idx_pos, :].reshape(3*Np, 1)
+            #     for k in range(Np):
+            #         tk = np.asarray(t_v[k], float).reshape(1,3)
+            #         rows = slice(3*k, 3*k+3)
 
-                    # increments operator (same as you use for reward)
-                    D1_inc = np.zeros((Np, Np))
-                    D1_inc[0, 0] = +1.0
-                    for k in range(1, Np):
-                        D1_inc[k, k-1] = -1.0
-                        D1_inc[k, k]   = +1.0
-                    Dpos = np.kron(D1_inc, np.eye(3))      # (3Np,3Np)
+            #         aU = (tk @ A_dX[rows, :]).reshape(-1)
+            #         b  = float(s_des_eff_local - (tk @ dX_aff[rows, :])[0, 0])
 
-                    # BUT stage 0 should be x1 - x_now, not x1 - 0
-                    x_now = xk[0:3, :].reshape(3,1)
-                    b0 = np.zeros((3*Np,1))
-                    b0[0:3,:] = -x_now
+            #         A_prog[k, :Nu] = aU
+            #         A_prog[k, Nu + ns_theta + k] = 1.0   # s_prog[k] after theta slacks
+            #         l_prog[k] = b
+            #         u_prog[k] = np.inf
 
-                    # Δx(U) = Dpos*(Xaff_pos + Mc_pos U) + b0
-                    A_dX = Dpos @ Mc_pos                   # (3Np, Nu)
-                    dX_aff = Dpos @ Xaff_pos + b0          # (3Np,1)
+            #     A_osqp = np.vstack([A_osqp, A_prog])
+            #     l_osqp = np.concatenate([l_osqp, l_prog])
+            #     u_osqp = np.concatenate([u_osqp, u_prog])
 
-                    # build constraints: t_k^T Δx_k + p_k >= s_des
-                    A_prog = np.zeros((Np, nz), float)
-                    l_prog = np.full(Np, -np.inf, float)
-                    u_prog = np.full(Np, +np.inf, float)
-
-                    for k in range(Np):
-                        tk = np.asarray(t_v[k], float).reshape(1,3)
-
-                        rows = slice(3*k, 3*k+3)
-                        aU = (tk @ A_dX[rows, :]).reshape(-1)         # (Nu,)
-                        b  = float(s_des_eff_local - (tk @ dX_aff[rows,:])[0,0])
-
-                        A_prog[k, :Nu] = aU
-                        # progress slack index: Nu + ns_wall + k
-                        A_prog[k, Nu + ns_wall + k] = 1.0
-                        l_prog[k] = b
-
-                    A_osqp = np.vstack([A_osqp, A_prog])
-                    l_osqp = np.concatenate([l_osqp, l_prog])
-                    u_osqp = np.concatenate([u_osqp, u_prog])
+            # # final sanity
+            # assert A_osqp.shape[1] == nz
+            # assert H_z.shape[0] == H_z.shape[1] == nz
 
             # -----------------------
             # Solve QP in z-space (or U-space if ns=0)
@@ -2093,9 +1923,34 @@ class mpc_controller_tipxy_LTI:
             if (U_opt_vec is not None) and (ns > 0):
                 Z_warm = np.zeros(nz, float)
                 Z_warm[:Nu] = U_opt_vec.copy()
-
+            # if self.debug:
+            #     _print_osqp_constraints(A_osqp, l_osqp, u_osqp,
+            #                             Nu=Nu, ns_theta=ns_theta, ns_prog=ns_prog,
+            #                             m=m, Np=Np, max_rows=120)
             Z_opt, _, status = solve_qp_osqp(H_z, f_z.ravel(), A_osqp, l_osqp, u_osqp, U_warm=Z_warm)
             status_last = status
+            # if self.debug and ns_theta > 0 and status in ("solved","solved inaccurate") and Z_opt is not None:
+            #     U_vec = np.asarray(Z_opt[:Nu], float).reshape(Nu,1)
+
+            #     k = 0
+            #     tv = np.asarray(t_vessel[k], float).reshape(3,)
+            #     tv /= (np.linalg.norm(tv) + 1e-12)
+
+            #     rows_t = np.array([k*n+3, k*n+4, k*n+5], dtype=int)
+            #     t_pred = (X_aff[rows_t, :].reshape(3,1) + Mc[rows_t, :] @ U_vec).reshape(3,)
+            #     t_norm = float(np.linalg.norm(t_pred))
+            #     t_hat  = t_pred / (t_norm + 1e-12)
+
+            #     cos_raw = float(tv @ t_pred)
+            #     cos_hat = float(tv @ t_hat)
+            #     ang_hat = float(np.degrees(np.arccos(np.clip(cos_hat, -1.0, 1.0))))
+
+            #     s_theta0 = float(Z_opt[Nu + k])
+            #     cos_max = float(np.cos(np.deg2rad(theta_max_deg)))
+            #     resid_needed = max(0.0, cos_max - cos_hat)
+
+            #     print(f"[THETA_CHECK] ||t_pred||={t_norm:.3f}  cos_raw={cos_raw:.3f}  cos_hat={cos_hat:.3f}  ang_hat={ang_hat:.2f}deg")
+            #     print(f"[THETA_CHECK] cos_max={cos_max:.3f}  needed_slack={resid_needed:.3e}  s_theta={s_theta0:.3e}")
             # ---- DEBUG print standoff distances at the QP solution ----
             if getattr(self, "_standoff_dbg", None) is not None and self.debug:
                 dbg = self._standoff_dbg
@@ -2106,7 +1961,6 @@ class mpc_controller_tipxy_LTI:
                 r0_stack_dbg = dbg["r0_stack"]
                 d_nom = dbg["d_nom"]
 
-            # Only update history/debug if we actually got a solution vector
             if status in ("solved", "solved inaccurate") and (Z_opt is not None):
 
                 # extract U (needed for any magnet trajectory debug)
@@ -2181,22 +2035,22 @@ class mpc_controller_tipxy_LTI:
                         )
                     print("[STANDOFF] idx_k:", idx_k_dbg.tolist())
                     print("[STANDOFF] Ck[0]:", Ck[0], "Ck[-1]:", Ck[-1])
-            if status in ("solved","solved inaccurate") and Z_opt is not None and self.debug:
-                self._debug_objective_breakdown(
-                    Z_opt=Z_opt,
-                    H_z=H_z,
-                    f_z=f_z,
-                    Nu=Nu,
-                    ns_wall=ns_wall,
-                    ns_prog=ns_prog,
-                    Rtil=Rtil,
-                    H_du=H_du,
-                    w_slack_wall=self.w_slack_wall if ns_wall > 0 else None,
-                    w_slack_prog=self.w_slack_prog if ns_prog > 0 else None,
-                    w_adv_eff=w_adv_eff if "w_adv_eff" in locals() else None,
-                    g_adv=g_adv if "g_adv" in locals() else None,
-                    overhead_terms=None,  # optional
-                )
+            # if status in ("solved","solved inaccurate") and Z_opt is not None and self.debug:
+            #     self._debug_objective_breakdown(
+            #         Z_opt=Z_opt,
+            #         H_z=H_z,
+            #         f_z=f_z,
+            #         Nu=Nu,
+            #         ns_wall=ns_wall,
+            #         ns_prog=ns_prog,
+            #         Rtil=Rtil,
+            #         H_du=H_du,
+            #         w_slack_wall=self.w_slack_wall if ns_wall > 0 else None,
+            #         w_slack_prog=self.w_slack_prog if ns_prog > 0 else None,
+            #         w_adv_eff=w_adv_eff if "w_adv_eff" in locals() else None,
+            #         g_adv=g_adv if "g_adv" in locals() else None,
+            #         overhead_terms=None,  # optional
+            #     )
             if status in ("solved", "solved inaccurate") and (Z_opt is not None):
                 if ns > 0:
                     U_opt_vec = Z_opt[:Nu].copy()
@@ -2207,9 +2061,9 @@ class mpc_controller_tipxy_LTI:
                 U_opt_vec = None
 
             infeas = (U_opt_vec is None)
-            if infeas:
-                U_guess = np.zeros((Np, m))
-                break
+            # if infeas:
+            #     U_guess = np.zeros((Np, m))
+            #     break
 
             # update SQP iterate
             U_guess = U_opt_vec.reshape(Np, m)
@@ -2355,13 +2209,13 @@ class mpc_controller_tipxy_LTI:
                 f"clear={1e3*clearance:.2f}mm" if np.isfinite(clearance) else
                 f"[TIP×VESSEL] seg={i_seg} u={u_seg:.2f} angle={ang:.2f}deg rho={1e3*rho:.2f}mm"
             )
-        if status in ("solved", "solved inaccurate") and Z_opt is not None and self.debug:
-            term_vals = self._eval_qp_terms(
-                z=Z_opt, Nu=Nu, dbg_terms=dbg_terms,
-                ns_wall=ns_wall, ns_prog=ns_prog
-            )
-            self._cost_terms_last = term_vals.copy()
-            print("[COST_TERMS]", {k: (float(v) if np.isfinite(v) else v) for k, v in term_vals.items() if k.startswith("J_")})
+        # if status in ("solved", "solved inaccurate") and Z_opt is not None and self.debug:
+        #     term_vals = self._eval_qp_terms(
+        #         z=Z_opt, Nu=Nu, dbg_terms=dbg_terms,
+        #         ns_wall=ns_wall, ns_prog=ns_prog
+        #     )
+        #     self._cost_terms_last = term_vals.copy()
+        #     print("[COST_TERMS]", {k: (float(v) if np.isfinite(v) else v) for k, v in term_vals.items() if k.startswith("J_")})
         info["X_base"] = (Mx @ xk).reshape(Np, n).copy()
         if self.debug and hasattr(self, "_inline_dbg"):
             idbg = self._inline_dbg
@@ -2453,7 +2307,75 @@ class mpc_controller_tipxy_LTI:
             info["theta0_deg"] = info_theta0
             info["theta_max_deg"] = info_thetamax
         return self.p.copy(), self.x.copy(), info
+def _print_osqp_constraints(A, l, u, Nu, ns_theta, ns_prog, m, Np, max_rows=80):
+    import numpy as np
 
+    A = np.asarray(A)
+    l = np.asarray(l).reshape(-1)
+    u = np.asarray(u).reshape(-1)
+    nz = A.shape[1]
+
+    def var_name(j):
+        if j < Nu:
+            k = j // m
+            r = j % m
+            names = ["vx","vy","vz","wx","wy","wz","dL"]
+            return f"U[{k},{names[r]}]"
+        j2 = j - Nu
+        if j2 < ns_theta:
+            return f"s_theta[{j2}]"
+        j3 = j2 - ns_theta
+        if j3 < ns_prog:
+            return f"s_prog[{j3}]"
+        return f"s[{j2}]"
+
+    # quick sanity
+    bad_bounds = np.where(l > u)[0]
+    if bad_bounds.size:
+        print("[CONSTR] ERROR: some rows have l>u:", bad_bounds[:10], "...")
+    if np.any(~np.isfinite(A)):
+        ii = np.argwhere(~np.isfinite(A))
+        print("[CONSTR] ERROR: A has non-finite entries, first few:", ii[:10])
+    if np.any(~np.isfinite(l)) or np.any(~np.isfinite(u)):
+        print("[CONSTR] WARN: non-finite bounds exist (expected for +/-inf).")
+
+    print(f"\n[CONSTR] A shape={A.shape}, nz={nz}, Nu={Nu}, ns_theta={ns_theta}, ns_prog={ns_prog}")
+    print("[CONSTR] Row format:  l <= sum(a_j * z_j) <= u  (showing nonzeros)")
+
+    nrows = A.shape[0]
+    show = min(nrows, max_rows)
+    for i in range(show):
+        row = A[i, :]
+        nz_idx = np.flatnonzero(np.abs(row) > 1e-12)
+        # keep it readable
+        if nz_idx.size > 12:
+            nz_idx = nz_idx[:12]
+            suffix = " ...(+more)"
+        else:
+            suffix = ""
+        terms = " + ".join([f"({row[j]:+.3g})*{var_name(j)}" for j in nz_idx])
+        if terms == "":
+            terms = "0"
+        li = l[i]
+        ui = u[i]
+        print(f"  row {i:04d}:  {li:+.3g} <= {terms}{suffix} <= {ui:+.3g}")
+
+    if nrows > show:
+        print(f"  ... {nrows-show} more rows not shown\n")
+
+    # categorize expected blocks (based on your stacking order)
+    # input bounds: Np*m rows
+    # dL bounds: Np rows
+    # slack nonnegativity: ns rows
+    n_u = Np*m
+    n_dL = Np
+    n_s = ns_theta + ns_prog
+
+    print("[CONSTR] Expected block sizes:")
+    print(f"  input bounds rows: {n_u}")
+    print(f"  dL lower-bound rows: {n_dL}")
+    print(f"  slack nonneg rows: {n_s}")
+    print(f"  remaining (theta/prog) rows: {nrows - (n_u + n_dL + n_s)}")
 
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     p8 = np.asarray(p8, float).ravel()
@@ -2992,14 +2914,15 @@ if __name__ == "__main__":
     0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], float)
 
-    L0 = 0.04
+    L0 = 0.032
     dt=0.01
     start_point = np.array([
     0.7181328220229531, -0.7055298925316631, -0.09 ,-3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], float)
+    
     # start_point = np.array([
-    #     .699, -0.836, -0.09,
-    #     -2.683,-1.529,+0.024
+    #     0.760,-0.831 ,-0.090,
+    #     -2.948,-0.941,+0.160
     # ], float)
     dt=0.01
     # t = start_point[:3]
@@ -3030,39 +2953,22 @@ if __name__ == "__main__":
     q = q0_ur
     R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])  
-    s_straight = 0.04
+    s_straight = 0.03
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.05 + s_straight,     
+        length=0.06 + s_straight,     
         n_pts=130,                      
         bend_axis=np.array([0.0, 0.0, 1.0]),
         bend_angle=np.deg2rad(90.0),
         bend_start=0.0 + s_straight,    
         bend_end=0.03 + s_straight       
     )
-    #     lumen_C = make_lumen_centerline_double_turn(
-    #     p0_ur, t0,
-    #     length=0.05, n_pts=60,
-    #     bend_axis=np.array([0., 0., 1.]),
-    #     bend1_angle=np.deg2rad(-90.0),
-    #     bend1_start=0.015, bend1_end=0.025,
-    #     bend2_angle=np.deg2rad(110.0),
-    #     bend2_start=0.03, bend2_end=0.04,  # <= length (0.08)
-    # )
-    # lumen_C = make_lumen_centerline_double_turn(
-    #     p0_ur, t0,
-    #     length=0.09, n_pts=60,
-    #     bend_axis=np.array([0., 0., 1.]),
-    #     bend1_angle=np.deg2rad(90.0),
-    #     bend1_start=0.02, bend1_end=0.04,
-    #     bend2_angle=np.deg2rad(-110.0),
-    #     bend2_start=0.05, bend2_end=0.07,  # <= length (0.08)
-    # )
+
 
     lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.0027)
+    lumen_R = np.full(len(lumen_C), 0.005)
     lumen_path = lumen_C
 
     forward_model = EnergyMinForwardWithLumen(
@@ -3124,8 +3030,8 @@ if __name__ == "__main__":
         p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
     )
 
-    w_pos_x = 10.0
-    w_pos_y = 10.0  
+    w_pos_x = 100.0
+    w_pos_y = 100.0  
     w_pos_z = 0.0
     w_tan   = 0.001
 
@@ -3171,7 +3077,7 @@ if __name__ == "__main__":
 
     cursor_state = {"stall": 0}
     x_prev = mpc.x[:3].copy()
-    out_root = Path("mpc_run_test_90_contact")
+    out_root = Path("mpc_run_130")
     frames_dir = out_root / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3223,7 +3129,7 @@ if __name__ == "__main__":
         mpc.mode = "lti"
 
         # mpc.enable_soft_wall = False
-        # mpc.enable_soft_progress = False
+        mpc.enable_soft_progress = False
 
         # mpc.w_adv = 0.0
         mpc.enable_mag_center_standoff = True
@@ -3450,10 +3356,10 @@ if __name__ == "__main__":
             ax1.legend(handles=[l1, l2], loc="best")
             plt.title("pred1_err vs Jacobian conditioning")
             plt.show()
-            lumen_C = np.load("mpc_run_bc_centreline_80_debug/lumen_C.npy")
-            lumen_R = np.load("mpc_run_bc_centreline_80_debug/lumen_R.npy")
-            summary, series = analyze_run("mpc_run_bc_centreline_80_debug/log.csv", lumen_C, lumen_R, dt=0.01)
-            print(summary)
+            # lumen_C = np.load("mpc_run_bc_centreline_80_debug/lumen_C.npy")
+            # lumen_R = np.load("mpc_run_bc_centreline_80_debug/lumen_R.npy")
+            # summary, series = analyze_run("mpc_run_bc_centreline_80_debug/log.csv", lumen_C, lumen_R, dt=0.01)
+            # print(summary)
             break
         # if (k % 2) == 0:
         #     theta0 = float(info.get("theta0_deg", np.nan))

@@ -1,13 +1,19 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
-
+import copy
 from beam_direction_magnetisation.cosserat_w_minimal_energy import (
     dipole_from_pose, solve_quasistatic_insertion
 )
 from beam_direction_magnetisation.magnetism.beam_geometry import make_m_local_fun_wire_tip
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_to_rotvec, unit
+def pose8_quat_to_pose7_rotvec(p8):
+    p8 = np.asarray(p8, float).ravel()
+    t = p8[0:3]
+    q = p8[3:7]
+    L = p8[7]
+    rvec = quat_wxyz_to_rotvec(q)
+    return np.array([t[0], t[1], t[2], rvec[0], rvec[1], rvec[2], L], float)
 
-# You already have: unpack_pose_ur_rotvec_L(p)
-# and wire_len_from_L(L, L_mag)
 def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
     """
     L_ins      : commanded insertion (what MPC tracks)
@@ -167,3 +173,89 @@ class EnergyMinForwardWithLumen:
         # print("[DBG-fwd] r_src:", r_src, "L_ins:", L_ins, "tip:", tip)
 
         return tip
+class DeterministicForward6D:
+    """
+    Wraps EnergyMinForwardWithLumen to guarantee:
+      - within a step: all evals start from identical internal state
+      - optional commit at end of step updates the baseline warm-start
+    Returns y = [tip_xyz(3), tip_tangent(3)].
+    """
+
+    def __init__(self, forward_model):
+        self.fm = forward_model
+        self._base = None  # snapshot used within current step
+        self.last_p_centerline = None
+        self.last_tip = None
+
+    def _snapshot(self):
+        fm = self.fm
+        return dict(
+            _last=copy.deepcopy(getattr(fm, "_last", None)),
+            last_p_centerline=None if fm.last_p_centerline is None else fm.last_p_centerline.copy(),
+            last_tip=None if fm.last_tip is None else fm.last_tip.copy(),
+            last_info=copy.deepcopy(getattr(fm, "last_info", None)),
+            last_hist=getattr(fm, "last_hist", None),  # might be big; shallow is fine unless you mutate it
+        )
+
+    def _restore(self, snap):
+        fm = self.fm
+        fm._last = copy.deepcopy(snap["_last"])
+        fm.last_p_centerline = None if snap["last_p_centerline"] is None else snap["last_p_centerline"].copy()
+        fm.last_tip = None if snap["last_tip"] is None else snap["last_tip"].copy()
+        fm.last_info = copy.deepcopy(snap["last_info"])
+        fm.last_hist = snap["last_hist"]
+
+    def start_step(self):
+        """Freeze the forward model warm-start state for this MPC step."""
+        self._base = self._snapshot()
+
+    def _eval_pose8_once(self, p8):
+        """Evaluate forward model ONCE and build 6D y."""
+        p7 = pose8_quat_to_pose7_rotvec(p8)
+        # print("p8.L", p8[7], "p7.L", p7[6])
+        # print("[DBG] p7.L =", float(np.asarray(p7).ravel()[6]))
+        tip = self.fm(p7)  # should set fm.last_tip + fm.last_p_centerline
+        x_tip = np.asarray(tip if tip is not None else self.fm.last_tip, float).reshape(3,)
+
+        C = self.fm.last_p_centerline
+        self.last_p_centerline = None if C is None else np.asarray(C, float).copy()
+        self.last_tip = x_tip.copy()
+
+        # tangent from end of centerline
+        if self.last_p_centerline is None:
+            t_tip = np.array([1.0, 0.0, 0.0], float)
+        else:
+            Cc = self.last_p_centerline
+            if Cc.shape[0] == 3:
+                p_end, p_prev = Cc[:, -1], Cc[:, -2]
+            else:
+                p_end, p_prev = Cc[-1, :], Cc[-2, :]
+            t_tip = unit(p_end - p_prev)
+            if np.linalg.norm(t_tip) < 1e-12:
+                t_tip = np.array([1.0, 0.0, 0.0], float)
+
+        return np.hstack([x_tip, t_tip])
+
+    def __call__(self, p8, *, commit=False):
+        """
+        If commit=False: PURE evaluation (restores base before+after).
+        If commit=True : updates base to post-eval (use for plant update once per step).
+        """
+        if self._base is None:
+            # if user forgot, define a baseline anyway
+            self._base = self._snapshot()
+
+        # Always start from the step baseline
+        self._restore(self._base)
+        y = self._eval_pose8_once(p8)
+
+        if commit:
+            # adopt the new solver state as baseline for next calls/next step
+            self._base = self._snapshot()
+        else:
+            # restore baseline so subsequent calls are identical
+            self._restore(self._base)
+
+        # also mirror attributes for MPC consumption
+        self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
+        return y

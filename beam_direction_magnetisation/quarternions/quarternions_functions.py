@@ -52,3 +52,44 @@ def T_to_p_quat_wxyz(T):
     q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
     q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
     return p, q_wxyz
+def quat_wxyz_normalize(qwxyz):
+    q = np.asarray(qwxyz, float).copy()
+    n = np.linalg.norm(q)
+    if n < 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0])
+    return q / n
+def quat_wxyz_mul(q1, q2):
+    # (w,x,y,z) ⊗ (w,x,y,z)
+    w1,x1,y1,z1 = q1
+    w2,x2,y2,z2 = q2
+    return np.array([
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2
+    ], float)
+def rotvec_to_quat_wxyz(rvec):
+    r = Rot.from_rotvec(np.asarray(rvec, float))
+    q_xyzw = r.as_quat()  # [x,y,z,w]
+    return np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+
+def quat_wxyz_to_rotvec(qwxyz):
+    qw, qx, qy, qz = quat_wxyz_normalize(qwxyz)
+    r = Rot.from_quat([qx, qy, qz, qw])  # xyzw
+    return r.as_rotvec()
+
+def small_rot_quat_wxyz(dphi):
+    # dphi is a small rotation vector in radians (axis*angle)
+    dphi = np.asarray(dphi, float).ravel()
+    a = np.linalg.norm(dphi)
+    if a < 1e-12:
+        return np.array([1.0, 0.0, 0.0, 0.0], float)
+    axis = dphi / a
+    half = 0.5 * a
+    return np.array([np.cos(half), *(np.sin(half) * axis)], float)
+def unit(v, eps=1e-12):
+    v = np.asarray(v, float).reshape(-1)
+    n = np.linalg.norm(v)
+    return v / (n + eps)
+
+

@@ -817,3 +817,53 @@ def closest_point_on_segment(p, a, b):
     t = np.clip(t, 0.0, 1.0)
     q = a + t * ab
     return q, t
+
+def maybe_plot_summary(k_hist, pred1_hist, svd_S_hist, svd_cond_hist):
+    K = np.asarray(k_hist)
+    pred1 = np.asarray(pred1_hist)
+    Smat = np.asarray(svd_S_hist)
+    cond = np.asarray(svd_cond_hist)
+
+    plt.figure()
+    plt.plot(K, 1e3 * pred1)
+    plt.xlabel("k")
+    plt.ylabel("pred1_err (mm)")
+    plt.title("One-step prediction error vs step")
+    plt.grid(True)
+    # plt.show()
+
+    plt.figure()
+    if Smat.ndim == 2 and Smat.shape[0] == K.size:
+        for i in range(Smat.shape[1]):
+            plt.plot(K, Smat[:, i], label=f"σ{i+1}")
+    plt.yscale("log")
+    plt.xlabel("k")
+    plt.ylabel("singular values of B (log)")
+    plt.title("Jacobian singular values vs step")
+    plt.grid(True)
+    plt.legend()
+    # plt.show()
+
+    plt.figure()
+    plt.plot(K, cond)
+    plt.yscale("log")
+    plt.xlabel("k")
+    plt.ylabel("cond(B) (log)")
+    plt.title("Jacobian conditioning vs step")
+    plt.grid(True)
+    # plt.show()
+
+    fig, ax1 = plt.subplots()
+    l1, = ax1.plot(K, 1e3 * pred1, label="pred1_err (mm)")
+    ax1.set_xlabel("k")
+    ax1.set_ylabel("pred1_err (mm)")
+    ax1.grid(True)
+
+    ax2 = ax1.twinx()
+    l2, = ax2.plot(K, cond, label="cond(B)")
+    ax2.set_yscale("log")
+    ax2.set_ylabel("cond(B) (log)")
+
+    ax1.legend(handles=[l1, l2], loc="best")
+    plt.title("pred1_err vs Jacobian conditioning")
+    # plt.show()

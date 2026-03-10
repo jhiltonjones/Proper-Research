@@ -1,6 +1,22 @@
 import csv
 import numpy as np
+def filter_series_by_k(series, k_min=None, k_max=None):
+    k = np.asarray(series["k"], int)
+    mask = np.ones_like(k, dtype=bool)
 
+    if k_min is not None:
+        mask &= (k >= k_min)
+    if k_max is not None:
+        mask &= (k <= k_max)
+
+    out = {}
+    for key, val in series.items():
+        arr = np.asarray(val)
+        if arr.ndim >= 1 and arr.shape[0] == mask.shape[0]:
+            out[key] = arr[mask]
+        else:
+            out[key] = val
+    return out
 def closest_point_polyline(C, x):
     """
     Return closest point on polyline C to point x.
@@ -114,7 +130,7 @@ def load_log_csv(path):
         i_ref=i_ref,
         rows=rows
     )
-def plot_prediction_error(series, dt=None, title_prefix="Prediction error"):
+def plot_prediction_error(series, dt=None, title_prefix="Prediction error", k_min=None, k_max=None):
     """
     Plots pred1 error (meters) from analyze_run(...)->series.
     Expects:
@@ -130,6 +146,21 @@ def plot_prediction_error(series, dt=None, title_prefix="Prediction error"):
     k = np.asarray(series.get("k", np.arange(pred1.size)), int).ravel()
     i_ref = np.asarray(series.get("i_ref", np.full(pred1.size, -1, int)), int).ravel()
 
+    # --- filter by k range ---
+    mask = np.ones_like(k, dtype=bool)
+    if k_min is not None:
+        mask &= (k >= k_min)
+    if k_max is not None:
+        mask &= (k <= k_max)
+
+    pred1 = pred1[mask]
+    k = k[mask]
+    i_ref = i_ref[mask]
+
+    if pred1.size == 0:
+        print("[plot_prediction_error] No samples left after k filtering.")
+        return
+
     pred1_mm = 1e3 * pred1
 
     # --- Plot 1: vs step k ---
@@ -138,12 +169,11 @@ def plot_prediction_error(series, dt=None, title_prefix="Prediction error"):
     plt.xlabel("k (step)")
     plt.ylabel("pred1_err [mm]")
     if dt is not None:
-        t = np.asarray(k, float) * float(dt)
-        # lightweight annotation in title only
         plt.title(f"{title_prefix} vs step (dt={dt:.3f}s)")
     else:
         plt.title(f"{title_prefix} vs step")
     plt.grid(True, alpha=0.3)
+    plt.xlim(k.min(), k.max())
     plt.show()
 
     # --- Plot 2: vs centerline index ---
@@ -159,7 +189,6 @@ def plot_prediction_error(series, dt=None, title_prefix="Prediction error"):
     else:
         print("[plot_prediction_error] i_ref not available (or all invalid), skipped index plot.")
 
-    # Optional quick stats print
     print(
         "[pred1_err] "
         f"RMS={np.sqrt(np.nanmean(pred1_mm**2)):.3f} mm, "
@@ -293,22 +322,213 @@ def plot_world_centerline_tube_and_tip(lumen_C, lumen_R, tip_xyz,
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
-    ax.legend()
+    # ax.legend()
+    plt.show()
+def plot_prediction_error_compare(
+    series1,
+    series2,
+    label1="Run 1",
+    label2="Run 2",
+    dt=None,
+    title_prefix="Prediction error comparison",
+    k_min=None,
+    k_max=None,
+):
+    s1 = filter_series_by_k(series1, k_min=k_min, k_max=k_max)
+    s2 = filter_series_by_k(series2, k_min=k_min, k_max=k_max)
+
+    pred1_1 = np.asarray(s1.get("pred1_err", []), float).ravel()
+    pred1_2 = np.asarray(s2.get("pred1_err", []), float).ravel()
+
+    if pred1_1.size == 0 or pred1_2.size == 0:
+        print("[plot_prediction_error_compare] One of the series has no pred1_err data.")
+        return
+
+    k1 = np.asarray(s1.get("k", np.arange(pred1_1.size)), int).ravel()
+    k2 = np.asarray(s2.get("k", np.arange(pred1_2.size)), int).ravel()
+
+    iref1 = np.asarray(s1.get("i_ref", np.full(pred1_1.size, -1, int)), int).ravel()
+    iref2 = np.asarray(s2.get("i_ref", np.full(pred1_2.size, -1, int)), int).ravel()
+
+    pred1_1_mm = 1e3 * pred1_1
+    pred1_2_mm = 1e3 * pred1_2
+
+    # --- Plot 1: vs step k ---
+    plt.figure(figsize=(10, 5))
+    plt.plot(k1, pred1_1_mm, marker="o", linewidth=1.5, label=label1)
+    plt.plot(k2, pred1_2_mm, marker="o", linewidth=1.5, label=label2)
+    plt.xlabel("k (step)")
+    plt.ylabel("pred1_err [mm]")
+    if dt is not None:
+        plt.title(f"{title_prefix} vs step (dt={dt:.3f}s)")
+    else:
+        plt.title(f"{title_prefix} vs step")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    # --- Plot 2: vs centerline index ---
+    valid1 = (iref1 >= 0) & np.isfinite(pred1_1_mm)
+    valid2 = (iref2 >= 0) & np.isfinite(pred1_2_mm)
+
+    if np.any(valid1) or np.any(valid2):
+        plt.figure(figsize=(10, 5))
+        if np.any(valid1):
+            plt.plot(iref1[valid1], pred1_1_mm[valid1], marker="o", linewidth=1.5, label=label1)
+        if np.any(valid2):
+            plt.plot(iref2[valid2], pred1_2_mm[valid2], marker="o", linewidth=1.5, label=label2)
+        plt.xlabel("i_ref (centerline index)")
+        plt.ylabel("pred1_err [mm]")
+        plt.title(f"{title_prefix} vs centerline index")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("[plot_prediction_error_compare] i_ref not available for either series.")
+
+    print(
+        f"[{label1}] "
+        f"RMS={np.sqrt(np.nanmean(pred1_1_mm**2)):.3f} mm, "
+        f"mean={np.nanmean(pred1_1_mm):.3f} mm, "
+        f"p95={np.nanpercentile(pred1_1_mm,95):.3f} mm, "
+        f"max={np.nanmax(pred1_1_mm):.3f} mm"
+    )
+    print(
+        f"[{label2}] "
+        f"RMS={np.sqrt(np.nanmean(pred1_2_mm**2)):.3f} mm, "
+        f"mean={np.nanmean(pred1_2_mm):.3f} mm, "
+        f"p95={np.nanpercentile(pred1_2_mm,95):.3f} mm, "
+        f"max={np.nanmax(pred1_2_mm):.3f} mm"
+    )
+def plot_world_centerline_tube_and_two_tips(
+    lumen_C,
+    lumen_R,
+    tip_xyz_1,
+    tip_xyz_2,
+    label1="Run 1",
+    label2="Run 2",
+    ring_step=5,
+    ring_n=24,
+    title="World view comparison",
+):
+    C = np.asarray(lumen_C, float)
+    R = np.asarray(lumen_R, float) if np.ndim(lumen_R) else np.full(C.shape[0], float(lumen_R))
+    tip_xyz_1 = np.asarray(tip_xyz_1, float)
+    tip_xyz_2 = np.asarray(tip_xyz_2, float)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # centerline
+    ax.plot(C[:, 0], C[:, 1], C[:, 2], linewidth=2, label="centerline")
+
+    # two tip paths
+    ax.plot(tip_xyz_1[:, 0], tip_xyz_1[:, 1], tip_xyz_1[:, 2], linewidth=2, label=label1)
+    ax.plot(tip_xyz_2[:, 0], tip_xyz_2[:, 1], tip_xyz_2[:, 2], linewidth=2, label=label2)
+
+    # mark starts and ends
+    ax.scatter(tip_xyz_1[0, 0], tip_xyz_1[0, 1], tip_xyz_1[0, 2], s=40, marker="o", label=f"{label1} start")
+    ax.scatter(tip_xyz_1[-1, 0], tip_xyz_1[-1, 1], tip_xyz_1[-1, 2], s=60, marker="^", label=f"{label1} end")
+
+    ax.scatter(tip_xyz_2[0, 0], tip_xyz_2[0, 1], tip_xyz_2[0, 2], s=40, marker="o", label=f"{label2} start")
+    ax.scatter(tip_xyz_2[-1, 0], tip_xyz_2[-1, 1], tip_xyz_2[-1, 2], s=60, marker="^", label=f"{label2} end")
+
+    # tube rings
+    for i in range(0, C.shape[0] - 1, int(ring_step)):
+        t = C[i + 1] - C[i]
+        ring = _make_ring_points(C[i], t, R[i], n=int(ring_n))
+        ax.plot(ring[:, 0], ring[:, 1], ring[:, 2], linewidth=1, alpha=0.25)
+
+    ax.set_title(title)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    # ax.legend()
+    plt.show()
+def plot_clearance_compare(
+    series1,
+    series2,
+    label1="Run 1",
+    label2="Run 2",
+    k_min=None,
+    k_max=None,
+):
+    s1 = filter_series_by_k(series1, k_min=k_min, k_max=k_max)
+    s2 = filter_series_by_k(series2, k_min=k_min, k_max=k_max)
+
+    k1 = np.asarray(s1["k"], int)
+    k2 = np.asarray(s2["k"], int)
+    c1 = 1e3 * np.asarray(s1["clearance"], float)
+    c2 = 1e3 * np.asarray(s2["clearance"], float)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(k1, c1, marker="o", linewidth=1.5, label=label1)
+    plt.plot(k2, c2, marker="o", linewidth=1.5, label=label2)
+    plt.axhline(0.0, linestyle="--", linewidth=1)
+    plt.xlabel("k (step)")
+    plt.ylabel("clearance [mm]")
+    plt.title("Clearance comparison")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 if __name__ == "__main__":
-    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_test_90_contact/lumen_C.npy")
-    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_test_90_contact/lumen_R.npy")
-    summary, series = analyze_run(
-        "/Users/jackhilton-jones/Proper-Research/mpc_run_test_90_contact/log.csv",
+    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_90_low_tangent_3step_ltv/lumen_C.npy")
+    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_90_low_tangent_3step_ltv/lumen_R.npy")
+
+    summary_bc, series_bc = analyze_run(
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_90_beam/log.csv",
         lumen_C, lumen_R, dt=0.01
     )
-    print(summary)
 
-    plot_world_centerline_tube_and_tip(
-        lumen_C, lumen_R, series["tip"],
-        ring_step=5, ring_n=24,
-        title="Tip path vs vessel (world)"
+    summary_nobc, series_nobc = analyze_run(
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_90_beam_tan/log.csv",
+        lumen_C, lumen_R, dt=0.01
     )
 
-    # NEW
-    plot_prediction_error(series, dt=0.01, title_prefix="MPC 1-step prediction error")
+    print("BC summary:")
+    print(summary_bc)
+    print()
+    print("No BC summary:")
+    print(summary_nobc)
+
+    k_min = 1
+    k_max = 25
+
+    # Filter just for trajectory comparison if desired
+    series_bc_f = filter_series_by_k(series_bc, k_min=k_min, k_max=k_max)
+    series_nobc_f = filter_series_by_k(series_nobc, k_min=k_min, k_max=k_max)
+
+    plot_world_centerline_tube_and_two_tips(
+        lumen_C,
+        lumen_R,
+        series_bc_f["tip"],
+        series_nobc_f["tip"],
+        label1="3 step",
+        label2="1 step",
+        ring_step=5,
+        ring_n=24,
+        title=f"Tip path vs vessel (world), k={k_min}..{k_max}"
+    )
+
+    plot_prediction_error_compare(
+        series_bc,
+        series_nobc,
+        label1="3 step",
+        label2="1 step",
+        dt=0.01,
+        title_prefix="MPC 1-step prediction error",
+        k_min=k_min,
+        k_max=k_max,
+    )
+
+    plot_clearance_compare(
+        series_bc,
+        series_nobc,
+        label1="3 step",
+        label2="1 step",
+        k_min=k_min,
+        k_max=k_max,
+    )

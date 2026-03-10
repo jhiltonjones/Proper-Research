@@ -15,6 +15,15 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Run open_loop",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.open_loop_control",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run mpc",
             "type": "debugpy",
             "request": "launch",
@@ -42,7 +51,31 @@
             "name": "Run testing camera",
             "type": "debugpy",
             "request": "launch",
+            "module": "proper_research.vision.vision_w_tangnet",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing beam/bounds",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.bounds_beam",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing camera no tan",
+            "type": "debugpy",
+            "request": "launch",
             "module": "proper_research.vision.camera",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing boundaries",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.boundaries",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

@@ -104,4 +104,4 @@ def advancer_go(length_des_mm):
 
 
 if __name__ == '__main__':
-    advancer_go(length_des_mm=45)
+    advancer_go(length_des_mm=80)

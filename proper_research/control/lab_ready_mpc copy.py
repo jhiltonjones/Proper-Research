@@ -14,7 +14,8 @@ from scipy.spatial.transform import Rotation as Rot
 from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, DeterministicForward6D
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import debug_step_pose7_no_targets, closest_point_polyline, save_step_artifacts, setup_output_dirs
-
+from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
+from proper_research.simulation.state_adapter import measured_result_to_xmeas
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
@@ -2059,7 +2060,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
         -3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], dtype=float)
 
-    L0 = 0.048
+    L0 = 0.032
     dt = 0.01
     return pivot_point, start_point, L0, dt
 
@@ -2080,7 +2081,7 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
     R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])
 
-    s_straight = 0.06
+    s_straight = 0.03
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
@@ -2218,7 +2219,7 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
     Np = mpc.Np
     M = lumen_path.shape[0]
 
-    max_steps = 2
+    max_steps = 500
     window = 20
 
     cursor_state = {"stall": 0}
@@ -2261,7 +2262,18 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         mpc.w_adv = w_adv_base
         mpc.i_ref_last = int(i_ref)
 
-        p_post, y_post, info = mpc.step(x_meas=None)
+        result = reconstruct_beam_within_vessel(
+            image_filename="focused_image.jpg",
+            red_roi_path="red_roi_box.json",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=None,
+            show=True,
+        )
+
+        x_meas = measured_result_to_xmeas(result)
+
+        p_post, y_post, info = mpc.step(x_meas=x_meas)
 
         theta0_last = float(info.get("theta0_deg", np.inf))
         theta0_hist.append(float(info.get("theta0_deg", np.nan)))

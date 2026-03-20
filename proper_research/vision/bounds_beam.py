@@ -8,7 +8,7 @@ from proper_research.vision.measure_length import new_capture
 from proper_research.vision.boundaries import detect_blue_vessel_boundaries, smooth_boundary
 RED_ROI_CONFIG_FILE = "red_roi_box.json"
 BLUE_ROI_CONFIG_FILE = "blue_roi_box.json"
-
+GREEN_ROI_CONFIG_FILE = "green_roi_box.json"
 
 def save_roi_box(box, path):
     data = {
@@ -31,22 +31,20 @@ def load_roi_box(path):
     print(f"[INFO] Loaded ROI from {path}: {data}")
     return box
 
-def compute_tip_wall_distances(tip_px, left_boundary_px, right_boundary_px):
+def compute_tip_wall_distances_with_radius(
+    tip_px,
+    left_boundary_px,
+    right_boundary_px,
+    tip_radius_px=0.0,
+):
     """
     Compute horizontal distances from the tip to the vessel walls
-    at the same y-level as the tip.
+    at the same y-level as the tip, accounting for tip radius.
 
-    Returns:
-        {
-            "tip_x": ...,
-            "tip_y": ...,
-            "x_left_at_tip": ...,
-            "x_right_at_tip": ...,
-            "dist_left": ...,
-            "dist_right": ...,
-            "closest_wall": "left" or "right",
-            "closest_distance": ...
-        }
+    tip_px is the tip center.
+    tip_radius_px is the horizontal radius of the tip blob in pixels.
+
+    Returns both center-based and edge-based distances.
     """
     tip_x = float(tip_px[0])
     tip_y = float(tip_px[1])
@@ -54,27 +52,37 @@ def compute_tip_wall_distances(tip_px, left_boundary_px, right_boundary_px):
     x_left_at_tip = float(interpolate_boundary_x_at_y(left_boundary_px, np.array([tip_y]))[0])
     x_right_at_tip = float(interpolate_boundary_x_at_y(right_boundary_px, np.array([tip_y]))[0])
 
-    dist_left = tip_x - x_left_at_tip
-    dist_right = x_right_at_tip - tip_x
+    # center-based distances
+    dist_left_center = tip_x - x_left_at_tip
+    dist_right_center = x_right_at_tip - tip_x
 
-    if dist_left <= dist_right:
+    # edge-based distances
+    dist_left_edge = (tip_x - tip_radius_px) - x_left_at_tip
+    dist_right_edge = x_right_at_tip - (tip_x + tip_radius_px)
+
+    if dist_left_edge <= dist_right_edge:
         closest_wall = "left"
-        closest_distance = dist_left
+        closest_distance = dist_left_edge
     else:
         closest_wall = "right"
-        closest_distance = dist_right
+        closest_distance = dist_right_edge
 
     return {
         "tip_x": tip_x,
         "tip_y": tip_y,
         "x_left_at_tip": x_left_at_tip,
         "x_right_at_tip": x_right_at_tip,
-        "dist_left": float(dist_left),
-        "dist_right": float(dist_right),
+        "tip_radius_px": float(tip_radius_px),
+
+        "dist_left_center": float(dist_left_center),
+        "dist_right_center": float(dist_right_center),
+
+        "dist_left_edge": float(dist_left_edge),
+        "dist_right_edge": float(dist_right_edge),
+
         "closest_wall": closest_wall,
         "closest_distance": float(closest_distance),
     }
-    
 def fit_beam_centerline_from_markers(markers, y_samples=None):
     """
     Fit beam centerline as x(y) using a cubic through the 4 ordered markers.
@@ -238,10 +246,23 @@ def compare_beam_to_vessel(beam_points_px, left_boundary_px, right_boundary_px):
         "min_clearance_right": float(np.min(clearance_right)),
         "all_inside": bool(np.all(inside)),
     }
+def mm_to_px_distance(dist_mm, mm_per_pixel):
+    if mm_per_pixel <= 0:
+        raise ValueError("mm_per_pixel must be positive.")
+    return float(dist_mm / mm_per_pixel)
+def compute_beam_length_px(beam_points_px):
+    pts = np.array(beam_points_px, dtype=np.float32)
+    if len(pts) < 2:
+        return 0.0
+
+    diffs = np.diff(pts, axis=0)              # consecutive segment vectors
+    seg_lengths = np.linalg.norm(diffs, axis=1)
+    return float(np.sum(seg_lengths))
 def reconstruct_beam_within_vessel(
     image_filename="focused_image.jpg",
     red_roi_path="red_roi_box.json",
     blue_roi_path="blue_roi_box.json",
+    green_roi_path="green_roi_box.json",
     pivot_hint=None,
     show=True,
 ):
@@ -251,18 +272,37 @@ def reconstruct_beam_within_vessel(
 
     red_roi_box = load_roi_box(red_roi_path)
     blue_roi_box = load_roi_box(blue_roi_path)
+    green_roi_box = load_roi_box(green_roi_path)
 
+    # --- green calibration points ---
+    green_result = detect_2_green_calibration_points(
+        image_bgr=image_bgr,
+        roi_box=green_roi_box,
+        green_h_low=35,
+        green_h_high=85,
+        sat_min=60,
+        val_min=60,
+        min_area=20,
+        max_area=50000,
+        show_debug=False,
+    )
+
+    green_pt1, green_pt2 = green_result["points_px"]
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=40.0)
+
+    # --- red markers / beam tip state ---
     tip_result = measure_tip_state_4markers(
         image_filename=image_filename,
         roi_box=red_roi_box,
-        show=True,
-        show_debug_markers=True,
+        show=show,
+        show_debug_markers=show,
         unwrap_angle=True,
         pivot_hint=pivot_hint,
     )
 
     markers = tip_result["markers"]
 
+    # --- vessel boundaries ---
     vessel = detect_blue_vessel_boundaries(
         image_bgr=image_bgr,
         roi_box=blue_roi_box,
@@ -270,24 +310,32 @@ def reconstruct_beam_within_vessel(
         blue_h_high=140,
         sat_min=40,
         val_min=40,
-        show_debug=True,
+        show_debug=show,
     )
 
     left_smooth = smooth_boundary(vessel["left_boundary_px"], window=11)
     right_smooth = smooth_boundary(vessel["right_boundary_px"], window=11)
 
+    # --- beam reconstruction ---
     beam_points_px, beam_coeffs = fit_beam_centerline_from_markers(markers)
+    beam_length_px = compute_beam_length_px(beam_points_px)
+    beam_length_mm = beam_length_px * mm_per_pixel
 
     comparison = compare_beam_to_vessel(
         beam_points_px=beam_points_px,
         left_boundary_px=left_smooth,
         right_boundary_px=right_smooth,
     )
-    tip_distance_info = compute_tip_wall_distances(
+
+    tip_radius_mm = 1.8
+    tip_radius_px = mm_to_px_distance(tip_radius_mm, mm_per_pixel)
+    tip_distance_info = compute_tip_wall_distances_with_radius(
         tip_px=markers["tip_px"],
         left_boundary_px=left_smooth,
         right_boundary_px=right_smooth,
+        tip_radius_px=tip_radius_px,
     )
+
     tip_wall_angle_info = compute_tip_to_wall_tangent_angle(
         markers=markers,
         left_boundary_px=left_smooth,
@@ -295,7 +343,23 @@ def reconstruct_beam_within_vessel(
         tip_distance_info=tip_distance_info,
         dy=5.0,
     )
+
+    # convert selected distances to mm
+    comparison_mm = {
+        "min_clearance_left_mm": px_to_mm_distance(comparison["min_clearance_left"], mm_per_pixel),
+        "min_clearance_right_mm": px_to_mm_distance(comparison["min_clearance_right"], mm_per_pixel),
+    }
+
+    tip_distance_info_mm = {
+        "dist_left_center_mm": px_to_mm_distance(tip_distance_info["dist_left_center"], mm_per_pixel),
+        "dist_right_center_mm": px_to_mm_distance(tip_distance_info["dist_right_center"], mm_per_pixel),
+        "dist_left_edge_mm": px_to_mm_distance(tip_distance_info["dist_left_edge"], mm_per_pixel),
+        "dist_right_edge_mm": px_to_mm_distance(tip_distance_info["dist_right_edge"], mm_per_pixel),
+        "closest_distance_mm": px_to_mm_distance(tip_distance_info["closest_distance"], mm_per_pixel),
+    }
+
     result = {
+        "green_result": green_result,
         "tip_result": tip_result,
         "vessel_result": vessel,
         "left_boundary_px": left_smooth,
@@ -303,10 +367,21 @@ def reconstruct_beam_within_vessel(
         "beam_centerline_px": beam_points_px,
         "beam_poly_coeffs": beam_coeffs,
         "comparison": comparison,
+        "comparison_mm": comparison_mm,
         "tip_distance_info": tip_distance_info,
+        "tip_distance_info_mm": tip_distance_info_mm,
         "tip_wall_angle_info": tip_wall_angle_info,
+        "beam_length_px": beam_length_px,
+        "mm_per_pixel": mm_per_pixel,
+        "beam_length_mm": beam_length_mm,
     }
+
     print("Beam-to-wall tangent angle (deg):", tip_wall_angle_info["beam_wall_tangent_angle_deg"])
+    print("Calibration distance (px):", green_result["distance_px"])
+    print("mm_per_pixel:", mm_per_pixel)
+    print("Beam length (px):", beam_length_px)
+    print("Beam length (mm):", beam_length_mm)
+
     if show:
         draw_beam_and_vessel_overlay(
             image_bgr=image_bgr,
@@ -319,21 +394,174 @@ def reconstruct_beam_within_vessel(
             tip_distance_info=tip_distance_info,
             tip_wall_angle_info=tip_wall_angle_info,
         )
+
         print("\n--- BEAM WITHIN VESSEL ---")
         print("Tip image px:", tip_result["tip_image_px"])
         print("Tip x,y from base:", tip_result["tip_xy_from_base"])
         print("Tip tangent angle (deg):", tip_result["tip_tangent_angle_deg"])
         print("All beam points inside vessel:", comparison["all_inside"])
-        print("Min clearance to left wall:", comparison["min_clearance_left"])
-        print("Min clearance to right wall:", comparison["min_clearance_right"])
-        print("Tip distance to left wall:", tip_distance_info["dist_left"])
-        print("Tip distance to right wall:", tip_distance_info["dist_right"])
+        print("Min clearance to left wall (px):", comparison["min_clearance_left"])
+        print("Min clearance to right wall (px):", comparison["min_clearance_right"])
+        print("Min clearance to left wall (mm):", comparison_mm["min_clearance_left_mm"])
+        print("Min clearance to right wall (mm):", comparison_mm["min_clearance_right_mm"])
+
+        print("Tip edge distance to left wall (mm):", tip_distance_info_mm["dist_left_edge_mm"])
+        print("Tip edge distance to right wall (mm):", tip_distance_info_mm["dist_right_edge_mm"])
+        print("Tip center distance to left wall (mm):", tip_distance_info_mm["dist_left_center_mm"])
+        print("Tip center distance to right wall (mm):", tip_distance_info_mm["dist_right_center_mm"])
+        print("Tip edge distance to left wall (mm):", tip_distance_info_mm["dist_left_edge_mm"])
+        print("Tip edge distance to right wall (mm):", tip_distance_info_mm["dist_right_edge_mm"])
         print("Closest wall:", tip_distance_info["closest_wall"])
-        print("Closest tip-wall distance:", tip_distance_info["closest_distance"])
+        print("Closest tip-wall distance (px):", tip_distance_info["closest_distance"])
+        print("Closest tip-wall distance (mm):", tip_distance_info_mm["closest_distance_mm"])
+
     return result
+def detect_2_green_calibration_points(
+    image_bgr,
+    roi_box=None,
+    green_h_low=35,
+    green_h_high=95,
+    sat_min=40,
+    val_min=40,
+    min_area=20,
+    max_area=50000,
+    show_debug=False,
+):
+    """
+    Detect exactly 2 green calibration markers and return their centroids.
 
+    Returns:
+        {
+            "points_px": [(x1, y1), (x2, y2)],
+            "distance_px": ...,
+            "mask": ...,
+        }
+    """
+    if roi_box is not None:
+        x0, y0, w, h = roi_box
+        roi = image_bgr[y0:y0 + h, x0:x0 + w].copy()
+    else:
+        x0, y0 = 0, 0
+        roi = image_bgr.copy()
 
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
+    lower = np.array([green_h_low, sat_min, val_min], dtype=np.uint8)
+    upper = np.array([green_h_high, 255, 255], dtype=np.uint8)
+
+    mask = cv2.inRange(hsv, lower, upper)
+
+    # clean mask
+    k = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    candidates = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area or area > max_area:
+            continue
+
+        M = cv2.moments(cnt)
+        if abs(M["m00"]) < 1e-8:
+            continue
+
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+
+        candidates.append({
+            "area": float(area),
+            "centroid_roi": (float(cx), float(cy)),
+            "contour": cnt,
+        })
+
+    if len(candidates) < 2:
+        raise RuntimeError(f"Expected at least 2 green blobs, found {len(candidates)}")
+
+    # Keep the 2 largest blobs
+    candidates = sorted(candidates, key=lambda d: d["area"], reverse=True)[:2]
+
+    pts = []
+    for c in candidates:
+        cx, cy = c["centroid_roi"]
+        pts.append((float(cx + x0), float(cy + y0)))
+
+    # Sort left-to-right for consistency
+    pts = sorted(pts, key=lambda p: p[0])
+
+    p1 = np.array(pts[0], dtype=np.float32)
+    p2 = np.array(pts[1], dtype=np.float32)
+    distance_px = float(np.linalg.norm(p2 - p1))
+
+    if show_debug:
+        vis = roi.copy()
+
+        for c in candidates:
+            cv2.drawContours(vis, [c["contour"]], -1, (255, 255, 255), 2)
+
+        for i, (px, py) in enumerate(pts):
+            px_roi = int(round(px - x0))
+            py_roi = int(round(py - y0))
+            cv2.circle(vis, (px_roi, py_roi), 6, (0, 0, 255), -1)
+            cv2.putText(
+                vis,
+                f"G{i+1}",
+                (px_roi + 6, py_roi - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                1,
+            )
+
+        cv2.line(
+            vis,
+            (int(round(pts[0][0] - x0)), int(round(pts[0][1] - y0))),
+            (int(round(pts[1][0] - x0)), int(round(pts[1][1] - y0))),
+            (0, 255, 255),
+            2,
+        )
+
+        plt.figure(figsize=(8, 6))
+        plt.subplot(1, 2, 1)
+        plt.imshow(mask, cmap="gray")
+        plt.title("Green mask")
+        plt.axis("off")
+
+        plt.subplot(1, 2, 2)
+        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        plt.title(f"Green calibration points, dist = {distance_px:.2f} px")
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+
+    return {
+        "points_px": pts,
+        "distance_px": distance_px,
+        "mask": mask,
+    }
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=40.0):
+    p1 = np.array(p1_px, dtype=np.float32)
+    p2 = np.array(p2_px, dtype=np.float32)
+
+    dist_px = np.linalg.norm(p2 - p1)
+
+    if dist_px < 1e-6:
+        raise ValueError("Reference points are too close or identical.")
+
+    mm_per_pixel = known_distance_mm / dist_px
+    return float(mm_per_pixel)
+def pixel_to_mm(point_px, origin_px, mm_per_pixel):
+    point = np.array(point_px, dtype=np.float32)
+    origin = np.array(origin_px, dtype=np.float32)
+
+    delta_px = point - origin
+    delta_mm = delta_px * mm_per_pixel
+
+    return tuple(delta_mm.tolist())
+def px_to_mm_distance(dist_px, mm_per_pixel):
+    return float(dist_px * mm_per_pixel)
 def order_four_markers(points, pivot_hint=None):
     pts = [np.array(p, dtype=np.float32) for p in points]
     if len(pts) != 4:
@@ -605,6 +833,7 @@ def compute_tip_to_wall_tangent_angle(markers, left_boundary_px, right_boundary_
     }
 if __name__ == "__main__":
     new_capture()
+    
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",
         red_roi_path="red_roi_box.json",

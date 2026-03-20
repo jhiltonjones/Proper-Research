@@ -166,6 +166,7 @@ def measure_tip_state_4markers(
         hue2_low=160,
         show_debug=show_debug_markers,
     )
+
 def detect_4_red_markers_in_roi(
     image_bgr,
     roi_box=None,
@@ -297,7 +298,7 @@ if __name__ == "__main__":
     result = measure_tip_state_4markers(
         image_filename=img_file,
         roi_box=red_roi_box,
-        show=False,
+        show=True,
         show_debug_markers=True,
         unwrap_angle=True,
         pivot_hint=None,
@@ -318,8 +319,8 @@ if __name__ == "__main__":
     show_red_mask(
         image_bgr=image_bgr,
         roi_box=roi_box,
-        sat_min=20,
-        val_min=20,
+        sat_min=10,
+        val_min=15,
         hue1_high=20,
         hue2_low=160
     )

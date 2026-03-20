@@ -74,6 +74,7 @@ def compute_tip_wall_distances(tip_px, left_boundary_px, right_boundary_px):
         "closest_wall": closest_wall,
         "closest_distance": float(closest_distance),
     }
+    
 def fit_beam_centerline_from_markers(markers, y_samples=None):
     """
     Fit beam centerline as x(y) using a cubic through the 4 ordered markers.
@@ -254,8 +255,8 @@ def reconstruct_beam_within_vessel(
     tip_result = measure_tip_state_4markers(
         image_filename=image_filename,
         roi_box=red_roi_box,
-        show=False,
-        show_debug_markers=False,
+        show=True,
+        show_debug_markers=True,
         unwrap_angle=True,
         pivot_hint=pivot_hint,
     )
@@ -269,7 +270,7 @@ def reconstruct_beam_within_vessel(
         blue_h_high=140,
         sat_min=40,
         val_min=40,
-        show_debug=False,
+        show_debug=True,
     )
 
     left_smooth = smooth_boundary(vessel["left_boundary_px"], window=11)
@@ -412,10 +413,10 @@ def measure_tip_state_4markers(
         roi_box=roi_box,
         min_area=10,
         max_area=40000,
-        sat_min=20,
-        val_min=20,
-        hue1_high=20,
-        hue2_low=160,
+        sat_min=10,
+        val_min=10,
+        hue1_high=25,
+        hue2_low=155,
         show_debug=show_debug_markers,
     )
 
@@ -603,6 +604,7 @@ def compute_tip_to_wall_tangent_angle(markers, left_boundary_px, right_boundary_
         "beam_wall_tangent_angle_deg": float(angle_deg),
     }
 if __name__ == "__main__":
+    new_capture()
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",
         red_roi_path="red_roi_box.json",

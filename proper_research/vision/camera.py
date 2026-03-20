@@ -4,7 +4,7 @@ import numpy as np
 import json
 import os
 from proper_research.vision.measure_length import detect_red_markers_in_roi, new_capture
-ROI_CONFIG_FILE = "blue_roi_box.json"  
+ROI_CONFIG_FILE = "red_roi_box.json"  
 
 def save_roi_box(box, path=ROI_CONFIG_FILE):
     """
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         image_filename="focused_image.jpg",
         use_roi=True,
         show=True,
-        show_debug_markers=False,
+        show_debug_markers=True,
         use_segment="base_to_tip",
     )
 

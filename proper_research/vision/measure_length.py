@@ -42,12 +42,12 @@ def new_capture(filename="focused_image.jpg",
                 cam_index=0,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=15,
-                exposure=110.0,     # try 200..5000 initially
+                exposure=20.0,     # try 200..5000 initially
                 gain=0.0,
                 auto_exposure_manual=1.0,  # working for you
                 brightness=None,     # e.g. 0.0
                 gamma=None):         # e.g. 0.7
-    cap = cv2.VideoCapture(cam_index, backend)
+    cap = cv2.VideoCapture(cam_index, backend) 
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open camera index {cam_index} with backend {backend}")
 
@@ -222,14 +222,14 @@ def detect_red_markers_in_roi(
     # --- HSV thresholds (tighter hue, lower S/V mins) ---
     s_min=50,
     v_min=50,
-    h_low1=0,  h_high1=8,
-    h_low2=172, h_high2=180,
+    h_low1=0,  h_high1=15,
+    h_low2=165, h_high2=180,
 
     # --- behavior when middle marker is missing ---
     allow_two_markers_when_expected_three=True,  # NEW
 
     # --- debug ---
-    show_debug=False,
+    show_debug=True,
 
     # --- internal guard to prevent infinite fallback recursion ---
     _did_fallback=False,  # NEW (do not set from outside)

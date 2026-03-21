@@ -113,10 +113,10 @@
         },
 
         {
-            "name": "Run nmpc",
+            "name": "Run mpc_lab",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.nmpc",
+            "module": "proper_research.control.lab_ready_mpc",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

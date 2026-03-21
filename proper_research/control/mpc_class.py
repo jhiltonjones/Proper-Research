@@ -1,55 +1,3 @@
-import numpy as np
-from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize
-def seq_mat_ltv(A, B_list):
-    """
-    Build stacked prediction matrices for time-varying B_k (LTV system)
-      x_{k+1} = A x_k + B_k u_k
-
-    Returns:
-      Mx: (Np*n, n)
-      Mc: (Np*n, Np*m)
-
-    B_list: list length Np with each B_k shape (n,m)
-            where B_0 corresponds to step from x0 -> x1
-    """
-    B_list = [np.asarray(B) for B in B_list]
-    Np = len(B_list)
-    n, m = B_list[0].shape
-
-    Mx = np.zeros((Np*n, n))
-    Mc = np.zeros((Np*n, Np*m))
-
-    A_pow = np.eye(n)
-
-    for i in range(Np):
-        # x_{i+1} = A^{i+1} x0 + sum_{j=0..i} A^{i-j} B_j u_j
-        A_pow = A @ A_pow
-        Mx[i*n:(i+1)*n, :] = A_pow
-
-        for j in range(i + 1):
-            A_ij = np.linalg.matrix_power(A, i - j)
-            Mc[i*n:(i+1)*n, j*m:(j+1)*m] = A_ij @ B_list[j]
-
-    return Mx, Mc
-
-def seq_mat_lti(A, B, N):
-    n, m = B.shape
-    Mx = np.zeros((N*n, n))
-    Mc = np.zeros((N*n, N*m))
-
-    A_pow = np.eye(n)
-
-    A_pow = A @ A_pow
-    Mx[0:n, :] = A_pow
-    Mc[0:n, 0:m] = B
-
-    for i in range(1, N):
-        A_pow = A @ A_pow
-        Mx[i*n:(i+1)*n, :] = A_pow
-        Mc[i*n:(i+1)*n, 0:i*m] = A @ Mc[(i-1)*n:i*n, 0:i*m]
-        Mc[i*n:(i+1)*n, i*m:(i+1)*m] = B
-
-    return Mx, Mc
 class mpc_controller_tipxy_LTI:
     def __init__(self, *, Jxy_fn, forward_tip_fn,
                  dt=0.05, Np=10,
@@ -263,25 +211,27 @@ class mpc_controller_tipxy_LTI:
         # B0 = B_list[0]
         # return p_seq, Mx, Mc, B0
 
-    def step_real(self, x_meas=None):
+    def step(self, x_meas=None):
         """
-        MPC step for real hardware.
+        MPC step with Option A (soft lumen constraints via slacks).
 
-        Expected usage:
-        - pass the latest camera measurement x_meas each control cycle
-        - controller solves MPC using that measurement
-        - returns u0 to send to hardware
-        - updates only internal command-side state self.p
-        - does NOT simulate tip motion or prediction error
+        Assumptions (consistent with your codebase):
+        - outputs y are n-dim, typically n=6: [x,y,z, tx,ty,tz]
+        - linear prediction uses X = X_aff + Mc U (stacked over horizon)
+        - U decision is (Np*m,)
+        - Optional soft lumen constraints introduce slacks s_k >= 0, one per stage k
+            and enforce: m_k(U) + s_k >= 0 (approx via linearized margin)
         """
 
         # -----------------------
         # Helpers (local)
         # -----------------------
         def _pos_row_idx(n, Np):
+            # stacked outputs are [y1,y2,...,yNp], each yk length n
             return np.array([k*n + i for k in range(Np) for i in (0, 1, 2)], dtype=int)
 
         def _pad_A(Au, nz, Nu):
+            """Pad a U-only constraint matrix Au (nr x Nu) to (nr x nz)."""
             Au = np.asarray(Au, float)
             if nz == Nu:
                 return Au
@@ -294,34 +244,33 @@ class mpc_controller_tipxy_LTI:
         # Step start / measurement
         # -----------------------
         if self.p is None:
-            raise ValueError("Call set_initial_params(...) before step_real().")
+            raise ValueError("Call set_initial_params(...) before step().")
 
-        if x_meas is None:
-            raise ValueError("step_real(...) requires the latest camera measurement x_meas.")
-
+        # freeze forward baseline once per MPC step (important with your deterministic wrapper)
         if hasattr(self.forward_tip_fn, "start_step"):
             self.forward_tip_fn.start_step()
 
         p_prev = self.p.copy()
         x_prev = self.x.copy()
 
-        # camera measurement update
-        self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
+        # measurement update
+        if x_meas is not None:
+            self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
 
         n = int(self.n)
         m = int(self.m)
         Np = int(self.Np)
         xk = self.x.reshape(n, 1)
-
         centerline_only = (getattr(self, "mode", "full") == "centerline_only")
+        # centerline_only=True
+
         enable_adv_eff      = ((self.w_adv != 0.0) and (not centerline_only))
         enable_standoff_eff = (self.enable_mag_center_standoff)
         enable_inline_eff   = (getattr(self, "enable_mag_tangent_inline", True))
-        enable_dipole_eff   = (self.enable_dipole_align)
+        enable_dipole_eff   = (self.enable_dipole_align )
 
-        # -----------------------
+
         # Warm start / SQP init
-        # -----------------------
         if self.U_warm is not None and self.U_warm.size == Np*m:
             U_opt_vec = self.U_warm.copy()
             U_guess = U_opt_vec.reshape(Np, m)
@@ -331,6 +280,7 @@ class mpc_controller_tipxy_LTI:
 
         status_last = "init"
 
+        # debug caches
         Mc_last = None
         X_aff_last = None
         X_nom_last = None
@@ -339,6 +289,9 @@ class mpc_controller_tipxy_LTI:
         p_lin = None
         p_first = None
         dbg_terms = {} if self.debug else None
+        # -----------------------
+        # SQP loop
+        # -----------------------
         for it in range(int(self.N_sqp)):
 
             # ---- linearization / prediction matrices ----
@@ -1141,42 +1094,350 @@ class mpc_controller_tipxy_LTI:
             U_seq = U_opt_vec.reshape(Np, m)
             u0 = U_seq[0, :].copy()
 
-        # predicted horizon (linear) for debug / preview
+        # predicted horizon (linear) for debug
         X_pred = np.full((Np, n), np.nan)
         if (not infeas_final) and (Mc_last is not None) and (X_aff_last is not None):
             U_vec = U_opt_vec.reshape(-1, 1)
             X_pred_stack = X_aff_last + Mc_last @ U_vec
             X_pred = X_pred_stack.reshape(Np, n)
 
-        # -----------------------
-        # Real-system state commit
-        # -----------------------
-        # Update actuator-side/internal state from command
-        p_next_cmd = self._clamp_p(integrate_pose8_body(p_prev, u0, self.dt))
-        self.p = p_next_cmd.copy()
+        # plant update (one step)
+        p_next_true = self._clamp_p(integrate_pose8_body(p_prev, u0, self.dt))
+        try:
+            x_next_true = np.asarray(self.forward_tip_fn(p_next_true, commit=False), float).reshape(n,)
+        except TypeError:
+            x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(n,)
 
-        # Keep measured state as the current state.
-        # Do NOT replace with forward model output on real hardware.
-        self.x = np.asarray(x_meas, dtype=float).reshape(n,)
+
+
+        # commit internal state
+        self.p = p_next_true.copy()
+        self.x = x_next_true.copy()
 
         # warm start
         if not infeas_final:
+            U_seq = U_opt_vec.reshape(Np, m)
             U_shift = np.vstack([U_seq[1:], np.zeros((1, m))])
             self.U_warm = U_shift.reshape(-1)
         else:
             self.U_warm = None
 
-        # Not available in real mode unless you compute it on next camera frame
+        # one-step prediction error
         pred1_err_xy = np.nan
         pred1_err_xyz = np.nan
-        tan1_err = np.nan
 
+        if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
+            e = x_next_true[:3] - X_pred[0][:3]
+            pred1_err_xy  = float(np.linalg.norm(e[:2]))   # XY only
+            pred1_err_xyz = float(np.linalg.norm(e))       # full XYZ (optional)
+            tan1_err = float(np.linalg.norm(x_next_true[3:6] - X_pred[0][3:6])) if (n >= 6 and X_pred.shape[1] >= 6) else np.nan
+         # -----------------------
+        # Detailed debug breakdown
+        # -----------------------
+
+        
+        
+        
+        
+        if self.debug and (U_opt_vec is not None):
+            U_dbg = U_opt_vec.reshape(Nu, 1)
+
+            if ns > 0 and hasattr(self, "_slack_last") and (self._slack_last is not None):
+                s_dbg = np.asarray(self._slack_last, float).reshape(-1, 1)
+            else:
+                s_dbg = np.zeros((ns, 1), float)
+
+            def _term_cost(Ht, ft, U):
+                if Ht is None:
+                    Ht = np.zeros((U.shape[0], U.shape[0]), float)
+                if ft is None:
+                    ft = np.zeros((U.shape[0], 1), float)
+                return float(0.5 * (U.T @ Ht @ U)[0, 0] + (ft.T @ U)[0, 0])
+
+            dbg_costs = {}
+            dbg_weights = {}
+
+            # objective terms
+            dbg_costs["effort"] = _term_cost(H_effort, np.zeros((Nu, 1)), U_dbg)
+            dbg_weights["R_diag"] = np.diag(self.R).copy().tolist()
+
+            if H_smooth is not None:
+                dbg_costs["smooth"] = _term_cost(H_smooth, np.zeros((Nu, 1)), U_dbg)
+                dbg_weights["Rd_diag"] = np.diag(self.Rd).copy().tolist()
+            else:
+                dbg_costs["smooth"] = 0.0
+                dbg_weights["Rd_diag"] = []
+
+            dbg_costs["track"] = _term_cost(H_track, f_track, U_dbg)  # useful even if commented out
+            dbg_weights["track_Q_diag"] = np.diag(self.Q).copy().tolist()
+
+            if "advance" in dbg_terms:
+                H_adv_dbg, f_adv_dbg = dbg_terms["advance"]
+                dbg_costs["advance"] = _term_cost(H_adv_dbg, f_adv_dbg, U_dbg)
+            else:
+                dbg_costs["advance"] = 0.0
+
+            if "tangent" in dbg_terms:
+                H_tan_dbg, f_tan_dbg = dbg_terms["tangent"]
+                dbg_costs["tangent"] = _term_cost(H_tan_dbg, f_tan_dbg, U_dbg)
+            else:
+                dbg_costs["tangent"] = 0.0
+
+            # slack costs
+            s_off = 0
+            if ns_standoff > 0:
+                s_st = s_dbg[s_off:s_off+ns_standoff]
+                dbg_costs["slack_standoff"] = float(w_slack_standoff * np.sum(s_st**2))
+                s_off += ns_standoff
+            else:
+                dbg_costs["slack_standoff"] = 0.0
+
+            if ns_inline > 0:
+                s_in = s_dbg[s_off:s_off+ns_inline]
+                dbg_costs["slack_inline"] = float(w_slack_inline * np.sum(s_in**2))
+                s_off += ns_inline
+            else:
+                dbg_costs["slack_inline"] = 0.0
+
+            if ns_dipole > 0:
+                s_dp = s_dbg[s_off:s_off+ns_dipole]
+                dbg_costs["slack_dipole"] = float(w_slack_dipole * np.sum(s_dp**2))
+                s_off += ns_dipole
+            else:
+                dbg_costs["slack_dipole"] = 0.0
+
+            dbg_costs["total_objective"] = float(
+                0.5 * (np.asarray(Z_opt, float).reshape(-1,1).T @ H_z @ np.asarray(Z_opt, float).reshape(-1,1))[0,0]
+                + (f_z.T @ np.asarray(Z_opt, float).reshape(-1,1))[0,0]
+            )
+
+            # advancement diagnostics
+            dbg_pen = {}
+
+            if "advance_model" in dbg_terms:
+                advm = dbg_terms["advance_model"]
+                g_adv_val = (advm["g_adv"].T @ U_dbg).reshape(-1)
+                dbg_pen["advance"] = dict(
+                    weight=float(advm["w_adv_eff"]),
+                    directional_progress=g_adv_val.copy(),
+                    mean_directional_progress=float(np.mean(g_adv_val)),
+                    min_directional_progress=float(np.min(g_adv_val)),
+                    max_directional_progress=float(np.max(g_adv_val)),
+                    s_des_eff=float(advm["s_des_eff"]),
+                )
+
+            # tangent diagnostics
+            if "tangent_model" in dbg_terms:
+                tanm = dbg_terms["tangent_model"]
+                e_tan = (tanm["A"] @ U_dbg + tanm["b"]).reshape(-1)
+                cos_pred = tanm["cos_ref"] - e_tan
+                cos_pred = np.clip(cos_pred, -1.0, 1.0)
+                theta_pred = np.degrees(np.arccos(cos_pred))
+
+                dbg_pen["tangent"] = dict(
+                    theta_ref_deg=float(tanm["theta_ref_deg"]),
+                    weights=np.asarray(dbg_terms["tangent_weights"], float).copy(),
+                    clearance_m=np.asarray(dbg_terms["tangent_clearance_m"], float).copy(),
+                    residual=e_tan.copy(),
+                    theta_pred_deg=theta_pred.copy(),
+                    theta_pred_deg_min=float(np.min(theta_pred)),
+                    theta_pred_deg_max=float(np.max(theta_pred)),
+                    theta_pred_deg_mean=float(np.mean(theta_pred)),
+                )
+
+            # soft constraint residual/violation diagnostics
+            dbg_con = {}
+      
+        
+            if ns_standoff > 0 and "standoff_model" in dbg_terms:
+                mdl = dbg_terms["standoff_model"]
+                e = (mdl["A"] @ U_dbg + mdl["b"]).reshape(-1)
+                if ns > 0:
+                    s_st = np.asarray(self._slack_last[:ns_standoff], float)
+                else:
+                    s_st = np.zeros(ns_standoff, float)
+                viol = np.maximum(np.abs(e) - mdl["eps"] - s_st, 0.0)
+                dbg_con["standoff_soft"] = dict(
+                    weight=float(w_slack_standoff),
+                    eps=float(mdl["eps"]),
+                    residual=e.copy(),
+                    slack=s_st.copy(),
+                    violation=viol.copy(),
+                    residual_abs_max=float(np.max(np.abs(e))),
+                    slack_max=float(np.max(s_st)) if s_st.size else 0.0,
+                    violation_max=float(np.max(viol)) if viol.size else 0.0,
+                )
+
+            if ns_inline > 0 and "inline_model" in dbg_terms:
+                mdl = dbg_terms["inline_model"]
+                e = (mdl["A"] @ U_dbg + mdl["b"]).reshape(-1)
+                if ns > 0:
+                    s0 = ns_standoff
+                    s_in = np.asarray(self._slack_last[s0:s0+ns_inline], float)
+                else:
+                    s_in = np.zeros(ns_inline, float)
+
+                e_n = e[0::2]
+                e_b = e[1::2]
+                rho_lat = np.sqrt(e_n**2 + e_b**2)
+
+                viol_n = np.maximum(np.abs(e_n) - mdl["eps"] - s_in, 0.0)
+                viol_b = np.maximum(np.abs(e_b) - mdl["eps"] - s_in, 0.0)
+
+                dbg_con["inline_soft"] = dict(
+                    weight=float(w_slack_inline),
+                    eps=float(mdl["eps"]),
+                    e_n=e_n.copy(),
+                    e_b=e_b.copy(),
+                    rho_lat=rho_lat.copy(),
+                    slack=s_in.copy(),
+                    violation_n=viol_n.copy(),
+                    violation_b=viol_b.copy(),
+                    rho_lat_max=float(np.max(rho_lat)) if rho_lat.size else 0.0,
+                    slack_max=float(np.max(s_in)) if s_in.size else 0.0,
+                    violation_max=float(max(np.max(viol_n), np.max(viol_b))) if viol_n.size else 0.0,
+                )
+
+            if ns_dipole > 0 and "dipole_model" in dbg_terms:
+                mdl = dbg_terms["dipole_model"]
+                e = (mdl["A"] @ U_dbg + mdl["b"]).reshape(-1)
+                if ns > 0:
+                    s0 = ns_standoff + ns_inline
+                    s_dp = np.asarray(self._slack_last[s0:s0+ns_dipole], float)
+                else:
+                    s_dp = np.zeros(ns_dipole, float)
+
+                e_stage = e.reshape(Np, 3)
+                e_norm = np.linalg.norm(e_stage, axis=1)
+                viol_stage = np.maximum(np.max(np.abs(e_stage), axis=1) - mdl["eps"] - s_dp, 0.0)
+
+                dbg_con["dipole_soft"] = dict(
+                    weight=float(w_slack_dipole),
+                    eps=float(mdl["eps"]),
+                    residual=e_stage.copy(),
+                    residual_norm=e_norm.copy(),
+                    slack=s_dp.copy(),
+                    violation=viol_stage.copy(),
+                    residual_norm_max=float(np.max(e_norm)) if e_norm.size else 0.0,
+                    slack_max=float(np.max(s_dp)) if s_dp.size else 0.0,
+                    violation_max=float(np.max(viol_stage)) if viol_stage.size else 0.0,
+                )
+            if "track_model" in dbg_terms:
+                U_dbg = np.asarray(U_opt_vec, float).reshape(Nu, 1)
+                trk = dbg_terms["track_model"]
+
+                X_pred_dbg = trk["X_aff"] + trk["Mc"] @ U_dbg
+                e_track = (X_pred_dbg - trk["X_ref"]).reshape(Np, n)
+
+                e_pos = e_track[:, 0:3]
+                pos_err_norm = np.linalg.norm(e_pos, axis=1)
+
+                if n >= 6:
+                    e_tan = e_track[:, 3:6]
+                    tan_err_norm = np.linalg.norm(e_tan, axis=1)
+                else:
+                    e_tan = np.zeros((Np, 0), float)
+                    tan_err_norm = np.full(Np, np.nan)
+
+                dbg_pen["track"] = dict(
+                    Q_diag=np.asarray(trk["Q_diag"], float).copy(),
+                    idx_ref=np.asarray(trk["idx_ref"], int).copy(),
+                    X_ref=trk["X_ref"].reshape(Np, n).copy(),
+                    X_pred=X_pred_dbg.reshape(Np, n).copy(),
+                    residual=e_track.copy(),
+                    pos_err=e_pos.copy(),
+                    pos_err_norm=pos_err_norm.copy(),
+                    tan_err=e_tan.copy(),
+                    tan_err_norm=tan_err_norm.copy(),
+                    cost=float(0.5 * (U_dbg.T @ H_track @ U_dbg)[0, 0] + (f_track.T @ U_dbg)[0, 0]),
+                    pos_err_norm_min=float(np.min(pos_err_norm)) if pos_err_norm.size else np.nan,
+                    pos_err_norm_mean=float(np.mean(pos_err_norm)) if pos_err_norm.size else np.nan,
+                    pos_err_norm_max=float(np.max(pos_err_norm)) if pos_err_norm.size else np.nan,
+                )  
+            # hard theta diagnostics
+            if np.any(hard_theta_mask):
+                cos_vals = []
+                theta_vals = []
+                margins = []
+
+                for k in np.flatnonzero(hard_theta_mask):
+                    tv = np.asarray(t_vessel[k], float).reshape(3,)
+                    tv /= (np.linalg.norm(tv) + 1e-12)
+
+                    rows_t = np.array([k*n + 3, k*n + 4, k*n + 5], dtype=int)
+                    t_pred = (X_aff[rows_t, :].reshape(3,1) + Mc[rows_t, :] @ U_dbg).reshape(3,)
+                    t_pred /= (np.linalg.norm(t_pred) + 1e-12)
+
+                    cosk = float(np.clip(tv @ t_pred, -1.0, 1.0))
+                    thetak = float(np.degrees(np.arccos(cosk)))
+                    margin = cosk - float(np.cos(np.deg2rad(theta_max_deg)))
+
+                    cos_vals.append(cosk)
+                    theta_vals.append(thetak)
+                    margins.append(margin)
+
+                dbg_con["theta_hard"] = dict(
+                    theta_max_deg=float(theta_max_deg),
+                    active_k=np.flatnonzero(hard_theta_mask).copy(),
+                    clearance_m=clearance_m[hard_theta_mask].copy(),
+                    cos_vals=np.asarray(cos_vals, float),
+                    theta_deg=np.asarray(theta_vals, float),
+                    margin=np.asarray(margins, float),
+                    min_margin=float(np.min(margins)) if len(margins) else np.nan,
+                )
+
+            self._mpc_dbg_last = dict(
+                weights=dict(
+                    w_adv_eff=float(w_adv_eff) if t_vessel is not None and enable_adv_eff else 0.0,
+                    w_tan_min=float(w_tan_min) if enable_tangent_pen and (self.lumen_R is not None) else 0.0,
+                    w_tan_max=float(w_tan_max) if enable_tangent_pen and (self.lumen_R is not None) else 0.0,
+                    w_slack_standoff=float(w_slack_standoff) if ns_standoff > 0 else 0.0,
+                    w_slack_inline=float(w_slack_inline) if ns_inline > 0 else 0.0,
+                    w_slack_dipole=float(w_slack_dipole) if ns_dipole > 0 else 0.0,
+                    theta_ref_deg=float(theta_ref_deg) if enable_tangent_pen and (self.lumen_R is not None) else np.nan,
+                    theta_max_deg=float(theta_max_deg) if np.any(hard_theta_mask) else float(getattr(self, "theta_max_deg", 40.0)),
+                ),
+                costs=dbg_costs,
+                penalties=dbg_pen,
+                constraints=dbg_con,
+            )
+
+            print("\n[DBG MPC] objective term costs")
+            for k_, v_ in dbg_costs.items():
+                print(f"  {k_:>18s}: {v_: .6e}")
+
+            print("[DBG MPC] weights")
+            for k_, v_ in self._mpc_dbg_last["weights"].items():
+                if np.isscalar(v_):
+                    print(f"  {k_:>18s}: {v_}")
+
+            if "advance" in dbg_pen:
+                ap = dbg_pen["advance"]
+                print("[DBG MPC] advance")
+                print(f"  weight={ap['weight']:.6e}  mean={ap['mean_directional_progress']:.6e}  "
+                      f"min={ap['min_directional_progress']:.6e}  max={ap['max_directional_progress']:.6e}")
+
+            if "tangent" in dbg_pen:
+                tp = dbg_pen["tangent"]
+                print("[DBG MPC] tangent")
+                print(f"  theta_ref_deg={tp['theta_ref_deg']:.2f}")
+                print(f"  theta_pred_deg min/mean/max = "
+                      f"{tp['theta_pred_deg_min']:.3f} / {tp['theta_pred_deg_mean']:.3f} / {tp['theta_pred_deg_max']:.3f}")
+                print(f"  weight min/max = {np.min(tp['weights']):.6e} / {np.max(tp['weights']):.6e}")
+                print(f"  clearance min/max [mm] = {1e3*np.min(tp['clearance_m']):.3f} / {1e3*np.max(tp['clearance_m']):.3f}")
+
+            for name in ("standoff_soft", "inline_soft", "dipole_soft", "theta_hard"):
+                if name in dbg_con:
+                    print(f"[DBG MPC] {name}")
+                    for kk, vv in dbg_con[name].items():
+                        if np.isscalar(vv):
+                            print(f"  {kk}: {vv}")
         info = dict(
             status=status_last,
             infeasible=int(infeas_final),
             u0=u0.copy(),
             p_now=self.p.copy(),
-            x_now=self.x.copy(),          # latest camera measurement
+            x_now=self.x.copy(),
             d=self.d.copy(),
             X_pred=X_pred.copy(),
             U_seq=U_seq.copy(),
@@ -1190,9 +1451,9 @@ class mpc_controller_tipxy_LTI:
             Mc_last=Mc_last.copy() if Mc_last is not None else None,
             X_nom_last=X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
             p_seq_last=p_seq_last.copy() if p_seq_last is not None else None,
-            pred1_err_xy=pred1_err_xy,
-            pred1_err_xyz=pred1_err_xyz,
-            tan1_err=tan1_err,
+            pred1_err_xy=float(pred1_err_xy),
+            pred1_err_xyz=float(pred1_err_xyz),
+            tan1_err=float(tan1_err) if np.isfinite(tan1_err) else np.nan,
             mpc_debug=self._mpc_dbg_last.copy() if hasattr(self, "_mpc_dbg_last") else None,
         )
 

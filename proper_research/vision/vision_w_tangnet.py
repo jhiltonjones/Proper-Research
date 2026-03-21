@@ -170,7 +170,7 @@ def measure_tip_state_4markers(
 def detect_4_red_markers_in_roi(
     image_bgr,
     roi_box=None,
-    min_area=5,
+    min_area=2,
     max_area=40000,
     show_debug=False,
     sat_min=20,
@@ -179,6 +179,7 @@ def detect_4_red_markers_in_roi(
     hue1_high=20,
     hue2_low=160,
     hue2_high=180,
+    debug_allow_less_than_4=False,
 ):
     if roi_box is not None:
         x, y, w, h = roi_box
@@ -200,61 +201,100 @@ def detect_4_red_markers_in_roi(
     mask2 = cv2.inRange(hsv, lower2, upper2)
     mask = cv2.bitwise_or(mask1, mask2)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Try opening only first; avoid closing because it can merge blobs
+    k = np.ones((3, 3), np.uint8)
+    mask_open = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
+
+    contours, _ = cv2.findContours(mask_open, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     print(f"[DEBUG] roi_box = {roi_box}")
-    print(f"[DEBUG] image shape = {image_bgr.shape}")
+    print(f"[DEBUG] mask nonzero = {int(np.count_nonzero(mask_open))}")
     print(f"[DEBUG] found {len(contours)} raw contours")
 
     candidates = []
-    debug_img = roi.copy()
+    raw_debug = roi.copy()
+    kept_debug = roi.copy()
 
-    for cnt in contours:
+    for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
-        if area < min_area or area > max_area:
-            continue
+        bx, by, bw, bh = cv2.boundingRect(cnt)
 
         M = cv2.moments(cnt)
-        if M["m00"] == 0:
+        if abs(M["m00"]) > 1e-8:
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+        else:
+            cx, cy = -1, -1
+
+        print(
+            f"[DEBUG] contour {i}: area={area:.2f}, "
+            f"bbox=({bx},{by},{bw},{bh}), center=({cx:.1f},{cy:.1f})"
+        )
+
+        # draw every raw contour
+        cv2.drawContours(raw_debug, [cnt], -1, (0, 255, 0), 1)
+        cv2.rectangle(raw_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
+        cv2.putText(raw_debug, f"{i}", (bx, max(0, by - 3)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+
+        if area < min_area or area > max_area:
+            continue
+        if abs(M["m00"]) <= 1e-8:
             continue
 
-        cx = M["m10"] / M["m00"]
-        cy = M["m01"] / M["m00"]
-
         candidates.append({
-            "point": (cx + x0, cy + y0),
-            "area": area,
+            "point": (float(cx + x0), float(cy + y0)),
+            "area": float(area),
             "contour": cnt,
-            "local_center": (cx, cy),
+            "local_center": (float(cx), float(cy)),
+            "bbox": (bx, by, bw, bh),
         })
 
     candidates = sorted(candidates, key=lambda d: d["area"], reverse=True)
 
-    if len(candidates) < 4:
-        raise RuntimeError(f"Expected at least 4 red markers, found {len(candidates)}")
+    print(f"[DEBUG] kept {len(candidates)} candidates after filtering")
 
-    candidates = candidates[:4]
-    points = [c["point"] for c in candidates]
+    # draw kept candidates
+    for j, c in enumerate(candidates):
+        cnt = c["contour"]
+        cx, cy = c["local_center"]
+        bx, by, bw, bh = c["bbox"]
+        cv2.drawContours(kept_debug, [cnt], -1, (0, 255, 0), 2)
+        cv2.rectangle(kept_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
+        cv2.circle(kept_debug, (int(round(cx)), int(round(cy))), 4, (255, 0, 0), -1)
+        cv2.putText(kept_debug, f"{j}", (bx, max(0, by - 3)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
     if show_debug:
-        for c in candidates:
-            cnt = c["contour"]
-            cx, cy = c["local_center"]
-            cv2.drawContours(debug_img, [cnt], -1, (0, 255, 0), 2)
-            cv2.circle(debug_img, (int(cx), int(cy)), 5, (255, 0, 0), -1)
+        plt.figure(figsize=(14, 8))
 
-        plt.figure(figsize=(10, 4))
-        plt.subplot(1, 2, 1)
+        plt.subplot(2, 2, 1)
         plt.imshow(mask, cmap="gray")
-        plt.title(f"Mask | raw contours={len(contours)} | kept={len(points)}")
+        plt.title("Raw red mask")
         plt.axis("off")
 
-        plt.subplot(1, 2, 2)
-        plt.imshow(cv2.cvtColor(debug_img, cv2.COLOR_BGR2RGB))
-        plt.title("Top 4 detected red blobs")
+        plt.subplot(2, 2, 2)
+        plt.imshow(mask_open, cmap="gray")
+        plt.title("Opened mask")
         plt.axis("off")
+
+        plt.subplot(2, 2, 3)
+        plt.imshow(cv2.cvtColor(raw_debug, cv2.COLOR_BGR2RGB))
+        plt.title(f"All raw contours: {len(contours)}")
+        plt.axis("off")
+
+        plt.subplot(2, 2, 4)
+        plt.imshow(cv2.cvtColor(kept_debug, cv2.COLOR_BGR2RGB))
+        plt.title(f"Kept candidates: {len(candidates)}")
+        plt.axis("off")
+
+        plt.tight_layout()
         plt.show()
 
+    if len(candidates) < 4 and not debug_allow_less_than_4:
+        raise RuntimeError(f"Expected at least 4 red markers, found {len(candidates)}")
+
+    points = [c["point"] for c in candidates[:4]]
     return points
 def show_red_mask(image_bgr, roi_box=None, sat_min=40, val_min=30, hue1_high=15, hue2_low=165):
     if roi_box is not None:

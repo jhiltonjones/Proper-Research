@@ -5,11 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from proper_research.vision.vision_w_tangnet import detect_4_red_markers_in_roi
 from proper_research.vision.measure_length import new_capture
-from proper_research.vision.boundaries import detect_blue_vessel_boundaries, smooth_boundary
+# from proper_research.vision.boundaries import detect_blue_vessel_boundaries, smooth_boundary
 RED_ROI_CONFIG_FILE = "red_roi_box.json"
 BLUE_ROI_CONFIG_FILE = "blue_roi_box.json"
 GREEN_ROI_CONFIG_FILE = "green_roi_box.json"
-
+MANUAL_VESSEL_BOUNDARY_FILE = "manual_vessel_boundaries.json"
 def save_roi_box(box, path):
     data = {
         "x": int(box[0]),
@@ -21,7 +21,36 @@ def save_roi_box(box, path):
         json.dump(data, f)
     print(f"[INFO] ROI saved to {path}: {data}")
 
+def build_lumen_from_parametric_boundaries(
+    left_boundary_px,
+    right_boundary_px,
+    base_px,
+    mm_per_pixel,
+    z_mm=0.0,
+):
+    left = np.array(left_boundary_px, dtype=np.float32)
+    right = np.array(right_boundary_px, dtype=np.float32)
 
+    if len(left) != len(right):
+        raise ValueError("Left and right boundaries must have same number of samples.")
+
+    center = 0.5 * (left + right)
+    radius_px = 0.5 * np.linalg.norm(right - left, axis=1)
+
+    base_x = float(base_px[0])
+    base_y = float(base_px[1])
+
+    x_mm = (center[:, 0] - base_x) * mm_per_pixel
+    y_mm = -(center[:, 1] - base_y) * mm_per_pixel
+    z_mm_arr = np.full_like(x_mm, float(z_mm))
+
+    lumen_C_mm = np.column_stack([x_mm, y_mm, z_mm_arr]).astype(np.float64)
+    lumen_R_mm = (radius_px * mm_per_pixel).astype(np.float64)
+
+    lumen_C_m = lumen_C_mm / 1000.0
+    lumen_R_m = lumen_R_mm / 1000.0
+
+    return lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm
 def load_roi_box(path):
     if not os.path.exists(path):
         return None
@@ -258,6 +287,233 @@ def compute_beam_length_px(beam_points_px):
     diffs = np.diff(pts, axis=0)              # consecutive segment vectors
     seg_lengths = np.linalg.norm(diffs, axis=1)
     return float(np.sum(seg_lengths))
+def load_manual_vessel_boundaries(path):
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    left_boundary_px = [tuple(map(float, p)) for p in data["left_boundary_px"]]
+    right_boundary_px = [tuple(map(float, p)) for p in data["right_boundary_px"]]
+
+    print(f"[INFO] Loaded manual vessel boundaries from {path}")
+    return {
+        "left_boundary_px": left_boundary_px,
+        "right_boundary_px": right_boundary_px,
+    }
+
+
+def resample_polyline_by_arclength(points, n_samples=200):
+    pts = np.array(points, dtype=np.float32)
+    if len(pts) < 2:
+        raise ValueError("Need at least 2 points.")
+
+    seg = np.diff(pts, axis=0)
+    seg_len = np.linalg.norm(seg, axis=1)
+
+    s = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total_len = s[-1]
+
+    if total_len < 1e-6:
+        raise ValueError("Polyline length is too small.")
+
+    s_samples = np.linspace(0.0, total_len, n_samples)
+    x_samples = np.interp(s_samples, s, pts[:, 0])
+    y_samples = np.interp(s_samples, s, pts[:, 1])
+
+    return [(float(x), float(y)) for x, y in zip(x_samples, y_samples)]
+def save_manual_vessel_boundaries(left_boundary_px, right_boundary_px, path):
+    data = {
+        "left_boundary_px": [[float(x), float(y)] for x, y in left_boundary_px],
+        "right_boundary_px": [[float(x), float(y)] for x, y in right_boundary_px],
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[INFO] Manual vessel boundaries saved to {path}")
+def draw_manual_vessel_boundaries(
+    image_filename="focused_image.jpg",
+    save_path=MANUAL_VESSEL_BOUNDARY_FILE,
+    blue_roi_path="blue_roi_box.json",
+):
+    """
+    Interactive boundary drawing.
+
+    Controls:
+      - Left mouse click: add point to current wall
+      - z: undo last point on current wall
+      - l: switch to LEFT wall
+      - r: switch to RIGHT wall
+      - c: clear current wall
+      - s: save
+      - q or Esc: quit without saving
+    """
+    image_bgr = cv2.imread(image_filename)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image at {image_filename}")
+
+    roi_box = load_roi_box(blue_roi_path)
+    if roi_box is not None:
+        x0, y0, w, h = roi_box
+        display = image_bgr[y0:y0+h, x0:x0+w].copy()
+    else:
+        x0, y0 = 0, 0
+        display = image_bgr.copy()
+
+    left_points = []
+    right_points = []
+    current_side = {"name": "left"}
+
+    window_name = "Draw vessel boundaries"
+
+    def redraw():
+        vis = display.copy()
+
+        # draw current instructions
+        text1 = f"Current wall: {current_side['name'].upper()}"
+        text2 = "Left click=add | z=undo | l/r=switch | c=clear current | s=save | q=quit"
+        cv2.putText(vis, text1, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        cv2.putText(vis, text2, (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+        # draw left points/lines in green
+        for i, (x, y) in enumerate(left_points):
+            cv2.circle(vis, (int(x), int(y)), 3, (0, 255, 0), -1)
+            if i > 0:
+                cv2.line(
+                    vis,
+                    (int(left_points[i-1][0]), int(left_points[i-1][1])),
+                    (int(x), int(y)),
+                    (0, 255, 0),
+                    1,
+                )
+
+        # draw right points/lines in red
+        for i, (x, y) in enumerate(right_points):
+            cv2.circle(vis, (int(x), int(y)), 3, (0, 0, 255), -1)
+            if i > 0:
+                cv2.line(
+                    vis,
+                    (int(right_points[i-1][0]), int(right_points[i-1][1])),
+                    (int(x), int(y)),
+                    (0, 0, 255),
+                    1,
+                )
+
+        cv2.imshow(window_name, vis)
+
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if current_side["name"] == "left":
+                left_points.append((float(x), float(y)))
+            else:
+                right_points.append((float(x), float(y)))
+            redraw()
+
+    cv2.namedWindow(window_name)
+    cv2.setMouseCallback(window_name, on_mouse)
+
+    redraw()
+
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+
+        if key == ord("z"):
+            if current_side["name"] == "left" and left_points:
+                left_points.pop()
+            elif current_side["name"] == "right" and right_points:
+                right_points.pop()
+            redraw()
+
+        elif key == ord("l"):
+            current_side["name"] = "left"
+            redraw()
+
+        elif key == ord("r"):
+            current_side["name"] = "right"
+            redraw()
+
+        elif key == ord("c"):
+            if current_side["name"] == "left":
+                left_points.clear()
+            else:
+                right_points.clear()
+            redraw()
+
+        elif key == ord("s"):
+            if len(left_points) < 2 or len(right_points) < 2:
+                print("[WARN] Need at least 2 points on each wall before saving.")
+                continue
+
+            left_boundary_roi = resample_polyline_by_arclength(left_points, n_samples=200)
+            right_boundary_roi = resample_polyline_by_arclength(right_points, n_samples=200)
+
+            left_boundary_px = [(x + x0, y + y0) for x, y in left_boundary_roi]
+            right_boundary_px = [(x + x0, y + y0) for x, y in right_boundary_roi]
+
+            save_manual_vessel_boundaries(left_boundary_px, right_boundary_px, save_path)
+            cv2.destroyWindow(window_name)
+            return {
+                "left_boundary_px": left_boundary_px,
+                "right_boundary_px": right_boundary_px,
+            }
+
+        elif key == ord("q") or key == 27:
+            cv2.destroyWindow(window_name)
+            print("[INFO] Boundary drawing cancelled.")
+            return None
+def closest_point_on_polyline(query_pt, polyline_pts):
+    q = np.array(query_pt, dtype=np.float32)
+    pts = np.array(polyline_pts, dtype=np.float32)
+
+    best_pt = None
+    best_dist = np.inf
+
+    for i in range(len(pts) - 1):
+        p0 = pts[i]
+        p1 = pts[i + 1]
+        v = p1 - p0
+        vv = float(np.dot(v, v))
+
+        if vv < 1e-12:
+            cand = p0
+        else:
+            t = float(np.dot(q - p0, v) / vv)
+            t = max(0.0, min(1.0, t))
+            cand = p0 + t * v
+
+        d = float(np.linalg.norm(q - cand))
+        if d < best_dist:
+            best_dist = d
+            best_pt = cand
+
+    return tuple(map(float, best_pt)), float(best_dist)
+
+def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_px, tip_radius_px=0.0):
+    left_pt, dist_left_center = closest_point_on_polyline(tip_px, left_boundary_px)
+    right_pt, dist_right_center = closest_point_on_polyline(tip_px, right_boundary_px)
+
+    dist_left_edge = dist_left_center - tip_radius_px
+    dist_right_edge = dist_right_center - tip_radius_px
+
+    if dist_left_edge <= dist_right_edge:
+        closest_wall = "left"
+        closest_distance = dist_left_edge
+    else:
+        closest_wall = "right"
+        closest_distance = dist_right_edge
+
+    return {
+        "tip_x": float(tip_px[0]),
+        "tip_y": float(tip_px[1]),
+        "closest_left_point": left_pt,
+        "closest_right_point": right_pt,
+        "dist_left_center": float(dist_left_center),
+        "dist_right_center": float(dist_right_center),
+        "dist_left_edge": float(dist_left_edge),
+        "dist_right_edge": float(dist_right_edge),
+        "closest_wall": closest_wall,
+        "closest_distance": float(closest_distance),
+    }
 def reconstruct_beam_within_vessel(
     image_filename="focused_image.jpg",
     red_roi_path="red_roi_box.json",
@@ -278,13 +534,13 @@ def reconstruct_beam_within_vessel(
     green_result = detect_2_green_calibration_points(
         image_bgr=image_bgr,
         roi_box=green_roi_box,
-        green_h_low=35,
-        green_h_high=85,
-        sat_min=60,
-        val_min=60,
-        min_area=20,
+        green_h_low=15,
+        green_h_high=110,
+        sat_min=20,
+        val_min=20,
+        min_area=5,
         max_area=50000,
-        show_debug=False,
+        show_debug=True,
     )
 
     green_pt1, green_pt2 = green_result["points_px"]
@@ -302,20 +558,21 @@ def reconstruct_beam_within_vessel(
 
     markers = tip_result["markers"]
 
-    # --- vessel boundaries ---
-    vessel = detect_blue_vessel_boundaries(
-        image_bgr=image_bgr,
-        roi_box=blue_roi_box,
-        blue_h_low=90,
-        blue_h_high=140,
-        sat_min=40,
-        val_min=40,
-        show_debug=show,
+    manual_vessel = load_manual_vessel_boundaries(MANUAL_VESSEL_BOUNDARY_FILE)
+
+    left_smooth = manual_vessel["left_boundary_px"]
+    right_smooth = manual_vessel["right_boundary_px"]
+    vessel = {"mode": "manual"}
+    print("[INFO] Using manually drawn vessel boundaries.")
+    lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm = build_lumen_from_parametric_boundaries(
+        left_boundary_px=left_smooth,
+        right_boundary_px=right_smooth,
+        base_px=markers["base_px"],
+        mm_per_pixel=mm_per_pixel,
+        z_mm=0.0,
     )
 
-    left_smooth = smooth_boundary(vessel["left_boundary_px"], window=11)
-    right_smooth = smooth_boundary(vessel["right_boundary_px"], window=11)
-
+    
     # --- beam reconstruction ---
     beam_points_px, beam_coeffs = fit_beam_centerline_from_markers(markers)
     beam_length_px = compute_beam_length_px(beam_points_px)
@@ -329,7 +586,7 @@ def reconstruct_beam_within_vessel(
 
     tip_radius_mm = 1.8
     tip_radius_px = mm_to_px_distance(tip_radius_mm, mm_per_pixel)
-    tip_distance_info = compute_tip_wall_distances_with_radius(
+    tip_distance_info = compute_tip_wall_distances_general(
         tip_px=markers["tip_px"],
         left_boundary_px=left_smooth,
         right_boundary_px=right_smooth,
@@ -374,6 +631,11 @@ def reconstruct_beam_within_vessel(
         "beam_length_px": beam_length_px,
         "mm_per_pixel": mm_per_pixel,
         "beam_length_mm": beam_length_mm,
+
+        "lumen_C_m": lumen_C_m,
+        "lumen_R_m": lumen_R_m,
+        "lumen_C_mm": lumen_C_mm,
+        "lumen_R_mm": lumen_R_mm,
     }
 
     print("Beam-to-wall tangent angle (deg):", tip_wall_angle_info["beam_wall_tangent_angle_deg"])
@@ -394,7 +656,7 @@ def reconstruct_beam_within_vessel(
             tip_distance_info=tip_distance_info,
             tip_wall_angle_info=tip_wall_angle_info,
         )
-
+        draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, markers["base_px"], mm_per_pixel)
         print("\n--- BEAM WITHIN VESSEL ---")
         print("Tip image px:", tip_result["tip_image_px"])
         print("Tip x,y from base:", tip_result["tip_xy_from_base"])
@@ -416,27 +678,36 @@ def reconstruct_beam_within_vessel(
         print("Closest tip-wall distance (mm):", tip_distance_info_mm["closest_distance_mm"])
 
     return result
+def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px, mm_per_pixel):
+    vis = image_bgr.copy()
+
+    bx, by = float(base_px[0]), float(base_px[1])
+
+    pts = []
+    for x_mm, y_mm, z_mm in lumen_C_mm:
+        x_px = bx + (x_mm / mm_per_pixel)
+        y_px = by - (y_mm / mm_per_pixel)
+        pts.append((int(round(x_px)), int(round(y_px))))
+
+    for i in range(len(pts) - 1):
+        cv2.line(vis, pts[i], pts[i + 1], (255, 255, 0), 2)
+
+    plt.figure(figsize=(8, 8))
+    plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+    plt.title("Camera-derived lumen centerline")
+    plt.axis("off")
+    plt.show()
 def detect_2_green_calibration_points(
     image_bgr,
     roi_box=None,
-    green_h_low=35,
-    green_h_high=95,
-    sat_min=40,
-    val_min=40,
-    min_area=20,
+    green_h_low=15,
+    green_h_high=110,
+    sat_min=20,
+    val_min=20,
+    min_area=5,
     max_area=50000,
     show_debug=False,
 ):
-    """
-    Detect exactly 2 green calibration markers and return their centroids.
-
-    Returns:
-        {
-            "points_px": [(x1, y1), (x2, y2)],
-            "distance_px": ...,
-            "mask": ...,
-        }
-    """
     if roi_box is not None:
         x0, y0, w, h = roi_box
         roi = image_bgr[y0:y0 + h, x0:x0 + w].copy()
@@ -451,10 +722,9 @@ def detect_2_green_calibration_points(
 
     mask = cv2.inRange(hsv, lower, upper)
 
-    # clean mask
+    # only opening; avoid closing because it merges blobs
     k = np.ones((3, 3), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -477,43 +747,52 @@ def detect_2_green_calibration_points(
             "contour": cnt,
         })
 
-    if len(candidates) < 2:
-        raise RuntimeError(f"Expected at least 2 green blobs, found {len(candidates)}")
+    vis = roi.copy()
 
-    # Keep the 2 largest blobs
-    candidates = sorted(candidates, key=lambda d: d["area"], reverse=True)[:2]
+    if len(candidates) >= 2:
+        candidates = sorted(candidates, key=lambda d: d["area"], reverse=True)[:2]
+        pts = []
+        for c in candidates:
+            cx, cy = c["centroid_roi"]
+            pts.append((float(cx + x0), float(cy + y0)))
+        pts = sorted(pts, key=lambda p: p[0])
+        mode = "two_blobs"
 
-    pts = []
-    for c in candidates:
-        cx, cy = c["centroid_roi"]
-        pts.append((float(cx + x0), float(cy + y0)))
+    elif len(candidates) == 1:
+        cnt = candidates[0]["contour"]
+        pts_cnt = cnt.reshape(-1, 2).astype(np.float32)
 
-    # Sort left-to-right for consistency
-    pts = sorted(pts, key=lambda p: p[0])
+        left_idx = int(np.argmin(pts_cnt[:, 0]))
+        right_idx = int(np.argmax(pts_cnt[:, 0]))
+
+        left_pt_roi = pts_cnt[left_idx]
+        right_pt_roi = pts_cnt[right_idx]
+
+        pts = [
+            (float(left_pt_roi[0] + x0), float(left_pt_roi[1] + y0)),
+            (float(right_pt_roi[0] + x0), float(right_pt_roi[1] + y0)),
+        ]
+        pts = sorted(pts, key=lambda p: p[0])
+        mode = "split_one_blob"
+
+    else:
+        raise RuntimeError("Expected at least 1 green blob, found 0")
 
     p1 = np.array(pts[0], dtype=np.float32)
     p2 = np.array(pts[1], dtype=np.float32)
     distance_px = float(np.linalg.norm(p2 - p1))
 
     if show_debug:
-        vis = roi.copy()
-
-        for c in candidates:
-            cv2.drawContours(vis, [c["contour"]], -1, (255, 255, 255), 2)
+        if len(candidates) > 0:
+            for c in candidates:
+                cv2.drawContours(vis, [c["contour"]], -1, (255, 255, 255), 2)
 
         for i, (px, py) in enumerate(pts):
             px_roi = int(round(px - x0))
             py_roi = int(round(py - y0))
             cv2.circle(vis, (px_roi, py_roi), 6, (0, 0, 255), -1)
-            cv2.putText(
-                vis,
-                f"G{i+1}",
-                (px_roi + 6, py_roi - 6),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 255),
-                1,
-            )
+            cv2.putText(vis, f"G{i+1}", (px_roi + 6, py_roi - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
 
         cv2.line(
             vis,
@@ -531,7 +810,7 @@ def detect_2_green_calibration_points(
 
         plt.subplot(1, 2, 2)
         plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-        plt.title(f"Green calibration points, dist = {distance_px:.2f} px")
+        plt.title(f"{mode}, dist = {distance_px:.2f} px")
         plt.axis("off")
         plt.tight_layout()
         plt.show()
@@ -540,6 +819,7 @@ def detect_2_green_calibration_points(
         "points_px": pts,
         "distance_px": distance_px,
         "mask": mask,
+        "mode": mode,
     }
 def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=40.0):
     p1 = np.array(p1_px, dtype=np.float32)
@@ -639,10 +919,10 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=10,
+        min_area=1,
         max_area=40000,
-        sat_min=10,
-        val_min=10,
+        sat_min=3,
+        val_min=3,
         hue1_high=25,
         hue2_low=155,
         show_debug=show_debug_markers,

@@ -14,8 +14,7 @@ from scipy.spatial.transform import Rotation as Rot
 from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, DeterministicForward6D
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import debug_step_pose7_no_targets, closest_point_polyline, save_step_artifacts, setup_output_dirs
-from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
-from proper_research.simulation.state_adapter import measured_result_to_xmeas
+
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
@@ -2262,18 +2261,7 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         mpc.w_adv = w_adv_base
         mpc.i_ref_last = int(i_ref)
 
-        result = reconstruct_beam_within_vessel(
-            image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
-            blue_roi_path="blue_roi_box.json",
-            green_roi_path="green_roi_box.json",
-            pivot_hint=None,
-            show=True,
-        )
-
-        x_meas = measured_result_to_xmeas(result)
-
-        p_post, y_post, info = mpc.step(x_meas=x_meas)
+        p_post, y_post, info = mpc.step(x_meas=None)
 
         theta0_last = float(info.get("theta0_deg", np.inf))
         theta0_hist.append(float(info.get("theta0_deg", np.nan)))

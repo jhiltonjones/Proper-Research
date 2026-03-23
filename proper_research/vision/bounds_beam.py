@@ -25,6 +25,7 @@ def build_lumen_from_parametric_boundaries(
     left_boundary_px,
     right_boundary_px,
     base_px,
+    mag_start_px,
     mm_per_pixel,
     z_mm=0.0,
 ):
@@ -37,11 +38,29 @@ def build_lumen_from_parametric_boundaries(
     center = 0.5 * (left + right)
     radius_px = 0.5 * np.linalg.norm(right - left, axis=1)
 
-    base_x = float(base_px[0])
-    base_y = float(base_px[1])
+    base = np.array(base_px, dtype=np.float32)
+    mag_start = np.array(mag_start_px, dtype=np.float32)
 
-    x_mm = (center[:, 0] - base_x) * mm_per_pixel
-    y_mm = -(center[:, 1] - base_y) * mm_per_pixel
+    ref = np.array([
+        mag_start[0] - base[0],
+        -(mag_start[1] - base[1]),
+    ], dtype=np.float32)
+
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("base->mag_start reference vector is zero length")
+
+    ex = ref / nr
+    ey = np.array([-ex[1], ex[0]], dtype=np.float32)
+
+    v = np.column_stack([
+        center[:, 0] - base[0],
+        -(center[:, 1] - base[1]),
+    ]).astype(np.float32)
+
+    # Straight beam / centerline should be along negative local x
+    x_mm = -(v @ ex) * mm_per_pixel
+    y_mm =  (v @ ey) * mm_per_pixel
     z_mm_arr = np.full_like(x_mm, float(z_mm))
 
     lumen_C_mm = np.column_stack([x_mm, y_mm, z_mm_arr]).astype(np.float64)
@@ -540,7 +559,7 @@ def reconstruct_beam_within_vessel(
         val_min=20,
         min_area=5,
         max_area=50000,
-        show_debug=True,
+        show_debug=False,
     )
 
     green_pt1, green_pt2 = green_result["points_px"]
@@ -565,13 +584,15 @@ def reconstruct_beam_within_vessel(
     vessel = {"mode": "manual"}
     print("[INFO] Using manually drawn vessel boundaries.")
     lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm = build_lumen_from_parametric_boundaries(
-        left_boundary_px=left_smooth,
-        right_boundary_px=right_smooth,
-        base_px=markers["base_px"],
-        mm_per_pixel=mm_per_pixel,
+        left_smooth,
+        right_smooth,
+        base_px = markers["base_px"],
+        mag_start_px = markers["mag_start_px"],
+        mm_per_pixel = mm_per_pixel,
         z_mm=0.0,
     )
-
+    print("lumen_C_m first local =", lumen_C_m[0])
+    print("lumen_C_m last local  =", lumen_C_m[-1])
     
     # --- beam reconstruction ---
     beam_points_px, beam_coeffs = fit_beam_centerline_from_markers(markers)
@@ -862,11 +883,31 @@ def order_four_markers(points, pivot_hint=None):
 
     return [tuple(map(float, p)) for p in ordered]
 
+def image_to_base_frame(point_px, base_px, mag_start_px):
+    # image -> Cartesian
+    v = np.array([
+        float(point_px[0] - base_px[0]),
+        float(-(point_px[1] - base_px[1])),
+    ], dtype=np.float32)
 
-def image_to_base_frame(point_px, base_px):
-    x = float(point_px[0] - base_px[0])
-    y = float(-(point_px[1] - base_px[1]))
-    return np.array([x, y], dtype=np.float32)
+    ref = np.array([
+        float(mag_start_px[0] - base_px[0]),
+        float(-(mag_start_px[1] - base_px[1])),
+    ], dtype=np.float32)
+
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("base-to-magnet reference vector is zero length")
+
+    ex = ref / nr                    # beam reference direction in image-cartesian frame
+    ey = np.array([-ex[1], ex[0]], dtype=np.float32)   # +90 deg perpendicular
+
+    # Beam-local convention:
+    # straight beam should be along negative local x
+    x_local = -float(np.dot(v, ex))
+    y_local =  float(np.dot(v, ey))
+
+    return np.array([x_local, y_local], dtype=np.float32)
 
 
 class AngleUnwrapper:
@@ -938,7 +979,7 @@ def measure_tip_state_4markers(
     tangent_start = np.array(tangent_start_px, dtype=np.float32)
     tip = np.array(tip_px, dtype=np.float32)
 
-    tip_xy = image_to_base_frame(tip, base)
+    tip_xy = image_to_base_frame(tip, base, mag_start)
 
     ref_vec = np.array([
         mag_start[0] - base[0],
@@ -967,7 +1008,21 @@ def measure_tip_state_4markers(
         },
         "roi_box": roi_box,
     }
+    print("[DBG markers]")
+    print("  base_px         =", base_px)
+    print("  mag_start_px    =", mag_start_px)
+    print("  tangent_start_px=", tangent_start_px)
+    print("  tip_px          =", tip_px)
 
+    print("[DBG raw deltas]")
+    print("  tip-base image dxdy =", tip - base)
+    print("  mag-base image dxdy =", mag_start - base)
+    print("  tan tip-start dxdy  =", tip - tangent_start)
+
+    print("[DBG converted]")
+    print("  tip_xy_from_base =", tip_xy)
+    print("  ref_vec =", ref_vec)
+    print("  tan_vec =", tan_vec)
     if show:
         vis = image_bgr.copy()
 

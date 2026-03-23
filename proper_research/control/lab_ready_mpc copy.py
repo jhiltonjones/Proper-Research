@@ -2186,7 +2186,7 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d,
         dt=dt,
-        Np=6,
+        Np=1,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -2237,7 +2237,7 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
     trans_hist, omega_hist, dL_hist = [], [], []
 
     for k in range(max_steps):
-        mpc.mode = "ltv"
+        mpc.mode = "lti"
         mpc.enable_soft_progress = True
         mpc.enable_mag_center_standoff = True
         mpc.enable_mag_tangent_inline = True

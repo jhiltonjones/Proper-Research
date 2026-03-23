@@ -12,7 +12,8 @@ from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_ce
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
 from proper_research.vision.measure_length import new_capture
-
+import matplotlib.pyplot as plt
+import time
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
@@ -481,7 +482,23 @@ def forward_tangent(Cc, i, t_prev=None):
     if t_prev is not None and np.dot(t, t_prev) < 0.0:
         t = -t
     return t
+def plot_reference_debug(mpc, x_meas, n_ref=10):
+    C = np.asarray(mpc.lumen_C, float)
+    i_ref = int(getattr(mpc, "i_ref_last", 0))
+    idx_ref = np.clip(i_ref + np.arange(n_ref), 0, len(C) - 1)
 
+    plt.figure(figsize=(7, 7))
+    plt.plot(C[:, 0], C[:, 1], "-", label="lumen")
+    plt.plot(x_meas[0], x_meas[1], "o", label="tip")
+    plt.plot(C[i_ref, 0], C[i_ref, 1], "s", label="i_ref")
+    plt.plot(C[idx_ref, 0], C[idx_ref, 1], "x--", label="future ref")
+    plt.axis("equal")
+    plt.grid(True)
+    plt.legend()
+    plt.xlabel("x [m]")
+    plt.ylabel("y [m]")
+    plt.title("Reference points on lumen")
+    plt.show()
 class mpc_controller_tipxy_LTI:
     def __init__(self, *, Jxy_fn, forward_tip_fn,
                  dt=0.05, Np=10,
@@ -495,7 +512,7 @@ class mpc_controller_tipxy_LTI:
                  n_out = 3,
                  n_p=8,
                  n_u=7,
-                 model_mode = "ltv",
+                 model_mode = "lti",
                  d_min_tip_mag=0.10,  
                  d_alpha=0.15,
                  overhead_magnet = False,
@@ -507,7 +524,7 @@ class mpc_controller_tipxy_LTI:
         self.n = n_out
         self.Jxy_fn = Jxy_fn
         self.forward_tip_fn = forward_tip_fn
-
+        self.x_pred_prev_1 = None
         self.dt = float(dt)
         self.Np = int(Np)
 
@@ -651,49 +668,50 @@ class mpc_controller_tipxy_LTI:
         return np.array(p_list)
 
 
+
     def _build_prediction_mats(self, p0, U_guess):
-        """
-        Returns: p_seq, Mx, Mc, B0
-        - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
-        - Mx, Mc: stacked prediction matrices
-        - B0: first-step input matrix (for terminal cost DARE)
-        """
+        t0 = time.perf_counter()
+
         n, m, Np = self.n, self.m, self.Np
 
         if self.model_mode == "lti":
-            # J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
-            # if J0.shape != (n, m):
-            #     raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
-            # B0 = self.dt * J0
-            J0 = np.asarray(self.Jxy_fn(p0), float)   # now returns B directly (n x 7)
-            B0 = J0
-            Mx, Mc = seq_mat_lti(self.A, B0, Np)
-            # col_names = ["vx","vy","vz","wx","wy","wz","dL"]
-            # row_names = ["x","y","z"]  # only if n_out==3 and it's xyz
+            tJ0 = time.perf_counter()
+            J0 = np.asarray(self.Jxy_fn(p0), float)
+            tJ1 = time.perf_counter()
 
-            # for r in range(B0.shape[0]):
-            #     row_label = row_names[r] if r < len(row_names) else f"y{r}"
-            #     vals = " ".join([f"{B0[r,c]:+10.3e}" for c in range(B0.shape[1])])
-            #     print(f"  {row_label}: {vals}")
-            # print("      cols:", " ".join([f"{n:>10s}" for n in col_names]))
+            B0 = J0
+
+            tM0 = time.perf_counter()
+            Mx, Mc = seq_mat_lti(self.A, B0, Np)
+            tM1 = time.perf_counter()
+
             if U_guess is None:
                 U_guess = np.zeros((Np, m))
+
+            tp0 = time.perf_counter()
             p_seq = self._p_seq_from_U(p0, U_guess)
+            tp1 = time.perf_counter()
+
+            t1 = time.perf_counter()
+            print(f"[TIME] Jxy_fn: {(tJ1-tJ0)*1e3:.2f} ms")
+            print(f"[TIME] seq_mat_lti: {(tM1-tM0)*1e3:.2f} ms")
+            print(f"[TIME] _p_seq_from_U: {(tp1-tp0)*1e3:.2f} ms")
+            print(f"[TIME] total build_prediction_mats: {(t1-t0)*1e3:.2f} ms")
 
             return p_seq, Mx, Mc, B0
 
-        # if U_guess is None:
-        #     U_guess = np.zeros((Np, m))
+        if U_guess is None:
+            U_guess = np.zeros((Np, m))
 
-        # p_seq = self._p_seq_from_U(p0, U_guess)  
-        # B_list = []
-        # for i in range(Np):
-        #     Ji = np.asarray(self.Jxy_fn(p_seq[i]), float)  # Ji is B_i directly
-        #     B_list.append(Ji)
+        p_seq = self._p_seq_from_U(p0, U_guess)  
+        B_list = []
+        for i in range(Np):
+            Ji = np.asarray(self.Jxy_fn(p_seq[i]), float)  # Ji is B_i directly
+            B_list.append(Ji)
 
-        # Mx, Mc = seq_mat_ltv(self.A, B_list)
-        # B0 = B_list[0]
-        # return p_seq, Mx, Mc, B0
+        Mx, Mc = seq_mat_ltv(self.A, B_list)
+        B0 = B_list[0]
+        return p_seq, Mx, Mc, B0
 
     def step(self, x_meas=None):
         """
@@ -715,7 +733,10 @@ class mpc_controller_tipxy_LTI:
         - outputs y are typically [x,y,z,tx,ty,tz]
         - self.p is still an internal actuator/configuration estimate
         """
-
+        print("ENTER step")
+        print("model_mode:", self.model_mode)
+        print("x_meas is None:", x_meas is None)
+        print("self.p is None:", self.p is None)
         def _pos_row_idx(n, Np):
             return np.array([k * n + i for k in range(Np) for i in (0, 1, 2)], dtype=int)
 
@@ -787,9 +808,23 @@ class mpc_controller_tipxy_LTI:
 
         for it in range(int(self.N_sqp)):
             p0 = self.p.copy()
+            print(f"P0 is {p0}")
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
+            print("built prediction mats")
+            print("p_seq shape:", np.shape(p_seq))
+            print("Mx shape:", np.shape(Mx))
+            print("Mc shape:", np.shape(Mc))
+            print("B0 shape:", np.shape(B0))
             B_first = np.asarray(B0, float).copy()
+            x_pred_prev_1 = getattr(self, "x_pred_prev_1", None)
 
+            pred1_err_xy = np.nan
+            pred1_err_xyz = np.nan
+
+            if x_pred_prev_1 is not None:
+                e = x_meas[:3] - x_pred_prev_1[:3]
+                pred1_err_xy = np.linalg.norm(e[:2])
+                pred1_err_xyz = np.linalg.norm(e[:3])
             # debug Jacobian info
             B = np.asarray(B0, float)
             _, mB = B.shape
@@ -1031,7 +1066,7 @@ class mpc_controller_tipxy_LTI:
                     R_k = float(Rr_tmp[idx_v])
                     clearance_m_obj[k] = R_k - rho_k
 
-                theta_ref_deg = float(getattr(self, "theta_ref_deg", 30.0))
+                theta_ref_deg = float(getattr(self, "theta_ref_deg", 0.0))
                 cos_ref = float(np.cos(np.deg2rad(theta_ref_deg)))
 
                 d_gate = float(getattr(self, "tangent_gate_clearance_m", 1.5e-3))
@@ -1483,7 +1518,18 @@ class mpc_controller_tipxy_LTI:
             Z_opt, _, status = solve_qp_osqp(H_z, f_z.ravel(), A_osqp, l_osqp, u_osqp, U_warm=Z_warm)
             status_last = status
             U_opt_vec = None
-
+            print("QP dims:")
+            print("H_z:", H_z.shape)
+            print("f_z:", f_z.shape)
+            print("A_osqp:", A_osqp.shape)
+            print("l_osqp:", l_osqp.shape)
+            print("u_osqp:", u_osqp.shape)
+            print("all finite H:", np.all(np.isfinite(H_z)))
+            print("all finite f:", np.all(np.isfinite(f_z)))
+            print("all finite A:", np.all(np.isfinite(A_osqp)))
+            print("all finite l:", np.all(np.isfinite(l_osqp)))
+            print("all finite u:", np.all(np.isfinite(u_osqp)))
+            print("any l > u:", np.any(l_osqp > u_osqp))
             if status in ("solved", "solved inaccurate") and (Z_opt is not None):
                 if ns > 0:
                     U_opt_vec = Z_opt[:Nu].copy()
@@ -1530,14 +1576,13 @@ class mpc_controller_tipxy_LTI:
         else:
             self.U_warm = None
 
-        pred1_err_xy = np.nan
-        pred1_err_xyz = np.nan
+
 
         if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
-            e = x_next_used[:3] - X_pred[0][:3]
-            pred1_err_xy = float(np.linalg.norm(e[:2]))
-            pred1_err_xyz = float(np.linalg.norm(e))
-            tan1_err = float(np.linalg.norm(x_next_used[3:6] - X_pred[0][3:6])) if (n >= 6 and X_pred.shape[1] >= 6) else np.nan
+            e_now_pred = x_next_used[:3] - X_pred[0][:3]
+            pred1_err_xy_nvslat = float(np.linalg.norm(e_now_pred[:2]))
+            pred1_err_xyz_nvslat = float(np.linalg.norm(e_now_pred))
+            tan1_err_nvslat = float(np.linalg.norm(x_next_used[3:6] - X_pred[0][3:6])) if (n >= 6 and X_pred.shape[1] >= 6) else np.nan
 
         if self.debug and (U_opt_vec is not None):
             U_dbg = U_opt_vec.reshape(Nu, 1)
@@ -1794,7 +1839,7 @@ class mpc_controller_tipxy_LTI:
                 penalties=dbg_pen,
                 constraints=dbg_con,
             )
-
+            self.x_pred_prev_1 = X_pred[0].copy()
             print("\n[DBG MPC] objective term costs")
             for k_, v_ in dbg_costs.items():
                 print(f"  {k_:>18s}: {v_: .6e}")
@@ -1849,8 +1894,10 @@ class mpc_controller_tipxy_LTI:
             Mc_last=Mc_last.copy() if Mc_last is not None else None,
             X_nom_last=X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
             p_seq_last=p_seq_last.copy() if p_seq_last is not None else None,
-            pred1_err_xy=float(pred1_err_xy),
-            pred1_err_xyz=float(pred1_err_xyz),
+            pred1_err_xy=float(pred1_err_xy) if x_pred_prev_1 is not None else None,
+            pred1_err_xyz=float(pred1_err_xyz) if x_pred_prev_1 is not None else None,
+            pred1_err_xy_nvslat=float(pred1_err_xy_nvslat),
+            pred1_err_xyz_nvslat=float(pred1_err_xyz_nvslat),
             tan1_err=float(tan1_err) if np.isfinite(tan1_err) else np.nan,
             theta0_deg=float(theta0) if np.isfinite(theta0) else np.nan,
             theta_max_deg=float(theta_max_deg),
@@ -1864,7 +1911,11 @@ class mpc_controller_tipxy_LTI:
         )
 
         return self.p.copy(), self.x.copy(), info
-def vision_result_to_x_meas(vision_result, align_tangent_with_lumen=True):
+def vision_result_to_x_meas_robot(
+    vision_result,
+    pivot_point_pose6,
+    align_tangent_with_lumen=True,
+    ):
     tip_result = vision_result["tip_result"]
     markers = tip_result["markers"]
     mm_per_pixel = float(vision_result["mm_per_pixel"])
@@ -1872,30 +1923,43 @@ def vision_result_to_x_meas(vision_result, align_tangent_with_lumen=True):
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
-    x_m = tip_xy_m[0]
-    y_m = tip_xy_m[1]
-    z_m = 0.0
-
-    tip_px = np.asarray(markers["tip_px"], dtype=float)
-    tangent_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
-
-    t_meas = np.array([
-        tip_px[0] - tangent_start_px[0],
-        -(tip_px[1] - tangent_start_px[1]),
+    p_local = np.array([
+        tip_xy_m[0],
+        tip_xy_m[1],
         0.0,
     ], dtype=float)
 
-    nrm = np.linalg.norm(t_meas)
+    tip_px = np.asarray(markers["tip_px"], dtype=float)
+    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
+
+    t_local = np.array([
+        tip_px[0] - tan_start_px[0],
+        -(tip_px[1] - tan_start_px[1]),
+        0.0,
+    ], dtype=float)
+
+    nrm = np.linalg.norm(t_local)
     if nrm < 1e-12:
         raise ValueError("Measured tangent from vision is zero-length.")
-    t_meas /= nrm
+    t_local /= nrm
 
-    lumen_C_m = vision_result.get("lumen_C_m", None)
-    if align_tangent_with_lumen and (lumen_C_m is not None):
-        C = np.asarray(lumen_C_m, dtype=float)
+    T_pivot_robot = ur_pose6_to_T(np.asarray(pivot_point_pose6, dtype=float))
+    R_pivot_robot = T_pivot_robot[:3, :3]
+    p_pivot_robot = T_pivot_robot[:3, 3]
+
+    p_robot = p_pivot_robot + R_pivot_robot @ p_local
+    t_robot = R_pivot_robot @ t_local
+
+    nrm_t = np.linalg.norm(t_robot)
+    if nrm_t < 1e-12:
+        raise ValueError("Robot-frame tangent became zero-length.")
+    t_robot /= nrm_t
+
+    lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
+    if align_tangent_with_lumen and (lumen_C_robot_m is not None):
+        C = np.asarray(lumen_C_robot_m, dtype=float)
         if C.ndim == 2 and C.shape[0] >= 2 and C.shape[1] >= 3:
-            tip_xyz = np.array([x_m, y_m, z_m], dtype=float)
-            d2 = np.sum((C - tip_xyz.reshape(1, 3)) ** 2, axis=1)
+            d2 = np.sum((C - p_robot.reshape(1, 3)) ** 2, axis=1)
             i = int(np.argmin(d2))
 
             if i <= 0:
@@ -1908,33 +1972,62 @@ def vision_result_to_x_meas(vision_result, align_tangent_with_lumen=True):
             nrm_l = np.linalg.norm(t_lumen)
             if nrm_l > 1e-12:
                 t_lumen /= nrm_l
-                if float(np.dot(t_meas, t_lumen)) < 0.0:
-                    t_meas = -t_meas
+                if float(np.dot(t_robot, t_lumen)) < 0.0:
+                    t_robot = -t_robot
 
-    return np.array([x_m, y_m, z_m, t_meas[0], t_meas[1], t_meas[2]], dtype=float)
+    return np.array([
+        p_robot[0],
+        p_robot[1],
+        p_robot[2],
+        t_robot[0],
+        t_robot[1],
+        t_robot[2],
+    ], dtype=float)
+
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
+    import time
+    t0 = time.perf_counter()
+
     p8 = np.asarray(p8, float).ravel()
-    y0 = np.asarray(forward_y_fn(p8), float).reshape(n_out,)
     B = np.zeros((n_out, 7), float)
-    # regular columns 0..5
+
+    tint = 0.0
+    tfwd = 0.0
+
     for i in range(6):
         du = np.zeros(7); du[i] = eps_u[i]
+
+        a = time.perf_counter()
         p_plus  = integrate_pose8_body(p8, +du, dt)
         p_minus = integrate_pose8_body(p8, -du, dt)
+        b = time.perf_counter()
+        tint += (b - a)
+
+        a = time.perf_counter()
         y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
         y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+        b = time.perf_counter()
+        tfwd += (b - a)
+
         B[:, i] = (y_plus - y_minus) / (2.0 * eps_u[i])
 
-    # dL column: differentiate w.r.t L directly (small delta_L), then map to u via dt
-    delta_L = 1e-3  # 0.1 mm
+    delta_L = 1e-3
     p_plus = p8.copy();  p_plus[7]  += delta_L
     p_minus = p8.copy(); p_minus[7] -= delta_L
+
+    a = time.perf_counter()
     y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
     y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-    dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
-    # print("L0", p8[7], "Lplus", p_plus[7], "Lminus", p_minus[7])
+    b = time.perf_counter()
+    tfwd += (b - a)
 
-    B[:, 6] = dt * dy_dL   # because u[6] is dL/dt
+    dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
+    B[:, 6] = dt * dy_dL
+
+    t1 = time.perf_counter()
+    print(f"[TIME] numerical_B total: {(t1-t0)*1e3:.2f} ms")
+    print(f"[TIME] integrate total: {(tint)*1e3:.2f} ms")
+    print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
 
     return B
 
@@ -2012,12 +2105,12 @@ def snapshot_forward(forward6d, p8, *, commit=False):
 
 def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-        0.8581328220229531, -0.7055298925316631, -0.1,
+        0.8581328220229531, -0.7455298925316631, -0.1,
         -3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], dtype=float)
 
     start_point = np.array([
-        0.7181328220229531, -0.7055298925316631, -0.09,
+        0.7181328220229531, -0.7455298925316631, -0.09,
         -3.10153453698904, 0.024928591141737892, 0.06094868352765547
     ], dtype=float)
 
@@ -2025,74 +2118,6 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     dt = 0.01
     return pivot_point, start_point, L0, dt
 
-
-def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
-    T_ur_pivot = ur_pose6_to_T(pivot_point)
-    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
-
-    L_model, wire_len_model, tip_len_model = effective_lengths(L0)
-    print(
-        f"[INIT] L_ins={L0:.3f} -> "
-        f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
-    )
-
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
-
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
-
-    s_straight = 0.06
-    lumen_C = make_lumen_centerline_turning(
-        p_start=p0_ur,
-        t0=t0,
-        length=0.06 + s_straight,
-        n_pts=130,
-        bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(90.0),
-        bend_start=0.0 + s_straight,
-        bend_end=0.03 + s_straight,
-    )
-
-    lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.005)
-    lumen_path = lumen_C
-
-    forward_model = EnergyMinForwardWithLumen(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
-        u_star=np.zeros(3),
-        m_body=m_body,
-        lumen_C=lumen_C,
-        lumen_R=lumen_R,
-        N_nodes=35,
-        maxiter=70,
-        L0_init=0.01,
-        dL_internal=0.002,
-        L_tip_full=0.04,
-        L_tip_min=0.01,
-        use_lumen_jac=True
-    )
-
-    forward_model_wrong = EnergyMinForwardWithLumen(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
-        u_star=np.zeros(3),
-        m_body=m_body,
-        lumen_C=lumen_C,
-        lumen_R=lumen_R,
-        N_nodes=35,
-        maxiter=70,
-        L0_init=0.01,
-        dL_internal=0.002,
-        L_tip_full=0.04,
-        L_tip_min=0.01,
-        use_lumen_jac=False,
-    )
-
-    return p0_ur, q0_ur, lumen_C, lumen_R, lumen_path, s_path, forward_model, forward_model_wrong
 
 
 def build_controller(
@@ -2114,17 +2139,8 @@ def build_controller(
     p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, 0.01])
     p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
 
-    w_u = np.array([
-        1e-5, 1e-5, 1e-4,
-        5e-1, 5e-1, 1e-6,
-        1e-4
-    ], dtype=float)
-
-    w_du = np.array([
-        1e-8, 1e-8, 1e-8,
-        1e-8, 1e-8, 1e-8,
-        1e-8
-    ], dtype=float)
+    w_u = np.array([1e-5, 1e-5, 1e-4, 5e-1, 5e-1, 1e-6, 1e-4], dtype=float)
+    w_du = np.array([1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8], dtype=float)
 
     u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.1], dtype=float)
 
@@ -2144,20 +2160,15 @@ def build_controller(
         p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
     )
 
-    w_pos_x = 1.0
-    w_pos_y = 1.0
-    w_pos_z = 0.0
-    w_tan = 0.0
-
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d,
         dt=dt,
-        Np=6,
+        Np=1,
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(w_pos_x, w_pos_y, w_pos_z, w_tan, w_tan, w_tan),
+        w_xy=(1.0, 1.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2170,96 +2181,26 @@ def build_controller(
     mpc.R = np.diag([1e-3] * 7)
     mpc.Rd = np.diag([1e-4] * 7)
 
-    mpc.enable_mag_center_standoff = False
-    mpc.enable_mag_tangent_inline = False
-    mpc.enable_dipole_align = False
-    mpc.enable_hard_epm_tip_clearance = False
-
-    mpc.enable_standoff_soft = False
-    mpc.enable_inline_soft = False
-    mpc.enable_dipole_soft = False
-
-    mpc.enable_hard_theta = False
-    mpc.enable_tangent_penalty = False
-    mpc.w_adv = 0.0
+    mpc.enable_mag_center_standoff = True
+    mpc.enable_mag_tangent_inline = True
+    mpc.enable_dipole_align = True
+    mpc.enable_hard_epm_tip_clearance = True
+    mpc.enable_standoff_soft = True
+    mpc.enable_inline_soft = True
+    mpc.enable_dipole_soft = True
+    mpc.enable_hard_theta = True
+    mpc.enable_tangent_penalty = True
 
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
     mpc.set_initial_params(p0)
 
     return mpc, p0, p_min, p_max, u_max, forward6d
-def vision_result_to_x_meas_robot(
-    vision_result,
-    pivot_point_pose6,
-    align_tangent_with_lumen=True,
-):
-    tip_result = vision_result["tip_result"]
-    markers = tip_result["markers"]
-    mm_per_pixel = float(vision_result["mm_per_pixel"])
 
-    tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
-    tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
-    p_local = np.array([
-        tip_xy_m[0],
-        tip_xy_m[1],
-        0.0,
-    ], dtype=float)
 
-    tip_px = np.asarray(markers["tip_px"], dtype=float)
-    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
 
-    t_local = np.array([
-        tip_px[0] - tan_start_px[0],
-        -(tip_px[1] - tan_start_px[1]),
-        0.0,
-    ], dtype=float)
 
-    nrm = np.linalg.norm(t_local)
-    if nrm < 1e-12:
-        raise ValueError("Measured tangent from vision is zero-length.")
-    t_local /= nrm
-
-    T_pivot_robot = ur_pose6_to_T(np.asarray(pivot_point_pose6, dtype=float))
-    R_pivot_robot = T_pivot_robot[:3, :3]
-    p_pivot_robot = T_pivot_robot[:3, 3]
-
-    p_robot = p_pivot_robot + R_pivot_robot @ p_local
-    t_robot = R_pivot_robot @ t_local
-
-    nrm_t = np.linalg.norm(t_robot)
-    if nrm_t < 1e-12:
-        raise ValueError("Robot-frame tangent became zero-length.")
-    t_robot /= nrm_t
-
-    lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
-    if align_tangent_with_lumen and (lumen_C_robot_m is not None):
-        C = np.asarray(lumen_C_robot_m, dtype=float)
-        if C.ndim == 2 and C.shape[0] >= 2 and C.shape[1] >= 3:
-            d2 = np.sum((C - p_robot.reshape(1, 3)) ** 2, axis=1)
-            i = int(np.argmin(d2))
-
-            if i <= 0:
-                t_lumen = C[1] - C[0]
-            elif i >= len(C) - 1:
-                t_lumen = C[-1] - C[-2]
-            else:
-                t_lumen = C[i + 1] - C[i - 1]
-
-            nrm_l = np.linalg.norm(t_lumen)
-            if nrm_l > 1e-12:
-                t_lumen /= nrm_l
-                if float(np.dot(t_robot, t_lumen)) < 0.0:
-                    t_robot = -t_robot
-
-    return np.array([
-        p_robot[0],
-        p_robot[1],
-        p_robot[2],
-        t_robot[0],
-        t_robot[1],
-        t_robot[2],
-    ], dtype=float)
 def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
     T_pivot_robot = ur_pose6_to_T(np.asarray(pivot_point_pose6, dtype=float))
     R_pivot_robot = T_pivot_robot[:3, :3]
@@ -2267,6 +2208,8 @@ def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
 
     P_local = np.asarray(points_local_m, dtype=float)
     return (R_pivot_robot @ P_local.T).T + p_pivot_robot.reshape(1, 3)
+
+
 def run_control(
     mpc,
     pivot_point,
@@ -2278,14 +2221,14 @@ def run_control(
     max_steps=100,
     show=False,
     send_commands=False,
-):
+    ):
     history = []
 
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
         # 1. capture new image
-        new_capture()
+        # new_capture()
 
         # 2. run vision
         vision_result = reconstruct_beam_within_vessel(
@@ -2329,7 +2272,9 @@ def run_control(
         print("[VISION] lumen_R shape =", mpc.lumen_R.shape)
         print("[VISION] closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
         print("[VISION] beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_wall_tangent_angle_deg"])
-
+        print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
+        print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
+        print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
         # 5. update current reference index from measured tip
         tip_xyz = x_meas[:3]
         i_ref = closest_index_in_window_monotone(
@@ -2338,24 +2283,32 @@ def run_control(
             int(getattr(mpc, "i_ref_last", 0)),
             window=int(getattr(mpc, "risk_window", 120)),
         )
+        C = np.asarray(mpc.lumen_C, float)
+        d2_all = np.sum((C - tip_xyz[None, :])**2, axis=1)
+        i_ref_global = int(np.argmin(d2_all))
+        print("[DBG] global closest index =", i_ref_global)
+        print("[DBG] global closest dist [mm] =", 1000*np.sqrt(d2_all[i_ref_global]))
         mpc.i_ref_last = int(i_ref)
         print("[VISION] i_ref =", i_ref)
         print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
         print("[VISION] tip-to-reference distance [mm] =",
             1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
+        
+        # plot_reference_debug(mpc, x_meas, n_ref=10)
+
+
         # 6. solve MPC using real measurement
         p_now, x_now, info = mpc.step(x_meas=x_meas)
 
         u0 = np.asarray(info["u0"], dtype=float).copy()
-        print("[MPC] pred1_err_xy [mm] =", 1000.0 * info.get("pred1_err_xy", np.nan))
-        print("[MPC] pred1_err_xyz [mm] =", 1000.0 * info.get("pred1_err_xyz", np.nan))
-        print("[MPC] tan1_err =", info.get("tan1_err", np.nan))
+
         print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
         print("[MPC] jac rank =", info.get("jac_svd_rank", np.nan))
         print(f"[CONTROL] step={k}")
         print("x_meas =", x_meas)
-        print("x_now  =", x_now)
-        print("u0_proposed =", u0)
+        print("p_now =", p_now)                 # updated internal actuator state
+        print("x_now =", x_now)                 # still current measurement
+        print("u0_proposed =", info["u0"])      # command that produced p_now
         print("i_ref =", mpc.i_ref_last)
         print("closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
         print("beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_wall_tangent_angle_deg"])
@@ -2386,7 +2339,7 @@ def build_initial_lumen_from_vision(
     pivot_hint=None,
     show=True,
 ):
-    new_capture()
+    # new_capture()
 
     vision_result = reconstruct_beam_within_vessel(
         image_filename=image_filename,
@@ -2448,7 +2401,7 @@ if __name__ == "__main__":
         blue_roi_path="blue_roi_box.json",
         green_roi_path="green_roi_box.json",
         pivot_hint=None,
-        show=True,
+        show=False,
     )
 
     # 2. build forward model from that same lumen
@@ -2478,7 +2431,7 @@ if __name__ == "__main__":
         blue_roi_path="blue_roi_box.json",
         green_roi_path="green_roi_box.json",
         pivot_hint=None,
-        max_steps=20,
-        show=True,
+        max_steps=1,
+        show=False,
         send_commands=False,
     )

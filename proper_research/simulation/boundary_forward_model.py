@@ -92,7 +92,6 @@ class EnergyMinForwardWithLumen:
         q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
         q_wxyz /= (np.linalg.norm(q_wxyz) + 1e-12)
         return q_wxyz
-
     def __call__(self, p):
         p = np.asarray(p, float).reshape(-1)
         if p.size != 7:
@@ -102,15 +101,26 @@ class EnergyMinForwardWithLumen:
         rvec  = p[3:6]
         L_ins = float(p[6])
 
+        print("\n[FWD] p =", p)
+        print("[FWD] r_src =", r_src)
+        print("[FWD] rvec =", rvec)
+        print("[FWD] L_ins =", L_ins)
+
         L_model, wire_len, tip_len = effective_lengths(
             L_ins,
             L_tip_full=self.L_tip_full,
-            L_tip_min=self.L_tip_min,   # rename your L_tip_model to L_tip_min for clarity
+            L_tip_min=self.L_tip_min,
         )
+        print("[FWD] lengths:",
+            "L_model =", L_model,
+            "wire_len =", wire_len,
+            "tip_len =", tip_len)
 
         # magnet pose -> world dipole
         q_src = self._quat_from_rotvec_ur(rvec)
         m_src = dipole_from_pose(q_src, self.m_body)
+        print("[FWD] q_src =", q_src)
+        print("[FWD] m_src =", m_src)
         # magnetisation profile: magnetised region is [wire_len, wire_len + tip_len]
         m_local_fun = make_m_local_fun_wire_tip(
             wire_len,
@@ -135,7 +145,10 @@ class EnergyMinForwardWithLumen:
         def wire_len_fun(LL):
             # wire exists only after full tip is inside
             return max(float(LL) - self.L_tip_full, 0.0)
-        
+            print("[FWD] lumen_C shape =", self.lumen_C.shape)
+        print("[FWD] lumen_R shape =", self.lumen_R.shape)
+        print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
+        print("[FWD] use_lumen_jac =", self.use_lumen_jac)
         hist = solve_quasistatic_insertion(
             p0=self.p0_ur, q0=self.q0_ur,
             L0=L_start, Lf=L_model, dL=self.dL_internal,
@@ -151,11 +164,14 @@ class EnergyMinForwardWithLumen:
             debug=False
         )
         if (not hist) or (hist[-1].get("p", None) is None):
+            print("[FWD] solve failed")
             return np.array([1e4, 1e4, 1e4], float)
 
-        pE = hist[-1]["p"]          # (3,N)
+        pE = hist[-1]["p"]
         tip = pE[:, -1].copy()
         info = hist[-1].get("info", {})
+        print("[FWD] tip =", tip)
+        print("[FWD] info keys =", list(info.keys()))
 
         # store for plotting/debug
         self.last_p_centerline = pE.copy()

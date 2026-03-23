@@ -851,7 +851,7 @@ def energy_from_u(
             p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e5
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
-
+    # print(f"DEBUG Elastic: {W_s}, Magnetic {W_m}, Gravity {W_g}, Barrier {W_cf}")
     W_total = W_s + W_m*1.2+ W_g + W_cf
     # W_total = W_m
     if debug_mag:

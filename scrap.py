@@ -14,8 +14,7 @@ rho = 0.13
 p0 = np.array([0.0, 0.0, 0.0])
 r_tip_nominal = p0 + np.array([0.05, 0.0, 0.0])
 ROBOT_IP = "192.168.56.101"
-TCP_TARGET =  [0.708, -0.868 , -0.090, -2.925,  -1.0,
-        0.039]
+TCP_TARGET =  [0.67813629, -0.70691417,  0.15178538 ,-3.10153564,  -0.0034492947,  0.06090397]
 
 Sleeping_joints = [5.127925760461949e-06, -1.570810934106344, 1.889864076787262e-05, -1.5707822610205149, -6.500874654591371e-06, -1.699129213506012e-05]
 if __name__ == "__main__":
@@ -26,8 +25,8 @@ if __name__ == "__main__":
 
         # robo.go_home_joint()
         # # posy[2]+=0.2
-        new_pose = get_point(0,0)
-        robo.moveL(new_pose)
+        # new_pose = get_point(0,0)
+        # robo.moveL(new_pose)
         # new_pose = get_point(0,60) 
         # robo.moveL(new_pose)
         
@@ -40,7 +39,7 @@ if __name__ == "__main__":
 
         # TCP_TARGET[2] +=.25
         # robo.moveL(TCP_TARGET)
-        # robo.get_pose()
+        robo.get_pose()
 
         print("Finished")
     finally:

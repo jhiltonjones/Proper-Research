@@ -101,26 +101,26 @@ class EnergyMinForwardWithLumen:
         rvec  = p[3:6]
         L_ins = float(p[6])
 
-        print("\n[FWD] p =", p)
-        print("[FWD] r_src =", r_src)
-        print("[FWD] rvec =", rvec)
-        print("[FWD] L_ins =", L_ins)
+        # print("\n[FWD] p =", p)
+        # print("[FWD] r_src =", r_src)
+        # print("[FWD] rvec =", rvec)
+        # print("[FWD] L_ins =", L_ins)
 
         L_model, wire_len, tip_len = effective_lengths(
             L_ins,
             L_tip_full=self.L_tip_full,
             L_tip_min=self.L_tip_min,
         )
-        print("[FWD] lengths:",
-            "L_model =", L_model,
-            "wire_len =", wire_len,
-            "tip_len =", tip_len)
+        # print("[FWD] lengths:",
+        #     "L_model =", L_model,
+        #     "wire_len =", wire_len,
+        #     "tip_len =", tip_len)
 
         # magnet pose -> world dipole
         q_src = self._quat_from_rotvec_ur(rvec)
         m_src = dipole_from_pose(q_src, self.m_body)
-        print("[FWD] q_src =", q_src)
-        print("[FWD] m_src =", m_src)
+        # print("[FWD] q_src =", q_src)
+        # print("[FWD] m_src =", m_src)
         # magnetisation profile: magnetised region is [wire_len, wire_len + tip_len]
         m_local_fun = make_m_local_fun_wire_tip(
             wire_len,
@@ -146,9 +146,9 @@ class EnergyMinForwardWithLumen:
             # wire exists only after full tip is inside
             return max(float(LL) - self.L_tip_full, 0.0)
             print("[FWD] lumen_C shape =", self.lumen_C.shape)
-        print("[FWD] lumen_R shape =", self.lumen_R.shape)
-        print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
-        print("[FWD] use_lumen_jac =", self.use_lumen_jac)
+        # print("[FWD] lumen_R shape =", self.lumen_R.shape)
+        # print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
+        # print("[FWD] use_lumen_jac =", self.use_lumen_jac)
         hist = solve_quasistatic_insertion(
             p0=self.p0_ur, q0=self.q0_ur,
             L0=L_start, Lf=L_model, dL=self.dL_internal,
@@ -170,8 +170,8 @@ class EnergyMinForwardWithLumen:
         pE = hist[-1]["p"]
         tip = pE[:, -1].copy()
         info = hist[-1].get("info", {})
-        print("[FWD] tip =", tip)
-        print("[FWD] info keys =", list(info.keys()))
+        # print("[FWD] tip =", tip)
+        # print("[FWD] info keys =", list(info.keys()))
 
         # store for plotting/debug
         self.last_p_centerline = pE.copy()

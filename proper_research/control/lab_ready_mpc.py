@@ -14,6 +14,7 @@ from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
 from proper_research.vision.measure_length import new_capture
 import matplotlib.pyplot as plt
 import time
+from proper_research.robot.live_hardware_control import LiveHardwareController
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
@@ -482,7 +483,7 @@ def forward_tangent(Cc, i, t_prev=None):
     if t_prev is not None and np.dot(t, t_prev) < 0.0:
         t = -t
     return t
-def plot_reference_debug(mpc, x_meas, n_ref=10):
+def plot_reference_debug_simple(mpc, x_meas, n_ref=10):
     C = np.asarray(mpc.lumen_C, float)
     i_ref = int(getattr(mpc, "i_ref_last", 0))
     idx_ref = np.clip(i_ref + np.arange(n_ref), 0, len(C) - 1)
@@ -498,7 +499,93 @@ def plot_reference_debug(mpc, x_meas, n_ref=10):
     plt.xlabel("x [m]")
     plt.ylabel("y [m]")
     plt.title("Reference points on lumen")
-    plt.show()
+    # plt.show()
+
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_reference_debug(mpc, x_meas, info=None, n_ref=10, show_boundaries=True, save_path=None):
+    C = np.asarray(mpc.lumen_C, float)
+    R = np.asarray(mpc.lumen_R, float).reshape(-1) if getattr(mpc, "lumen_R", None) is not None else None
+
+    i_ref = int(getattr(mpc, "i_ref_last", 0))
+    idx_ref = np.clip(i_ref + np.arange(n_ref), 0, len(C) - 1)
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+
+    ax.plot(C[:, 0], C[:, 1], "-", label="lumen centerline")
+
+    if show_boundaries and (R is not None) and (len(C) >= 2):
+        left_bd = np.zeros_like(C[:, :2])
+        right_bd = np.zeros_like(C[:, :2])
+
+        for i in range(len(C)):
+            if i == 0:
+                t = C[1, :2] - C[0, :2]
+            elif i == len(C) - 1:
+                t = C[-1, :2] - C[-2, :2]
+            else:
+                t = C[i + 1, :2] - C[i - 1, :2]
+
+            nt = np.linalg.norm(t)
+            if nt < 1e-12:
+                n = np.array([0.0, 0.0])
+            else:
+                t = t / nt
+                n = np.array([-t[1], t[0]])
+
+            left_bd[i] = C[i, :2] + R[i] * n
+            right_bd[i] = C[i, :2] - R[i] * n
+
+        ax.plot(left_bd[:, 0], left_bd[:, 1], "--", label="lumen boundary +R")
+        ax.plot(right_bd[:, 0], right_bd[:, 1], "--", label="lumen boundary -R")
+
+    ax.plot(x_meas[0], x_meas[1], "o", markersize=8, label="measured tip")
+    ax.plot(C[i_ref, 0], C[i_ref, 1], "s", markersize=8, label="i_ref")
+    ax.plot(C[idx_ref, 0], C[idx_ref, 1], "x--", label="future ref")
+
+    if len(x_meas) >= 6:
+        ax.arrow(
+            x_meas[0], x_meas[1],
+            0.01 * x_meas[3], 0.01 * x_meas[4],
+            head_width=0.0005, length_includes_head=True
+        )
+
+    if info is not None:
+        X_pred = info.get("X_pred", None)
+        if X_pred is not None:
+            X_pred = np.asarray(X_pred, float)
+            if X_pred.ndim == 2 and X_pred.shape[1] >= 2 and np.all(np.isfinite(X_pred[:, :2])):
+                ax.plot(X_pred[:, 0], X_pred[:, 1], "o-.", label="predicted tip")
+                ax.plot(X_pred[0, 0], X_pred[0, 1], "D", markersize=8, label="predicted tip[0]")
+                if X_pred.shape[1] >= 6:
+                    ax.arrow(
+                        X_pred[0, 0], X_pred[0, 1],
+                        0.01 * X_pred[0, 3], 0.01 * X_pred[0, 4],
+                        head_width=0.0005, length_includes_head=True
+                    )
+
+        X_nom_last = info.get("X_nom_last", None)
+        if X_nom_last is not None:
+            X_nom_last = np.asarray(X_nom_last, float)
+            if X_nom_last.ndim == 2 and X_nom_last.shape[1] >= 2 and np.all(np.isfinite(X_nom_last[:, :2])):
+                ax.plot(X_nom_last[:, 0], X_nom_last[:, 1], ":+", label="nominal tip")
+
+    ax.axis("equal")
+    ax.grid(True)
+    ax.legend()
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_title("Reference, lumen, and MPC prediction")
+
+    if save_path is not None:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+        print(f"[SAVE] plot saved to {save_path}")
+
+    # plt.show()
+    # plt.close(fig)
 class mpc_controller_tipxy_LTI:
     def __init__(self, *, Jxy_fn, forward_tip_fn,
                  dt=0.05, Np=10,
@@ -613,7 +700,7 @@ class mpc_controller_tipxy_LTI:
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 20
-        self.mag_center_standoff_m = 0.12
+        self.mag_center_standoff_m = 0.16
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -633,7 +720,10 @@ class mpc_controller_tipxy_LTI:
             D1[i, i+1] = +1.0
 
         return np.kron(D1, np.eye(m))
-
+    def set_measured_params(self, p_meas):
+        p_meas = np.asarray(p_meas, float).reshape(self.np,)
+        self.p = self._clamp_p(p_meas)
+        self.p_last_meas = self.p.copy()
 
     def set_initial_params(self, p0):
         self.p = np.asarray(p0, float).reshape(self.np,)
@@ -1284,7 +1374,7 @@ class mpc_controller_tipxy_LTI:
             else:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
-            enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
+            enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", False))
             epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
 
             if enable_hard_epm_tip_clearance:
@@ -1896,8 +1986,8 @@ class mpc_controller_tipxy_LTI:
             p_seq_last=p_seq_last.copy() if p_seq_last is not None else None,
             pred1_err_xy=float(pred1_err_xy) if x_pred_prev_1 is not None else None,
             pred1_err_xyz=float(pred1_err_xyz) if x_pred_prev_1 is not None else None,
-            pred1_err_xy_nvslat=float(pred1_err_xy_nvslat),
-            pred1_err_xyz_nvslat=float(pred1_err_xyz_nvslat),
+            pred1_err_xy_nvslat=float(pred1_err_xy_nvslat)if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])) else None,
+            pred1_err_xyz_nvslat=float(pred1_err_xyz_nvslat) if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])) else None,
             tan1_err=float(tan1_err) if np.isfinite(tan1_err) else np.nan,
             theta0_deg=float(theta0) if np.isfinite(theta0) else np.nan,
             theta_max_deg=float(theta_max_deg),
@@ -1931,12 +2021,37 @@ def vision_result_to_x_meas_robot(
 
     tip_px = np.asarray(markers["tip_px"], dtype=float)
     tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
+    base_px = np.asarray(markers["base_px"], dtype=float)
+    mag_start_px = np.asarray(markers["mag_start_px"], dtype=float)
 
-    t_local = np.array([
+    # beam reference direction in image-Cartesian
+    ref = np.array([
+        mag_start_px[0] - base_px[0],
+        -(mag_start_px[1] - base_px[1]),
+    ], dtype=float)
+
+    nref = np.linalg.norm(ref)
+    if nref < 1e-12:
+        raise ValueError("Base-to-magnet reference vector is zero length.")
+    ex = ref / nref
+    ey = np.array([-ex[1], ex[0]], dtype=float)
+
+    # measured tangent in image-Cartesian
+    v_img = np.array([
         tip_px[0] - tan_start_px[0],
         -(tip_px[1] - tan_start_px[1]),
-        0.0,
     ], dtype=float)
+
+    nv = np.linalg.norm(v_img)
+    if nv < 1e-12:
+        raise ValueError("Measured tangent from vision is zero-length.")
+    v_img /= nv
+
+    # project into beam-local frame
+    tx_local = -float(np.dot(v_img, ex))
+    ty_local =  float(np.dot(v_img, ey))
+
+    t_local = np.array([tx_local, ty_local, 0.0], dtype=float)
 
     nrm = np.linalg.norm(t_local)
     if nrm < 1e-12:
@@ -1954,7 +2069,13 @@ def vision_result_to_x_meas_robot(
     if nrm_t < 1e-12:
         raise ValueError("Robot-frame tangent became zero-length.")
     t_robot /= nrm_t
-
+    print("[DBG TAN]")
+    print("  v_img =", v_img)
+    print("  ex =", ex)
+    print("  ey =", ey)
+    print("  tx_local, ty_local =", tx_local, ty_local)
+    print("  t_local =", t_local)
+    print("  t_robot =", t_robot)
     lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
     if align_tangent_with_lumen and (lumen_C_robot_m is not None):
         C = np.asarray(lumen_C_robot_m, dtype=float)
@@ -2030,7 +2151,14 @@ def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
 
     return B
-
+def build_measured_p8_from_robot_and_length(robo, L_meas):
+    pose6 = np.asarray(robo.get_pose(), float).reshape(6,)
+    p7 = np.array([
+        pose6[0], pose6[1], pose6[2]-0.25,
+        pose6[3], pose6[4], pose6[5],
+        float(L_meas)
+    ], dtype=float)
+    return pose7_rotvec_to_pose8_quat(p7)
 def predicted_targets_from_info(info, Np=None):
     X_pred = info.get("X_pred", None)
     if X_pred is None:
@@ -2105,16 +2233,15 @@ def snapshot_forward(forward6d, p8, *, commit=False):
 
 def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-        0.8581328220229531, -0.7455298925316631, -0.1,
-        -3.10153453698904, 0.024928591141737892, 0.06094868352765547
-    ], dtype=float)
+    0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+    ], float)
+
 
     start_point = np.array([
-        0.7181328220229531, -0.7455298925316631, -0.09,
-        -3.10153453698904, 0.024928591141737892, 0.06094868352765547
-    ], dtype=float)
+    0.6715010260183386, -0.7526721844012182, -0.1, -3.0461210973288635, -0.5474107279178696, 0.07160160804058051
+    ], float)
 
-    L0 = 0.043
+    L0 = 0.129
     dt = 0.01
     return pivot_point, start_point, L0, dt
 
@@ -2221,6 +2348,9 @@ def run_control(
     max_steps=100,
     show=False,
     send_commands=False,
+    hw=None,
+    save_plots=True,
+    plot_dir="mpc_debug_plots",
     ):
     history = []
 
@@ -2228,7 +2358,7 @@ def run_control(
         print(f"\n================ CONTROL STEP {k} ================")
 
         # 1. capture new image
-        # new_capture()
+        new_capture()
 
         # 2. run vision
         vision_result = reconstruct_beam_within_vessel(
@@ -2294,12 +2424,36 @@ def run_control(
         print("[VISION] tip-to-reference distance [mm] =",
             1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
         
-        # plot_reference_debug(mpc, x_meas, n_ref=10)
+        if hw is not None and hasattr(hw, "robo"):
+            L_meas = float(vision_result["beam_length_mm"]) / 1000.0
+            p_meas8 = build_measured_p8_from_robot_and_length(hw.robo, L_meas)
+            mpc.set_measured_params(p_meas8)
 
-
+            print("[MEAS P] robot pose6 =", hw.robo.get_pose())
+            print("[MEAS P] L_meas =", L_meas)
+            print("[MEAS P] p_meas8 =", p_meas8)
+        plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         # 6. solve MPC using real measurement
         p_now, x_now, info = mpc.step(x_meas=x_meas)
+        plot_path = None
+        if save_plots:
+            plot_path = os.path.join(plot_dir, f"step_{k:04d}_reference_debug.png")
 
+        plot_reference_debug(
+            mpc,
+            x_meas,
+            info=info,
+            n_ref=3,
+            show_boundaries=True,
+            save_path=plot_path,
+        )
+
+        p7_now = pose8_quat_to_pose7_rotvec(p_now)
+        ur_pose6_next = p7_now[:6]
+        L_next = p7_now[6]
+
+        print("UR next pose:", ur_pose6_next)
+        print("Insertion next:", L_next)
         u0 = np.asarray(info["u0"], dtype=float).copy()
 
         print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
@@ -2308,6 +2462,7 @@ def run_control(
         print("x_meas =", x_meas)
         print("p_now =", p_now)                 # updated internal actuator state
         print("x_now =", x_now)                 # still current measurement
+        print("Error on 1 step ", info["pred1_err_xy"])
         print("u0_proposed =", info["u0"])      # command that produced p_now
         print("i_ref =", mpc.i_ref_last)
         print("closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
@@ -2327,8 +2482,9 @@ def run_control(
         })
 
         if send_commands:
-            raise RuntimeError("send_commands=True not enabled yet; keep this off for dry-run testing.")
-
+            if hw is None:
+                raise RuntimeError("send_commands=True requires a hardware controller instance.")
+            hw.send_step(p_now=p_now, u0=u0, dt=mpc.dt)
     return history
 def build_initial_lumen_from_vision(
     pivot_point,
@@ -2339,7 +2495,7 @@ def build_initial_lumen_from_vision(
     pivot_hint=None,
     show=True,
 ):
-    # new_capture()
+    new_capture()
 
     vision_result = reconstruct_beam_within_vessel(
         image_filename=image_filename,
@@ -2423,15 +2579,39 @@ if __name__ == "__main__":
     )
 
     # 4. dry-run control loop
-    history = run_control(
-        mpc=mpc,
-        pivot_point=pivot_point,
-        image_filename="focused_image.jpg",
-        red_roi_path="red_roi_box.json",
-        blue_roi_path="blue_roi_box.json",
-        green_roi_path="green_roi_box.json",
-        pivot_hint=None,
-        max_steps=1,
-        show=False,
-        send_commands=False,
+    hw = LiveHardwareController(
+        robot_ip="192.168.56.101",
+        dry_run=False,                 # True first
+        use_advancer=True,
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=0.25,
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
     )
+
+    try:
+        history = run_control(
+            mpc=mpc,
+            pivot_point=pivot_point,
+            image_filename="focused_image.jpg",
+            red_roi_path="red_roi_box.json",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=None,
+            max_steps=25,
+            show=False,
+            send_commands=True,
+            hw=hw,
+            save_plots=True,
+            plot_dir="mpc_debug_plots_w_lumen",
+        )
+    finally:
+        hw.shutdown()

@@ -506,7 +506,145 @@ def closest_point_on_polyline(query_pt, polyline_pts):
             best_pt = cand
 
     return tuple(map(float, best_pt)), float(best_dist)
+def plot_tip_measurement_vs_lumen_local(result, tangent_scale_mm=8.0, n_tangent_pts=15):
+    """
+    Plot lumen centerline, lumen boundaries, measured tip position,
+    measured tip tangent, and local centerline tangent in the same LOCAL frame.
 
+    result = output of reconstruct_beam_within_vessel(...)
+    """
+
+    C_mm = np.asarray(result["lumen_C_mm"], dtype=float)   # (N,3)
+    R_mm = np.asarray(result["lumen_R_mm"], dtype=float)   # (N,)
+    tip_result = result["tip_result"]
+    markers = tip_result["markers"]
+
+    # measured tip position in same local frame as lumen_C_mm
+    tip_xy = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
+    tip_xy_mm = tip_xy * float(result["mm_per_pixel"])
+
+    # measured tangent in image-cartesian
+    tip_px = np.asarray(markers["tip_px"], dtype=float)
+    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
+    base_px = np.asarray(markers["base_px"], dtype=float)
+    mag_start_px = np.asarray(markers["mag_start_px"], dtype=float)
+
+    v_img = np.array([
+        tip_px[0] - tan_start_px[0],
+        -(tip_px[1] - tan_start_px[1]),
+    ], dtype=float)
+    nv = np.linalg.norm(v_img)
+    if nv < 1e-12:
+        raise ValueError("Measured tangent vector is zero-length.")
+    v_img /= nv
+
+    # same beam-local basis used by image_to_base_frame() / build_lumen_from_parametric_boundaries()
+    ref = np.array([
+        mag_start_px[0] - base_px[0],
+        -(mag_start_px[1] - base_px[1]),
+    ], dtype=float)
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("Base-to-magnet reference vector is zero-length.")
+    ex = ref / nr
+    ey = np.array([-ex[1], ex[0]], dtype=float)
+
+    # project measured tangent into beam-local frame
+    tx_local = -float(np.dot(v_img, ex))
+    ty_local =  float(np.dot(v_img, ey))
+    t_meas_local = np.array([tx_local, ty_local], dtype=float)
+    t_meas_local /= (np.linalg.norm(t_meas_local) + 1e-12)
+
+    # nearest centerline point to measured tip
+    d2 = np.sum((C_mm[:, :2] - tip_xy_mm.reshape(1, 2)) ** 2, axis=1)
+    i_near = int(np.argmin(d2))
+
+    # local centerline tangent
+    i0 = max(0, i_near - n_tangent_pts)
+    i1 = min(len(C_mm) - 1, i_near + n_tangent_pts)
+    if i1 <= i0:
+        if i_near == 0:
+            c_tan = C_mm[1, :2] - C_mm[0, :2]
+        else:
+            c_tan = C_mm[i_near, :2] - C_mm[i_near - 1, :2]
+    else:
+        c_tan = C_mm[i1, :2] - C_mm[i0, :2]
+
+    c_tan /= (np.linalg.norm(c_tan) + 1e-12)
+
+    # build lumen boundaries in the same local XY plane
+    left_bd = np.zeros((len(C_mm), 2), dtype=float)
+    right_bd = np.zeros((len(C_mm), 2), dtype=float)
+
+    for i in range(len(C_mm)):
+        if i == 0:
+            t = C_mm[1, :2] - C_mm[0, :2]
+        elif i == len(C_mm) - 1:
+            t = C_mm[-1, :2] - C_mm[-2, :2]
+        else:
+            t = C_mm[i + 1, :2] - C_mm[i - 1, :2]
+
+        nt = np.linalg.norm(t)
+        if nt < 1e-12:
+            n = np.array([0.0, 0.0])
+        else:
+            t = t / nt
+            n = np.array([-t[1], t[0]])
+
+        left_bd[i] = C_mm[i, :2] + R_mm[i] * n
+        right_bd[i] = C_mm[i, :2] - R_mm[i] * n
+
+    # angle between measured tangent and local centerline tangent
+    dot_tc = np.clip(float(np.dot(t_meas_local, c_tan)), -1.0, 1.0)
+    angle_deg = np.degrees(np.arccos(dot_tc))
+    if angle_deg > 90.0:
+        angle_deg = 180.0 - angle_deg
+
+    # plot
+    plt.figure(figsize=(8, 8))
+    plt.plot(C_mm[:, 0], C_mm[:, 1], "-", label="lumen centerline")
+    plt.plot(left_bd[:, 0], left_bd[:, 1], "--", label="lumen boundary +R")
+    plt.plot(right_bd[:, 0], right_bd[:, 1], "--", label="lumen boundary -R")
+
+    plt.plot(tip_xy_mm[0], tip_xy_mm[1], "ro", label="measured tip")
+    plt.plot(C_mm[i_near, 0], C_mm[i_near, 1], "ks", label="nearest centerline point")
+
+    # measured tip tangent arrow
+    plt.arrow(
+        tip_xy_mm[0], tip_xy_mm[1],
+        tangent_scale_mm * t_meas_local[0],
+        tangent_scale_mm * t_meas_local[1],
+        head_width=0.8, length_includes_head=True
+    )
+
+    # centerline tangent arrow
+    plt.arrow(
+        C_mm[i_near, 0], C_mm[i_near, 1],
+        tangent_scale_mm * c_tan[0],
+        tangent_scale_mm * c_tan[1],
+        head_width=0.8, length_includes_head=True
+    )
+
+    plt.axis("equal")
+    plt.grid(True)
+    plt.xlabel("local x [mm]")
+    plt.ylabel("local y [mm]")
+    plt.title(
+        f"Tip measurement vs lumen local frame\n"
+        f"nearest idx={i_near}, tip-centerline dist={np.sqrt(d2[i_near]):.2f} mm, "
+        f"angle={angle_deg:.2f} deg"
+    )
+    plt.legend()
+    plt.show()
+
+    print("[DBG LOCAL PLOT]")
+    print("  tip_xy_mm =", tip_xy_mm)
+    print("  nearest centerline idx =", i_near)
+    print("  nearest centerline point [mm] =", C_mm[i_near, :2])
+    print("  tip-centerline distance [mm] =", np.sqrt(d2[i_near]))
+    print("  measured tangent local =", t_meas_local)
+    print("  centerline tangent local =", c_tan)
+    print("  angle between tangents [deg] =", angle_deg)
 def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_px, tip_radius_px=0.0):
     left_pt, dist_left_center = closest_point_on_polyline(tip_px, left_boundary_px)
     right_pt, dist_right_center = closest_point_on_polyline(tip_px, right_boundary_px)
@@ -605,7 +743,7 @@ def reconstruct_beam_within_vessel(
         right_boundary_px=right_smooth,
     )
 
-    tip_radius_mm = 1.8
+    tip_radius_mm = 0.8
     tip_radius_px = mm_to_px_distance(tip_radius_mm, mm_per_pixel)
     tip_distance_info = compute_tip_wall_distances_general(
         tip_px=markers["tip_px"],
@@ -677,7 +815,7 @@ def reconstruct_beam_within_vessel(
             tip_distance_info=tip_distance_info,
             tip_wall_angle_info=tip_wall_angle_info,
         )
-        draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, markers["base_px"], mm_per_pixel)
+        draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, markers["base_px"], markers["mag_start_px"], mm_per_pixel)
         print("\n--- BEAM WITHIN VESSEL ---")
         print("Tip image px:", tip_result["tip_image_px"])
         print("Tip x,y from base:", tip_result["tip_xy_from_base"])
@@ -699,15 +837,31 @@ def reconstruct_beam_within_vessel(
         print("Closest tip-wall distance (mm):", tip_distance_info_mm["closest_distance_mm"])
 
     return result
-def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px, mm_per_pixel):
+def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px, mag_start_px, mm_per_pixel):
     vis = image_bgr.copy()
 
-    bx, by = float(base_px[0]), float(base_px[1])
+    base = np.array(base_px, dtype=np.float32)
+    mag_start = np.array(mag_start_px, dtype=np.float32)
+
+    ref = np.array([
+        mag_start[0] - base[0],
+        -(mag_start[1] - base[1]),
+    ], dtype=np.float32)
+
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("base->mag_start reference vector is zero length")
+
+    ex = ref / nr
+    ey = np.array([-ex[1], ex[0]], dtype=np.float32)
 
     pts = []
     for x_mm, y_mm, z_mm in lumen_C_mm:
-        x_px = bx + (x_mm / mm_per_pixel)
-        y_px = by - (y_mm / mm_per_pixel)
+        # invert local -> image-cartesian
+        v_mm = (-x_mm) * ex + (y_mm) * ey
+
+        x_px = base[0] + (v_mm[0] / mm_per_pixel)
+        y_px = base[1] - (v_mm[1] / mm_per_pixel)
         pts.append((int(round(x_px)), int(round(y_px))))
 
     for i in range(len(pts) - 1):
@@ -974,6 +1128,7 @@ def measure_tip_state_4markers(
 
     ordered = order_four_markers(detected_points, pivot_hint=pivot_hint)
     tip_px, tangent_start_px, mag_start_px, base_px = ordered
+    # base_px, mag_start_px, tangent_start_px, tip_px = ordered
     base = np.array(base_px, dtype=np.float32)
     mag_start = np.array(mag_start_px, dtype=np.float32)
     tangent_start = np.array(tangent_start_px, dtype=np.float32)
@@ -1176,3 +1331,4 @@ if __name__ == "__main__":
         pivot_hint=None,
         show=True,
     )
+    plot_tip_measurement_vs_lumen_local(result)

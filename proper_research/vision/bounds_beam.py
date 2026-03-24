@@ -24,13 +24,14 @@ def save_roi_box(box, path):
 def build_lumen_from_parametric_boundaries(
     left_boundary_px,
     right_boundary_px,
-    base_px,
-    mag_start_px,
+    base_px_ref,
+    ex_ref,
+    ey_ref,
     mm_per_pixel,
     z_mm=0.0,
 ):
-    left = np.array(left_boundary_px, dtype=np.float32)
-    right = np.array(right_boundary_px, dtype=np.float32)
+    left = np.asarray(left_boundary_px, dtype=np.float32)
+    right = np.asarray(right_boundary_px, dtype=np.float32)
 
     if len(left) != len(right):
         raise ValueError("Left and right boundaries must have same number of samples.")
@@ -38,27 +39,25 @@ def build_lumen_from_parametric_boundaries(
     center = 0.5 * (left + right)
     radius_px = 0.5 * np.linalg.norm(right - left, axis=1)
 
-    base = np.array(base_px, dtype=np.float32)
-    mag_start = np.array(mag_start_px, dtype=np.float32)
+    base = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
+    ex = np.asarray(ex_ref, dtype=np.float32).reshape(2,)
+    ey = np.asarray(ey_ref, dtype=np.float32).reshape(2,)
 
-    ref = np.array([
-        mag_start[0] - base[0],
-        -(mag_start[1] - base[1]),
-    ], dtype=np.float32)
+    nex = np.linalg.norm(ex)
+    ney = np.linalg.norm(ey)
+    if nex < 1e-12 or ney < 1e-12:
+        raise ValueError("Reference basis vectors must be nonzero.")
 
-    nr = np.linalg.norm(ref)
-    if nr < 1e-12:
-        raise ValueError("base->mag_start reference vector is zero length")
-
-    ex = ref / nr
-    ey = np.array([-ex[1], ex[0]], dtype=np.float32)
+    ex = ex / nex
+    ey = ey / ney
 
     v = np.column_stack([
         center[:, 0] - base[0],
         -(center[:, 1] - base[1]),
     ]).astype(np.float32)
 
-    # Straight beam / centerline should be along negative local x
+    # fixed beam-local convention:
+    # forward along negative local x
     x_mm = -(v @ ex) * mm_per_pixel
     y_mm =  (v @ ey) * mm_per_pixel
     z_mm_arr = np.full_like(x_mm, float(z_mm))
@@ -70,6 +69,23 @@ def build_lumen_from_parametric_boundaries(
     lumen_R_m = lumen_R_mm / 1000.0
 
     return lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm
+def make_fixed_local_frame(base_px_ref, mag_start_px_ref):
+    base = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
+    mag_start = np.asarray(mag_start_px_ref, dtype=np.float32).reshape(2,)
+
+    ref = np.array([
+        mag_start[0] - base[0],
+        -(mag_start[1] - base[1]),
+    ], dtype=np.float32)
+
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("Reference base->mag_start vector is zero length.")
+
+    ex_ref = ref / nr
+    ey_ref = np.array([-ex_ref[1], ex_ref[0]], dtype=np.float32)
+
+    return base, ex_ref, ey_ref
 def load_roi_box(path):
     if not os.path.exists(path):
         return None
@@ -185,16 +201,10 @@ def draw_beam_and_vessel_overlay(
     blue_roi_box=None,
     tip_distance_info=None,
     tip_wall_angle_info=None,
+    save_path=None,
+    show_plot=True,
 ):
     vis = image_bgr.copy()
-
-    # if red_roi_box is not None:
-    #     x, y, w, h = red_roi_box
-    #     cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
-
-    # if blue_roi_box is not None:
-    #     x, y, w, h = blue_roi_box
-    #     cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 255, 0), 2)
 
     # draw vessel boundaries
     for x, y in left_boundary_px:
@@ -221,11 +231,14 @@ def draw_beam_and_vessel_overlay(
             cv2.putText(
                 vis, key.replace("_px", ""),
                 (int(p[0]) + 5, int(p[1]) - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+            )
             cv2.putText(
                 vis, key.replace("_px", ""),
                 (int(p[0]) + 5, int(p[1]) - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+            )
+
     # draw closest wall tangent near the tip
     if tip_wall_angle_info is not None:
         p_minus = tip_wall_angle_info["wall_tangent_points"]["p_minus"]
@@ -234,19 +247,38 @@ def draw_beam_and_vessel_overlay(
         p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
         p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
 
-        cv2.line(vis, p1, p2, (180, 105, 255), 3)  # yellow wall tangent segment
+        cv2.line(vis, p1, p2, (180, 105, 255), 3)
 
-        txt_angle = f"Beam-wall tangent angle = {tip_wall_angle_info['beam_wall_tangent_angle_deg']:.2f} deg"
+        txt_angle = (
+            f"Beam-wall tangent angle = "
+            f"{tip_wall_angle_info['beam_wall_tangent_angle_deg']:.2f} deg"
+        )
 
-        cv2.putText(vis, txt_angle, (20, 125),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5)
-        cv2.putText(vis, txt_angle, (20, 125),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
-    plt.figure(figsize=(8, 8))
-    plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-    plt.title("Beam reconstruction inside vessel bounds")
-    plt.axis("off")
-    plt.show()
+        cv2.putText(
+            vis, txt_angle, (20, 125),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+        )
+        cv2.putText(
+            vis, txt_angle, (20, 125),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+        )
+
+    # save raw overlay image if requested
+    if save_path is not None:
+        save_dir = os.path.dirname(save_path)
+        if save_dir != "":
+            os.makedirs(save_dir, exist_ok=True)
+        cv2.imwrite(save_path, vis)
+        print(f"[SAVE] reconstruction overlay saved to {save_path}")
+
+    if show_plot:
+        plt.figure(figsize=(8, 8))
+        plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+        plt.title("Beam reconstruction inside vessel bounds")
+        plt.axis("off")
+        plt.show()
+
+    return vis
 
 def interpolate_boundary_x_at_y(boundary_points, y_query):
     """
@@ -678,7 +710,8 @@ def reconstruct_beam_within_vessel(
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
     show=True,
-):
+    save_overlay_path=None,
+    ):
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
@@ -691,11 +724,11 @@ def reconstruct_beam_within_vessel(
     green_result = detect_2_green_calibration_points(
         image_bgr=image_bgr,
         roi_box=green_roi_box,
-        green_h_low=15,
-        green_h_high=110,
-        sat_min=20,
-        val_min=20,
-        min_area=5,
+        green_h_low=35,
+        green_h_high=95,
+        sat_min=40,
+        val_min=40,
+        min_area=3,
         max_area=50000,
         show_debug=False,
     )
@@ -721,12 +754,24 @@ def reconstruct_beam_within_vessel(
     right_smooth = manual_vessel["right_boundary_px"]
     vessel = {"mode": "manual"}
     print("[INFO] Using manually drawn vessel boundaries.")
+    base_px_ref, ex_ref, ey_ref = make_fixed_local_frame(
+    markers["base_px"],
+    markers["mag_start_px"],
+    )
+    tip_xy_fixed = image_to_fixed_local_frame(
+        markers["tip_px"],
+        base_px_ref,
+        ex_ref,
+        ey_ref,
+    )
+    tip_result["tip_xy_from_base"] = (float(tip_xy_fixed[0]), float(tip_xy_fixed[1]))
     lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm = build_lumen_from_parametric_boundaries(
         left_smooth,
         right_smooth,
-        base_px = markers["base_px"],
-        mag_start_px = markers["mag_start_px"],
-        mm_per_pixel = mm_per_pixel,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
+        mm_per_pixel=mm_per_pixel,
         z_mm=0.0,
     )
     print("lumen_C_m first local =", lumen_C_m[0])
@@ -743,7 +788,7 @@ def reconstruct_beam_within_vessel(
         right_boundary_px=right_smooth,
     )
 
-    tip_radius_mm = 0.8
+    tip_radius_mm = 0.0
     tip_radius_px = mm_to_px_distance(tip_radius_mm, mm_per_pixel)
     tip_distance_info = compute_tip_wall_distances_general(
         tip_px=markers["tip_px"],
@@ -802,20 +847,28 @@ def reconstruct_beam_within_vessel(
     print("mm_per_pixel:", mm_per_pixel)
     print("Beam length (px):", beam_length_px)
     print("Beam length (mm):", beam_length_mm)
-
+    draw_beam_and_vessel_overlay(
+        image_bgr=image_bgr,
+        beam_points_px=beam_points_px,
+        left_boundary_px=left_smooth,
+        right_boundary_px=right_smooth,
+        markers=markers,
+        red_roi_box=red_roi_box,
+        blue_roi_box=blue_roi_box,
+        tip_distance_info=tip_distance_info,
+        tip_wall_angle_info=tip_wall_angle_info,
+        save_path=save_overlay_path,
+        show_plot=show,
+    )
     if show:
-        draw_beam_and_vessel_overlay(
-            image_bgr=image_bgr,
-            beam_points_px=beam_points_px,
-            left_boundary_px=left_smooth,
-            right_boundary_px=right_smooth,
-            markers=markers,
-            red_roi_box=red_roi_box,
-            blue_roi_box=blue_roi_box,
-            tip_distance_info=tip_distance_info,
-            tip_wall_angle_info=tip_wall_angle_info,
-        )
-        draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, markers["base_px"], markers["mag_start_px"], mm_per_pixel)
+        draw_lumen_centerline_overlay(
+            image_bgr,
+            lumen_C_mm,
+            base_px_ref,
+            ex_ref,
+            ey_ref,
+            mm_per_pixel,
+        )    
         print("\n--- BEAM WITHIN VESSEL ---")
         print("Tip image px:", tip_result["tip_image_px"])
         print("Tip x,y from base:", tip_result["tip_xy_from_base"])
@@ -837,31 +890,25 @@ def reconstruct_beam_within_vessel(
         print("Closest tip-wall distance (mm):", tip_distance_info_mm["closest_distance_mm"])
 
     return result
-def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px, mag_start_px, mm_per_pixel):
+def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px_ref, ex_ref, ey_ref, mm_per_pixel):
     vis = image_bgr.copy()
 
-    base = np.array(base_px, dtype=np.float32)
-    mag_start = np.array(mag_start_px, dtype=np.float32)
+    base = np.asarray(base_px_ref, dtype=np.float32)
+    ex = np.asarray(ex_ref, dtype=np.float32)
+    ey = np.asarray(ey_ref, dtype=np.float32)
 
-    ref = np.array([
-        mag_start[0] - base[0],
-        -(mag_start[1] - base[1]),
-    ], dtype=np.float32)
-
-    nr = np.linalg.norm(ref)
-    if nr < 1e-12:
-        raise ValueError("base->mag_start reference vector is zero length")
-
-    ex = ref / nr
-    ey = np.array([-ex[1], ex[0]], dtype=np.float32)
+    # optional safety
+    ex = ex / (np.linalg.norm(ex) + 1e-12)
+    ey = ey / (np.linalg.norm(ey) + 1e-12)
 
     pts = []
     for x_mm, y_mm, z_mm in lumen_C_mm:
-        # invert local -> image-cartesian
+        # local -> image-cartesian
+        # because local x was defined as negative along ex_ref
         v_mm = (-x_mm) * ex + (y_mm) * ey
 
         x_px = base[0] + (v_mm[0] / mm_per_pixel)
-        y_px = base[1] - (v_mm[1] / mm_per_pixel)
+        y_px = base[1] - (v_mm[1] / mm_per_pixel)   # cartesian y-up -> image y-down
         pts.append((int(round(x_px)), int(round(y_px))))
 
     for i in range(len(pts) - 1):
@@ -869,7 +916,7 @@ def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px, mag_start_px, 
 
     plt.figure(figsize=(8, 8))
     plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-    plt.title("Camera-derived lumen centerline")
+    plt.title("Camera-derived lumen centerline (fixed frame)")
     plt.axis("off")
     plt.show()
 def detect_2_green_calibration_points(
@@ -1106,7 +1153,10 @@ def measure_tip_state_4markers(
     show_debug_markers=False,
     unwrap_angle=True,
     pivot_hint=None,
-):
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
+    ):
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
@@ -1114,12 +1164,12 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=1,
+        min_area=10,
         max_area=40000,
-        sat_min=3,
-        val_min=3,
-        hue1_high=25,
-        hue2_low=155,
+        sat_min=80,
+        val_min=50,
+        hue1_high=10,
+        hue2_low=170,
         show_debug=show_debug_markers,
     )
 
@@ -1127,15 +1177,14 @@ def measure_tip_state_4markers(
         raise RuntimeError(f"Expected 4 detected red markers, got: {detected_points}")
 
     ordered = order_four_markers(detected_points, pivot_hint=pivot_hint)
-    tip_px, tangent_start_px, mag_start_px, base_px = ordered
-    # base_px, mag_start_px, tangent_start_px, tip_px = ordered
+    # tip_px, tangent_start_px, mag_start_px, base_px = ordered
+    base_px, mag_start_px, tangent_start_px, tip_px = ordered
     base = np.array(base_px, dtype=np.float32)
     mag_start = np.array(mag_start_px, dtype=np.float32)
     tangent_start = np.array(tangent_start_px, dtype=np.float32)
     tip = np.array(tip_px, dtype=np.float32)
 
     tip_xy = image_to_base_frame(tip, base, mag_start)
-
     ref_vec = np.array([
         mag_start[0] - base[0],
         -(mag_start[1] - base[1])
@@ -1321,14 +1370,25 @@ def compute_tip_to_wall_tangent_angle(markers, left_boundary_px, right_boundary_
         },
         "beam_wall_tangent_angle_deg": float(angle_deg),
     }
+def image_to_fixed_local_frame(point_px, base_px_ref, ex_ref, ey_ref):
+    v = np.array([
+        float(point_px[0] - base_px_ref[0]),
+        float(-(point_px[1] - base_px_ref[1])),
+    ], dtype=np.float32)
+
+    x_local = -float(np.dot(v, ex_ref))
+    y_local =  float(np.dot(v, ey_ref))
+
+    return np.array([x_local, y_local], dtype=np.float32)
 if __name__ == "__main__":
     new_capture()
-    
+    pivot_hint = (300, 391)
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",
         red_roi_path="red_roi_box.json",
         blue_roi_path="blue_roi_box.json",
-        pivot_hint=None,
+        pivot_hint=pivot_hint,
         show=True,
+        save_overlay_path="debug_outputs/reconstruction_overlay.png",
     )
     plot_tip_measurement_vs_lumen_local(result)

@@ -52,6 +52,7 @@ class LiveHardwareController:
         v=0.10,
         a=0.30,
     ):
+        self.robot_ip = robot_ip
         self.dry_run = bool(dry_run)
         self.use_advancer = bool(use_advancer)
         self.advancer_delay_us = int(advancer_delay_us)
@@ -65,14 +66,18 @@ class LiveHardwareController:
         self.v = float(v)
         self.a = float(a)
 
-        self.robo = URRtde(robot_ip)
         self.adv = None
         self.prev_pose6 = None
         self.dl_residual_mm = 0.0
 
         if self.use_advancer and not self.dry_run:
             self.adv = AdvancerUnit(port=advancer_port, baudrate=advancer_baud)
-
+    def get_robot_pose_once(self):
+        robo = URRtde(self.robot_ip)
+        try:
+            return robo.get_pose()
+        finally:
+            robo.shutdown()
     def send_step(self, p_now, u0, dt):
         ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
         ur_pose6_send = ur_pose6_next.copy()
@@ -80,16 +85,6 @@ class LiveHardwareController:
 
         if not within_workspace(ur_pose6_send, self.xyz_min, self.xyz_max):
             raise RuntimeError(f"UR pose out of workspace: {ur_pose6_send}")
-
-        # if not max_step_ok(
-        #     self.prev_pose6,
-        #     ur_pose6_send,
-        #     max_trans_m=self.max_trans_m,
-        #     max_rot_rad=self.max_rot_rad,
-        # ):
-        #     raise RuntimeError(
-        #         f"UR pose jump too large.\nprev={self.prev_pose6}\nnext={ur_pose6_send}"
-        #     )
 
         dL_mm = u0_to_advancer_mm(u0, dt)
         self.dl_residual_mm += dL_mm
@@ -115,16 +110,17 @@ class LiveHardwareController:
                 else:
                     self.adv.backward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
 
-            if self.use_moveL_params:
-                self.robo.moveL(ur_pose6_send.tolist(), v=self.v, a=self.a)
-            else:
-                self.robo.moveL(ur_pose6_send.tolist())
+            robo = URRtde(self.robot_ip)
+            try:
+                if self.use_moveL_params:
+                    robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                else:
+                    robo.moveL(ur_pose6_send.tolist())
+            finally:
+                robo.shutdown()
 
         self.prev_pose6 = ur_pose6_send.copy()
 
     def shutdown(self):
-        try:
-            if self.adv is not None:
-                self.adv.shutdown()
-        finally:
-            self.robo.shutdown()
+        if self.adv is not None:
+            self.adv.shutdown()

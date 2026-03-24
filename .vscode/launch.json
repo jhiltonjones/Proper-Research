@@ -15,6 +15,15 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Run characterisations",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.charactisations",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run open_loop",
             "type": "debugpy",
             "request": "launch",

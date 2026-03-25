@@ -58,7 +58,9 @@ def magnetic_wrench_density_cosserat_profile(p, q, s, m_ext, r_src, m_local_fun,
 
     m_loc = m_local_fun(s, m_front_or_overhead)                 # (3,N) body frame
     m_pts = np.einsum('nij,jn->in', R, m_loc)   # (3,N) world frame
-
+    # print("m_loc[:, 0]  =", m_loc[:, 0])
+    # print("m_loc[:, -1] =", m_loc[:, -1])
+    # print("nonzero m nodes =", np.where(np.linalg.norm(m_loc, axis=0) > 1e-12)[0])
     r_pts = p.T                            # (N,3)
     B = dipole_field_from_source(r_pts, r_src, m_ext, r_min=r_min).T     # (3,N)
 

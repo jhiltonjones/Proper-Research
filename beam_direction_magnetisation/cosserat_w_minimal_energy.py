@@ -455,6 +455,9 @@ class CosseratForwardModel:
                 contact_penalty_fun=None,
                 s_out_n=400
             )
+            print("\n[ENERGY PARTS DEBUG]")
+            print("W_total =", W)
+            print("parts =", parts)
             candidates.append((float(W), sol, tag, parts))
 
         if len(candidates) == 0:
@@ -673,7 +676,12 @@ def solve_quasistatic_insertion(*,
 
         # IMPORTANT: regenerate m_local_fun per step so tip magnetisation window moves correctly
         m_local_fun_k = make_m_local_fun_wire_tip(len_wire, len_tip=len_tip, mode="axial", eps=1e-3)
-
+        # print("\n[SOLVE DEBUG]")
+        # print("r_src =", r_src)
+        # print("m_src =", m_src)
+        # print("m_local_fun =", m_local_fun)
+        # print("m_moment =", m_moment)
+        # print("Kinv_fun =", Kinv_fun)
         p, q, u_seg, info = solve_energy_min_3d(
             p0=p0, q0=q0, L=L_model,
             wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
@@ -824,20 +832,33 @@ def energy_from_u(
     f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
     )  # B: (3,N)
-    
-    if debug_mag:
-        fz = f_mag[2, :]
-        print("[DBG-MAG] fz min/max:", fz.min(), fz.max())
-        print("[DBG-MAG] f at tip:", f_mag[:, -1], "tau at tip:", tau_mag[:, -1])
-    # Build m_world at nodes
-    R_all = quat_to_rot(quat_normalize(q))     # expect (N,3,3)
-    m_body = np.asarray(m_local_fun(s, None), float)  # (3,N)
-    m_world = np.einsum('nij,jn->in', R_all, m_body)  # (3,N)
 
-    m_dot_B = np.sum(m_world * B, axis=0)      # (N,)
-    w_m = -m_dot_B                              # (N,) magnetic energy density (per unit length-ish)
+    R_all = quat_to_rot(quat_normalize(q))   # (N,3,3)
+
+    m_body = np.asarray(m_local_fun(s, m_moment), float)   # (3,N)
+    m_world = np.einsum('nij,jn->in', R_all, m_body)       # (3,N)
+
+    # Convert world-field into local/body frame: B_local = R^T B_world
+    R_all_T = np.transpose(R_all, (0, 2, 1))
+    B_local = np.einsum('nij,jn->in', R_all_T, B)          # (3,N)
+
+    # for i in range(max(0, len(s) - 5), len(s)):
+    #     print(
+    #         i,
+    #         "B_world =", B[:, i],
+    #         "B_local =", B_local[:, i],
+    #         "m_local =", m_body[:, i],
+    #         "m_world =", m_world[:, i],
+    #     )
+    # print("\n[MAG ENERGY DEBUG]")
+    # print("max |B| =", np.max(np.linalg.norm(B, axis=0)))
+    # print("max |m_local| =", np.max(np.linalg.norm(m_body, axis=0)))
+    # print("max |m_world| =", np.max(np.linalg.norm(m_world, axis=0)))
+    # print("max |m x B| =", np.max(np.linalg.norm(np.cross(m_world.T, B.T), axis=1)))
+    # print("sum m·B =", np.sum(np.sum(m_world * B, axis=0)))
+    m_dot_B = np.sum(m_world * B, axis=0)   # (N,)
+    w_m = -m_dot_B
     W_m = np.trapezoid(w_m, s)
-
     # Gravity (disable unless you really want it)
     W_g = 0.0
     if include_gravity:
@@ -852,58 +873,58 @@ def energy_from_u(
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
     # print(f"DEBUG Elastic: {W_s}, Magnetic {W_m}, Gravity {W_g}, Barrier {W_cf}")
-    W_total = W_s + W_m*1.2+ W_g + W_cf
+    W_total = W_s + W_m+ W_g + W_cf
     # W_total = W_m
-    if debug_mag:
-        Bnorm = np.linalg.norm(B, axis=0) + 1e-16
-        mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
+    # if debug_mag:
+    #     Bnorm = np.linalg.norm(B, axis=0) + 1e-16
+    #     mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
 
-        # alignment cos and angle
-        cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
-        cos_th = np.clip(cos_th, -1.0, 1.0)
-        th_deg = np.degrees(np.arccos(cos_th))
+    #     # alignment cos and angle
+    #     cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
+    #     cos_th = np.clip(cos_th, -1.0, 1.0)
+    #     th_deg = np.degrees(np.arccos(cos_th))
 
-        # torque density proxy (direction + magnitude)
-        tau = np.cross(m_world.T, B.T).T          # (3,N)
-        tau_norm = np.linalg.norm(tau, axis=0)    # (N,)
+    #     # torque density proxy (direction + magnitude)
+    #     tau = np.cross(m_world.T, B.T).T          # (3,N)
+    #     tau_norm = np.linalg.norm(tau, axis=0)    # (N,)
 
-        # scalar energy density and cumulative
-        m_dot_B = np.sum(m_world * B, axis=0)
-        w_m = -m_dot_B
-        Wm_cum = np.zeros(N, float)
-        for i in range(1, N):
-            Wm_cum[i] = np.trapezoid(w_m[:i+1], s[:i+1])
+    #     # scalar energy density and cumulative
+    #     m_dot_B = np.sum(m_world * B, axis=0)
+    #     w_m = -m_dot_B
+    #     Wm_cum = np.zeros(N, float)
+    #     for i in range(1, N):
+    #         Wm_cum[i] = np.trapezoid(w_m[:i+1], s[:i+1])
 
-        print("\n[DBG-MAG] per-node magnetic + alignment")
-        print(" i  s(mm)  x(mm)  y(mm)  z(mm)   |B|     Bx      By      Bz      "
-            "m·B     theta(deg)  |m×B|     w_m      Wm_cum")
+    #     print("\n[DBG-MAG] per-node magnetic + alignment")
+    #     print(" i  s(mm)  x(mm)  y(mm)  z(mm)   |B|     Bx      By      Bz      "
+    #         "m·B     theta(deg)  |m×B|     w_m      Wm_cum")
 
-        head = int(debug_head)
-        step = int(debug_every)
+    #     head = int(debug_head)
+    #     step = int(debug_every)
 
-        def _row(i):
-            return (f"{i:2d} {1e3*s[i]:6.2f} "
-                    f"{1e3*p[0,i]:6.2f} {1e3*p[1,i]:6.2f} {1e3*p[2,i]:6.2f} "
-                    f"{Bnorm[i]:+7.2e} {B[0,i]:+7.2e} {B[1,i]:+7.2e} {B[2,i]:+7.2e} "
-                    f"{m_dot_B[i]:+7.2e} {th_deg[i]:8.2f} {tau_norm[i]:+7.2e} "
-                    f"{w_m[i]:+8.2e} {Wm_cum[i]:+8.2e}")
+    #     def _row(i):
+    #         return (f"{i:2d} {1e3*s[i]:6.2f} "
+    #                 f"{1e3*p[0,i]:6.2f} {1e3*p[1,i]:6.2f} {1e3*p[2,i]:6.2f} "
+    #                 f"{Bnorm[i]:+7.2e} {B[0,i]:+7.2e} {B[1,i]:+7.2e} {B[2,i]:+7.2e} "
+    #                 f"{m_dot_B[i]:+7.2e} {th_deg[i]:8.2f} {tau_norm[i]:+7.2e} "
+    #                 f"{w_m[i]:+8.2e} {Wm_cum[i]:+8.2e}")
 
-        # head
-        count = 0
-        for i in range(0, N, step):
-            print(_row(i))
-            count += 1
-            if count >= head:
-                break
+    #     # head
+    #     count = 0
+    #     for i in range(0, N, step):
+    #         print(_row(i))
+    #         count += 1
+    #         if count >= head:
+    #             break
 
-        # tail
-        if N > head:
-            print(" ...")
-            for i in range(max(0, N - head), N, step):
-                print(_row(i))
+    #     # tail
+    #     if N > head:
+    #         print(" ...")
+    #         for i in range(max(0, N - head), N, step):
+    #             print(_row(i))
 
-        print(f"[DBG-MAG] max theta(deg) = {np.max(th_deg):.3f}")
-        print(f"[DBG-MAG] max |m×B|      = {np.max(tau_norm):.3e}")
+    #     print(f"[DBG-MAG] max theta(deg) = {np.max(th_deg):.3f}")
+    #     print(f"[DBG-MAG] max |m×B|      = {np.max(tau_norm):.3e}")
 
     parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_cf=float(W_cf))
     return float(W_total), parts
@@ -1026,7 +1047,9 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
             wire_len=wire_len, include_gravity=False,
             lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen, debug_mag=False,
         )
+
         return W
+
     z0_flat = (u_ctrl0_flat / u_scale)
     # u_test = u_ctrl0_flat.copy()
     # u_test[0] = 5.0  # curvature-ish magnitude (1/m); try also 1.0, 10.0
@@ -1060,8 +1083,11 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
         lumen_C=lumen_C, lumen_R=lumen_R,
         contact_k=contact_k, contact_beta=contact_beta, contact_delta=contact_delta,
         contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off, lumen_query=lumen_query, 
-        use_lumen=use_lumen, debug_mag=False,
+        use_lumen=use_lumen, debug_mag=True,
     )
+    # print("\n[ENERGY PARTS DEBUG]")
+    # print("W_total =", W)
+    # print("parts =", parts)
     # print("parts:", parts)
 
     info = dict(

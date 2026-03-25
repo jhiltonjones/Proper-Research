@@ -37,7 +37,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Dict, Tuple
-
+from proper_research.robot.live_hardware_control import LiveHardwareController
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 import matplotlib.pyplot as plt
@@ -46,12 +46,14 @@ import matplotlib.pyplot as plt
 # =========================
 from beam_direction_magnetisation.cosserat_6d_pose import ur_pose6_to_T
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
+from proper_research.robot.transformations import get_point
 
 from proper_research.simulation.boundary_forward_model import (
     EnergyMinForwardWithLumen,
     DeterministicForward6D,
     effective_lengths,
 )
+from proper_research.vision.measure_length import new_capture
 
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from proper_research.parameters import default_magnet_params
@@ -80,6 +82,9 @@ class SinglePoseEvalConfig:
     L_m: float
 
     image_filename: str = "focused_image.jpg"
+    reference_image_filename: str = "focused_image_straight.jpg"
+    use_reference_frame: bool = True
+
     red_roi_path: str = "red_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
 
@@ -96,15 +101,14 @@ class SinglePoseEvalConfig:
 # Basic helpers
 # ============================================================
 def robot_pose_to_pivot_local_pose(pose6_robot, pivot_pose6):
-    T_pivot = ur_pose6_to_T(np.asarray(pivot_pose6, float).reshape(6,))
-    R_pivot = T_pivot[:3, :3]
-    p_pivot = T_pivot[:3, 3]
-
     pose6_robot = np.asarray(pose6_robot, float).reshape(6,)
     p_robot = pose6_robot[:3]
-
-    p_local = R_pivot.T @ (p_robot - p_pivot)
-    return p_local
+    p_pivot = np.asarray(pivot_pose6[:3], float).reshape(3,)
+    return p_robot - p_pivot
+def pivot_local_point_to_robot(local_xyz, pivot_pose6):
+    p_pivot = np.asarray(pivot_pose6[:3], float).reshape(3,)
+    local_xyz = np.asarray(local_xyz, float).reshape(3,)
+    return p_pivot + local_xyz
 def rotvec_to_quat_wxyz(rvec: np.ndarray) -> np.ndarray:
     r = Rot.from_rotvec(np.asarray(rvec, dtype=float).reshape(3,))
     q_xyzw = r.as_quat()  # [x, y, z, w]
@@ -130,13 +134,9 @@ def pose6_and_L_to_pose8_quat(ur_pose6: np.ndarray, L_m: float) -> np.ndarray:
 
 
 def robot_point_to_pivot_local(p_robot: np.ndarray, pivot_pose6: np.ndarray) -> np.ndarray:
-    T_ur_pivot = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
-    R_pivot = T_ur_pivot[:3, :3]
-    p_pivot = T_ur_pivot[:3, 3]
-
     p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
-    p_local = R_pivot.T @ (p_robot - p_pivot)
-    return p_local
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    return p_robot - p_pivot
 
 
 def compute_position_errors_mm(pred_local_m: np.ndarray, meas_local_m: np.ndarray) -> Dict[str, float]:
@@ -301,8 +301,42 @@ def predicted_tip_to_base_local_from_base_point_robot(
     pred_tip_pivot_local = robot_point_to_pivot_local(pred_tip_robot_m, pivot_pose6)
     beam_base_pivot_local = robot_point_to_pivot_local(beam_base_point_robot_m, pivot_pose6)
     return pred_tip_pivot_local - beam_base_pivot_local
+def build_reference_beam_frame_from_image(
+    image_filename: str,
+    red_roi_path: str,
+    pivot_hint=None,
+    show: bool = False,
+    show_debug_markers: bool = False,
+):
+    red_roi_box = load_roi_box(red_roi_path)
+
+    ref_result = measure_tip_state_4markers(
+        image_filename=image_filename,
+        roi_box=red_roi_box,
+        show=show,
+        show_debug_markers=show_debug_markers,
+        unwrap_angle=False,
+        pivot_hint=pivot_hint,
+        base_px_ref=None,
+        ex_ref=None,
+        ey_ref=None,
+    )
+
+    base_px_ref = ref_result["markers"]["base_px"]
+    ex_ref = np.asarray(ref_result["beam_frame_fit"]["ex"], dtype=float)
+    ey_ref = np.asarray(ref_result["beam_frame_fit"]["ey"], dtype=float)
+
+    return {
+        "base_px_ref": base_px_ref,
+        "ex_ref": ex_ref,
+        "ey_ref": ey_ref,
+        "raw_result": ref_result,
+    }
 def measure_tip_from_vision_base_local(
     cfg: SinglePoseEvalConfig,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
     ) -> Dict:
     import cv2
 
@@ -326,14 +360,17 @@ def measure_tip_from_vision_base_local(
         show_debug_markers=cfg.show_debug_vision,
         unwrap_angle=False,
         pivot_hint=cfg.pivot_hint,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
     )
 
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
     tip_base_local_m = np.array([
-        tip_xy_m[0],
-        tip_xy_m[1],
+        -tip_xy_m[0],
+        -tip_xy_m[1],
         0.0,
     ], dtype=float)
 
@@ -346,7 +383,12 @@ def measure_tip_from_vision_base_local(
 # ============================================================
 # Single-shot comparison
 # ============================================================
-
+def beam_tangent_in_robot_from_pose(pose6_robot):
+    rvec = np.asarray(pose6_robot[3:6], float)
+    R = Rot.from_rotvec(rvec).as_matrix()
+    t_body = np.array([-1.0, 0.0, 0.0], float)
+    t_robot = R @ t_body
+    return t_robot / (np.linalg.norm(t_robot) + 1e-12)
 def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     os.makedirs(cfg.results_dir, exist_ok=True)
 
@@ -357,7 +399,20 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     print("test_pose6  =", np.asarray(cfg.test_pose6, dtype=float))
     print("base_point_robot_m =", np.asarray(cfg.beam_base_point_robot_m, dtype=float))
     print("L_m         =", float(cfg.L_m))
+    ref_frame = None
+    if cfg.use_reference_frame:
+        ref_frame = build_reference_beam_frame_from_image(
+            image_filename=cfg.reference_image_filename,
+            red_roi_path=cfg.red_roi_path,
+            pivot_hint=cfg.pivot_hint,
+            show=False,
+            show_debug_markers=False,
+        )
 
+        print("\n--- REFERENCE FRAME ---")
+        print("base_px_ref =", ref_frame["base_px_ref"])
+        print("ex_ref      =", ref_frame["ex_ref"])
+        print("ey_ref      =", ref_frame["ey_ref"])
     forward6d = build_forward_model_no_lumen_effect(
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
         L0=float(cfg.L_m),
@@ -370,7 +425,15 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
     )
 
-    meas = measure_tip_from_vision_base_local(cfg)
+    if ref_frame is not None:
+        meas = measure_tip_from_vision_base_local(
+            cfg,
+            base_px_ref=ref_frame["base_px_ref"],
+            ex_ref=ref_frame["ex_ref"],
+            ey_ref=ref_frame["ey_ref"],
+        )
+    else:
+        meas = measure_tip_from_vision_base_local(cfg)
 
     pred_base_local_m = predicted_tip_to_base_local_from_base_point_robot(
         pred_tip_robot_m=pred["tip_robot_m"],
@@ -378,17 +441,30 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
     )
 
+    pred_tip_angle_deg = compute_tip_angle_from_base_local_deg(pred_base_local_m)
+
     err = compute_position_errors_mm(
         pred_local_m=pred_base_local_m,
         meas_local_m=meas["tip_base_local_m"],
     )
 
+    pred_x_mm = 1e3 * pred_base_local_m[0]
+    pred_y_mm = 1e3 * pred_base_local_m[1]
+    meas_x_mm = 1e3 * meas["tip_base_local_m"][0]
+    meas_y_mm = 1e3 * meas["tip_base_local_m"][1]
+
+    print("\n--- PLANAR DEFLECTION ---")
+    print(f"pred chord [mm] = ({pred_x_mm:.3f}, {pred_y_mm:.3f})")
+    print(f"meas chord [mm] = ({meas_x_mm:.3f}, {meas_y_mm:.3f})")
+    print("pred_tip_angle_from_ref_deg =", pred_tip_angle_deg)
+    print("meas_tip_angle_from_ref_deg =", meas["tip_result"]["tip_base_angle_from_ref_deg"])
     result = {
         "pivot_pose6": np.asarray(cfg.pivot_pose6, dtype=float).tolist(),
         "test_pose6": np.asarray(cfg.test_pose6, dtype=float).tolist(),
         "base_point_robot_m": np.asarray(cfg.beam_base_point_robot_m, dtype=float).tolist(),
         "L_m": float(cfg.L_m),
-
+        "pred_tip_angle_from_ref_deg": float(pred_tip_angle_deg),
+        "meas_tip_angle_from_ref_deg": float(meas["tip_result"]["tip_base_angle_from_ref_deg"]),
         "pred_tip_robot_m": pred["tip_robot_m"].tolist(),
         "pred_tip_pivot_local_m": pred["tip_local_m"].tolist(),
         "pred_tip_base_local_m": pred_base_local_m.tolist(),
@@ -402,7 +478,22 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     out_json = os.path.join(cfg.results_dir, "result_summary.json")
     with open(out_json, "w") as f:
         json.dump(result, f, indent=2)
+    def unit(v):
+        v = np.asarray(v, float)
+        return v / (np.linalg.norm(v) + 1e-12)
 
+    m_robot = source_dipole_in_robot(cfg.test_pose6)
+    t_robot = beam_tangent_in_robot_from_pose(cfg.test_pose6)
+
+    print("source dipole dir in robot =", m_robot)
+    print("beam tangent dir in robot  =", t_robot)
+    print("alignment cos(theta)       =", float(np.dot(m_robot, t_robot)))
+
+    m_local = unit(m_robot)
+    t_local = unit(t_robot)
+
+    print("cos robot =", np.dot(m_robot, t_robot))
+    print("cos local =", np.dot(m_local, t_local))
     print("\n--- PREDICTED TIP ---")
     print("robot [m]:", pred["tip_robot_m"])
     print("pivot-local [m]:", pred["tip_local_m"])
@@ -417,11 +508,36 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     for k, v in err.items():
         print(f"{k}: {v:.4f}")
 
+    src_pivot_local_m = robot_point_to_pivot_local(
+        np.asarray(cfg.test_pose6[:3], dtype=float),
+        np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    base_pivot_local_m = robot_point_to_pivot_local(
+        np.asarray(cfg.beam_base_point_robot_m, dtype=float),
+        np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    src_base_local_m = src_pivot_local_m - base_pivot_local_m
+
+    src_dir_robot = source_dipole_in_robot(cfg.test_pose6)
+    src_dir_local = src_dir_robot.copy()
+
+    pred_base_local_m_plot = pred_base_local_m.copy()
+    meas_base_local_m_plot = meas["tip_base_local_m"].copy()
+    src_base_local_plot_m = src_base_local_m.copy()
+    print(f"TEST POSE {cfg.test_pose6}")
+    src_local_check = robot_pose_to_pivot_local_pose(cfg.test_pose6, cfg.pivot_pose6)
+    print(f"Pivot POSE {cfg.pivot_pose6}")
+    print("source position from robot pose in pivot local [mm] =", 1e3 * src_local_check)
+
     plot_single_tip_comparison_local(
-        pred_local_m=pred_base_local_m,
-        meas_local_m=meas["tip_base_local_m"],
+        pred_local_m=pred_base_local_m_plot,
+        meas_local_m=meas_base_local_m_plot,
         results_dir=cfg.results_dir,
         filename="tip_comparison_base_local.png",
+        src_local_m=src_base_local_plot_m,
+        src_dir_local=src_dir_local,
     )
 
     print(f"\nSaved summary to: {out_json}")
@@ -431,24 +547,56 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
 # ============================================================
 # Main
 # ============================================================
-def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, float]:
+def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.8581328220229531, -0.7112771185002148, -0.1, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
+    0.9081328220229531, -0.7112771185002148, -0.1, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
     ], float)
 
+    
+    L0 = 0.065
 
-    start_point = np.array([
-    0.6658880909386228, -0.7112771185002148, -0.1, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
-    ], float)
+    pose6 = np.asarray(get_point(0, 30), dtype=float)
+    pose6[2] = -0.1
+    print(f"POSE6 is {pose6}")
+    T = ur_pose6_to_T(pose6)
+    p, q_wxyz = T_to_p_quat_wxyz(T)
 
-    L0 = 0.054
+    p_now = np.concatenate([p, q_wxyz, [L0]])
+    u0 = np.zeros(7, dtype=float)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    # start_point = np.array([
+    # 0.6943785995167966, -0.8067580541845363, -0.1, -2.83972782227175, -1.2569061634125336, 0.06672741411356532
+    # ], float)
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
+
+    start_point = robot_pose6
+    print(f"START POINT: {start_point}")
+    # L0 = 0.065
     dt = 0.01
     return pivot_point, start_point, L0, dt
+def compute_tip_angle_from_base_local_deg(p_base_local_m: np.ndarray) -> float:
+    """
+    Angle of base->tip chord relative to straight local -x axis.
+    Returns signed angle in degrees.
+
+    Convention:
+      straight beam along local -x gives 0 deg
+      negative local y gives negative angle
+      positive local y gives positive angle
+    """
+    v = np.asarray(p_base_local_m, dtype=float).reshape(3,)
+    vx = -v[0]   # straight reference magnitude along local -x
+    vy = v[1]
+
+    return float(np.degrees(np.arctan2(vy, vx)))
 def plot_single_tip_comparison_local(
     pred_local_m: np.ndarray,
     meas_local_m: np.ndarray,
     results_dir: str,
     filename: str = "tip_comparison_local.png",
+    src_local_m: np.ndarray | None = None,
+    src_dir_local: np.ndarray | None = None,
 ):
     pred_local_m = np.asarray(pred_local_m, dtype=float).reshape(3,)
     meas_local_m = np.asarray(meas_local_m, dtype=float).reshape(3,)
@@ -456,16 +604,16 @@ def plot_single_tip_comparison_local(
     pred_mm = 1e3 * pred_local_m
     meas_mm = 1e3 * meas_local_m
 
-    plt.figure(figsize=(6, 6))
+    plt.figure(figsize=(7, 7))
 
-    # pivot
-    plt.plot(0.0, 0.0, "ko", label="Pivot")
+    # pivot / base-local origin
+    plt.plot(0.0, 0.0, "ko", label="Base / pivot-local origin")
 
-    # predicted / measured
+    # predicted / measured tip
     plt.plot(pred_mm[0], pred_mm[1], "bs", markersize=10, label="Predicted tip")
     plt.plot(meas_mm[0], meas_mm[1], "ro", markersize=10, label="Measured tip")
 
-    # join them
+    # connect predicted and measured
     plt.plot(
         [pred_mm[0], meas_mm[0]],
         [pred_mm[1], meas_mm[1]],
@@ -474,7 +622,7 @@ def plot_single_tip_comparison_local(
         label="Error vector",
     )
 
-    # labels
+    # annotate tips
     plt.annotate(
         f"Pred\n({pred_mm[0]:.2f}, {pred_mm[1]:.2f}) mm",
         (pred_mm[0], pred_mm[1]),
@@ -488,9 +636,41 @@ def plot_single_tip_comparison_local(
         xytext=(8, -18),
     )
 
+    # external magnet position
+    if src_local_m is not None:
+        src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+        src_mm = 1e3 * src_local_m
+
+        plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+
+        plt.annotate(
+            f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+            (src_mm[0], src_mm[1]),
+            textcoords="offset points",
+            xytext=(8, 8),
+        )
+
+        # optional dipole direction arrow
+        if src_dir_local is not None:
+            src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+            dxy = src_dir_local[:2]
+            n = np.linalg.norm(dxy)
+            if n > 1e-12:
+                dxy = dxy / n
+                arrow_len_mm = 25.0
+                plt.arrow(
+                    src_mm[0],
+                    src_mm[1],
+                    arrow_len_mm * dxy[0],
+                    arrow_len_mm * dxy[1],
+                    head_width=3.0,
+                    head_length=5.0,
+                    length_includes_head=True,
+                )
+
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")
-    plt.title("Predicted vs measured tip in pivot-local frame")
+    plt.title("Predicted vs measured tip with external magnet")
     plt.axis("equal")
     plt.grid(True)
     plt.legend()
@@ -502,49 +682,6 @@ def plot_single_tip_comparison_local(
 
     print(f"Saved local tip plot to: {out_path}")
 
-
-def plot_single_tip_comparison_robot(
-    pred_robot_m: np.ndarray,
-    meas_robot_m: np.ndarray,
-    pivot_pose6: np.ndarray,
-    results_dir: str,
-    filename: str = "tip_comparison_robot.png",
-):
-    pred_robot_m = np.asarray(pred_robot_m, dtype=float).reshape(3,)
-    meas_robot_m = np.asarray(meas_robot_m, dtype=float).reshape(3,)
-    pivot_pose6 = np.asarray(pivot_pose6, dtype=float).reshape(6,)
-
-    pred_mm = 1e3 * pred_robot_m
-    meas_mm = 1e3 * meas_robot_m
-    pivot_mm = 1e3 * pivot_pose6[:3]
-
-    plt.figure(figsize=(6, 6))
-
-    plt.plot(pivot_mm[0], pivot_mm[1], "ko", label="Pivot")
-    plt.plot(pred_mm[0], pred_mm[1], "bs", markersize=10, label="Predicted tip")
-    plt.plot(meas_mm[0], meas_mm[1], "ro", markersize=10, label="Measured tip")
-
-    plt.plot(
-        [pred_mm[0], meas_mm[0]],
-        [pred_mm[1], meas_mm[1]],
-        "k--",
-        alpha=0.7,
-        label="Error vector",
-    )
-
-    plt.xlabel("Robot x [mm]")
-    plt.ylabel("Robot y [mm]")
-    plt.title("Predicted vs measured tip in robot frame")
-    plt.axis("equal")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-
-    out_path = os.path.join(results_dir, filename)
-    plt.savefig(out_path, dpi=200)
-    plt.close()
-
-    print(f"Saved robot tip plot to: {out_path}")
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
@@ -552,22 +689,55 @@ def source_dipole_in_robot(pose6_robot):
     m_robot = R @ m_body_dir
     return m_robot / (np.linalg.norm(m_robot) + 1e-12)
 
-def beam_axis_in_robot_from_pivot(pivot_pose6):
-    R = Rot.from_rotvec(np.asarray(pivot_pose6[3:6], float)).as_matrix()
-    t_robot = R @ np.array([-1.0, 0.0, 0.0], float)
+def beam_tangent_in_robot_from_pose(pose6_robot):
+    rvec = np.asarray(pose6_robot[3:6], float)
+    R = Rot.from_rotvec(rvec).as_matrix()
+
+    # straight beam direction in tool/body frame
+    t_body = np.array([-1.0, 0.0, 0.0], float)
+
+    t_robot = R @ t_body
     return t_robot / (np.linalg.norm(t_robot) + 1e-12)
 if __name__ == "__main__":
-    pivot_point, start_point, L0_default, dt = make_initial_poses_single_use()
+    new_capture()
+    hw = LiveHardwareController(
+    robot_ip="192.168.56.101",
+    dry_run=False,                 # True first
+    use_advancer=False,
+    advancer_port="/dev/ttyACM0",
+    advancer_baud=115200,
+    advancer_delay_us=20,
+    advancer_min_cmd_mm=0.166,
+    xyz_min=(0.20, -1.50, -0.30),
+    xyz_max=(1.20, +1.50, +1.50),
+    max_trans_m=0.01,
+    max_rot_rad=0.2,
+    z_offset=0.25,
+    use_moveL_params=False,
+    v=0.10,
+    a=0.30,
+    )
+    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw=hw)
 
-    test_pose6 = np.asarray(start_point, dtype=float).reshape(6,)
+
+
+
+    # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
+    # src_robot = pivot_local_point_to_robot(src_local, pivot_point2)
+    # src_local_check = robot_point_to_pivot_local(src_robot, pivot_point2)
+
+    # print("desired source in pivot-local [mm] =", 1e3 * src_local)
+    # print("converted source in robot frame [mm] =", 1e3 * src_robot)
+    # print("back-converted source in pivot-local [mm] =", 1e3 * src_local_check)
+    test_pose6 = np.asarray(start_point2, dtype=float).reshape(6,)
+    # test_pose6[:3] = src_robot
+    src_local_check = robot_pose_to_pivot_local_pose(test_pose6, pivot_point2)
+    print("source position from robot pose in pivot local [mm] =", 1e3 * src_local_check)
+
     L_test = float(L0_default)
-
-    src_local = robot_pose_to_pivot_local_pose(test_pose6, pivot_point)
-    print("source position in pivot-local frame [m] =", src_local)
-    print("source position in pivot-local frame [mm] =", 1e3 * src_local)
-
+    
     m_robot = source_dipole_in_robot(test_pose6)
-    t_robot = beam_axis_in_robot_from_pivot(pivot_point)
+    t_robot = beam_tangent_in_robot_from_pose(test_pose6)
     print("source dipole dir in robot =", m_robot)
     print("beam axis dir in robot     =", t_robot)
     print("alignment cos(theta)       =", float(np.dot(m_robot, t_robot)))
@@ -575,26 +745,24 @@ if __name__ == "__main__":
     # IMPORTANT:
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
-    beam_base_point_robot_m = np.array([
-        0.8581328220229531,
-        -0.7112771185002148,
-        -0.1,
-    ], dtype=float)
-
+    beam_base_point_robot_m = pivot_point2[:3]
+    pivot_hint = (318.200927734375, 369.6798095703125)
     cfg = SinglePoseEvalConfig(
-        pivot_pose6=np.asarray(pivot_point, dtype=float),
+        pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
         beam_base_point_robot_m=beam_base_point_robot_m,
         L_m=L_test,
         image_filename="focused_image.jpg",
+        reference_image_filename="focused_image_straight.jpg",
+        use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
-        pivot_hint=None,
+        pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation",
         save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
-        show_debug_vision=True,
-        show_debug_model=True,
+        show_debug_vision=False,
+        show_debug_model=False,
     )
 
     evaluate_single_pose(cfg)

@@ -7,7 +7,7 @@ import os
 # =====================================================================
 # CONFIG
 # =====================================================================
-ROI_CONFIG_FILE = "green_roi_box.json"
+ROI_CONFIG_FILE = "red_roi_box.json"
 
 CAMERA_TO_CHECKERBOARD_MM = 110.0
 BEAM_RELATIVE_Z_OFFSET_MM = 40.0   # beam distance relative to checkerboard along Z
@@ -42,7 +42,7 @@ def new_capture(filename="focused_image.jpg",
                 cam_index=0,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=15,
-                exposure=100.0,     # try 200..5000 initially
+                exposure=30.0,     # try 200..5000 initially
                 gain=0.0,
                 auto_exposure_manual=1.0,  # working for you
                 brightness=None,     # e.g. 0.0

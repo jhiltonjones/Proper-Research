@@ -6,6 +6,11 @@ from beam_direction_magnetisation.cosserat_w_minimal_energy import (
 )
 from beam_direction_magnetisation.magnetism.beam_geometry import make_m_local_fun_wire_tip
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_to_rotvec, unit
+from proper_research.parameters import default_beam_params
+beam_params = default_beam_params()
+
+mu_tip = beam_params.mag * beam_params.A_cs
+
 def pose8_quat_to_pose7_rotvec(p8):
     p8 = np.asarray(p8, float).ravel()
     t = p8[0:3]
@@ -129,7 +134,11 @@ class EnergyMinForwardWithLumen:
             alpha_end=0.0,
             eps=1e-3
         )
-
+        s_dbg = np.linspace(0.0, L_model, 5)
+        m_dbg = m_local_fun(s_dbg, None)
+        # print("[M_LOCAL DEBUG]")
+        # print("s_dbg =", s_dbg)
+        # print("m_local magnitudes =", np.linalg.norm(m_dbg, axis=0))
         # warm start
         u_init = None
         L_start = max(self.L_tip_min, min(self.L0_init, L_model))
@@ -149,6 +158,46 @@ class EnergyMinForwardWithLumen:
         # print("[FWD] lumen_R shape =", self.lumen_R.shape)
         # print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
         # print("[FWD] use_lumen_jac =", self.use_lumen_jac)
+        # print("\n[FWD PARAM DEBUG]")
+        # print("L_ins =", L_ins)
+        # print("L_model =", L_model)
+        # print("wire_len =", wire_len)
+        # print("tip_len =", tip_len)
+
+        # print("\n--- MAGNETICS ---")
+        # print("m_body (source body dipole) =", self.m_body)
+        # print("m_src  (world source dipole) =", m_src)
+        # print("mu_tip depends on beam_params.mag =", mu_tip)
+
+        # print("\n--- FUNCTIONS ---")
+        # print("Kinv_fun =", self.Kinv_fun)
+        # print("m_local_fun object =", m_local_fun)
+
+        # check if m_local_fun is actually valid
+        if m_local_fun is None:
+            print("m_local_fun STATUS: NONE (NOT USED)")
+        else:
+            print("m_local_fun STATUS: ACTIVE")
+
+            # quick probe of magnetisation along the beam
+            s_dbg = np.linspace(0.0, L_model, 5)
+            m_dbg = m_local_fun(s_dbg, None)
+            print("m_local magnitudes along s =", np.linalg.norm(m_dbg, axis=0))
+
+        print("m_moment passed to solver =", 0.0)
+
+        # stiffness check
+        s_test = np.array([0.0, wire_len * 0.5, wire_len + 0.5 * tip_len], dtype=float)
+        Ktest = self.Kinv_fun(s_test, wire_len)
+
+        # print("\n--- KINV DEBUG ---")
+        # for i, ss in enumerate(s_test):
+        #     print(
+        #         f"s={ss:.4f} "
+        #         f"Kinv_tors={Ktest[0,0,i]:.6e} "
+        #         f"Kinv_b1={Ktest[1,1,i]:.6e} "
+        #         f"Kinv_b2={Ktest[2,2,i]:.6e}"
+        #     )
         hist = solve_quasistatic_insertion(
             p0=self.p0_ur, q0=self.q0_ur,
             L0=L_start, Lf=L_model, dL=self.dL_internal,
@@ -156,7 +205,7 @@ class EnergyMinForwardWithLumen:
             tip_len_fun=tip_len_fun,
             Kinv_fun=self.Kinv_fun, u_star=self.u_star,
             r_src=r_src, m_src=m_src,
-            m_local_fun=None, m_moment=0.0,   # ignored because we rebuild it each step
+            m_local_fun=m_local_fun, m_moment=0.0,
             lumen_C=self.lumen_C, lumen_R=self.lumen_R,
             N=self.N_nodes, maxiter=self.maxiter,
             use_lumen=self.use_lumen_jac,
@@ -185,7 +234,16 @@ class EnergyMinForwardWithLumen:
             if key in info and info[key] is not None:
                 u_next = info[key]
                 break
-        self._last.update(p=p.copy(), L=L_model, u_init=u_next, tip=tip.copy())
+        # self._last.update(p=p.copy(), L=L_model, u_init=u_next, tip=tip.copy())
+        self._last.update(
+            p=p.copy(),
+            L=L_model,
+            u_init=u_next,
+            tip=tip.copy(),
+            p_centerline=pE.copy(),
+            info=info,
+            hist=hist,
+        )
         # print("[DBG-fwd] r_src:", r_src, "L_ins:", L_ins, "tip:", tip)
 
         return tip

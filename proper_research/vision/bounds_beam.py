@@ -5,6 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from proper_research.vision.vision_w_tangnet import detect_4_red_markers_in_roi
 from proper_research.vision.measure_length import new_capture
+from proper_research.vision.line_fit_through_points import measure_tip_base_angles,make_beam_frame_from_proximal_markers, project_point_to_beam_frame
+
 # from proper_research.vision.boundaries import detect_blue_vessel_boundaries, smooth_boundary
 RED_ROI_CONFIG_FILE = "red_roi_box.json"
 BLUE_ROI_CONFIG_FILE = "blue_roi_box.json"
@@ -730,7 +732,7 @@ def reconstruct_beam_within_vessel(
         val_min=40,
         min_area=3,
         max_area=50000,
-        show_debug=False,
+        show_debug=True,
     )
 
     green_pt1, green_pt2 = green_result["points_px"]
@@ -1144,8 +1146,12 @@ def signed_angle_between_vectors(v1, v2):
         ang += 360
 
     return float(ang)
-
-
+def normalize_2d(v: np.ndarray) -> np.ndarray:
+    v = np.asarray(v, dtype=float).reshape(2,)
+    n = np.linalg.norm(v)
+    if n < 1e-12:
+        raise ValueError(f"Cannot normalize near-zero vector: {v}")
+    return v / n
 def measure_tip_state_4markers(
     image_filename="focused_image.jpg",
     roi_box=None,
@@ -1156,7 +1162,7 @@ def measure_tip_state_4markers(
     base_px_ref=None,
     ex_ref=None,
     ey_ref=None,
-    ):
+):
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
@@ -1173,60 +1179,96 @@ def measure_tip_state_4markers(
         show_debug=show_debug_markers,
     )
 
-    if detected_points is None or len(detected_points) != 4:
-        raise RuntimeError(f"Expected 4 detected red markers, got: {detected_points}")
+    if detected_points is None or len(detected_points) < 4:
+        raise RuntimeError(f"Expected at least 4 detected red markers, got: {detected_points}")
 
     ordered = order_four_markers(detected_points, pivot_hint=pivot_hint)
-    # tip_px, tangent_start_px, mag_start_px, base_px = ordered
     base_px, mag_start_px, tangent_start_px, tip_px = ordered
+
     base = np.array(base_px, dtype=np.float32)
     mag_start = np.array(mag_start_px, dtype=np.float32)
     tangent_start = np.array(tangent_start_px, dtype=np.float32)
     tip = np.array(tip_px, dtype=np.float32)
 
-    tip_xy = image_to_base_frame(tip, base, mag_start)
-    ref_vec = np.array([
-        mag_start[0] - base[0],
-        -(mag_start[1] - base[1])
-    ], dtype=np.float32)
+    # -------------------------------------------------
+    # USE STRAIGHT-IMAGE FRAME IF PROVIDED
+    # -------------------------------------------------
+    if base_px_ref is not None and ex_ref is not None and ey_ref is not None:
+        base_ref = np.asarray(base_px_ref, dtype=float).reshape(2,)
+        base_cart = np.array([base_ref[0], -base_ref[1]], dtype=float)
 
+        ex_fit = np.asarray(ex_ref, dtype=float).reshape(2,)
+        ey_fit = np.asarray(ey_ref, dtype=float).reshape(2,)
+
+        ex_fit = ex_fit / (np.linalg.norm(ex_fit) + 1e-12)
+        ey_fit = ey_fit / (np.linalg.norm(ey_fit) + 1e-12)
+    else:
+        base_cart, ex_fit, ey_fit = make_beam_frame_from_proximal_markers(
+            base_px=base,
+            mag_start_px=mag_start,
+            tangent_start_px=tangent_start,
+        )
+
+    tip_xy = project_point_to_beam_frame(
+        point_px=tip,
+        origin_cart=base_cart,
+        ex=ex_fit,
+        ey=ey_fit,
+    )
+
+    # tangent in Cartesian convention
     tan_vec = np.array([
         tip[0] - tangent_start[0],
         -(tip[1] - tangent_start[1])
     ], dtype=np.float32)
+
+    ref_vec = ex_fit.astype(np.float32)
 
     tangent_angle_deg = signed_angle_between_vectors(ref_vec, tan_vec)
 
     if unwrap_angle:
         tangent_angle_deg = unwrap_tip_angle(tangent_angle_deg)
 
+    tip_base_angle_info = measure_tip_base_angles(
+        base_px=base if base_px_ref is None else np.asarray(base_px_ref, dtype=np.float32),
+        tip_px=tip,
+        ex_ref=ex_fit,
+    )
+
     result = {
         "tip_image_px": (float(tip[0]), float(tip[1])),
         "tip_xy_from_base": (float(tip_xy[0]), float(tip_xy[1])),
         "tip_tangent_angle_deg": float(tangent_angle_deg),
+        "tip_base_abs_angle_deg": float(tip_base_angle_info["tip_base_abs_angle_deg"]),
+        "tip_base_angle_from_vertical_deg": float(tip_base_angle_info["tip_base_angle_from_vertical_deg"]),
+        "tip_base_angle_from_ref_deg": float(tip_base_angle_info["tip_base_angle_from_ref_deg"]),
         "markers": {
             "base_px": tuple(map(float, base_px)),
             "mag_start_px": tuple(map(float, mag_start_px)),
             "tangent_start_px": tuple(map(float, tangent_start_px)),
             "tip_px": tuple(map(float, tip_px)),
         },
+        "beam_frame_fit": {
+            "origin_cart": tuple(map(float, base_cart)),
+            "ex": tuple(map(float, ex_fit)),
+            "ey": tuple(map(float, ey_fit)),
+        },
         "roi_box": roi_box,
     }
+
     print("[DBG markers]")
     print("  base_px         =", base_px)
     print("  mag_start_px    =", mag_start_px)
     print("  tangent_start_px=", tangent_start_px)
     print("  tip_px          =", tip_px)
 
-    print("[DBG raw deltas]")
-    print("  tip-base image dxdy =", tip - base)
-    print("  mag-base image dxdy =", mag_start - base)
-    print("  tan tip-start dxdy  =", tip - tangent_start)
+    print("[DBG fitted frame]")
+    print("  ex_fit =", ex_fit)
+    print("  ey_fit =", ey_fit)
 
     print("[DBG converted]")
     print("  tip_xy_from_base =", tip_xy)
-    print("  ref_vec =", ref_vec)
-    print("  tan_vec =", tan_vec)
+
     if show:
         vis = image_bgr.copy()
 
@@ -1244,18 +1286,49 @@ def measure_tip_state_4markers(
         for key, p in result["markers"].items():
             cv2.circle(vis, (int(p[0]), int(p[1])), 6, color_map[key], -1)
 
-        cv2.line(vis, (int(base[0]), int(base[1])), (int(mag_start[0]), int(mag_start[1])), (0, 255, 0), 2)
-        cv2.line(vis, (int(mag_start[0]), int(mag_start[1])), (int(tangent_start[0]), int(tangent_start[1])), (0, 255, 0), 2)
-        cv2.line(vis, (int(tangent_start[0]), int(tangent_start[1])), (int(tip[0]), int(tip[1])), (0, 255, 0), 2)
+        # draw the REFERENCE frame through reference base
+        if base_px_ref is not None:
+            p0 = np.array(base_px_ref, dtype=float)
+        else:
+            p0 = np.array([base[0], base[1]], dtype=float)
+
+        ex_img = np.array([ex_fit[0], -ex_fit[1]], dtype=float)
+        p1 = p0 - 300 * ex_img
+        p2 = p0 + 300 * ex_img
+
+        cv2.line(
+            vis,
+            (int(round(p1[0])), int(round(p1[1]))),
+            (int(round(p2[0])), int(round(p2[1]))),
+            (255, 255, 0),
+            2,
+        )
 
         plt.figure(figsize=(8, 8))
         plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
-        plt.title("4-marker tip state measurement")
+        plt.title("Tip measurement in fixed straight-reference frame")
         plt.axis("off")
         plt.show()
 
     return result
+def draw_arrow_from_point(vis, p0, vec, color, length_px=120, thickness=2):
+    p0 = np.asarray(p0, dtype=float).reshape(2,)
+    vec = np.asarray(vec, dtype=float).reshape(2,)
+    n = np.linalg.norm(vec)
+    if n < 1e-12:
+        return
 
+    u = vec / n
+    p1 = p0 + length_px * u
+
+    cv2.arrowedLine(
+        vis,
+        (int(round(p0[0])), int(round(p0[1]))),
+        (int(round(p1[0])), int(round(p1[1]))),
+        color,
+        thickness,
+        tipLength=0.15,
+    )
 def unit_vector(v):
     v = np.asarray(v, dtype=np.float32)
     n = np.linalg.norm(v)

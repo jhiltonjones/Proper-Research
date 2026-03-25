@@ -12,19 +12,19 @@ def smooth_top_hat(s, s0, s1, eps):
     return 0.5*(np.tanh((s - s0)/eps) - np.tanh((s - s1)/eps))
 
 
-EI1, GJ1 = EI, GJ        
-EI2, GJ2 = EI, GJ  
+EI_wire, GJ_wire = 0.5 * EI, 0.5 * GJ
+EI_tip,  GJ_tip  = 1 * EI, 1* GJ
 
+def Kbt_inv_profile(s, len_wire, bend_soft=2, tors_soft=2):
+    mask_tip = (s >= len_wire)
 
-def Kbt_inv_profile(s, s_k, bend_soft=2, tors_soft=2):
-    mask = (s >= s_k)
-    EI_s = np.where(mask, EI2, EI1)
-    GJ_s = np.where(mask, GJ2, GJ1)
+    EI_s = np.where(mask_tip, EI_tip, EI_wire)
+    GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
 
-    Kinv = np.zeros((3,3,s.size))
-    Kinv[0,0,:] = tors_soft / GJ_s
-    Kinv[1,1,:] = bend_soft / EI_s
-    Kinv[2,2,:] = bend_soft / EI_s
+    Kinv = np.zeros((3, 3, s.size))
+    Kinv[0, 0, :] = tors_soft / GJ_s
+    Kinv[1, 1, :] = bend_soft / EI_s
+    Kinv[2, 2, :] = bend_soft / EI_s
     return Kinv
 
 

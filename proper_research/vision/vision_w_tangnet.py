@@ -158,7 +158,7 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=10,
+        min_area=2,
         max_area=40000,
         sat_min=10,
         val_min=10,

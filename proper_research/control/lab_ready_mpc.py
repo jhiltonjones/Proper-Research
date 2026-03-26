@@ -684,8 +684,8 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
-        # self.w_adv = 0
+        # self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
+        self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -2274,10 +2274,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     
-    L0 = 0.049
+    L0 = 0.065
 
-    pose6 = np.asarray(get_point(0, 0), dtype=float)
-    # pose6 = hw.get_robot_pose_once()
+    # pose6 = np.asarray(get_point(0, 0), dtype=float)
+    pose6 = hw.get_robot_pose_once()
 
     pose6[2] = -0.1
     # pose6[0] = 0.3
@@ -2350,7 +2350,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(5.0, 5.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(15.0, 15.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2364,7 +2364,7 @@ def build_controller(
     mpc.Rd = np.diag([1e-4] * 7)
 
     mpc.enable_mag_center_standoff = True
-    mpc.enable_mag_tangent_inline = True
+    mpc.enable_mag_tangent_inline = False
     mpc.enable_dipole_align = True
     mpc.enable_hard_epm_tip_clearance = False
     mpc.enable_standoff_soft = True
@@ -2693,7 +2693,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_w_opti2",
+            plot_dir="mpc_debug_plots_w_cent2",
         )
     finally:
         hw.shutdown()

@@ -1170,7 +1170,7 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=10,
+        min_area=2,
         max_area=40000,
         sat_min=80,
         val_min=50,
@@ -1454,7 +1454,7 @@ def image_to_fixed_local_frame(point_px, base_px_ref, ex_ref, ey_ref):
 
     return np.array([x_local, y_local], dtype=np.float32)
 if __name__ == "__main__":
-    # new_capture()
+    new_capture()
     pivot_hint = (300, 391)
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",

@@ -818,8 +818,8 @@ if __name__ == "__main__":
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation",
         save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
-        show_debug_vision=False,
-        show_debug_model=False,
+        show_debug_vision=True,
+        show_debug_model=True,
     )
 
     evaluate_single_pose(cfg)

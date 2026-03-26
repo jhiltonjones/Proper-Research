@@ -1,92 +1,75 @@
 import pandas as pd
-import matplotlib.pyplot as plt
-
-df = pd.read_csv("/home/jack/Proper-Research/results_sweep_forward_validation2/sweep_results.csv")
-
-# 1) Predicted vs measured XY tip path
-plt.figure(figsize=(7, 6))
-plt.plot(df["pred_base_x_mm"], df["pred_base_y_mm"], "o-", label="Predicted")
-plt.plot(df["meas_base_x_mm"], df["meas_base_y_mm"], "s-", label="Measured")
-plt.xlabel("Base-local x [mm]")
-plt.ylabel("Base-local y [mm]")
-plt.title("Predicted vs measured tip path")
-plt.axis("equal")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-# 2) X vs j_idx
-plt.figure(figsize=(8, 5))
-plt.plot(df["j_idx"], df["pred_base_x_mm"], "o-", label="Predicted x")
-plt.plot(df["j_idx"], df["meas_base_x_mm"], "s-", label="Measured x")
-plt.xlabel("j_idx")
-plt.ylabel("Tip x [mm]")
-plt.title("Tip x vs j_idx")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-# plt.show()
-
-# 3) Y vs j_idx
-plt.figure(figsize=(8, 5))
-plt.plot(df["j_idx"], df["pred_base_y_mm"], "o-", label="Predicted y")
-plt.plot(df["j_idx"], df["meas_base_y_mm"], "s-", label="Measured y")
-plt.xlabel("j_idx")
-plt.ylabel("Tip y [mm]")
-plt.title("Tip y vs j_idx")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-# plt.show()
-
-# 4) Angle vs j_idx
-plt.figure(figsize=(8, 5))
-plt.plot(df["j_idx"], df["pred_tip_angle_deg"], "o-", label="Predicted angle")
-plt.plot(df["j_idx"], df["meas_tip_angle_deg"], "s-", label="Measured angle")
-plt.xlabel("j_idx")
-plt.ylabel("Tip angle [deg]")
-plt.title("Predicted vs measured tip angle")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-# plt.show()
-
-# 5) Error vs j_idx
-plt.figure(figsize=(8, 5))
-plt.plot(df["j_idx"], df["err_x_mm"], "o-", label="err x")
-plt.plot(df["j_idx"], df["err_y_mm"], "s-", label="err y")
-plt.plot(df["j_idx"], df["err_xy_mm"], "^-", label="err xy")
-plt.xlabel("j_idx")
-plt.ylabel("Error [mm]")
-plt.title("Prediction error vs j_idx")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-# plt.show()
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 
-with open("results_sweep_forward_validation2/sweep_results.json", "r") as f:
-    data = json.load(f)
+# ----------------------------
+# Load run 5 (CSV)
+# ----------------------------
+df5 = pd.read_csv("/home/jack/Proper-Research/results_sweep_forward_validation5/sweep_results.csv")
 
-row = next(r for r in data if r["j_idx"] == 30)
+# ----------------------------
+# Load run 6 (JSON)
+# ----------------------------
+with open("/home/jack/Proper-Research/results_sweep_forward_validation7/sweep_results.json", "r") as f:
+    data6 = json.load(f)
 
-pred = np.asarray(row["pred_beam_local_mm"], dtype=float)
-meas = np.asarray(row["meas_beam_local_mm"], dtype=float)
+# Extract run 6 tip data
+pred_x6 = []
+pred_y6 = []
+meas_x6 = []
+meas_y6 = []
 
-# measured beam is tip -> base, so reverse it
-meas = meas[::-1]
+for r in data6:
+    pred = np.asarray(r["pred_tip_base_local_m"], float) * 1e3
+    meas = np.asarray(r["meas_tip_base_local_m"], float) * 1e3
 
+    pred_x6.append(pred[0])
+    pred_y6.append(pred[1])
+    meas_x6.append(meas[0])
+    meas_y6.append(meas[1])
+
+# ----------------------------
+# Plot everything together
+# ----------------------------
 plt.figure(figsize=(7, 7))
-plt.plot(pred[:, 0], pred[:, 1], "-o", markersize=2, label="Predicted")
-plt.plot(meas[:, 0], meas[:, 1], "-o", markersize=2, label="Measured (reversed)")
+
+# Run 5
+plt.plot(
+    df5["pred_base_x_mm"],
+    df5["pred_base_y_mm"],
+    "o-",
+    label="Predicted (run 5)"
+)
+plt.plot(
+    df5["meas_base_x_mm"],
+    df5["meas_base_y_mm"],
+    "s-",
+    label="Measured (run 5)"
+)
+
+# Run 6
+plt.plot(
+    pred_x6,
+    pred_y6,
+    "o--",
+    label="Predicted (run 6)"
+)
+plt.plot(
+    meas_x6,
+    meas_y6,
+    "s--",
+    label="Measured (run 6)"
+)
+
+# Pivot origin
+plt.plot(0, 0, "k+", markersize=10, label="Pivot")
+
+plt.xlabel("Base-local x [mm]")
+plt.ylabel("Base-local y [mm]")
+plt.title("Predicted vs Measured Tip (Run 5 vs Run 6)")
 plt.axis("equal")
 plt.grid(True)
-plt.xlabel("Local x [mm]")
-plt.ylabel("Local y [mm]")
-plt.title(f"Beam shape comparison, j_idx={row['j_idx']}")
 plt.legend()
 plt.tight_layout()
 plt.show()

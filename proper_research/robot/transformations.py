@@ -1,11 +1,11 @@
 import numpy as np
 pivot_point = np.array([
-0.8581328220229531, -0.7055298925316631, 0.15, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
+0.8581328220229531, -0.7112731669220016, 0.18,  np.pi, 0.001,0.001
 ], float)
 
 
 start_point = np.array([
-0.6658880909386228, -0.7112771185002148, 0.15, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
+0.6658941096487977, -0.7112731669220016, 0.18,  np.pi, 0.001,0.001
 ], float)
 
 def rotz(theta):
@@ -515,7 +515,18 @@ def get_point(theta_angle_x, theta_angle_z,
     new_rvec = R_to_rotvec(new_R)
 
     new_pose_for_robot = np.hstack([new_pos, new_rvec])
+    print("p_m0:", H_b_m0[:3, 3])
+    print("p_m1:", H_b_m1[:3, 3])
+    print("p_e1:", H_b_e1[:3, 3])
+    print("mag z change:", H_b_m1[2, 3] - H_b_m0[2, 3])
+    print("tcp z change:", H_b_e1[2, 3] - H_b_e0[2, 3])
+    x_axis = new_R[:, 0]
+    y_axis = new_R[:, 1]
+    z_axis = new_R[:, 2]
 
+    print("TCP x-axis:", x_axis)
+    print("TCP y-axis:", y_axis)
+    print("TCP z-axis:", z_axis)
     # print("New EE pose to send to robot:")
     # print(repr(new_pose_for_robot))
     return new_pose_for_robot

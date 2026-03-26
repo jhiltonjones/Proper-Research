@@ -100,15 +100,23 @@ class SinglePoseEvalConfig:
 # ============================================================
 # Basic helpers
 # ============================================================
-def robot_pose_to_pivot_local_pose(pose6_robot, pivot_pose6):
-    pose6_robot = np.asarray(pose6_robot, float).reshape(6,)
-    p_robot = pose6_robot[:3]
-    p_pivot = np.asarray(pivot_pose6[:3], float).reshape(3,)
+def robot_point_to_pivot_local(p_robot, pivot_pose6):
+    p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
     return p_robot - p_pivot
+
+def robot_pose_to_pivot_local_pose(pose6_robot, pivot_pose6):
+    pose6_robot = np.asarray(pose6_robot, dtype=float).reshape(6,)
+    return robot_point_to_pivot_local(pose6_robot[:3], pivot_pose6)
+
 def pivot_local_point_to_robot(local_xyz, pivot_pose6):
-    p_pivot = np.asarray(pivot_pose6[:3], float).reshape(3,)
-    local_xyz = np.asarray(local_xyz, float).reshape(3,)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    local_xyz = np.asarray(local_xyz, dtype=float).reshape(3,)
     return p_pivot + local_xyz
+
+def robot_dir_to_pivot_local(v_robot, pivot_pose6):
+    v_robot = np.asarray(v_robot, dtype=float).reshape(3,)
+    return v_robot.copy()
 def rotvec_to_quat_wxyz(rvec: np.ndarray) -> np.ndarray:
     r = Rot.from_rotvec(np.asarray(rvec, dtype=float).reshape(3,))
     q_xyzw = r.as_quat()  # [x, y, z, w]
@@ -133,10 +141,6 @@ def pose6_and_L_to_pose8_quat(ur_pose6: np.ndarray, L_m: float) -> np.ndarray:
     return p8
 
 
-def robot_point_to_pivot_local(p_robot: np.ndarray, pivot_pose6: np.ndarray) -> np.ndarray:
-    p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
-    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
-    return p_robot - p_pivot
 
 
 def compute_position_errors_mm(pred_local_m: np.ndarray, meas_local_m: np.ndarray) -> Dict[str, float]:
@@ -161,29 +165,15 @@ def build_dummy_straight_lumen_from_pivot(
     radius_m: float = 0.05,
     n_pts: int = 150,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Build a straight, very wide lumen aligned with the pivot x-axis.
+    p0_ur = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    t0 = np.array([-1.0, 0.0, 0.0], dtype=float)
 
-    This does NOT represent the vessel.
-    It is only used because the forward-model class requires lumen_C / lumen_R.
-    The radius is made intentionally large so wall effects are negligible.
-    """
-    T_ur_pivot = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
-    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
-
-    q = np.asarray(q0_ur, dtype=float)
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-
-    # local straight beam direction = negative x in your convention
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
-
-    lumen_C = np.array([
-        p0_ur + s * t0 for s in np.linspace(0.0, length_m, n_pts)
-    ], dtype=float)
-
+    lumen_C = np.array(
+        [p0_ur + s * t0 for s in np.linspace(0.0, length_m, n_pts)],
+        dtype=float,
+    )
     lumen_R = np.full(len(lumen_C), float(radius_m), dtype=float)
     return lumen_C, lumen_R
-
 
 def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float) -> DeterministicForward6D:
     """
@@ -417,6 +407,14 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
         L0=float(cfg.L_m),
     )
+    dp_robot = np.asarray(cfg.test_pose6[:3], float) - np.asarray(cfg.pivot_pose6[:3], float)
+    R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
+    dp_local = R_pivot.T @ dp_robot
+
+    print("\n--- FRAME DEBUG ---")
+    print("dp_robot [mm] =", 1e3 * dp_robot)
+    print("dp_local [mm] =", 1e3 * dp_local)
+
 
     pred = predict_tip_local_from_model(
         forward6d=forward6d,
@@ -458,6 +456,9 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     print(f"meas chord [mm] = ({meas_x_mm:.3f}, {meas_y_mm:.3f})")
     print("pred_tip_angle_from_ref_deg =", pred_tip_angle_deg)
     print("meas_tip_angle_from_ref_deg =", meas["tip_result"]["tip_base_angle_from_ref_deg"])
+    
+    
+    
     result = {
         "pivot_pose6": np.asarray(cfg.pivot_pose6, dtype=float).tolist(),
         "test_pose6": np.asarray(cfg.test_pose6, dtype=float).tolist(),
@@ -508,29 +509,82 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     for k, v in err.items():
         print(f"{k}: {v:.4f}")
 
-    src_pivot_local_m = robot_point_to_pivot_local(
+    src_base_local_m = robot_point_to_pivot_local(
         np.asarray(cfg.test_pose6[:3], dtype=float),
         np.asarray(cfg.pivot_pose6, dtype=float),
     )
 
-    base_pivot_local_m = robot_point_to_pivot_local(
+    # if beam base is exactly the pivot, this is already the correct base-local point
+    # otherwise subtract the true base point expressed in the same frame:
+    base_local_m = robot_point_to_pivot_local(
         np.asarray(cfg.beam_base_point_robot_m, dtype=float),
         np.asarray(cfg.pivot_pose6, dtype=float),
     )
-
-    src_base_local_m = src_pivot_local_m - base_pivot_local_m
+    src_base_local_m = src_base_local_m - base_local_m
 
     src_dir_robot = source_dipole_in_robot(cfg.test_pose6)
-    src_dir_local = src_dir_robot.copy()
+    src_dir_local = robot_dir_to_pivot_local(src_dir_robot, cfg.pivot_pose6)
 
     pred_base_local_m_plot = pred_base_local_m.copy()
     meas_base_local_m_plot = meas["tip_base_local_m"].copy()
     src_base_local_plot_m = src_base_local_m.copy()
     print(f"TEST POSE {cfg.test_pose6}")
     src_local_check = robot_pose_to_pivot_local_pose(cfg.test_pose6, cfg.pivot_pose6)
+
+
+
+    r_test = Rot.from_rotvec(np.asarray(cfg.test_pose6[3:6], float))
+    r_pivot = Rot.from_rotvec(np.asarray(cfg.pivot_pose6[3:6], float))
+
+    r_rel = r_pivot.inv() * r_test
+    rel_rotvec = r_rel.as_rotvec()
+    rel_angle_deg = np.degrees(np.linalg.norm(rel_rotvec))
+
+    print("relative rotvec =", rel_rotvec)
+    print("relative angle [deg] =", rel_angle_deg)
     print(f"Pivot POSE {cfg.pivot_pose6}")
     print("source position from robot pose in pivot local [mm] =", 1e3 * src_local_check)
+    R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
 
+    src_pos_robot = np.asarray(cfg.test_pose6[:3], float)
+    src_pos_local = robot_point_to_pivot_local(src_pos_robot, cfg.pivot_pose6)
+
+    m_robot = source_dipole_in_robot(cfg.test_pose6)
+    m_local = robot_dir_to_pivot_local(m_robot, cfg.pivot_pose6)
+
+    pivot_x_local = np.array([1.0, 0.0, 0.0])
+    pivot_neg_x_local = np.array([-1.0, 0.0, 0.0])
+    T_pivot = ur_pose6_to_T(cfg.pivot_pose6)
+    R_pivot = T_pivot[:3, :3]
+
+    dp_robot = np.asarray(cfg.test_pose6[:3]) - np.asarray(cfg.pivot_pose6[:3])
+    x_pivot_robot = R_pivot[:, 0]
+
+    dp_robot_u = dp_robot / (np.linalg.norm(dp_robot) + 1e-12)
+    x_pivot_robot_u = x_pivot_robot / (np.linalg.norm(x_pivot_robot) + 1e-12)
+
+    print("dp_robot unit =", dp_robot_u)
+    print("pivot x-axis  =", x_pivot_robot_u)
+    print("dot(dp_robot_u, pivot x-axis) =", np.dot(dp_robot_u, x_pivot_robot_u))
+    print("\n--- CONSISTENT LOCAL DEBUG ---")
+    print("src_pos_local [mm] =", 1e3 * src_pos_local)
+    print("m_local =", m_local / (np.linalg.norm(m_local) + 1e-12))
+    print("dot(m_local, +x_local) =", float(np.dot(m_local, pivot_x_local)))
+    print("dot(m_local, -x_local) =", float(np.dot(m_local, pivot_neg_x_local)))
+    print("\n--- DIPOLE DEBUG ---")
+    print("m_robot =", m_robot)
+    print("src_dir_local =", src_dir_local)
+    print("difference =", src_dir_local - m_robot)
+    print("xy angle in robot/local [deg] =",
+        np.degrees(np.arctan2(m_robot[1], m_robot[0])),
+        np.degrees(np.arctan2(src_dir_local[1], src_dir_local[0])))
+    pivot_m_robot = source_dipole_in_robot(cfg.pivot_pose6)
+    test_m_robot = source_dipole_in_robot(cfg.test_pose6)
+
+    print("pivot dipole xy angle [deg] =", np.degrees(np.arctan2(pivot_m_robot[1], pivot_m_robot[0])))
+    print("test  dipole xy angle [deg] =", np.degrees(np.arctan2(test_m_robot[1], test_m_robot[0])))
+    print("pivot dipole =", pivot_m_robot)
+    print("test  dipole =", test_m_robot)
     plot_single_tip_comparison_local(
         pred_local_m=pred_base_local_m_plot,
         meas_local_m=meas_base_local_m_plot,
@@ -549,14 +603,16 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
 # ============================================================
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.9081328220229531, -0.7112771185002148, -0.1, -3.058898048077014, -0.47783476689395354, 0.049835539244206514
+    0.8781328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
-    
-    L0 = 0.065
 
-    pose6 = np.asarray(get_point(0, 30), dtype=float)
+    
+    L0 = 0.049
+
+    pose6 = np.asarray(get_point(0, 0), dtype=float)
     pose6[2] = -0.1
+    # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
     T = ur_pose6_to_T(pose6)
     p, q_wxyz = T_to_p_quat_wxyz(T)
@@ -565,7 +621,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     u0 = np.zeros(7, dtype=float)
     hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
-    # 0.6943785995167966, -0.8067580541845363, -0.1, -2.83972782227175, -1.2569061634125336, 0.06672741411356532
+    # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
     robot_pose6 = hw.get_robot_pose_once()
     robot_pose6[2] = -0.1
@@ -699,7 +755,8 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
     t_robot = R @ t_body
     return t_robot / (np.linalg.norm(t_robot) + 1e-12)
 if __name__ == "__main__":
-    new_capture()
+
+
     hw = LiveHardwareController(
     robot_ip="192.168.56.101",
     dry_run=False,                 # True first
@@ -712,7 +769,7 @@ if __name__ == "__main__":
     xyz_max=(1.20, +1.50, +1.50),
     max_trans_m=0.01,
     max_rot_rad=0.2,
-    z_offset=0.25,
+    z_offset=0.28,
     use_moveL_params=False,
     v=0.10,
     a=0.30,
@@ -720,7 +777,7 @@ if __name__ == "__main__":
     pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw=hw)
 
 
-
+    new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
     # src_robot = pivot_local_point_to_robot(src_local, pivot_point2)

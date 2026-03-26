@@ -74,6 +74,14 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Run hardware camera",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.hardware_move",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run testing beam/bounds",
             "type": "debugpy",
             "request": "launch",

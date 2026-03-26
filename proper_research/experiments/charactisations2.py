@@ -158,18 +158,13 @@ def build_dummy_straight_lumen_from_pivot(
     radius_m: float = 0.05,
     n_pts: int = 150,
 ):
-    T_ur_pivot = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
-    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+    p0_ur = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    t0 = np.array([-1.0, 0.0, 0.0], dtype=float)
 
-    q = np.asarray(q0_ur, dtype=float)
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
-
-    lumen_C = np.array([
-        p0_ur + s * t0 for s in np.linspace(0.0, length_m, n_pts)
-    ], dtype=float)
-
+    lumen_C = np.array(
+        [p0_ur + s * t0 for s in np.linspace(0.0, length_m, n_pts)],
+        dtype=float,
+    )
     lumen_R = np.full(len(lumen_C), float(radius_m), dtype=float)
     return lumen_C, lumen_R
 
@@ -427,7 +422,19 @@ def save_results_csv(path: str, rows: List[Dict]) -> None:
         writer = csv.DictWriter(f, fieldnames=list(flat_rows[0].keys()))
         writer.writeheader()
         writer.writerows(flat_rows)
+def order_measured_curve_base_to_tip(curve_mm, meas_tip_mm):
+    curve_mm = np.asarray(curve_mm, dtype=float).reshape(-1, 3)
+    meas_tip_mm = np.asarray(meas_tip_mm, dtype=float).reshape(3,)
 
+    d0 = np.linalg.norm(curve_mm[0] - meas_tip_mm)
+    d1 = np.linalg.norm(curve_mm[-1] - meas_tip_mm)
+
+    # If the first point is closer to the tip than the last point,
+    # then the curve is tip->base, so reverse it.
+    if d0 < d1:
+        curve_mm = curve_mm[::-1].copy()
+
+    return curve_mm
 def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dict]:
     os.makedirs(cfg.results_dir, exist_ok=True)
 
@@ -453,11 +460,14 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
 
     results = []
 
-    for j_idx in range(cfg.j_start, cfg.j_end + 1,10):
+    for j_idx in range(cfg.j_start, cfg.j_end + 1, 10):
         print("\n====================================")
         print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
         print("====================================")
 
+        # ------------------------------------------------------------
+        # Command + move
+        # ------------------------------------------------------------
         cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx), dtype=float).reshape(6,)
         cmd_pose6[2] = -0.1
 
@@ -468,6 +478,10 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
 
         if cfg.capture_each_step:
             new_capture()
+
+        # ------------------------------------------------------------
+        # Vision reconstruction from image
+        # ------------------------------------------------------------
         recon = reconstruct_beam_within_vessel(
             image_filename=cfg.image_filename,
             red_roi_path=cfg.red_roi_path,
@@ -480,14 +494,45 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
             ),
         )
 
+        # Use ONE consistent frame for both measured tip and measured beam
+        if ref_frame is not None:
+            meas_base_px = ref_frame["base_px_ref"]
+            meas_ex = ref_frame["ex_ref"]
+            meas_ey = ref_frame["ey_ref"]
+
+            meas = measure_tip_from_vision_base_local(
+                cfg,
+                base_px_ref=meas_base_px,
+                ex_ref=meas_ex,
+                ey_ref=meas_ey,
+            )
+        else:
+            meas_base_px = recon["tip_result"]["markers"]["base_px"]
+            meas_ex = np.asarray(recon["tip_result"]["beam_frame_fit"]["ex"], dtype=float)
+            meas_ey = np.asarray(recon["tip_result"]["beam_frame_fit"]["ey"], dtype=float)
+
+            meas = measure_tip_from_vision_base_local(cfg)
+
         meas_beam_local_mm = beam_points_px_to_base_local_mm(
             beam_points_px=recon["beam_centerline_px"],
-            base_px_ref=recon["tip_result"]["markers"]["base_px"],
-            ex_ref=recon["tip_result"]["beam_frame_fit"]["ex"],
-            ey_ref=recon["tip_result"]["beam_frame_fit"]["ey"],
+            base_px_ref=meas_base_px,
+            ex_ref=meas_ex,
+            ey_ref=meas_ey,
             mm_per_pixel=recon["mm_per_pixel"],
         )
 
+        # Reorder measured beam so it is base -> tip
+        meas_beam_local_mm = order_measured_curve_base_to_tip(
+            meas_beam_local_mm,
+            1e3 * np.asarray(meas["tip_base_local_m"], dtype=float),
+        )
+
+        # Optional: force exact base anchor to zero for shape plotting
+        # meas_beam_local_mm = meas_beam_local_mm - meas_beam_local_mm[0]
+
+        # ------------------------------------------------------------
+        # Prediction
+        # ------------------------------------------------------------
         pred = predict_tip_local_from_model(
             forward6d=forward6d,
             pose6=act_pose6,
@@ -499,19 +544,9 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
 
         pred_beam_local_mm = predicted_centerline_robot_to_base_local_mm(
             centerline_robot_m=pred_centerline_robot_m,
-            beam_base_point_robot_m=cfg.beam_base_point_robot_m,
-            pivot_pose6=cfg.pivot_pose6,
+            beam_base_point_robot_m=np.asarray(cfg.beam_base_point_robot_m, dtype=float),
+            pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
         )
-
-        if ref_frame is not None:
-            meas = measure_tip_from_vision_base_local(
-                cfg,
-                base_px_ref=ref_frame["base_px_ref"],
-                ex_ref=ref_frame["ex_ref"],
-                ey_ref=ref_frame["ey_ref"],
-            )
-        else:
-            meas = measure_tip_from_vision_base_local(cfg)
 
         pred_base_local_m = predicted_tip_to_base_local_from_base_point_robot(
             pred_tip_robot_m=pred["tip_robot_m"],
@@ -519,12 +554,19 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
             pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
         )
 
+        # ------------------------------------------------------------
+        # Errors
+        # ------------------------------------------------------------
         pred_tip_angle_deg = compute_tip_angle_from_base_local_deg(pred_base_local_m)
+
         err = compute_position_errors_mm(
             pred_local_m=pred_base_local_m,
             meas_local_m=meas["tip_base_local_m"],
         )
 
+        # ------------------------------------------------------------
+        # Save row
+        # ------------------------------------------------------------
         row = {
             "i_idx": int(cfg.i_fixed),
             "j_idx": int(j_idx),
@@ -541,23 +583,34 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
             "mm_per_pixel": float(meas["mm_per_pixel"]),
 
             "pred_tip_angle_from_ref_deg": float(pred_tip_angle_deg),
-            "meas_tip_angle_from_ref_deg": float(meas["tip_result"]["tip_base_angle_from_ref_deg"]),
+            "meas_tip_angle_from_ref_deg": float(
+                meas["tip_result"]["tip_base_angle_from_ref_deg"]
+            ),
 
             # full beam curves for later plotting
             "pred_beam_local_mm": pred_beam_local_mm.tolist(),
             "meas_beam_local_mm": meas_beam_local_mm.tolist(),
 
+            # save the exact frame used for measured beam conversion
+            "meas_frame_base_px": np.asarray(meas_base_px, dtype=float).tolist(),
+            "meas_frame_ex": np.asarray(meas_ex, dtype=float).tolist(),
+            "meas_frame_ey": np.asarray(meas_ey, dtype=float).tolist(),
+
             # optional raw reconstruction data
-            "meas_beam_centerline_px": np.asarray(recon["beam_centerline_px"], dtype=float).tolist(),
+            "meas_beam_centerline_px": np.asarray(
+                recon["beam_centerline_px"], dtype=float
+            ).tolist(),
             "meas_markers": recon["tip_result"]["markers"],
-            "beam_poly_coeffs": np.asarray(recon["beam_poly_coeffs"], dtype=float).tolist(),
+            "beam_poly_coeffs": np.asarray(
+                recon["beam_poly_coeffs"], dtype=float
+            ).tolist(),
 
             **err,
         }
 
         print(
-            f"pred [mm] = ({1e3*pred_base_local_m[0]:.3f}, {1e3*pred_base_local_m[1]:.3f}) | "
-            f"meas [mm] = ({1e3*meas['tip_base_local_m'][0]:.3f}, {1e3*meas['tip_base_local_m'][1]:.3f}) | "
+            f"pred [mm] = ({1e3 * pred_base_local_m[0]:.3f}, {1e3 * pred_base_local_m[1]:.3f}) | "
+            f"meas [mm] = ({1e3 * meas['tip_base_local_m'][0]:.3f}, {1e3 * meas['tip_base_local_m'][1]:.3f}) | "
             f"err_xy = {err['err_xy_mm']:.3f} mm"
         )
 
@@ -648,19 +701,18 @@ if __name__ == "__main__":
         xyz_max=(1.20, +1.50, +1.50),
         max_trans_m=0.01,
         max_rot_rad=0.2,
-        z_offset=0.25,
+        z_offset=0.28,
         use_moveL_params=False,
         v=0.10,
         a=0.30,
     )
 
     pivot_point = np.array([
-        0.9081328220229531, -0.7112771185002148, -0.1,
-        -3.058898048077014, -0.47783476689395354, 0.049835539244206514
+    0.8981328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     beam_base_point_robot_m = pivot_point[:3].copy()
-    L0 = 0.065
+    L0 = 0.052
 
     cfg = SweepEvalConfig(
         pivot_pose6=pivot_point,
@@ -676,7 +728,7 @@ if __name__ == "__main__":
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_forward_validation2",
+        results_dir="results_sweep_forward_validation8",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

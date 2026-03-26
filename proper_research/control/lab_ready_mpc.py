@@ -14,6 +14,7 @@ from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
 from proper_research.vision.measure_length import new_capture
 import matplotlib.pyplot as plt
 import time
+from proper_research.robot.transformations import get_point
 from proper_research.robot.live_hardware_control import LiveHardwareController
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
@@ -2007,26 +2008,42 @@ def vision_result_to_x_meas_robot(
     vision_result,
     pivot_point_pose6,
     align_tangent_with_lumen=True,
-    ):
+):
     tip_result = vision_result["tip_result"]
     markers = tip_result["markers"]
     mm_per_pixel = float(vision_result["mm_per_pixel"])
 
+    # ----------------------------------
+    # 1) tip position in the SAME local frame
+    #    as your validated script
+    # ----------------------------------
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
+    # Match validated code:
+    # tip_base_local_m = [-tip_xy_m[0], +tip_xy_m[1], 0]
     p_local = np.array([
         tip_xy_m[0],
-        tip_xy_m[1],
-        0.0,
+        -tip_xy_m[1],
+         0.0,
     ], dtype=float)
+    p_local_wrong = np.array([ tip_xy_m[0], tip_xy_m[1], 0.0 ])
+    p_local_right = np.array([-tip_xy_m[0], tip_xy_m[1], 0.0 ])
 
+    p_pivot = np.asarray(pivot_point_pose6[:3], float)
+
+    print("wrong p_robot =", p_pivot + p_local_wrong)
+    print("right p_robot =", p_pivot + p_local_right)
+
+    # ----------------------------------
+    # 2) tangent in the SAME local frame
+    # ----------------------------------
     tip_px = np.asarray(markers["tip_px"], dtype=float)
     tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
     base_px = np.asarray(markers["base_px"], dtype=float)
     mag_start_px = np.asarray(markers["mag_start_px"], dtype=float)
 
-    # beam reference direction in image-Cartesian
+    # image-Cartesian reference axis from base -> magnet marker
     ref = np.array([
         mag_start_px[0] - base_px[0],
         -(mag_start_px[1] - base_px[1]),
@@ -2049,7 +2066,8 @@ def vision_result_to_x_meas_robot(
         raise ValueError("Measured tangent from vision is zero-length.")
     v_img /= nv
 
-    # project into beam-local frame
+    # Match validated straight-beam convention:
+    # straight beam is along local -x
     tx_local = -float(np.dot(v_img, ex))
     ty_local =  float(np.dot(v_img, ey))
 
@@ -2057,27 +2075,39 @@ def vision_result_to_x_meas_robot(
 
     nrm = np.linalg.norm(t_local)
     if nrm < 1e-12:
-        raise ValueError("Measured tangent from vision is zero-length.")
+        raise ValueError("Measured tangent in local frame is zero-length.")
     t_local /= nrm
 
-    T_pivot_robot = ur_pose6_to_T(np.asarray(pivot_point_pose6, dtype=float))
-    R_pivot_robot = T_pivot_robot[:3, :3]
-    p_pivot_robot = T_pivot_robot[:3, 3]
+    # ----------------------------------
+    # 3) convert local -> robot frame
+    #    using your validated convention:
+    #    translation only, NO rotation
+    # ----------------------------------
+    p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
 
-    p_robot = p_pivot_robot + R_pivot_robot @ p_local
-    t_robot = R_pivot_robot @ t_local
+    p_robot = p_pivot_robot + p_local
+    t_robot = t_local.copy()
 
     nrm_t = np.linalg.norm(t_robot)
     if nrm_t < 1e-12:
         raise ValueError("Robot-frame tangent became zero-length.")
     t_robot /= nrm_t
+
     print("[DBG TAN]")
+    print("  tip_xy_m =", tip_xy_m)
+    print("  p_local =", p_local)
     print("  v_img =", v_img)
     print("  ex =", ex)
     print("  ey =", ey)
     print("  tx_local, ty_local =", tx_local, ty_local)
     print("  t_local =", t_local)
+    print("  p_robot =", p_robot)
     print("  t_robot =", t_robot)
+
+    # ----------------------------------
+    # 4) optional tangent sign alignment
+    #    with lumen direction
+    # ----------------------------------
     lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
     if align_tangent_with_lumen and (lumen_C_robot_m is not None):
         C = np.asarray(lumen_C_robot_m, dtype=float)
@@ -2237,17 +2267,36 @@ def snapshot_forward(forward6d, p8, *, commit=False):
     return tip, tan, C, y
 
 
-def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
+def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.8581328220229531, -0.7054938660842401, -0.1, -3.0588512205383798, -0.4775475597069048, 0.050181684964115555
+    0.8781328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
 
-    start_point = np.array([
-    0.668151500750927, -0.7054938660842401, -0.1, -3.0588512205383798, -0.4775475597069048, 0.050181684964115555
-    ], float)
+    
+    L0 = 0.049
 
-    L0 = 0.056
+    pose6 = np.asarray(get_point(0, 0), dtype=float)
+    # pose6 = hw.get_robot_pose_once()
+
+    pose6[2] = -0.1
+    # pose6[0] = 0.3
+    print(f"POSE6 is {pose6}")
+    T = ur_pose6_to_T(pose6)
+    p, q_wxyz = T_to_p_quat_wxyz(T)
+
+    p_now = np.concatenate([p, q_wxyz, [L0]])
+    u0 = np.zeros(7, dtype=float)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    # start_point = np.array([
+    # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
+    # ], float)
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
+
+    start_point = robot_pose6
+    print(f"START POINT: {start_point}")
+    # L0 = 0.065
     dt = 0.01
     return pivot_point, start_point, L0, dt
 
@@ -2330,18 +2379,22 @@ def build_controller(
 
     return mpc, p0, p_min, p_max, u_max, forward6d
 
-
-
-
-
 def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
-    T_pivot_robot = ur_pose6_to_T(np.asarray(pivot_point_pose6, dtype=float))
-    R_pivot_robot = T_pivot_robot[:3, :3]
-    p_pivot_robot = T_pivot_robot[:3, 3]
+    p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
+    P_local = np.asarray(points_local_m, dtype=float).copy()
 
-    P_local = np.asarray(points_local_m, dtype=float)
-    return (R_pivot_robot @ P_local.T).T + p_pivot_robot.reshape(1, 3)
+    if P_local.ndim == 1:
+        P_local = P_local.reshape(1, 3)
 
+    P_local[:, 1] *= -1.0
+    return P_local + p_pivot_robot.reshape(1, 3)
+
+
+
+# def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
+#     p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
+#     P_local = np.asarray(points_local_m, dtype=float)
+#     return P_local + p_pivot_robot.reshape(1, 3)
 
 def run_control(
     mpc,
@@ -2542,6 +2595,7 @@ def build_initial_lumen_from_vision(
     vision_result["lumen_R_robot_m"] = lumen_R_robot_m
 
     return vision_result, lumen_C_robot_m, lumen_R_robot_m
+
 def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -2574,7 +2628,25 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     return p0_ur, q0_ur, forward_model
 if __name__ == "__main__":
     pivot_hint = (300, 391)
-    pivot_point, start_point, L0, dt = make_initial_poses()
+        # 4. dry-run control loop
+    hw = LiveHardwareController(
+        robot_ip="192.168.56.101",
+        dry_run=False,                 # True first
+        use_advancer=True,
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=0.28,
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
+    )
+    pivot_point, start_point, L0, dt = make_initial_poses_single_use(hw)
 
     # 1. build lumen once from vision
     vision_init, lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
@@ -2605,24 +2677,7 @@ if __name__ == "__main__":
         lumen_R=lumen_R_robot_m,
     )
 
-    # 4. dry-run control loop
-    hw = LiveHardwareController(
-        robot_ip="192.168.56.101",
-        dry_run=False,                 # True first
-        use_advancer=True,
-        advancer_port="/dev/ttyACM0",
-        advancer_baud=115200,
-        advancer_delay_us=20,
-        advancer_min_cmd_mm=0.166,
-        xyz_min=(0.20, -1.50, -0.30),
-        xyz_max=(1.20, +1.50, +1.50),
-        max_trans_m=0.01,
-        max_rot_rad=0.2,
-        z_offset=0.25,
-        use_moveL_params=False,
-        v=0.10,
-        a=0.30,
-    )
+
 
     try:
         history = run_control(
@@ -2633,7 +2688,7 @@ if __name__ == "__main__":
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
-            max_steps=50,
+            max_steps=100,
             show=False,
             send_commands=True,
             hw=hw,

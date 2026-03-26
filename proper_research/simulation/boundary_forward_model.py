@@ -177,14 +177,14 @@ class EnergyMinForwardWithLumen:
         if m_local_fun is None:
             print("m_local_fun STATUS: NONE (NOT USED)")
         else:
-            print("m_local_fun STATUS: ACTIVE")
+            # print("m_local_fun STATUS: ACTIVE")
 
             # quick probe of magnetisation along the beam
             s_dbg = np.linspace(0.0, L_model, 5)
             m_dbg = m_local_fun(s_dbg, None)
-            print("m_local magnitudes along s =", np.linalg.norm(m_dbg, axis=0))
+            # print("m_local magnitudes along s =", np.linalg.norm(m_dbg, axis=0))
 
-        print("m_moment passed to solver =", 0.0)
+        # print("m_moment passed to solver =", 0.0)
 
         # stiffness check
         s_test = np.array([0.0, wire_len * 0.5, wire_len + 0.5 * tip_len], dtype=float)

@@ -732,7 +732,7 @@ def reconstruct_beam_within_vessel(
         val_min=40,
         min_area=3,
         max_area=50000,
-        show_debug=False,
+        show_debug=True,
     )
 
     green_pt1, green_pt2 = green_result["points_px"]
@@ -844,7 +844,7 @@ def reconstruct_beam_within_vessel(
         "lumen_R_mm": lumen_R_mm,
     }
 
-    print("Beam-to-wall tangent angle (deg):", tip_wall_angle_info["beam_wall_tangent_angle_deg"])
+    # print("Beam-to-wall tangent angle (deg):", tip_wall_angle_info["beam_wall_tangent_angle_deg"])
     print("Calibration distance (px):", green_result["distance_px"])
     print("mm_per_pixel:", mm_per_pixel)
     print("Beam length (px):", beam_length_px)

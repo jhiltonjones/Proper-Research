@@ -106,11 +106,13 @@ def contact_penalty_softplus(p, lumen_query, *,
     return C, F, g_arr
 def contact_barrier_energy_and_force_fast(
     p, lumen_query: LumenQuery, *,
-    Kc=5e4,
-    d_tilde=1e-3,
+    Kc=5e3,
+    d_tilde=5e-4,
     eps=1e-9,
     penalize_outside=True,
-    k_out=5e4,
+    k_out=2e3,
+    pen_switch=5e-4,
+    k_hard=2e5,
     window=3
 ):
     p = np.asarray(p, float)
@@ -135,16 +137,29 @@ def contact_barrier_energy_and_force_fast(
             Cj = -Kc * (d - d_tilde)**2 * log_term
             C[j] = Cj
 
-            dC_dd = -Kc * (2.0*(d - d_tilde)*log_term + (d - d_tilde)**2 * (1.0 / max(d, eps)))
+            dC_dd = -Kc * (
+                2.0 * (d - d_tilde) * log_term
+                + (d - d_tilde)**2 / max(d, eps)
+            )
             F[:, j] = dC_dd * n
 
         elif d >= d_tilde:
             pass
+
         else:
             if penalize_outside:
                 pen = -d
-                C[j] = 0.5 * k_out * pen * pen
-                F[:, j] = -k_out * pen * n
+
+                if pen <= pen_switch:
+                    C[j] = 0.5 * k_out * pen**2
+                    F[:, j] = -(k_out * pen) * n
+                else:
+                    dp = pen - pen_switch
+                    C0 = 0.5 * k_out * pen_switch**2
+                    F0 = k_out * pen_switch
+
+                    C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
+                    F[:, j] = -(F0 + k_hard * dp) * n
 
     return C, F, d_arr
 
@@ -869,9 +884,23 @@ def energy_from_u(
     W_cf = 0.0
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
-            p, lumen_query, Kc=5e4, d_tilde=1e-3, penalize_outside=True, k_out=5e5
+            p, lumen_query,
+            Kc=0,
+            d_tilde=5e-4,
+            eps=1e-9,
+            penalize_outside=True,
+            k_out=2e3,
+            pen_switch=5e-4,
+            k_hard=2e5,
+            window=3,
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
+    # print(f"W_s  = {W_s:.6e}")
+    # print(f"W_m  = {W_m:.6e}")
+    # print(f"W_cf = {W_cf:.6e}")
+    # print(f"min d = {np.min(d_nodes):.6e}")
+    # print(f"max penetration = {max(0.0, -np.min(d_nodes)):.6e}")
+    # print(f"max |F_contact| = {np.max(np.linalg.norm(F_nodes, axis=0)):.6e}")
     # print(f"DEBUG Elastic: {W_s}, Magnetic {W_m}, Gravity {W_g}, Barrier {W_cf}")
     W_total = W_s + W_m+ W_g + W_cf
     # W_total = W_m

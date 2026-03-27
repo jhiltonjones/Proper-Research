@@ -54,6 +54,7 @@ from proper_research.simulation.boundary_forward_model import (
     effective_lengths,
 )
 from proper_research.vision.measure_length import new_capture
+from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
 
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from proper_research.parameters import default_magnet_params
@@ -97,26 +98,56 @@ class SinglePoseEvalConfig:
     show_debug_vision: bool = True
     show_debug_model: bool = True
 
-# ============================================================
-# Basic helpers
-# ============================================================
+
+def pivot_rotation_matrix(pivot_pose6: np.ndarray) -> np.ndarray:
+    T = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
+    return T[:3, :3]
+
+
 def robot_point_to_pivot_local(p_robot, pivot_pose6):
     p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
     p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
-    return p_robot - p_pivot
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return R_pivot.T @ (p_robot - p_pivot)
+
+
+def pivot_local_point_to_robot(local_xyz, pivot_pose6):
+    local_xyz = np.asarray(local_xyz, dtype=float).reshape(3,)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return p_pivot + R_pivot @ local_xyz
+
+
+def robot_dir_to_pivot_local(v_robot, pivot_pose6):
+    v_robot = np.asarray(v_robot, dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return R_pivot.T @ v_robot
+
+
+def pivot_local_dir_to_robot(v_local, pivot_pose6):
+    v_local = np.asarray(v_local, dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return R_pivot @ v_local
+# ============================================================
+# Basic helpers
+# ============================================================
+# def robot_point_to_pivot_local(p_robot, pivot_pose6):
+#     p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
+#     p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+#     return p_robot - p_pivot
 
 def robot_pose_to_pivot_local_pose(pose6_robot, pivot_pose6):
     pose6_robot = np.asarray(pose6_robot, dtype=float).reshape(6,)
     return robot_point_to_pivot_local(pose6_robot[:3], pivot_pose6)
 
-def pivot_local_point_to_robot(local_xyz, pivot_pose6):
-    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
-    local_xyz = np.asarray(local_xyz, dtype=float).reshape(3,)
-    return p_pivot + local_xyz
+# def pivot_local_point_to_robot(local_xyz, pivot_pose6):
+#     p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+#     local_xyz = np.asarray(local_xyz, dtype=float).reshape(3,)
+#     return p_pivot + local_xyz
 
-def robot_dir_to_pivot_local(v_robot, pivot_pose6):
-    v_robot = np.asarray(v_robot, dtype=float).reshape(3,)
-    return v_robot.copy()
+# def robot_dir_to_pivot_local(v_robot, pivot_pose6):
+#     v_robot = np.asarray(v_robot, dtype=float).reshape(3,)
+#     return v_robot.copy()
 def rotvec_to_quat_wxyz(rvec: np.ndarray) -> np.ndarray:
     r = Rot.from_rotvec(np.asarray(rvec, dtype=float).reshape(3,))
     q_xyzw = r.as_quat()  # [x, y, z, w]
@@ -154,11 +185,63 @@ def compute_position_errors_mm(pred_local_m: np.ndarray, meas_local_m: np.ndarra
         "err_xyz_mm": float(1e3 * np.linalg.norm(e)),
     }
 
+def transform_local_points_to_robot(
+    points_local_m,
+    pivot_pose6,
+    flip_y: bool = True,
+):
+    """
+    Convert lumen points from the vision/local frame into robot/world frame.
 
+    Assumes points_local_m are expressed in a pivot-attached local frame,
+    except for the historical image convention where +y must be flipped.
+    """
+    P_local = np.asarray(points_local_m, dtype=float).copy()
+    if P_local.ndim == 1:
+        P_local = P_local.reshape(1, 3)
+
+    # Preserve your existing vision sign convention.
+    if flip_y:
+        P_local[:, 1] *= -1.0
+
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(1, 3)
+
+    P_robot = (R_pivot @ P_local.T).T + p_pivot
+    return P_robot
 # ============================================================
 # Build "no-lumen-effect" forward model
 # ============================================================
+def build_initial_lumen_from_vision(
+    pivot_point,
+    image_filename="focused_image.jpg",
+    red_roi_path="red_roi_box.json",
+    blue_roi_path="blue_roi_box.json",
+    green_roi_path="green_roi_box.json",
+    pivot_hint=None,
+    show=True,
+):
+    new_capture()
 
+    vision_result = reconstruct_beam_within_vessel(
+        image_filename=image_filename,
+        red_roi_path=red_roi_path,
+        blue_roi_path=blue_roi_path,
+        green_roi_path=green_roi_path,
+        pivot_hint=pivot_hint,
+        show=show,
+    )
+
+    lumen_C_robot_m = transform_local_points_to_robot(
+        vision_result["lumen_C_m"],
+        pivot_point,
+    )
+    lumen_R_robot_m = np.asarray(vision_result["lumen_R_m"], float)
+
+    vision_result["lumen_C_robot_m"] = lumen_C_robot_m
+    vision_result["lumen_R_robot_m"] = lumen_R_robot_m
+
+    return lumen_C_robot_m, lumen_R_robot_m
 def build_dummy_straight_lumen_from_pivot(
     pivot_pose6: np.ndarray,
     length_m: float = 0.12,
@@ -166,7 +249,11 @@ def build_dummy_straight_lumen_from_pivot(
     n_pts: int = 150,
 ) -> Tuple[np.ndarray, np.ndarray]:
     p0_ur = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
-    t0 = np.array([-1.0, 0.0, 0.0], dtype=float)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+
+    # Straight lumen along pivot local -x, expressed in robot frame
+    t0 = -(R_pivot[:, 0])
+    t0 = t0 / (np.linalg.norm(t0) + 1e-12)
 
     lumen_C = np.array(
         [p0_ur + s * t0 for s in np.linspace(0.0, length_m, n_pts)],
@@ -174,8 +261,7 @@ def build_dummy_straight_lumen_from_pivot(
     )
     lumen_R = np.full(len(lumen_C), float(radius_m), dtype=float)
     return lumen_C, lumen_R
-
-def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float) -> DeterministicForward6D:
+def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, image_filename, red_roi_path, blue_roi_path, green_roi_path, pivot_hint, lumen = False) -> DeterministicForward6D:
     """
     Build the same solver stack as the controller uses, but with a dummy
     straight/wide lumen so the comparison is effectively 'beam theory only'.
@@ -188,14 +274,23 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float) -> D
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-
-    lumen_C, lumen_R = build_dummy_straight_lumen_from_pivot(
-        pivot_pose6=pivot_pose6,
-        length_m=0.16,
-        radius_m=0.05,   # huge radius -> essentially unconstrained
-        n_pts=160,
-    )
-
+    if lumen == False:
+        lumen_C, lumen_R = build_dummy_straight_lumen_from_pivot(
+            pivot_pose6=pivot_pose6,
+            length_m=0.16,
+            radius_m=0.05,   # huge radius -> essentially unconstrained
+            n_pts=160,
+        )
+    else:
+        lumen_C, lumen_R =  build_initial_lumen_from_vision(
+            pivot_point = pivot_pose6,
+            image_filename="focused_image.jpg",
+            red_roi_path="red_roi_box.json",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=pivot_hint,
+            show=False,
+        )
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
 
     forward_model = EnergyMinForwardWithLumen(
@@ -206,17 +301,33 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float) -> D
         m_body=m_body,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
-        N_nodes=35,
+        N_nodes=10,
         maxiter=70,
         L0_init=0.01,
         dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
     )
 
     return DeterministicForward6D(forward_model)
+def robot_points_to_base_local(points_robot_m, pivot_pose6, beam_base_point_robot_m):
+    """
+    Convert Nx3 robot-frame points into base-local coordinates.
 
+    base-local = pivot-local coordinates shifted so that the beam base is at the origin.
+    """
+    P_robot = np.asarray(points_robot_m, dtype=float)
+    if P_robot.ndim == 1:
+        P_robot = P_robot.reshape(1, 3)
+
+    P_local = np.array(
+        [robot_point_to_pivot_local(p, pivot_pose6) for p in P_robot],
+        dtype=float,
+    )
+
+    base_local = robot_point_to_pivot_local(beam_base_point_robot_m, pivot_pose6)
+    return P_local - base_local.reshape(1, 3)
 
 # ============================================================
 # Model prediction
@@ -360,7 +471,7 @@ def measure_tip_from_vision_base_local(
 
     tip_base_local_m = np.array([
         -tip_xy_m[0],
-        -tip_xy_m[1],
+        tip_xy_m[1],
         0.0,
     ], dtype=float)
 
@@ -405,7 +516,11 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         print("ey_ref      =", ref_frame["ey_ref"])
     forward6d = build_forward_model_no_lumen_effect(
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
-        L0=float(cfg.L_m),
+        L0=float(cfg.L_m),image_filename="focused_image.jpg",
+            red_roi_path="red_roi_box.json",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=cfg.pivot_hint, lumen = True
     )
     dp_robot = np.asarray(cfg.test_pose6[:3], float) - np.asarray(cfg.pivot_pose6[:3], float)
     R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
@@ -585,6 +700,30 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     print("test  dipole xy angle [deg] =", np.degrees(np.arctan2(test_m_robot[1], test_m_robot[0])))
     print("pivot dipole =", pivot_m_robot)
     print("test  dipole =", test_m_robot)
+    # Rebuild the same lumen used by the forward model, for plotting
+    if True:  # set to False if you want dummy lumen instead
+        lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
+            pivot_point=cfg.pivot_pose6,
+            image_filename=cfg.image_filename,
+            red_roi_path=cfg.red_roi_path,
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path=cfg.green_roi_path,
+            pivot_hint=cfg.pivot_hint,
+            show=False,
+        )
+    else:
+        lumen_C_robot_m, lumen_R_robot_m = build_dummy_straight_lumen_from_pivot(
+            pivot_pose6=cfg.pivot_pose6,
+            length_m=0.16,
+            radius_m=0.05,
+            n_pts=160,
+        )
+
+    lumen_C_base_local_m = robot_points_to_base_local(
+        lumen_C_robot_m,
+        pivot_pose6=cfg.pivot_pose6,
+        beam_base_point_robot_m=cfg.beam_base_point_robot_m,
+    )
     plot_single_tip_comparison_local(
         pred_local_m=pred_base_local_m_plot,
         meas_local_m=meas_base_local_m_plot,
@@ -592,6 +731,8 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         filename="tip_comparison_base_local.png",
         src_local_m=src_base_local_plot_m,
         src_dir_local=src_dir_local,
+        lumen_C_local_m=lumen_C_base_local_m,
+        lumen_R_m=lumen_R_robot_m,
     )
 
     print(f"\nSaved summary to: {out_json}")
@@ -603,14 +744,14 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
 # ============================================================
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.8781328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8681328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
 
     
-    L0 = 0.049
+    L0 = 0.079
 
-    pose6 = np.asarray(get_point(0, 0), dtype=float)
+    pose6 = np.asarray(get_point(0, 5), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -653,6 +794,8 @@ def plot_single_tip_comparison_local(
     filename: str = "tip_comparison_local.png",
     src_local_m: np.ndarray | None = None,
     src_dir_local: np.ndarray | None = None,
+    lumen_C_local_m: np.ndarray | None = None,
+    lumen_R_m: np.ndarray | None = None,
 ):
     pred_local_m = np.asarray(pred_local_m, dtype=float).reshape(3,)
     meas_local_m = np.asarray(meas_local_m, dtype=float).reshape(3,)
@@ -691,7 +834,55 @@ def plot_single_tip_comparison_local(
         textcoords="offset points",
         xytext=(8, -18),
     )
+    # lumen centerline
+    if lumen_C_local_m is not None:
+        lumen_C_local_m = np.asarray(lumen_C_local_m, dtype=float)
+        if lumen_C_local_m.ndim == 1:
+            lumen_C_local_m = lumen_C_local_m.reshape(1, 3)
 
+        lumen_mm = 1e3 * lumen_C_local_m
+        plt.plot(
+            lumen_mm[:, 0],
+            lumen_mm[:, 1],
+            "-",
+            linewidth=2.0,
+            label="Lumen centerline",
+        )
+
+        # Optional: show start/end markers
+        plt.plot(
+            lumen_mm[0, 0], lumen_mm[0, 1],
+            "o", markersize=6, label="Lumen start"
+        )
+        plt.plot(
+            lumen_mm[-1, 0], lumen_mm[-1, 1],
+            "x", markersize=8, label="Lumen end"
+        )
+        if lumen_R_m is not None and len(lumen_R_m) == len(lumen_C_local_m):
+            lumen_R_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
+
+            # Build approximate normal in the plot plane
+            tangents = np.zeros_like(lumen_C_local_m)
+            tangents[1:-1] = lumen_C_local_m[2:] - lumen_C_local_m[:-2]
+            tangents[0] = lumen_C_local_m[1] - lumen_C_local_m[0]
+            tangents[-1] = lumen_C_local_m[-1] - lumen_C_local_m[-2]
+
+            normals = np.zeros_like(tangents)
+            for i, t in enumerate(tangents):
+                tx, ty = t[0], t[1]
+                n = np.array([-ty, tx, 0.0], dtype=float)
+                nn = np.linalg.norm(n[:2])
+                if nn > 1e-12:
+                    normals[i] = n / nn
+
+            upper = lumen_C_local_m + normals * lumen_R_m[:, None]
+            lower = lumen_C_local_m - normals * lumen_R_m[:, None]
+
+            upper_mm = 1e3 * upper
+            lower_mm = 1e3 * lower
+
+            plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
+            plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
     # external magnet position
     if src_local_m is not None:
         src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
@@ -818,8 +1009,8 @@ if __name__ == "__main__":
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation",
         save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
-        show_debug_vision=True,
-        show_debug_model=True,
+        show_debug_vision=False,
+        show_debug_model=False,
     )
 
     evaluate_single_pose(cfg)

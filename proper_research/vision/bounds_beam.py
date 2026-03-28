@@ -732,7 +732,7 @@ def reconstruct_beam_within_vessel(
         val_min=40,
         min_area=3,
         max_area=50000,
-        show_debug=True,
+        show_debug=False,
     )
 
     green_pt1, green_pt2 = green_result["points_px"]
@@ -1170,7 +1170,7 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=2,
+        min_area=4,
         max_area=40000,
         sat_min=80,
         val_min=50,

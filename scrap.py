@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
         # robo.go_home_joint()
         # # posy[2]+=0.2
-        new_pose = get_point(0,0)
+        new_pose = get_point(0,-30)
         robo.moveL(new_pose)
         # new_pose = get_point(0,60) 
         # robo.moveL(new_pose)

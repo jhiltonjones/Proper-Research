@@ -329,8 +329,8 @@ def show_red_mask(image_bgr, roi_box=None, sat_min=40, val_min=30, hue1_high=15,
     plt.show()
     
 if __name__ == "__main__":
-    img_file = new_capture(filename="focused_image2.jpg")
-    image_bgr = cv2.imread("focused_image2.jpg")
+    img_file = new_capture(filename="focused_image_straight.jpg")
+    image_bgr = cv2.imread("focused_image_straight.jpg")
     if image_bgr is None:
         raise FileNotFoundError("Could not read focused_image.jpg")
     red_roi_box = load_roi_box("red_roi_box.json")
@@ -352,7 +352,7 @@ if __name__ == "__main__":
     # print("ROI:", result["roi_box"])
     roi_box = load_roi_box()
 
-    image_bgr = cv2.imread("focused_image2.jpg")
+    image_bgr = cv2.imread("focused_image_straight.jpg")
     if image_bgr is None:
         raise FileNotFoundError("Could not read focused_image.jpg")
 

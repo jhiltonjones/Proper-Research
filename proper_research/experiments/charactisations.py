@@ -188,7 +188,7 @@ def compute_position_errors_mm(pred_local_m: np.ndarray, meas_local_m: np.ndarra
 def transform_local_points_to_robot(
     points_local_m,
     pivot_pose6,
-    flip_y: bool = True,
+    flip_y: bool = False,
 ):
     """
     Convert lumen points from the vision/local frame into robot/world frame.
@@ -307,7 +307,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
     )
 
     return DeterministicForward6D(forward_model)
@@ -416,7 +416,7 @@ def build_reference_beam_frame_from_image(
         roi_box=red_roi_box,
         show=show,
         show_debug_markers=show_debug_markers,
-        unwrap_angle=False,
+        unwrap_angle=True,
         pivot_hint=pivot_hint,
         base_px_ref=None,
         ex_ref=None,
@@ -506,8 +506,8 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
             image_filename=cfg.reference_image_filename,
             red_roi_path=cfg.red_roi_path,
             pivot_hint=cfg.pivot_hint,
-            show=False,
-            show_debug_markers=False,
+            show=True,
+            show_debug_markers=True,
         )
 
         print("\n--- REFERENCE FRAME ---")
@@ -749,9 +749,9 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     
-    L0 = 0.079
+    L0 = 0.108
 
-    pose6 = np.asarray(get_point(0, 5), dtype=float)
+    pose6 = np.asarray(get_point(0, -30), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -994,7 +994,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (318.200927734375, 369.6798095703125)
+    pivot_hint = (300, 391)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -1009,8 +1009,8 @@ if __name__ == "__main__":
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation",
         save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
-        show_debug_vision=False,
-        show_debug_model=False,
+        show_debug_vision=True,
+        show_debug_model=True,
     )
 
     evaluate_single_pose(cfg)

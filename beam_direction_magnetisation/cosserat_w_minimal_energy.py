@@ -409,7 +409,7 @@ class CosseratForwardModel:
             Kinv_fun=self.Kinv_fun,
             m_local_fun=self.m_local_fun,
             m_moment=self.m_moment,
-            wire_len=self.wire_len,
+            wire_len=wire_len,
         )
 
         if not try_energy_selection:
@@ -808,7 +808,45 @@ def precompute_K_segments(s, Kinv_fun, wire_len):
     for i in range(smid.size):
         K_seg[i] = np.linalg.inv(Kinv[:, :, i])
     return K_seg
+def magnetic_tip_equivalent_energy(
+    s, q, B, m_local_fun, m_moment, wire_len
+):
+    """
+    Equivalent magnetic energy for the whole magnetic tip.
+    Uses average tip orientation + average tip field.
+    Returns scalar W_m_eq.
+    """
+    s = np.asarray(s, float).ravel()
+    tip_mask = (s >= wire_len)
+    if not np.any(tip_mask):
+        return 0.0
 
+    s_tip = s[tip_mask]
+    q_tip = quat_normalize(q[:, tip_mask])              # (4, Nt)
+    B_tip = B[:, tip_mask]                              # (3, Nt)
+    m_body_tip = np.asarray(m_local_fun(s_tip, m_moment), float)  # (3, Nt)
+
+    # net body dipole of tip
+    m_eq_body = np.trapezoid(m_body_tip, s_tip, axis=1)   # (3,)
+
+    # average rotation over tip
+    R_tip = quat_to_rot(q_tip)   # (Nt, 3, 3)
+    R_rep = np.mean(R_tip, axis=0)
+
+    # project back to nearest rotation matrix
+    U, _, Vt = np.linalg.svd(R_rep)
+    R_rep = U @ Vt
+    if np.linalg.det(R_rep) < 0:
+        U[:, -1] *= -1.0
+        R_rep = U @ Vt
+
+    m_eq_world = R_rep @ m_eq_body
+
+    # average field over tip
+    B_rep = np.trapezoid(B_tip, s_tip, axis=1) / max(s_tip[-1] - s_tip[0], 1e-12)
+
+    W_m_eq = -float(np.dot(m_eq_world, B_rep))
+    return W_m_eq
 def energy_from_u(
     u_flat, *, p0, q0, s, K_seg, u_star,
     m_src, r_src, m_local_fun, m_moment, wire_len,
@@ -871,9 +909,24 @@ def energy_from_u(
     # print("max |m_world| =", np.max(np.linalg.norm(m_world, axis=0)))
     # print("max |m x B| =", np.max(np.linalg.norm(np.cross(m_world.T, B.T), axis=1)))
     # print("sum m·B =", np.sum(np.sum(m_world * B, axis=0)))
-    m_dot_B = np.sum(m_world * B, axis=0)   # (N,)
-    w_m = -m_dot_B
-    W_m = np.trapezoid(w_m, s)
+    # m_dot_B = np.sum(m_world * B, axis=0)   # (N,)
+    # w_m = -m_dot_B
+    # W_m = np.trapezoid(w_m, s)
+    m_dot_B = np.sum(m_world * B, axis=0)
+    w_m_dist = -m_dot_B
+    W_m_dist = np.trapezoid(w_m_dist, s)
+
+    W_m_eq = magnetic_tip_equivalent_energy(
+        s=s,
+        q=q,
+        B=B,
+        m_local_fun=m_local_fun,
+        m_moment=m_moment,
+        wire_len=wire_len,
+    )
+
+    eta_eq = 0.5   # start here; then test 0.2, 0.5, 1.0
+    W_m = W_m_dist + eta_eq * W_m_eq
     # Gravity (disable unless you really want it)
     W_g = 0.0
     if include_gravity:
@@ -889,9 +942,9 @@ def energy_from_u(
             d_tilde=5e-4,
             eps=1e-9,
             penalize_outside=True,
-            k_out=2e3,
+            k_out=1e5,
             pen_switch=5e-4,
-            k_hard=2e5,
+            k_hard=3e5,
             window=3,
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
@@ -955,10 +1008,11 @@ def energy_from_u(
     #     print(f"[DBG-MAG] max theta(deg) = {np.max(th_deg):.3f}")
     #     print(f"[DBG-MAG] max |m×B|      = {np.max(tau_norm):.3e}")
 
-    parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_cf=float(W_cf))
+    parts = dict(W_s=float(W_s), W_m=float(W_m), W_m_dist=float(W_m_dist),
+                W_m_eq=float(W_m_eq), W_g=float(W_g), W_cf=float(W_cf))    
     return float(W_total), parts
     # W_total = float(W_s + W_m + W_g + W_c)
-    # parts = dict(W_s=float(W_s), W_m=float(W_m), W_g=float(W_g), W_c=float(W_c))
+    # parts = dict(W_s=float(W_s),  _m=float(W_m), W_g=float(W_g), W_c=float(W_c))
 
 def contact_barrier_energy_and_force(
     p, lumen_C, lumen_R, *,

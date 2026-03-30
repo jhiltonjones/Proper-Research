@@ -10,6 +10,8 @@ from beam_direction_magnetisation.post_processing.post_processing import (
     plot_energy_only_3d,
     make_lumen_centerline_double_turn,
 )
+from proper_research.robot.transformations import get_point
+
 from proper_research.control.no_path_plan_mpc import DeterministicForward6D
 from proper_research.parameters import default_magnet_params, default_beam_params
 from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T, T_to_p_quat_wxyz
@@ -24,27 +26,28 @@ import copy
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
-L_min_energy = 0.05
+L_min_energy = 0.077
 mag_len = beam_params.length_of_mag
 m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
 
 pivot_point = np.array([
-    0.8581328220229531, -0.7055298925316631, -0.1,
-    -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+0.8681328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
 ], float)
 
-start_point = np.array([
-    0.7281328220229531, -0.7555298925316631, -0.09,
-    -3.10153453698904, 0.024928591141737892, 0.06094868352765547
-], float)
 
+
+L0 = 0.077
+
+pose6 = np.asarray(get_point(0, -50), dtype=float)
+pose6[2] = -0.1
+start_point = pose6
 # rotate start pose 180 deg about local Z
-t = start_point[:3]
-rvec = start_point[3:]
-R0 = Rot.from_rotvec(rvec)
-R_spin_localZ = Rot.from_rotvec([0, 0, np.deg2rad(-35)])
-R_new = R0 * R_spin_localZ
-start_point = np.hstack([t, R_new.as_rotvec()])
+# t = start_point[:3]
+# rvec = start_point[3:]
+# R0 = Rot.from_rotvec(rvec)
+# R_spin_localZ = Rot.from_rotvec([0, 0, np.deg2rad(-35)])
+# R_new = R0 * R_spin_localZ
+# start_point = np.hstack([t, R_new.as_rotvec()])
 
 # pivot pose
 T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -86,7 +89,7 @@ forward_model = EnergyMinForwardWithLumen(
     dL_internal=0.002,
     L_tip_full=0.04,
     L_tip_min=0.01,
-    use_lumen_jac=True
+    use_lumen_jac=False
 )
 forward_model_wrong = EnergyMinForwardWithLumen(
     p0_ur=p0_ur,

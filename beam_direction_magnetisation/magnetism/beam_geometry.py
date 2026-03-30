@@ -12,7 +12,8 @@ def smooth_top_hat(s, s0, s1, eps):
     return 0.5*(np.tanh((s - s0)/eps) - np.tanh((s - s1)/eps))
 
 
-EI_wire, GJ_wire = 3.29e-6, 2.21e-6
+# EI_wire, GJ_wire = 3.29e-6, 2.21e-6
+EI_wire, GJ_wire = 0.19 * EI, 0.19* GJ
 EI_tip,  GJ_tip  = 1 * EI, 1* GJ
 print(f"EI wire is : {EI_wire}, and GJ_wire : {GJ_wire}")
 print(f"EI tip is : {EI_tip}, and GJ tip : {GJ_tip}")

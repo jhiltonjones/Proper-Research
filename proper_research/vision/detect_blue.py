@@ -226,7 +226,7 @@ def draw_manual_vessel_boundaries(
                 right_points.append((float(x), float(y)))
             redraw()
 
-    cv2.namedWindow(window_name)
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.setMouseCallback(window_name, on_mouse)
 
     redraw()

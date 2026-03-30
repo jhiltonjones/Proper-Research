@@ -2,7 +2,7 @@ from proper_research.advancer_unit.advancer_unit_cmd import AdvancerUnit
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_to_rotvec
-
+import time
 from robot_class import URRtde
 def pose8_quat_to_pose7_rotvec(p8):
     p8 = np.asarray(p8, float).ravel()
@@ -51,6 +51,7 @@ class LiveHardwareController:
         use_moveL_params=False,
         v=0.10,
         a=0.30,
+        rtde_frequency=125.0,
     ):
         self.robot_ip = robot_ip
         self.dry_run = bool(dry_run)
@@ -65,19 +66,28 @@ class LiveHardwareController:
         self.use_moveL_params = bool(use_moveL_params)
         self.v = float(v)
         self.a = float(a)
-
+        self.rtde_frequency = float(rtde_frequency)
         self.adv = None
+        self.robo = None
         self.prev_pose6 = None
         self.dl_residual_mm = 0.0
 
         if self.use_advancer and not self.dry_run:
             self.adv = AdvancerUnit(port=advancer_port, baudrate=advancer_baud)
+
+        if not self.dry_run:
+            self.robo = URRtde(self.robot_ip, frequency=rtde_frequency)
+            self.robo.disconnect()
+
     def get_robot_pose_once(self):
-        robo = URRtde(self.robot_ip)
+        if self.dry_run:
+            return None
+        self.open_robot()
         try:
-            return robo.get_pose()
+            return self.robo.get_pose()
         finally:
-            robo.shutdown()
+            self.close_robot()
+
     def send_step(self, p_now, u0, dt):
         ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
         ur_pose6_send = ur_pose6_next.copy()
@@ -85,6 +95,16 @@ class LiveHardwareController:
 
         if not within_workspace(ur_pose6_send, self.xyz_min, self.xyz_max):
             raise RuntimeError(f"UR pose out of workspace: {ur_pose6_send}")
+
+        # if not max_step_ok(
+        #     self.prev_pose6,
+        #     ur_pose6_send,
+        #     max_trans_m=self.max_trans_m,
+        #     max_rot_rad=self.max_rot_rad,
+        # ):
+        #     raise RuntimeError(
+        #         f"Step too large. prev={self.prev_pose6}, next={ur_pose6_send}"
+        #     )
 
         dL_mm = u0_to_advancer_mm(u0, dt)
         self.dl_residual_mm += dL_mm
@@ -104,23 +124,40 @@ class LiveHardwareController:
         )
 
         if not self.dry_run:
+            self.open_robot()
             if self.use_advancer and self.adv is not None and abs(adv_cmd_mm) > 0.0:
                 if adv_cmd_mm > 0:
                     self.adv.forward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
                 else:
                     self.adv.backward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
 
-            robo = URRtde(self.robot_ip)
+
             try:
                 if self.use_moveL_params:
-                    robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                    self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
                 else:
-                    robo.moveL(ur_pose6_send.tolist())
+                    self.robo.moveL(ur_pose6_send.tolist())
             finally:
-                robo.shutdown()
-
+                self.close_robot()
         self.prev_pose6 = ur_pose6_send.copy()
+    def open_robot(self):
+        if self.dry_run:
+            return
+        if self.robo is None:
+            self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+        else:
+            self.robo.ensure_connected()
 
+    def close_robot(self):
+        if self.dry_run:
+            return
+        if self.robo is not None:
+            self.robo.disconnect()
     def shutdown(self):
+        if self.robo is not None:
+            self.robo.shutdown()
+            self.robo = None
+
         if self.adv is not None:
             self.adv.shutdown()
+        

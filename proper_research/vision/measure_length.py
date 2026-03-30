@@ -7,9 +7,9 @@ import os
 # =====================================================================
 # CONFIG
 # =====================================================================
-ROI_CONFIG_FILE = "green_roi_box.json"
+ROI_CONFIG_FILE = "red_roi_box.json"
 
-CAMERA_TO_CHECKERBOARD_MM = 110.0
+CAMERA_TO_CHECKERBOARD_MM = 30.0
 BEAM_RELATIVE_Z_OFFSET_MM = 40.0   # beam distance relative to checkerboard along Z
 
 CHECKERBOARD_SQUARE_SIZE_MM = 6

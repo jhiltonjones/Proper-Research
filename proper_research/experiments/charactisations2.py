@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
-
+from proper_research.experiments.charactisations import compute_mm_per_pixel_from_green
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
@@ -240,11 +240,17 @@ def transform_local_points_to_robot(
     pivot_pose6,
     flip_y: bool = False,
 ):
-    P_local = np.asarray(points_local_m, dtype=float).copy()
+    """
+    Convert lumen points from the vision/local frame into robot/world frame.
 
+    Assumes points_local_m are expressed in a pivot-attached local frame,
+    except for the historical image convention where +y must be flipped.
+    """
+    P_local = np.asarray(points_local_m, dtype=float).copy()
     if P_local.ndim == 1:
         P_local = P_local.reshape(1, 3)
 
+    # Preserve your existing vision sign convention.
     if flip_y:
         P_local[:, 1] *= -1.0
 
@@ -253,7 +259,6 @@ def transform_local_points_to_robot(
 
     P_robot = (R_pivot @ P_local.T).T + p_pivot
     return P_robot
-
 def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, image_filename, red_roi_path, blue_roi_path, green_roi_path, pivot_hint, lumen = False) -> DeterministicForward6D:
     """
     Build the same solver stack as the controller uses, but with a dummy
@@ -300,7 +305,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
     )
 
     return DeterministicForward6D(forward_model)
@@ -328,7 +333,7 @@ def predict_tip_local_from_model(
     pivot_pose6: np.ndarray,
 ) -> Dict:
     p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
-
+    print(f"Inside prediction pose: {pose6}")
     if hasattr(forward6d, "start_step"):
         forward6d.start_step()
 
@@ -336,11 +341,25 @@ def predict_tip_local_from_model(
     p_tip_robot = y_pred_robot[:3]
     p_tip_local = robot_point_to_pivot_local(p_tip_robot, pivot_pose6)
 
+    centerline_robot = None
+    centerline_pivot_local = None
+
+    if getattr(forward6d, "last_p_centerline", None) is not None:
+        C_robot = np.asarray(forward6d.last_p_centerline, dtype=float)   # (3, N)
+        centerline_robot = C_robot.copy()
+
+        centerline_pivot_local = np.column_stack([
+            robot_point_to_pivot_local(C_robot[:, i], pivot_pose6)
+            for i in range(C_robot.shape[1])
+        ])  # (3, N)
+
     out = {
         "pose8": p8.copy(),
         "y_pred_robot": y_pred_robot.copy(),
         "tip_robot_m": p_tip_robot.copy(),
         "tip_local_m": p_tip_local.copy(),
+        "centerline_robot_m": centerline_robot,
+        "centerline_pivot_local_m": centerline_pivot_local,
     }
 
     return out
@@ -390,28 +409,6 @@ def build_reference_beam_frame_from_image(
         "raw_result": ref_result,
     }
 
-def compute_mm_per_pixel_from_green(image_bgr, green_roi_box, known_distance_mm: float) -> float:
-    green_result = detect_2_green_calibration_points(
-        image_bgr=image_bgr,
-        roi_box=green_roi_box,
-        green_h_low=35,
-        green_h_high=95,
-        sat_min=40,
-        val_min=40,
-        min_area=3,
-        max_area=50000,
-        show_debug=False,
-    )
-
-    p1, p2 = green_result["points_px"]
-    p1 = np.asarray(p1, dtype=float)
-    p2 = np.asarray(p2, dtype=float)
-    dist_px = np.linalg.norm(p2 - p1)
-
-    if dist_px < 1e-12:
-        raise ValueError("Green calibration points are too close.")
-
-    return float(known_distance_mm / dist_px)
 
 def measure_tip_from_vision_base_local(
     cfg: SweepEvalConfig,
@@ -579,7 +576,7 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
 
     results = []
 
-    for j_idx in range(cfg.j_start, cfg.j_end + 1, 10):
+    for j_idx in range(cfg.j_start, cfg.j_end - 1, -5):
         print("\n====================================")
         print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
         print("====================================")
@@ -827,11 +824,11 @@ if __name__ == "__main__":
     )
 
     pivot_point = np.array([
-    0.8681328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     beam_base_point_robot_m = pivot_point[:3].copy()
-    L0 = 0.079
+    L0 = 0.055
 
     cfg = SweepEvalConfig(
         pivot_pose6=pivot_point,
@@ -839,7 +836,7 @@ if __name__ == "__main__":
         L_m=L0,
         i_fixed=0,
         j_start=0,
-        j_end=60,
+        j_end=-60,
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
@@ -847,7 +844,7 @@ if __name__ == "__main__":
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_forward_wlumen",
+        results_dir="results_sweep_forward_wlumen2",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

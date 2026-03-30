@@ -705,6 +705,18 @@ def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_
         "closest_wall": closest_wall,
         "closest_distance": float(closest_distance),
     }
+def load_calibration_points(path="calibration_points.json"):
+    with open(path, "r") as f:
+        data = json.load(f)
+    return data
+def get_saved_2_point_calibration(path="calibration_points.json"):
+    data = load_calibration_points(path)
+    return {
+        "points_px": [tuple(map(float, p)) for p in data["points_px"]],
+        "distance_px": float(data["distance_px"]),
+        "mask": None,
+        "mode": "manual_click",
+    }
 def reconstruct_beam_within_vessel(
     image_filename="focused_image.jpg",
     red_roi_path="red_roi_box.json",
@@ -723,19 +735,20 @@ def reconstruct_beam_within_vessel(
     green_roi_box = load_roi_box(green_roi_path)
 
     # --- green calibration points ---
-    green_result = detect_2_green_calibration_points(
-        image_bgr=image_bgr,
-        roi_box=green_roi_box,
-        green_h_low=35,
-        green_h_high=95,
-        sat_min=40,
-        val_min=40,
-        min_area=3,
-        max_area=50000,
-        show_debug=False,
-    )
-
+    # green_result = detect_2_green_calibration_points(
+    #     image_bgr=image_bgr,
+    #     roi_box=green_roi_box,
+    #     green_h_low=35,
+    #     green_h_high=95,
+    #     sat_min=40,
+    #     val_min=40,
+    #     min_area=3,
+    #     max_area=50000,
+    #     show_debug=True,
+    # )
+    green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
+    
     mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=40.0)
 
     # --- red markers / beam tip state ---
@@ -1170,10 +1183,10 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=4,
+        min_area=1,
         max_area=40000,
-        sat_min=80,
-        val_min=50,
+        sat_min=50,
+        val_min=40,
         hue1_high=10,
         hue2_low=170,
         show_debug=show_debug_markers,
@@ -1454,7 +1467,7 @@ def image_to_fixed_local_frame(point_px, base_px_ref, ex_ref, ey_ref):
 
     return np.array([x_local, y_local], dtype=np.float32)
 if __name__ == "__main__":
-    # new_capture()
+    new_capture()
     pivot_hint = (300, 391)
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",

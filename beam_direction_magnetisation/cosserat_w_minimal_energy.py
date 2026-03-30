@@ -938,7 +938,7 @@ def energy_from_u(
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
             p, lumen_query,
-            Kc=0,
+            Kc=5,
             d_tilde=5e-4,
             eps=1e-9,
             penalize_outside=True,
@@ -1082,7 +1082,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
                         N=20, u0_flat=None, maxiter=200, lumen_C=None, lumen_R=None,use_lumen=True,
                         contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
                         contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0, u_ctrl_init=None,
-                        K=8):
+                        K=20):
     """
     Minimises Π(u) using K control points for u(s).
     Returns (p, q, u_seg, info).

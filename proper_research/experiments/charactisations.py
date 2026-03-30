@@ -37,7 +37,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Dict, Tuple
-# from proper_research.robot.live_hardware_control import LiveHardwareController
+from proper_research.robot.live_hardware_control import LiveHardwareController
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 import matplotlib.pyplot as plt
@@ -53,8 +53,9 @@ from proper_research.simulation.boundary_forward_model import (
     DeterministicForward6D,
     effective_lengths,
 )
+from proper_research.control.lab_ready_mpc import integrate_pose8_body
 from proper_research.vision.measure_length import new_capture
-from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
+from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, get_saved_2_point_calibration
 
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from proper_research.parameters import default_magnet_params
@@ -221,7 +222,7 @@ def build_initial_lumen_from_vision(
     pivot_hint=None,
     show=True,
 ):
-    # new_capture()
+    new_capture()
 
     vision_result = reconstruct_beam_within_vessel(
         image_filename=image_filename,
@@ -274,14 +275,8 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
+    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
     if lumen == False:
-        lumen_C, lumen_R = build_dummy_straight_lumen_from_pivot(
-            pivot_pose6=pivot_pose6,
-            length_m=0.16,
-            radius_m=0.05,   # huge radius -> essentially unconstrained
-            n_pts=160,
-        )
-    else:
         lumen_C, lumen_R =  build_initial_lumen_from_vision(
             pivot_point = pivot_pose6,
             image_filename="focused_image.jpg",
@@ -291,9 +286,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
             pivot_hint=pivot_hint,
             show=False,
         )
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
-
-    forward_model = EnergyMinForwardWithLumen(
+        forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
         Kinv_fun=Kbt_inv_profile,
@@ -307,10 +300,73 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
+        use_lumen_jac=False,
+    )
+    else:
+        lumen_C, lumen_R =  build_initial_lumen_from_vision(
+            pivot_point = pivot_pose6,
+            image_filename="focused_image.jpg",
+            red_roi_path="red_roi_box.json",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=pivot_hint,
+            show=False,
+        )
+        forward_model = EnergyMinForwardWithLumen(
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        Kinv_fun=Kbt_inv_profile,
+        u_star=np.zeros(3),
+        m_body=m_body,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        N_nodes=20,
+        maxiter=80,
+        L0_init=0.01,
+        dL_internal=0.002,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
         use_lumen_jac=True,
     )
 
+
+
+
     return DeterministicForward6D(forward_model)
+
+
+def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
+
+    p8 = np.asarray(p8, float).ravel()
+    B = np.zeros((n_out, 7), float)
+
+    tint = 0.0
+    tfwd = 0.0
+
+    for i in range(6):
+        du = np.zeros(7); du[i] = eps_u[i]
+
+        p_plus  = integrate_pose8_body(p8, +du, dt)
+        p_minus = integrate_pose8_body(p8, -du, dt)
+
+        y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+        y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+
+        B[:, i] = (y_plus - y_minus) / (2.0 * eps_u[i])
+
+    delta_L = 1e-3
+    p_plus = p8.copy();  p_plus[7]  += delta_L
+    p_minus = p8.copy(); p_minus[7] -= delta_L
+
+    y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+
+    dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
+    B[:, 6] = dt * dy_dL
+
+
+
+    return B
 def robot_points_to_base_local(points_robot_m, pivot_pose6, beam_base_point_robot_m):
     """
     Convert Nx3 robot-frame points into base-local coordinates.
@@ -340,7 +396,7 @@ def predict_tip_local_from_model(
     pivot_pose6: np.ndarray,
 ) -> Dict:
     p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
-
+    print(f"Inside prediction pose: {pose6}")
     if hasattr(forward6d, "start_step"):
         forward6d.start_step()
 
@@ -385,17 +441,18 @@ def load_roi_box(path: str):
 
 
 def compute_mm_per_pixel_from_green(image_bgr, green_roi_box, known_distance_mm: float) -> float:
-    green_result = detect_2_green_calibration_points(
-        image_bgr=image_bgr,
-        roi_box=green_roi_box,
-        green_h_low=35,
-        green_h_high=95,
-        sat_min=40,
-        val_min=40,
-        min_area=3,
-        max_area=50000,
-        show_debug=False,
-    )
+    # green_result = detect_2_green_calibration_points(
+    #     image_bgr=image_bgr,
+    #     roi_box=green_roi_box,
+    #     green_h_low=35,
+    #     green_h_high=95,
+    #     sat_min=40,
+    #     val_min=40,
+    #     min_area=3,
+    #     max_area=50000,
+    #     show_debug=False,
+    # )
+    green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
 
     p1, p2 = green_result["points_px"]
     p1 = np.asarray(p1, dtype=float)
@@ -493,7 +550,56 @@ def measure_tip_from_vision_base_local(
         "tip_result": tip_result,
         "tip_base_local_m": tip_base_local_m.copy(),
     }
+def plot_jacobian_comparison(J_no, J_yes, results_dir, filename="jacobian_comparison.png"):
+    os.makedirs(results_dir, exist_ok=True)
 
+    row_labels = ["tip_x", "tip_y", "tip_z", "tan_x", "tan_y", "tan_z"]
+    col_labels = ["vx", "vy", "vz", "wx", "wy", "wz", "vL"]
+
+    J_diff = J_yes - J_no
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
+
+    mats = [J_no, J_yes, J_diff]
+    titles = ["Jacobian without lumen", "Jacobian with lumen", "Difference (with - without)"]
+
+    vmax = max(np.max(np.abs(J_no)), np.max(np.abs(J_yes)), 1e-12)
+    vmax_diff = max(np.max(np.abs(J_diff)), 1e-12)
+
+    for ax, M, title in zip(axes[:2], mats[:2], titles[:2]):
+        im = ax.imshow(M, aspect="auto", cmap="coolwarm", vmin=-vmax, vmax=vmax)
+        ax.set_title(title)
+        ax.set_xticks(range(len(col_labels)))
+        ax.set_xticklabels(col_labels, rotation=45, ha="right")
+        ax.set_yticks(range(len(row_labels)))
+        ax.set_yticklabels(row_labels)
+
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]):
+                ax.text(j, i, f"{M[i, j]:.2e}", ha="center", va="center", fontsize=8)
+
+    ax = axes[2]
+    im = ax.imshow(J_diff, aspect="auto", cmap="coolwarm", vmin=-vmax_diff, vmax=vmax_diff)
+    ax.set_title(titles[2])
+    ax.set_xticks(range(len(col_labels)))
+    ax.set_xticklabels(col_labels, rotation=45, ha="right")
+    ax.set_yticks(range(len(row_labels)))
+    ax.set_yticklabels(row_labels)
+
+    for i in range(J_diff.shape[0]):
+        for j in range(J_diff.shape[1]):
+            ax.text(j, i, f"{J_diff[i, j]:.2e}", ha="center", va="center", fontsize=8)
+
+    out_path = os.path.join(results_dir, filename)
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+    print(f"Saved Jacobian comparison to: {out_path}")
+def print_jacobian_summary(name, J):
+    print(f"\n--- {name} ---")
+    print("shape:", J.shape)
+    print("max abs entry:", np.max(np.abs(J)))
+    print("fro norm:", np.linalg.norm(J, ord="fro"))
+    print(J)
 # ============================================================
 # Single-shot comparison
 # ============================================================
@@ -505,7 +611,6 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
     return t_robot / (np.linalg.norm(t_robot) + 1e-12)
 def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     os.makedirs(cfg.results_dir, exist_ok=True)
-
     print("\n==============================")
     print(" SINGLE-POSE MODEL VALIDATION ")
     print("==============================")
@@ -554,9 +659,9 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     if ref_frame is not None:
         meas = measure_tip_from_vision_base_local(
             cfg,
-            base_px_ref=None,
-            ex_ref=None,
-            ey_ref=None,
+            base_px_ref=ref_frame["base_px_ref"],
+            ex_ref=ref_frame["ex_ref"],
+            ey_ref=ref_frame["ey_ref"],
         )
     else:
         meas = measure_tip_from_vision_base_local(cfg)
@@ -743,6 +848,9 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pivot_pose6=cfg.pivot_pose6,
         beam_base_point_robot_m=cfg.beam_base_point_robot_m,
     )
+    import time
+
+    t = time.perf_counter()
     plot_single_tip_comparison_local(
         pred_local_m=pred_base_local_m_plot,
         meas_local_m=meas_base_local_m_plot,
@@ -754,24 +862,80 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         lumen_R_m=lumen_R_robot_m,
         beam_centerline_local_m=pred_centerline_base_local_m,
     )
+    print(f"[TIME] tip plot: {(time.perf_counter()-t):.2f} s")
 
+    t = time.perf_counter()
+    fwd_no_lumen = build_forward_model_no_lumen_effect(
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+        L0=float(cfg.L_m),
+        image_filename=cfg.image_filename,
+        red_roi_path=cfg.red_roi_path,
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path=cfg.green_roi_path,
+        pivot_hint=cfg.pivot_hint,
+        lumen=False,
+    )
+    print(f"[TIME] build no-lumen model: {(time.perf_counter()-t):.2f} s")
+
+    t = time.perf_counter()
+    fwd_with_lumen = build_forward_model_no_lumen_effect(
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+        L0=float(cfg.L_m),
+        image_filename=cfg.image_filename,
+        red_roi_path=cfg.red_roi_path,
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path=cfg.green_roi_path,
+        pivot_hint=cfg.pivot_hint,
+        lumen=True,
+    )
+    print(f"[TIME] build with-lumen model: {(time.perf_counter()-t):.2f} s")
+
+    # t = time.perf_counter()
+    # J_no, p8_eval, eps_u = compute_model_jacobian(
+    #     fwd_no_lumen, cfg.test_pose6, cfg.L_m, dt=0.01
+    # )
+    # print(f"[TIME] J_no: {(time.perf_counter()-t):.2f} s")
+
+    # t = time.perf_counter()
+    # J_yes, _, _ = compute_model_jacobian(
+    #     fwd_with_lumen, cfg.test_pose6, cfg.L_m, dt=0.01
+    # )
+    # print(f"[TIME] J_yes: {(time.perf_counter()-t):.2f} s")
+
+    # t = time.perf_counter()
+    # plot_jacobian_comparison(J_no, J_yes, cfg.results_dir)
+    # print(f"[TIME] jacobian plot: {(time.perf_counter()-t):.2f} s")
+    # print_jacobian_summary("Jacobian without lumen", J_no)
+    # print_jacobian_summary("Jacobian with lumen", J_yes)
+    # print_jacobian_summary("Jacobian difference", J_yes - J_no)
+
+    # save_jacobian_tables(J_no, J_yes, cfg.results_dir)
+    # plot_jacobian_comparison(J_no, J_yes, cfg.results_dir)
     print(f"\nSaved summary to: {out_json}")
     return result
 
+def save_jacobian_tables(J_no, J_yes, results_dir):
+    os.makedirs(results_dir, exist_ok=True)
+    np.save(os.path.join(results_dir, "J_no_lumen.npy"), J_no)
+    np.save(os.path.join(results_dir, "J_with_lumen.npy"), J_yes)
+    np.save(os.path.join(results_dir, "J_diff.npy"), J_yes - J_no)
 
+    np.savetxt(os.path.join(results_dir, "J_no_lumen.csv"), J_no, delimiter=",")
+    np.savetxt(os.path.join(results_dir, "J_with_lumen.csv"), J_yes, delimiter=",")
+    np.savetxt(os.path.join(results_dir, "J_diff.csv"), J_yes - J_no, delimiter=",")
 # ============================================================
 # Main
 # ============================================================
-def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, float]:
+def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.8681328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
 
     
-    L0 = 0.077
+    L0 = 0.044
 
-    pose6 = np.asarray(get_point(0, -20), dtype=float)
+    pose6 = np.asarray(get_point(0, 0), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -780,17 +944,19 @@ def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, floa
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
-    pose6[2] = -0.1
-    start_point = pose6
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
+    # pose6[2] = -0.1
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.01
+    dt =0.01
+
+
     return pivot_point, start_point, L0, dt
 def compute_tip_angle_from_base_local_deg(p_base_local_m: np.ndarray) -> float:
     """
@@ -917,36 +1083,36 @@ def plot_single_tip_comparison_local(
                     label="Predicted beam centerline",
                 )
     # external magnet position
-    # if src_local_m is not None:
-    #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
-    #     src_mm = 1e3 * src_local_m
+    if src_local_m is not None:
+        src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+        src_mm = 1e3 * src_local_m
 
-    #     plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+        plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
 
-    #     plt.annotate(
-    #         f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
-    #         (src_mm[0], src_mm[1]),
-    #         textcoords="offset points",
-    #         xytext=(8, 8),
-    #     )
+        plt.annotate(
+            f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+            (src_mm[0], src_mm[1]),
+            textcoords="offset points",
+            xytext=(8, 8),
+        )
 
-    #     # optional dipole direction arrow
-    #     if src_dir_local is not None:
-    #         src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
-    #         dxy = src_dir_local[:2]
-    #         n = np.linalg.norm(dxy)
-    #         if n > 1e-12:
-    #             dxy = dxy / n
-    #             arrow_len_mm = 25.0
-    #             plt.arrow(
-    #                 src_mm[0],
-    #                 src_mm[1],
-    #                 arrow_len_mm * dxy[0],
-    #                 arrow_len_mm * dxy[1],
-    #                 head_width=3.0,
-    #                 head_length=5.0,
-    #                 length_includes_head=True,
-    #             )
+        # optional dipole direction arrow
+        if src_dir_local is not None:
+            src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+            dxy = src_dir_local[:2]
+            n = np.linalg.norm(dxy)
+            if n > 1e-12:
+                dxy = dxy / n
+                arrow_len_mm = 25.0
+                plt.arrow(
+                    src_mm[0],
+                    src_mm[1],
+                    arrow_len_mm * dxy[0],
+                    arrow_len_mm * dxy[1],
+                    head_width=3.0,
+                    head_length=5.0,
+                    length_includes_head=True,
+                )
 
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")
@@ -961,7 +1127,40 @@ def plot_single_tip_comparison_local(
     plt.close()
 
     print(f"Saved local tip plot to: {out_path}")
+def compute_model_jacobian(forward6d, pose6, L_m, dt=0.01,
+                           dr=5e-3, dtheta_deg=50.0, dL=1e-3, n_out=6):
+    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
 
+    eps_u = np.array([
+        dr / dt, dr / dt, dr / dt,
+        np.deg2rad(dtheta_deg) / dt,
+        np.deg2rad(dtheta_deg) / dt,
+        np.deg2rad(dtheta_deg) / dt,
+        dL / dt
+    ], dtype=float)
+
+    if hasattr(forward6d, "start_step"):
+        forward6d.start_step()
+
+    J = numerical_B_y_wrt_u(
+        p8=p8,
+        forward_y_fn=lambda pp: forward6d(pp, commit=False),
+        dt=dt,
+        eps_u=eps_u,
+        n_out=n_out,
+    )
+    return J, p8, eps_u
+def build_forward_model(pivot_pose6, L0, pivot_hint, use_lumen):
+    return build_forward_model_no_lumen_effect(
+        pivot_pose6=np.asarray(pivot_pose6, dtype=float),
+        L0=float(L0),
+        image_filename="focused_image.jpg",
+        red_roi_path="red_roi_box.json",
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path="green_roi_box.json",
+        pivot_hint=pivot_hint,
+        lumen=use_lumen,
+    )
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
@@ -981,27 +1180,27 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
 if __name__ == "__main__":
 
 
-    # hw = LiveHardwareController(
-    # robot_ip="192.168.56.101",
-    # dry_run=False,                 # True first
-    # use_advancer=False,
-    # advancer_port="/dev/ttyACM0",
-    # advancer_baud=115200,
-    # advancer_delay_us=20,
-    # advancer_min_cmd_mm=0.166,
-    # xyz_min=(0.20, -1.50, -0.30),
-    # xyz_max=(1.20, +1.50, +1.50),
-    # max_trans_m=0.01,
-    # max_rot_rad=0.2,
-    # z_offset=0.28,
-    # use_moveL_params=False,
-    # v=0.10,
-    # a=0.30,
-    # )
-    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
+    hw = LiveHardwareController(
+    robot_ip="192.168.56.101",
+    dry_run=False,                 # True first
+    use_advancer=False,
+    advancer_port="/dev/ttyACM0",
+    advancer_baud=115200,
+    advancer_delay_us=20,
+    advancer_min_cmd_mm=0.166,
+    xyz_min=(0.20, -1.50, -0.30),
+    xyz_max=(1.20, +1.50, +1.50),
+    max_trans_m=0.01,
+    max_rot_rad=0.2,
+    z_offset=0.28,
+    use_moveL_params=False,
+    v=0.10,
+    a=0.30,
+    )
+    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
 
-    # new_capture()
+    new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
     # src_robot = pivot_local_point_to_robot(src_local, pivot_point2)
@@ -1040,7 +1239,7 @@ if __name__ == "__main__":
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=pivot_hint,
-        results_dir="results_single_pose_forward_validation",
+        results_dir="results_single_pose_forward_validation_test",
         save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
         show_debug_vision=False,
         show_debug_model=False,

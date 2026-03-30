@@ -2183,6 +2183,27 @@ def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
 
     return B
+def numerical_B_y_wrt_u_forward(p8, forward_y_fn, dt, eps_u, n_out):
+    p8 = np.asarray(p8, float).ravel()
+    B = np.zeros((n_out, 7), float)
+
+    y0 = np.asarray(forward_y_fn(p8), float).reshape(n_out,)
+
+    for i in range(6):
+        du = np.zeros(7)
+        du[i] = eps_u[i]
+        p_plus = integrate_pose8_body(p8, du, dt)
+        y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+        B[:, i] = (y_plus - y0) / eps_u[i]
+
+    delta_L = 1e-3
+    p_plus = p8.copy()
+    p_plus[7] += delta_L
+    y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    dy_dL = (y_plus - y0) / delta_L
+    B[:, 6] = dt * dy_dL
+
+    return B
 def build_measured_p8_from_pose6_and_length(pose6, L_meas, z_offset=0.25):
     pose6 = np.asarray(pose6, float).reshape(6,)
     p7 = np.array([
@@ -2269,12 +2290,12 @@ def snapshot_forward(forward6d, p8, *, commit=False):
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.8781328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
 
     
-    L0 = 0.065
+    L0 = 0.048
 
     # pose6 = np.asarray(get_point(0, 0), dtype=float)
     pose6 = hw.get_robot_pose_once()
@@ -2297,7 +2318,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.01
+    dt = 0.1
     return pivot_point, start_point, L0, dt
 
 
@@ -2337,7 +2358,23 @@ def build_controller(
     ], dtype=float)
 
     forward6d = DeterministicForward6D(forward_model)
-
+    # forward_model_fastjac = EnergyMinForwardWithLumen(
+    #     p0_ur=forward_model.p0_ur,
+    #     q0_ur=forward_model.q0_ur,
+    #     Kinv_fun=forward_model.Kinv_fun,
+    #     u_star=forward_model.u_star,
+    #     m_body=forward_model.m_body,
+    #     lumen_C=forward_model.lumen_C,
+    #     lumen_R=forward_model.lumen_R,
+    #     N_nodes=10,
+    #     maxiter=15,
+    #     L0_init=forward_model.L0_init,
+    #     dL_internal=0.005,
+    #     L_tip_full=forward_model.L_tip_full,
+    #     L_tip_min=forward_model.L_tip_min,
+    #     use_lumen_jac=forward_model.use_lumen_jac,
+    # )
+    # forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
     J_fn = lambda p8: numerical_B_y_wrt_u(
         p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
     )
@@ -2509,11 +2546,12 @@ def run_control(
             print("[MEAS P] robot pose6 =", robot_pose6)
             print("[MEAS P] L_meas =", L_meas)
             print("[MEAS P] p_meas8 =", p_meas8)
-
-
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         # 6. solve MPC using real measurement
+
+        print("[DBG] before mpc.step")
         p_now, x_now, info = mpc.step(x_meas=x_meas)
+        print("[DBG] after mpc.step")
         plot_path = None
         if save_plots:
             plot_path = os.path.join(plot_dir, f"step_{k:04d}_reference_debug.png")
@@ -2560,10 +2598,12 @@ def run_control(
             "info": info,
         })
 
+
+
         if send_commands:
-            if hw is None:
-                raise RuntimeError("send_commands=True requires a hardware controller instance.")
+            print("[DBG] before hw.send_step")
             hw.send_step(p_now=p_now, u0=u0, dt=mpc.dt)
+            print("[DBG] after hw.send_step")
     return history
 def build_initial_lumen_from_vision(
     pivot_point,
@@ -2693,7 +2733,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_w_cent2",
+            plot_dir="mpc_debug_plots_easter_run",
         )
     finally:
         hw.shutdown()

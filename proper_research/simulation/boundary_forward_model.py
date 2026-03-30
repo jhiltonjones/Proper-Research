@@ -210,7 +210,7 @@ class EnergyMinForwardWithLumen:
             N=self.N_nodes, maxiter=self.maxiter,
             use_lumen=self.use_lumen_jac,
             u_init=u_init,
-            debug=True
+            debug=False
         )
         if (not hist) or (hist[-1].get("p", None) is None):
             print("[FWD] solve failed")

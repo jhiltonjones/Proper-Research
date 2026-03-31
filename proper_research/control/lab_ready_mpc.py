@@ -10,11 +10,12 @@ from scipy.spatial.transform import Rotation as Rot
 from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, DeterministicForward6D
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
-from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
+from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
 from proper_research.vision.measure_length import new_capture
 import matplotlib.pyplot as plt
 import time
 from proper_research.robot.transformations import get_point
+import csv
 from proper_research.robot.live_hardware_control import LiveHardwareController
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
@@ -506,7 +507,18 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-def plot_reference_debug(mpc, x_meas, info=None, n_ref=10, show_boundaries=True, save_path=None):
+def plot_reference_debug(
+    mpc,
+    x_meas,
+    info=None,
+    n_ref=10,
+    show_boundaries=True,
+    save_path=None,
+    mag_pos=None,
+    mag_dir=None,
+    mag_pos_next=None,
+    mag_dir_next=None,
+):
     C = np.asarray(mpc.lumen_C, float)
     R = np.asarray(mpc.lumen_R, float).reshape(-1) if getattr(mpc, "lumen_R", None) is not None else None
 
@@ -572,6 +584,45 @@ def plot_reference_debug(mpc, x_meas, info=None, n_ref=10, show_boundaries=True,
             X_nom_last = np.asarray(X_nom_last, float)
             if X_nom_last.ndim == 2 and X_nom_last.shape[1] >= 2 and np.all(np.isfinite(X_nom_last[:, :2])):
                 ax.plot(X_nom_last[:, 0], X_nom_last[:, 1], ":+", label="nominal tip")
+    # current external magnet
+    if mag_pos is not None:
+        mag_pos = np.asarray(mag_pos, float).reshape(3,)
+        ax.plot(mag_pos[0], mag_pos[1], "md", markersize=9, label="magnet current")
+
+        if mag_dir is not None:
+            mag_dir = np.asarray(mag_dir, float).reshape(3,)
+            nrm = np.linalg.norm(mag_dir[:2])
+            if nrm > 1e-12:
+                dxy = mag_dir[:2] / nrm
+                arrow_len = 0.01  # 10 mm in plot units [m]
+                ax.arrow(
+                    mag_pos[0], mag_pos[1],
+                    arrow_len * dxy[0], arrow_len * dxy[1],
+                    head_width=0.0015,
+                    head_length=0.0025,
+                    length_includes_head=True,
+                    color="m",
+                )
+
+    # next commanded external magnet
+    if mag_pos_next is not None:
+        mag_pos_next = np.asarray(mag_pos_next, float).reshape(3,)
+        ax.plot(mag_pos_next[0], mag_pos_next[1], "cs", markersize=8, label="magnet next")
+
+        if mag_dir_next is not None:
+            mag_dir_next = np.asarray(mag_dir_next, float).reshape(3,)
+            nrm = np.linalg.norm(mag_dir_next[:2])
+            if nrm > 1e-12:
+                dxy = mag_dir_next[:2] / nrm
+                arrow_len = 0.01
+                ax.arrow(
+                    mag_pos_next[0], mag_pos_next[1],
+                    arrow_len * dxy[0], arrow_len * dxy[1],
+                    head_width=0.0015,
+                    head_length=0.0025,
+                    length_includes_head=True,
+                    color="c",
+                )
     print("tip norm:", np.linalg.norm(x_meas[:3]))
     print("lumen norm:", np.linalg.norm(mpc.lumen_C[0]))
     ax.axis("equal")
@@ -588,6 +639,27 @@ def plot_reference_debug(mpc, x_meas, info=None, n_ref=10, show_boundaries=True,
 
     # plt.show()
     # plt.close(fig)
+
+
+from scipy.spatial.transform import Rotation as Rot
+import numpy as np
+
+def dipole_dir_from_p8(p8):
+    p8 = np.asarray(p8, float).ravel()
+    q_wxyz = p8[3:7]
+    q_xyzw = np.array([q_wxyz[1], q_wxyz[2], q_wxyz[3], q_wxyz[0]], float)
+    R = Rot.from_quat(q_xyzw).as_matrix()
+
+    # body dipole axis of the external magnet
+    m_body = np.array([1.0, 0.0, 0.0], float)
+    m_world = R @ m_body
+    return m_world / (np.linalg.norm(m_world) + 1e-12)
+def dipole_dir_from_pose6(pose6):
+    pose6 = np.asarray(pose6, float).ravel()
+    R = Rot.from_rotvec(pose6[3:6]).as_matrix()
+    m_body = np.array([1.0, 0.0, 0.0], float)
+    m_world = R @ m_body
+    return m_world / (np.linalg.norm(m_world) + 1e-12)
 class mpc_controller_tipxy_LTI:
     def __init__(self, *, Jxy_fn, forward_tip_fn,
                  dt=0.05, Np=10,
@@ -697,12 +769,12 @@ class mpc_controller_tipxy_LTI:
         self.s_des = 5e-4  
 
         self.enable_dipole_align = True
-        self.w_dipole_align = 3        # start small: 0.1..10
+        self.w_dipole_align = 0.1        # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 20
-        self.mag_center_standoff_m = 0.16
+        self.mag_center_standoff_m = 0.2
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1058,7 +1130,7 @@ class mpc_controller_tipxy_LTI:
                 X_aff = (Mx @ xk).reshape(Np * n, 1)
 
             i0 = int(getattr(self, "i_ref_last", 0))
-            look = int(getattr(self, "ref_lookahead_pts", 5))
+            look = int(getattr(self, "ref_lookahead_pts", 7))
             idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
             print(f"REFERENCE {idx_ref}")
 
@@ -1438,8 +1510,8 @@ class mpc_controller_tipxy_LTI:
             f_z = np.zeros((nz, 1), float)
             f_z[:Nu, :] = f
 
-            eps_standoff = float(getattr(self, "eps_standoff_m", 0.12))
-            eps_inline_lat = float(getattr(self, "eps_inline_lat_m", 0.02))
+            eps_standoff = float(getattr(self, "eps_standoff_m", 0.03))
+            eps_inline_lat = float(getattr(self, "eps_inline_lat_m", 0.01))
             eps_dipole = float(getattr(self, "eps_dipole", 1e-2))
 
             if ns_standoff > 0:
@@ -1450,7 +1522,7 @@ class mpc_controller_tipxy_LTI:
                 w_slack_standoff = 0.0
 
             if ns_inline > 0:
-                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 4.0)))
+                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 0.1)))
                 i0i = off_inline
                 H_z[i0i:i0i + ns_inline, i0i:i0i + ns_inline] = 2.0 * w_slack_inline * np.eye(ns_inline)
             else:
@@ -2297,8 +2369,8 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     
     L0 = 0.048
 
-    # pose6 = np.asarray(get_point(0, 0), dtype=float)
-    pose6 = hw.get_robot_pose_once()
+    pose6 = np.asarray(get_point(0, 0), dtype=float)
+    # pose6 = hw.get_robot_pose_once()
 
     pose6[2] = -0.1
     # pose6[0] = 0.3
@@ -2318,7 +2390,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.1
+    dt = 0.15
     return pivot_point, start_point, L0, dt
 
 
@@ -2358,25 +2430,25 @@ def build_controller(
     ], dtype=float)
 
     forward6d = DeterministicForward6D(forward_model)
-    # forward_model_fastjac = EnergyMinForwardWithLumen(
-    #     p0_ur=forward_model.p0_ur,
-    #     q0_ur=forward_model.q0_ur,
-    #     Kinv_fun=forward_model.Kinv_fun,
-    #     u_star=forward_model.u_star,
-    #     m_body=forward_model.m_body,
-    #     lumen_C=forward_model.lumen_C,
-    #     lumen_R=forward_model.lumen_R,
-    #     N_nodes=10,
-    #     maxiter=15,
-    #     L0_init=forward_model.L0_init,
-    #     dL_internal=0.005,
-    #     L_tip_full=forward_model.L_tip_full,
-    #     L_tip_min=forward_model.L_tip_min,
-    #     use_lumen_jac=forward_model.use_lumen_jac,
-    # )
-    # forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
+    forward_model_fastjac = EnergyMinForwardWithLumen(
+        p0_ur=forward_model.p0_ur,
+        q0_ur=forward_model.q0_ur,
+        Kinv_fun=forward_model.Kinv_fun,
+        u_star=forward_model.u_star,
+        m_body=forward_model.m_body,
+        lumen_C=forward_model.lumen_C,
+        lumen_R=forward_model.lumen_R,
+        N_nodes=10,
+        maxiter=30,
+        L0_init=forward_model.L0_init,
+        dL_internal=0.002,
+        L_tip_full=forward_model.L_tip_full,
+        L_tip_min=forward_model.L_tip_min,
+        use_lumen_jac=forward_model.use_lumen_jac,
+    )
+    forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
     J_fn = lambda p8: numerical_B_y_wrt_u(
-        p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
+        p8, forward6d_fastjac, dt=dt, eps_u=eps_u, n_out=6
     )
 
     mpc = mpc_controller_tipxy_LTI(
@@ -2387,7 +2459,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(15.0, 15.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(35.0, 35.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2413,7 +2485,7 @@ def build_controller(
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
     mpc.set_initial_params(p0)
-
+    print(f"Finished building controller")
     return mpc, p0, p_min, p_max, u_max, forward6d
 
 def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
@@ -2447,27 +2519,27 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    ):
+    csv_log_path="control_run_log.csv",
+):
     history = []
+    csv_rows = []
 
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
-        # 1. capture new image
         new_capture()
-        overlay_path = f"debug_outputs_opti/reconstruction_step_{k:04d}.png"
+        overlay_path = f"debug_outputs_easter/reconstruction_step_{k:04d}.png"
+        roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
 
-        # 2. run vision
         vision_result = reconstruct_beam_within_vessel(
-            image_filename=image_filename,
-            red_roi_path=red_roi_path,
-            blue_roi_path=blue_roi_path,
-            green_roi_path=green_roi_path,
+            image_filename="focused_image.jpg",
+            red_roi_polygon=roi_polygon,
+            blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
-            show=show,
-            save_overlay_path=overlay_path,
+            show=False,
+            save_overlay_path="debug_outputs/reconstruction_overlay.png",
         )
-        # # 3. convert lumen from local/base frame to robot frame
+
         vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
             vision_result["lumen_C_m"],
             pivot_point
@@ -2475,12 +2547,13 @@ def run_control(
 
         mpc.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
         mpc.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
+
         print("[VISION] lumen first point robot =", mpc.lumen_C[0])
         print("[VISION] lumen last point robot  =", mpc.lumen_C[-1])
         print("[VISION] lumen radius min/max [mm] =",
             1000.0 * np.min(mpc.lumen_R),
             1000.0 * np.max(mpc.lumen_R))
-        # 4. convert measured tip+tangent to robot frame
+
         x_meas = vision_result_to_x_meas_robot(
             vision_result,
             pivot_point_pose6=pivot_point,
@@ -2510,11 +2583,12 @@ def run_control(
         print("[VISION] lumen_C shape =", mpc.lumen_C.shape)
         print("[VISION] lumen_R shape =", mpc.lumen_R.shape)
         print("[VISION] closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
-        print("[VISION] beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_wall_tangent_angle_deg"])
+        print("[VISION] left beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"])
+        print("[VISION] right beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"])
         print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
         print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
         print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
-        # 5. update current reference index from measured tip
+
         tip_xyz = x_meas[:3]
         i_ref = closest_index_in_window_monotone(
             mpc.lumen_C,
@@ -2527,12 +2601,16 @@ def run_control(
         i_ref_global = int(np.argmin(d2_all))
         print("[DBG] global closest index =", i_ref_global)
         print("[DBG] global closest dist [mm] =", 1000*np.sqrt(d2_all[i_ref_global]))
+
         mpc.i_ref_last = int(i_ref)
         print("[VISION] i_ref =", i_ref)
         print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
         print("[VISION] tip-to-reference distance [mm] =",
             1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
-        
+
+        mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
+        mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
+
         if hw is not None:
             L_meas = float(vision_result["beam_length_mm"]) / 1000.0
             robot_pose6 = hw.get_robot_pose_once()
@@ -2542,16 +2620,20 @@ def run_control(
                 z_offset=hw.z_offset,
             )
             mpc.set_measured_params(p_meas8)
+            mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
+            mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
 
             print("[MEAS P] robot pose6 =", robot_pose6)
             print("[MEAS P] L_meas =", L_meas)
             print("[MEAS P] p_meas8 =", p_meas8)
-        plot_reference_debug_simple(mpc, x_meas, n_ref=10)
-        # 6. solve MPC using real measurement
 
-        print("[DBG] before mpc.step")
+        plot_reference_debug_simple(mpc, x_meas, n_ref=10)
+
         p_now, x_now, info = mpc.step(x_meas=x_meas)
-        print("[DBG] after mpc.step")
+
+        mag_pos_next = np.asarray(p_now[:3], dtype=float)
+        mag_dir_next = np.asarray(dipole_dir_from_p8(p_now), dtype=float)
+
         plot_path = None
         if save_plots:
             plot_path = os.path.join(plot_dir, f"step_{k:04d}_reference_debug.png")
@@ -2563,6 +2645,10 @@ def run_control(
             n_ref=3,
             show_boundaries=True,
             save_path=plot_path,
+            mag_pos=mag_pos_current,
+            mag_dir=mag_dir_current,
+            mag_pos_next=mag_pos_next,
+            mag_dir_next=mag_dir_next,
         )
 
         p7_now = pose8_quat_to_pose7_rotvec(p_now)
@@ -2571,21 +2657,83 @@ def run_control(
 
         print("UR next pose:", ur_pose6_next)
         print("Insertion next:", L_next)
+
         u0 = np.asarray(info["u0"], dtype=float).copy()
 
         print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
         print("[MPC] jac rank =", info.get("jac_svd_rank", np.nan))
         print(f"[CONTROL] step={k}")
         print("x_meas =", x_meas)
-        print("p_now =", p_now)                 # updated internal actuator state
-        print("x_now =", x_now)                 # still current measurement
+        print("p_now =", p_now)
+        print("x_now =", x_now)
         print("Error on 1 step ", info["pred1_err_xy"])
-        print("u0_proposed =", info["u0"])      # command that produced p_now
+        print("u0_proposed =", info["u0"])
         print("i_ref =", mpc.i_ref_last)
         print("closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
-        print("beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_wall_tangent_angle_deg"])
         print("status =", info.get("status"))
         print("infeasible =", info.get("infeasible"))
+
+        left_tan = np.asarray(
+            vision_result["tip_wall_angle_info"]["left_wall_tangent_vec_cartesian"],
+            dtype=float
+        )
+        right_tan = np.asarray(
+            vision_result["tip_wall_angle_info"]["right_wall_tangent_vec_cartesian"],
+            dtype=float
+        )
+
+        mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
+        if hw is not None:
+            mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
+
+        # use actual predicted tip, not x_now
+        X_pred = np.asarray(info["X_pred"], dtype=float)
+        pred_tip = np.asarray(X_pred[0, :3], dtype=float)
+
+        meas_tip = np.asarray(x_meas[:3], dtype=float)
+        err_xyz = meas_tip - pred_tip
+        err_xy = np.linalg.norm(err_xyz[:2])
+
+        row = {
+            "step": int(k),
+
+            "mag_x": float(mag_pos_current[0]),
+            "mag_y": float(mag_pos_current[1]),
+            "mag_z": float(mag_pos_current[2]),
+
+            "pred_x": float(pred_tip[0]),
+            "pred_y": float(pred_tip[1]),
+            "pred_z": float(pred_tip[2]),
+
+            "meas_x": float(meas_tip[0]),
+            "meas_y": float(meas_tip[1]),
+            "meas_z": float(meas_tip[2]),
+
+            "err_xy": float(err_xy),
+
+            "i_ref": int(mpc.i_ref_last),
+
+            "left_wall_tan_x": float(left_tan[0]),
+            "left_wall_tan_y": float(left_tan[1]),
+            "right_wall_tan_x": float(right_tan[0]),
+            "right_wall_tan_y": float(right_tan[1]),
+
+            "dist_left_center_mm": float(vision_result["tip_distance_info_mm"]["dist_left_center_mm"]),
+            "dist_right_center_mm": float(vision_result["tip_distance_info_mm"]["dist_right_center_mm"]),
+            "dist_left_edge_mm": float(vision_result["tip_distance_info_mm"]["dist_left_edge_mm"]),
+            "dist_right_edge_mm": float(vision_result["tip_distance_info_mm"]["dist_right_edge_mm"]),
+            "closest_distance_mm": float(vision_result["tip_distance_info_mm"]["closest_distance_mm"]),
+
+            "beam_left_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"]),
+            "beam_right_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"]),
+        }
+        csv_rows.append(row)
+
+        # write CSV each step so you do not lose data if run stops
+        with open(csv_log_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(csv_rows)
 
         history.append({
             "k": int(k),
@@ -2598,12 +2746,12 @@ def run_control(
             "info": info,
         })
 
-
-
         if send_commands:
             print("[DBG] before hw.send_step")
             hw.send_step(p_now=p_now, u0=u0, dt=mpc.dt)
             print("[DBG] after hw.send_step")
+
+    print(f"[SAVE] CSV log saved to {csv_log_path}")
     return history
 def build_initial_lumen_from_vision(
     pivot_point,
@@ -2664,7 +2812,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         L_tip_min=0.01,
         use_lumen_jac=False,
     )
-
+    print(f"Finished_building_model")
     return p0_ur, q0_ur, forward_model
 if __name__ == "__main__":
     pivot_hint = (300, 391)
@@ -2733,7 +2881,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_easter_run",
+            plot_dir="mpc_debug_plots_easter_new_nowall2",
         )
     finally:
         hw.shutdown()

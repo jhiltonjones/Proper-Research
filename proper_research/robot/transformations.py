@@ -5,7 +5,7 @@ pivot_point = np.array([
 
 
 start_point = np.array([
-0.6358941096487977, -0.7112731669220016, 0.18,  np.pi, 0.001,0.001
+0.6058941096487977, -0.7112731669220016, 0.18,  np.pi, 0.001,0.001
 ], float)
 
 def rotz(theta):
@@ -192,9 +192,9 @@ def tcp_from_global(pose6_in_G):
 
 tcp_start = tcp_from_global([-0.15, 0.0, 0.25, 0,0,0])
 tcp_start2 = tcp_from_global([-0.17, 0.2, 0.25, 0,0,0])
-print("tcp_start:", tcp_start)
-print("tcp_start:", tcp_start2)
-print("diff to start_point:", tcp_start - tcp_start2)
+# print("tcp_start:", tcp_start)
+# print("tcp_start:", tcp_start2)
+# print("diff to start_point:", tcp_start - tcp_start2)
 import numpy as np
 
 def quat_normalize_wxyz(q):
@@ -302,8 +302,8 @@ def test_orbit_about_global_origin():
         R_exp = R0 @ R_th
         ang_err = rot_err_angle(R_exp, R_got)
         com_pose = get_point(0,deg)
-        print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
-              f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
+        # print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
+        #       f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = [0.0, 0.0, -0.25]
 T_M_TCP = inv_T(T_TCP_M)
@@ -337,7 +337,7 @@ p_tcp_start = start_point[:3]
 p_mag_world_at_start = pivot_point[:3]  # magnet at catheter base
 
 p_TCP_M = R_start.T @ (p_mag_world_at_start - p_tcp_start)  # expressed in TCP frame
-print("p_TCP_M (in TCP frame):", p_TCP_M)
+# print("p_TCP_M (in TCP frame):", p_TCP_M)
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = p_TCP_M
 T_M_TCP = inv_T(T_TCP_M)
@@ -515,18 +515,18 @@ def get_point(theta_angle_x, theta_angle_z,
     new_rvec = R_to_rotvec(new_R)
 
     new_pose_for_robot = np.hstack([new_pos, new_rvec])
-    print("p_m0:", H_b_m0[:3, 3])
-    print("p_m1:", H_b_m1[:3, 3])
-    print("p_e1:", H_b_e1[:3, 3])
-    print("mag z change:", H_b_m1[2, 3] - H_b_m0[2, 3])
-    print("tcp z change:", H_b_e1[2, 3] - H_b_e0[2, 3])
+    # print("p_m0:", H_b_m0[:3, 3])
+    # print("p_m1:", H_b_m1[:3, 3])
+    # print("p_e1:", H_b_e1[:3, 3])
+    # print("mag z change:", H_b_m1[2, 3] - H_b_m0[2, 3])
+    # print("tcp z change:", H_b_e1[2, 3] - H_b_e0[2, 3])
     x_axis = new_R[:, 0]
     y_axis = new_R[:, 1]
     z_axis = new_R[:, 2]
 
-    print("TCP x-axis:", x_axis)
-    print("TCP y-axis:", y_axis)
-    print("TCP z-axis:", z_axis)
+    # print("TCP x-axis:", x_axis)
+    # print("TCP y-axis:", y_axis)
+    # print("TCP z-axis:", z_axis)
     # print("New EE pose to send to robot:")
     # print(repr(new_pose_for_robot))
     return new_pose_for_robot
@@ -751,8 +751,8 @@ def test_orbit_about_global_origin():
         R_exp = R0 @ R_th
         ang_err = rot_err_angle(R_exp, R_got)
         com_pose = get_point(0,deg)
-        print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
-              f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
+        # print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
+        #       f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = [0.0, 0.0, -0.25]
 T_M_TCP = inv_T(T_TCP_M)
@@ -1163,8 +1163,8 @@ def test_orbit_about_global_origin():
         R_exp = R0 @ R_th
         ang_err = rot_err_angle(R_exp, R_got)
         com_pose = get_point(0,deg)
-        print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
-              f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
+        # print(f"deg={deg:>4}  p_th={p_th}  tcp_xyz={repr(tcp_pose6)}, tcp_from_com={com_pose} , DIFF = {tcp_pose6 - com_pose}"
+        #       f"p_err={p_err:.3e}  rot_err_deg={np.rad2deg(ang_err):.3e}")
 T_TCP_M = np.eye(4)
 T_TCP_M[:3, 3] = [0.0, 0.0, -0.25]
 T_M_TCP = inv_T(T_TCP_M)

@@ -9,7 +9,7 @@
             "name": "Run testing_script1 (module)",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.experiments.testing_script1",
+            "module": "scrap2",
             "justMyCode": true,
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

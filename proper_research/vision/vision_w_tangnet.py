@@ -144,8 +144,9 @@ def order_four_markers(points, pivot_hint=None):
 # Main measurement
 # ----------------------------
 def measure_tip_state_4markers(
-    image_filename="focused_image2.jpg",
+    image_filename="focused_image.jpg",
     roi_box=None,
+    roi_polygon=None,
     show=True,
     show_debug_markers=False,
     unwrap_angle=True,
@@ -158,18 +159,20 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
-        min_area=2,
+        roi_polygon=roi_polygon,
+        min_area=1,
         max_area=40000,
-        sat_min=10,
-        val_min=10,
+        sat_min=50,
+        val_min=40,
         hue1_high=10,
-        hue2_low=160,
+        hue2_low=170,
         show_debug=show_debug_markers,
     )
 
 def detect_4_red_markers_in_roi(
     image_bgr,
     roi_box=None,
+    roi_polygon=None,
     min_area=2,
     max_area=40000,
     show_debug=False,
@@ -181,13 +184,73 @@ def detect_4_red_markers_in_roi(
     hue2_high=180,
     debug_allow_less_than_4=False,
 ):
-    if roi_box is not None:
+    """
+    Detect up to 4 red markers inside either:
+      - roi_box: (x, y, w, h)
+      - roi_polygon: [(x1, y1), (x2, y2), ...]
+
+    Returns full-image coordinates.
+    """
+
+    def polygon_to_local_mask(shape_hw, polygon_pts, offset_xy):
+        h, w = shape_hw
+        x0, y0 = offset_xy
+        mask = np.zeros((h, w), dtype=np.uint8)
+        pts_local = np.array(
+            [[int(round(px - x0)), int(round(py - y0))] for px, py in polygon_pts],
+            dtype=np.int32
+        )
+        cv2.fillPoly(mask, [pts_local], 255)
+        return mask
+
+    H, W = image_bgr.shape[:2]
+
+    # ---------------------------------------------------------
+    # Build working ROI image + spatial mask
+    # ---------------------------------------------------------
+    if roi_polygon is not None:
+        pts = np.array(roi_polygon, dtype=np.float32)
+        if len(pts) < 3:
+            raise ValueError("roi_polygon must contain at least 3 points.")
+
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+
+        x0 = max(0, int(np.floor(xs.min())))
+        y0 = max(0, int(np.floor(ys.min())))
+        x1 = min(W, int(np.ceil(xs.max())))
+        y1 = min(H, int(np.ceil(ys.max())))
+
+        if x1 <= x0 or y1 <= y0:
+            raise ValueError("roi_polygon bounding box is empty.")
+
+        roi = image_bgr[y0:y1, x0:x1].copy()
+        spatial_mask = polygon_to_local_mask(
+            shape_hw=roi.shape[:2],
+            polygon_pts=roi_polygon,
+            offset_xy=(x0, y0),
+        )
+        roi_desc = {"type": "polygon", "polygon": roi_polygon}
+
+    elif roi_box is not None:
         x, y, w, h = roi_box
-        roi = image_bgr[y:y+h, x:x+w].copy()
-        x0, y0 = x, y
+        x0 = max(0, int(x))
+        y0 = max(0, int(y))
+        x1 = min(W, x0 + int(w))
+        y1 = min(H, y0 + int(h))
+
+        if x1 <= x0 or y1 <= y0:
+            raise ValueError(f"Invalid roi_box: {roi_box}")
+
+        roi = image_bgr[y0:y1, x0:x1].copy()
+        spatial_mask = np.full(roi.shape[:2], 255, dtype=np.uint8)
+        roi_desc = {"type": "box", "box": (x0, y0, x1 - x0, y1 - y0)}
+
     else:
         roi = image_bgr.copy()
         x0, y0 = 0, 0
+        spatial_mask = np.full(roi.shape[:2], 255, dtype=np.uint8)
+        roi_desc = None
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
@@ -201,19 +264,34 @@ def detect_4_red_markers_in_roi(
     mask2 = cv2.inRange(hsv, lower2, upper2)
     mask = cv2.bitwise_or(mask1, mask2)
 
-    # Try opening only first; avoid closing because it can merge blobs
+    # restrict to custom area
+    mask = cv2.bitwise_and(mask, spatial_mask)
+
+    # opening only; avoid closing because it can merge blobs
     k = np.ones((3, 3), np.uint8)
     mask_open = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
 
+    # enforce spatial mask again after morphology
+    mask_open = cv2.bitwise_and(mask_open, spatial_mask)
+
     contours, _ = cv2.findContours(mask_open, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    print(f"[DEBUG] roi_box = {roi_box}")
+    print(f"[DEBUG] roi_desc = {roi_desc}")
     print(f"[DEBUG] mask nonzero = {int(np.count_nonzero(mask_open))}")
     print(f"[DEBUG] found {len(contours)} raw contours")
 
     candidates = []
     raw_debug = roi.copy()
     kept_debug = roi.copy()
+
+    # visualize polygon boundary in local ROI coords
+    if roi_polygon is not None:
+        pts_local = np.array(
+            [[int(round(px - x0)), int(round(py - y0))] for px, py in roi_polygon],
+            dtype=np.int32
+        )
+        cv2.polylines(raw_debug, [pts_local], True, (0, 255, 255), 1)
+        cv2.polylines(kept_debug, [pts_local], True, (0, 255, 255), 1)
 
     for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
@@ -234,8 +312,15 @@ def detect_4_red_markers_in_roi(
         # draw every raw contour
         cv2.drawContours(raw_debug, [cnt], -1, (0, 255, 0), 1)
         cv2.rectangle(raw_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
-        cv2.putText(raw_debug, f"{i}", (bx, max(0, by - 3)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+        cv2.putText(
+            raw_debug,
+            f"{i}",
+            (bx, max(0, by - 3)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (255, 255, 0),
+            1
+        )
 
         if area < min_area or area > max_area:
             continue
@@ -254,7 +339,6 @@ def detect_4_red_markers_in_roi(
 
     print(f"[DEBUG] kept {len(candidates)} candidates after filtering")
 
-    # draw kept candidates
     for j, c in enumerate(candidates):
         cnt = c["contour"]
         cx, cy = c["local_center"]
@@ -262,8 +346,15 @@ def detect_4_red_markers_in_roi(
         cv2.drawContours(kept_debug, [cnt], -1, (0, 255, 0), 2)
         cv2.rectangle(kept_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
         cv2.circle(kept_debug, (int(round(cx)), int(round(cy))), 4, (255, 0, 0), -1)
-        cv2.putText(kept_debug, f"{j}", (bx, max(0, by - 3)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+        cv2.putText(
+            kept_debug,
+            f"{j}",
+            (bx, max(0, by - 3)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (255, 255, 0),
+            1
+        )
 
     if show_debug:
         plt.figure(figsize=(14, 8))

@@ -1082,7 +1082,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
                         N=20, u0_flat=None, maxiter=200, lumen_C=None, lumen_R=None,use_lumen=True,
                         contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
                         contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0, u_ctrl_init=None,
-                        K=20):
+                        K=8):
     """
     Minimises Π(u) using K control points for u(s).
     Returns (p, q, u_seg, info).
@@ -1147,7 +1147,7 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
             maxiter=maxiter,
             ftol=1e-9,
             eps=1e-2,     # try 1e-2 then 1e-1
-            maxls=80
+            maxls=40
         )
     ) 
     z_opt = res.x.reshape(K,3)

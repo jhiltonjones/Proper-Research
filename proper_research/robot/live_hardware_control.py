@@ -93,18 +93,13 @@ class LiveHardwareController:
         ur_pose6_send = ur_pose6_next.copy()
         ur_pose6_send[2] += self.z_offset
 
+        print("[DBG] entering send_step")
+        print("[DBG] dry_run =", self.dry_run)
+        print("[DBG] use_moveL_params =", self.use_moveL_params)
+        print("[DBG] robo is None =", self.robo is None)
+
         if not within_workspace(ur_pose6_send, self.xyz_min, self.xyz_max):
             raise RuntimeError(f"UR pose out of workspace: {ur_pose6_send}")
-
-        # if not max_step_ok(
-        #     self.prev_pose6,
-        #     ur_pose6_send,
-        #     max_trans_m=self.max_trans_m,
-        #     max_rot_rad=self.max_rot_rad,
-        # ):
-        #     raise RuntimeError(
-        #         f"Step too large. prev={self.prev_pose6}, next={ur_pose6_send}"
-        #     )
 
         dL_mm = u0_to_advancer_mm(u0, dt)
         self.dl_residual_mm += dL_mm
@@ -115,38 +110,83 @@ class LiveHardwareController:
             adv_cmd_mm = n_quanta * self.advancer_min_cmd_mm
             self.dl_residual_mm -= adv_cmd_mm
 
-        print(
-            "[LIVE CMD]",
-            "UR_send =", ur_pose6_send.tolist(),
-            f"dL_step = {dL_mm:+.4f} mm",
-            f"adv_cmd = {adv_cmd_mm:+.4f} mm",
-            f"residual = {self.dl_residual_mm:+.4f} mm",
-        )
+        print("[LIVE CMD]", ur_pose6_send.tolist())
 
         if not self.dry_run:
-            self.open_robot()
-            if self.use_advancer and self.adv is not None and abs(adv_cmd_mm) > 0.0:
-                if adv_cmd_mm > 0:
-                    self.adv.forward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
-                else:
-                    self.adv.backward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
-
-
             try:
+                print("[DBG] before open_robot")
+                self.open_robot(warmup=True)
+                print("[DBG] after open_robot")
+
+                if self.use_advancer and self.adv is not None and abs(adv_cmd_mm) > 0.0:
+                    if adv_cmd_mm > 0:
+                        self.adv.forward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
+                    else:
+                        self.adv.backward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
+
+                print("[DBG] before moveL")
                 if self.use_moveL_params:
-                    self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                    out = self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
                 else:
-                    self.robo.moveL(ur_pose6_send.tolist())
+                    out = self.robo.moveL(ur_pose6_send.tolist())
+
+                print("[DBG] after moveL, return =", out)
+
+                if out is False:
+                    print("[DBG] moveL returned False, rebuilding RTDE once and retrying...")
+                    self.close_robot()
+                    time.sleep(0.25)
+
+                    self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+                    time.sleep(0.25)
+
+                    # warm after rebuild
+                    _ = self.robo.get_pose()
+                    time.sleep(0.10)
+
+                    if self.use_moveL_params:
+                        out = self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                    else:
+                        out = self.robo.moveL(ur_pose6_send.tolist())
+
+                    print("[DBG] retry moveL return =", out)
+
+                    if out is False:
+                        raise RuntimeError(f"URRtde.moveL returned False for pose {ur_pose6_send.tolist()}")
+
+            except Exception as e:
+                print("[DBG] moveL exception:", repr(e))
+                raise
             finally:
+                print("[DBG] before close_robot")
                 self.close_robot()
+                print("[DBG] after close_robot")
+
         self.prev_pose6 = ur_pose6_send.copy()
-    def open_robot(self):
+        print("[DBG] send_step finished")
+    def open_robot(self, warmup=True):
         if self.dry_run:
             return
+
         if self.robo is None:
             self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
         else:
-            self.robo.ensure_connected()
+            ok = self.robo.ensure_connected()
+            if not ok:
+                raise RuntimeError("Failed to reconnect RTDE interfaces")
+
+        if warmup:
+            # Give RTDE control side a moment after reconnect
+            time.sleep(0.20)
+
+            # Touch receive side once; this often helps confirm the session is live
+            try:
+                _ = self.robo.get_pose()
+            except Exception as e:
+                raise RuntimeError(f"Robot reconnected but pose read failed: {e}")
+
+            # Small extra pause before issuing motion
+            time.sleep(0.10)
 
     def close_robot(self):
         if self.dry_run:

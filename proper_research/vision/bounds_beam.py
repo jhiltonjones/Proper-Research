@@ -22,7 +22,93 @@ def save_roi_box(box, path):
     with open(path, "w") as f:
         json.dump(data, f)
     print(f"[INFO] ROI saved to {path}: {data}")
+def load_search_area(path):
+    """
+    Supports either:
+      rectangle JSON: {"x":..., "y":..., "w":..., "h":...}
+      polygon JSON:   {"points": [[x1,y1], [x2,y2], ...]}
+    """
+    if not os.path.exists(path):
+        return None
 
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    if "points" in data:
+        polygon = [tuple(map(float, p)) for p in data["points"]]
+        print(f"[INFO] Loaded polygon area from {path}: {len(polygon)} points")
+        return {
+            "type": "polygon",
+            "polygon": polygon,
+        }
+
+    if all(k in data for k in ("x", "y", "w", "h")):
+        box = (int(data["x"]), int(data["y"]), int(data["w"]), int(data["h"]))
+        print(f"[INFO] Loaded box area from {path}: {data}")
+        return {
+            "type": "box",
+            "box": box,
+        }
+
+    raise ValueError(f"Unrecognized ROI/custom area format in {path}")
+
+
+def area_to_bbox(area, image_shape=None):
+    """
+    Convert either box or polygon area to a bounding box (x, y, w, h).
+    """
+    if area is None:
+        if image_shape is None:
+            return None
+        h, w = image_shape[:2]
+        return (0, 0, w, h)
+
+    if area["type"] == "box":
+        return area["box"]
+
+    if area["type"] == "polygon":
+        pts = np.array(area["polygon"], dtype=np.float32)
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+
+        x0 = int(np.floor(xs.min()))
+        y0 = int(np.floor(ys.min()))
+        x1 = int(np.ceil(xs.max()))
+        y1 = int(np.ceil(ys.max()))
+
+        if image_shape is not None:
+            h_img, w_img = image_shape[:2]
+            x0 = max(0, min(x0, w_img - 1))
+            y0 = max(0, min(y0, h_img - 1))
+            x1 = max(x0 + 1, min(x1, w_img))
+            y1 = max(y0 + 1, min(y1, h_img))
+
+        return (x0, y0, x1 - x0, y1 - y0)
+
+    raise ValueError(f"Unknown area type: {area['type']}")
+
+
+def draw_area_overlay(image_bgr, area, color=(0, 255, 255), thickness=2):
+    """
+    Draw either a rectangle or polygon on an image.
+    """
+    if area is None:
+        return image_bgr
+
+    vis = image_bgr
+
+    if area["type"] == "box":
+        x, y, w, h = area["box"]
+        cv2.rectangle(vis, (int(x), int(y)), (int(x + w), int(y + h)), color, thickness)
+
+    elif area["type"] == "polygon":
+        pts = np.array(area["polygon"], dtype=np.int32)
+        cv2.polylines(vis, [pts], isClosed=True, color=color, thickness=thickness)
+
+    else:
+        raise ValueError(f"Unknown area type: {area['type']}")
+
+    return vis
 def build_lumen_from_parametric_boundaries(
     left_boundary_px,
     right_boundary_px,
@@ -199,8 +285,8 @@ def draw_beam_and_vessel_overlay(
     left_boundary_px,
     right_boundary_px,
     markers=None,
-    red_roi_box=None,
-    blue_roi_box=None,
+    red_area=None,
+    blue_area=None,
     tip_distance_info=None,
     tip_wall_angle_info=None,
     save_path=None,
@@ -214,7 +300,11 @@ def draw_beam_and_vessel_overlay(
 
     for x, y in right_boundary_px:
         cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # if red_area is not None:
+    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
+    if blue_area is not None:
+        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
     # draw beam centerline
     beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
     for i in range(len(beam_int) - 1):
@@ -243,8 +333,8 @@ def draw_beam_and_vessel_overlay(
 
     # draw closest wall tangent near the tip
     if tip_wall_angle_info is not None:
-        p_minus = tip_wall_angle_info["wall_tangent_points"]["p_minus"]
-        p_plus = tip_wall_angle_info["wall_tangent_points"]["p_plus"]
+        p_minus = tip_wall_angle_info["left_wall_tangent_points"]["p_minus"]
+        p_plus = tip_wall_angle_info["left_wall_tangent_points"]["p_plus"]
 
         p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
         p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
@@ -253,7 +343,7 @@ def draw_beam_and_vessel_overlay(
 
         txt_angle = (
             f"Beam-wall tangent angle = "
-            f"{tip_wall_angle_info['beam_wall_tangent_angle_deg']:.2f} deg"
+            f"{tip_wall_angle_info['beam_left_wall_tangent_angle_deg']:.2f} deg"
         )
 
         cv2.putText(
@@ -405,9 +495,10 @@ def draw_manual_vessel_boundaries(
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
 
-    roi_box = load_roi_box(blue_roi_path)
-    if roi_box is not None:
-        x0, y0, w, h = roi_box
+    area = load_search_area(blue_roi_path)
+
+    if area is not None:
+        x0, y0, w, h = area_to_bbox(area, image_bgr.shape)
         display = image_bgr[y0:y0+h, x0:x0+w].copy()
     else:
         x0, y0 = 0, 0
@@ -720,19 +811,20 @@ def get_saved_2_point_calibration(path="calibration_points.json"):
 def reconstruct_beam_within_vessel(
     image_filename="focused_image.jpg",
     red_roi_path="red_roi_box.json",
+    red_roi_polygon=None,
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
     show=True,
     save_overlay_path=None,
-    ):
+):
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
 
-    red_roi_box = load_roi_box(red_roi_path)
-    blue_roi_box = load_roi_box(blue_roi_path)
-    green_roi_box = load_roi_box(green_roi_path)
+    red_area = load_search_area(red_roi_path)
+    blue_area = load_search_area(blue_roi_path)
+    green_area = load_search_area(green_roi_path)
 
     # --- green calibration points ---
     # green_result = detect_2_green_calibration_points(
@@ -750,11 +842,15 @@ def reconstruct_beam_within_vessel(
     green_pt1, green_pt2 = green_result["points_px"]
     
     mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=40.0)
-
+    red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
+    red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
+    red_polygon = red_area["polygon"] if (red_area is not None and red_area["type"] == "polygon") else None
+
     tip_result = measure_tip_state_4markers(
         image_filename=image_filename,
-        roi_box=red_roi_box,
+        roi_box=None,
+        roi_polygon=red_roi_polygon,
         show=show,
         show_debug_markers=show,
         unwrap_angle=True,
@@ -812,7 +908,7 @@ def reconstruct_beam_within_vessel(
         tip_radius_px=tip_radius_px,
     )
 
-    tip_wall_angle_info = compute_tip_to_wall_tangent_angle(
+    tip_wall_angle_info = compute_tip_to_both_wall_tangents(
         markers=markers,
         left_boundary_px=left_smooth,
         right_boundary_px=right_smooth,
@@ -868,8 +964,8 @@ def reconstruct_beam_within_vessel(
         left_boundary_px=left_smooth,
         right_boundary_px=right_smooth,
         markers=markers,
-        red_roi_box=red_roi_box,
-        blue_roi_box=blue_roi_box,
+        red_area=red_area,
+        blue_area=blue_area,
         tip_distance_info=tip_distance_info,
         tip_wall_angle_info=tip_wall_angle_info,
         save_path=save_overlay_path,
@@ -937,6 +1033,7 @@ def draw_lumen_centerline_overlay(image_bgr, lumen_C_mm, base_px_ref, ex_ref, ey
 def detect_2_green_calibration_points(
     image_bgr,
     roi_box=None,
+    roi_polygon=None,
     green_h_low=15,
     green_h_high=110,
     sat_min=20,
@@ -945,12 +1042,40 @@ def detect_2_green_calibration_points(
     max_area=50000,
     show_debug=False,
 ):
-    if roi_box is not None:
+    if roi_polygon is not None:
+        pts = np.array(roi_polygon, dtype=np.float32)
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+
+        x0 = int(np.floor(xs.min()))
+        y0 = int(np.floor(ys.min()))
+        x1 = int(np.ceil(xs.max()))
+        y1 = int(np.ceil(ys.max()))
+
+        x0 = max(0, x0)
+        y0 = max(0, y0)
+        x1 = min(image_bgr.shape[1], x1)
+        y1 = min(image_bgr.shape[0], y1)
+
+        roi = image_bgr[y0:y1, x0:x1].copy()
+
+        mask_spatial = np.zeros((roi.shape[0], roi.shape[1]), dtype=np.uint8)
+        pts_local = np.array(
+            [[int(px - x0), int(py - y0)] for px, py in roi_polygon],
+            dtype=np.int32
+        )
+        cv2.fillPoly(mask_spatial, [pts_local], 255)
+
+    elif roi_box is not None:
         x0, y0, w, h = roi_box
         roi = image_bgr[y0:y0 + h, x0:x0 + w].copy()
+        mask_spatial = np.full((roi.shape[0], roi.shape[1]), 255, dtype=np.uint8)
+
     else:
         x0, y0 = 0, 0
         roi = image_bgr.copy()
+        mask_spatial = np.full((roi.shape[0], roi.shape[1]), 255, dtype=np.uint8)
+
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
@@ -958,11 +1083,11 @@ def detect_2_green_calibration_points(
     upper = np.array([green_h_high, 255, 255], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, lower, upper)
-
+    mask = cv2.bitwise_and(mask, mask_spatial)
     # only opening; avoid closing because it merges blobs
     k = np.ones((3, 3), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
-
+    mask = cv2.bitwise_and(mask, mask_spatial)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     candidates = []
@@ -1168,6 +1293,7 @@ def normalize_2d(v: np.ndarray) -> np.ndarray:
 def measure_tip_state_4markers(
     image_filename="focused_image.jpg",
     roi_box=None,
+    roi_polygon=None,
     show=True,
     show_debug_markers=False,
     unwrap_angle=True,
@@ -1183,6 +1309,7 @@ def measure_tip_state_4markers(
     detected_points = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
+        roi_polygon=roi_polygon,
         min_area=1,
         max_area=40000,
         sat_min=50,
@@ -1267,6 +1394,7 @@ def measure_tip_state_4markers(
             "ey": tuple(map(float, ey_fit)),
         },
         "roi_box": roi_box,
+        "roi_polygon": roi_polygon,
     }
 
     print("[DBG markers]")
@@ -1285,9 +1413,12 @@ def measure_tip_state_4markers(
     if show:
         vis = image_bgr.copy()
 
-        if roi_box is not None:
-            x, y, w, h = roi_box
-            cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
+        if roi_polygon is not None:
+            pts = np.array(roi_polygon, dtype=np.int32)
+            cv2.polylines(vis, [pts], isClosed=True, color=(0, 255, 255), thickness=2)
+    elif roi_box is not None:
+        x, y, w, h = roi_box
+        cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
 
         color_map = {
             "base_px": (255, 0, 0),
@@ -1403,7 +1534,49 @@ def compute_boundary_tangent_vector_at_y(boundary_points, y0, dy=5.0):
         "tangent_vec_image": tangent_img,
         "tangent_vec_cartesian": tangent_cart,
     }
+def compute_tip_to_both_wall_tangents(markers, left_boundary_px, right_boundary_px, tip_distance_info, dy=5.0):
+    tip = np.array(markers["tip_px"], dtype=np.float32)
+    tangent_start = np.array(markers["tangent_start_px"], dtype=np.float32)
 
+    beam_tangent_vec = np.array([
+        tip[0] - tangent_start[0],
+        -(tip[1] - tangent_start[1])
+    ], dtype=np.float32)
+
+    tip_y = float(tip[1])
+
+    left_info = compute_boundary_tangent_vector_at_y(left_boundary_px, tip_y, dy=dy)
+    right_info = compute_boundary_tangent_vector_at_y(right_boundary_px, tip_y, dy=dy)
+
+    left_tangent = left_info["tangent_vec_cartesian"]
+    right_tangent = right_info["tangent_vec_cartesian"]
+
+    left_angle = unsigned_angle_between_vectors(beam_tangent_vec, left_tangent)
+    right_angle = unsigned_angle_between_vectors(beam_tangent_vec, right_tangent)
+
+    if left_angle > 90.0:
+        left_angle = 180.0 - left_angle
+    if right_angle > 90.0:
+        right_angle = 180.0 - right_angle
+
+    return {
+        "closest_wall": tip_distance_info["closest_wall"],
+        "beam_tangent_vec_cartesian": beam_tangent_vec,
+
+        "left_wall_tangent_vec_cartesian": left_tangent,
+        "left_wall_tangent_points": {
+            "p_minus": left_info["p_minus"],
+            "p_plus": left_info["p_plus"],
+        },
+        "beam_left_wall_tangent_angle_deg": float(left_angle),
+
+        "right_wall_tangent_vec_cartesian": right_tangent,
+        "right_wall_tangent_points": {
+            "p_minus": right_info["p_minus"],
+            "p_plus": right_info["p_plus"],
+        },
+        "beam_right_wall_tangent_angle_deg": float(right_angle),
+    }
 
 def compute_tip_to_wall_tangent_angle(markers, left_boundary_px, right_boundary_px, tip_distance_info, dy=5.0):
     """
@@ -1466,15 +1639,31 @@ def image_to_fixed_local_frame(point_px, base_px_ref, ex_ref, ey_ref):
     y_local =  float(np.dot(v, ey_ref))
 
     return np.array([x_local, y_local], dtype=np.float32)
+def load_polygon(path):
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    if "points" not in data:
+        raise ValueError(f"No 'points' key found in polygon file: {path}")
+
+    polygon = [tuple(map(float, p)) for p in data["points"]]
+    return polygon
 if __name__ == "__main__":
     new_capture()
+
     pivot_hint = (300, 391)
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+
     result = reconstruct_beam_within_vessel(
         image_filename="focused_image.jpg",
-        red_roi_path="red_roi_box.json",
+        red_roi_polygon=roi_polygon,
         blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,
         show=True,
         save_overlay_path="debug_outputs/reconstruction_overlay.png",
     )
+
     plot_tip_measurement_vs_lumen_local(result)

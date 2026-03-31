@@ -37,7 +37,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Dict, Tuple
-from proper_research.robot.live_hardware_control import LiveHardwareController
+from proper_research.robot.live_hardware_control import LiveHardwareController, p8_to_ur_pose6_and_L
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 import matplotlib.pyplot as plt
@@ -51,7 +51,7 @@ from proper_research.robot.transformations import get_point
 from proper_research.simulation.boundary_forward_model import (
     EnergyMinForwardWithLumen,
     DeterministicForward6D,
-    effective_lengths,
+    effective_lengths
 )
 from proper_research.control.lab_ready_mpc import integrate_pose8_body
 from proper_research.vision.measure_length import new_capture
@@ -64,7 +64,7 @@ from proper_research.parameters import default_magnet_params
 # Update this import path if your vision utilities live elsewhere.
 from proper_research.vision.bounds_beam import (
     detect_2_green_calibration_points,
-    measure_tip_state_4markers,
+    measure_tip_state_4markers, load_polygon
 )
 
 
@@ -87,7 +87,7 @@ class SinglePoseEvalConfig:
     reference_image_filename: str = "focused_image_straight.jpg"
     use_reference_frame: bool = True
 
-    red_roi_path: str = "red_roi_box.json"
+    red_roi_path: str = "/home/jack/Proper-Research/red_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
 
     known_green_distance_mm: float = 40.0
@@ -216,7 +216,7 @@ def transform_local_points_to_robot(
 def build_initial_lumen_from_vision(
     pivot_point,
     image_filename="focused_image.jpg",
-    red_roi_path="red_roi_box.json",
+    roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
@@ -224,14 +224,17 @@ def build_initial_lumen_from_vision(
 ):
     new_capture()
 
+    roi_polygon = load_polygon(roi_polygon_path)
+
     vision_result = reconstruct_beam_within_vessel(
-        image_filename=image_filename,
-        red_roi_path=red_roi_path,
-        blue_roi_path=blue_roi_path,
-        green_roi_path=green_roi_path,
+        image_filename="focused_image.jpg",
+        red_roi_polygon=roi_polygon,
+        blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,
-        show=show,
+        show=False,
+        save_overlay_path="debug_outputs/reconstruction_overlay.png",
     )
+
 
     lumen_C_robot_m = transform_local_points_to_robot(
         vision_result["lumen_C_m"],
@@ -280,7 +283,6 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         lumen_C, lumen_R =  build_initial_lumen_from_vision(
             pivot_point = pivot_pose6,
             image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
@@ -306,7 +308,6 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         lumen_C, lumen_R =  build_initial_lumen_from_vision(
             pivot_point = pivot_pose6,
             image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
@@ -477,20 +478,19 @@ def build_reference_beam_frame_from_image(
     red_roi_path: str,
     pivot_hint=None,
     show: bool = False,
+    roi_polygon=None,
     show_debug_markers: bool = False,
-):
+    ):
     red_roi_box = load_roi_box(red_roi_path)
-
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     ref_result = measure_tip_state_4markers(
         image_filename=image_filename,
-        roi_box=red_roi_box,
+        roi_box=None,
+        roi_polygon=roi_polygon,
         show=show,
-        show_debug_markers=show_debug_markers,
+        show_debug_markers=show,
         unwrap_angle=True,
         pivot_hint=pivot_hint,
-        base_px_ref=None,
-        ex_ref=None,
-        ey_ref=None,
     )
 
     base_px_ref = ref_result["markers"]["base_px"]
@@ -524,16 +524,13 @@ def measure_tip_from_vision_base_local(
         known_distance_mm=cfg.known_green_distance_mm,
     )
 
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     tip_result = measure_tip_state_4markers(
-        image_filename=cfg.image_filename,
-        roi_box=red_roi_box,
-        show=cfg.show_debug_vision,
-        show_debug_markers=cfg.show_debug_vision,
-        unwrap_angle=False,
-        pivot_hint=cfg.pivot_hint,
-        base_px_ref=base_px_ref,
-        ex_ref=ex_ref,
-        ey_ref=ey_ref,
+        image_filename="focused_image.jpg",
+        roi_box=None,
+        roi_polygon=roi_polygon,
+        unwrap_angle=True,
+        pivot_hint=pivot_hint,
     )
 
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
@@ -550,7 +547,7 @@ def measure_tip_from_vision_base_local(
         "tip_result": tip_result,
         "tip_base_local_m": tip_base_local_m.copy(),
     }
-def plot_jacobian_comparison(J_no, J_yes, results_dir, filename="jacobian_comparison.png"):
+def plot_jacobian_comparison(J_no, J_yes, results_dir,show=False, filename="jacobian_comparison.png"):
     os.makedirs(results_dir, exist_ok=True)
 
     row_labels = ["tip_x", "tip_y", "tip_z", "tan_x", "tan_y", "tan_z"]
@@ -829,7 +826,6 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
             pivot_point=cfg.pivot_pose6,
             image_filename=cfg.image_filename,
-            red_roi_path=cfg.red_roi_path,
             blue_roi_path="blue_roi_box.json",
             green_roi_path=cfg.green_roi_path,
             pivot_hint=cfg.pivot_hint,
@@ -926,16 +922,17 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 # Main
 # ============================================================
+
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
     0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
-
+    hw.open_robot()
     
-    L0 = 0.044
+    L0 = 0.055
 
-    pose6 = np.asarray(get_point(0, 0), dtype=float)
+    pose6 = np.asarray(get_point(0, -20), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -943,14 +940,21 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     p, q_wxyz = T_to_p_quat_wxyz(T)
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
+    ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
+
+    print("original pose6:", pose6)
+    print("recovered pose6:", ur_pose6_next)
+    print("difference:", ur_pose6_next - pose6)
+    print("z_offset:", hw.z_offset)
+    print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.01)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
     robot_pose6 = hw.get_robot_pose_once()
     robot_pose6[2] = -0.1
-    # pose6[2] = -0.1
+    # # pose6[2] = -0.1
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
@@ -1181,21 +1185,21 @@ if __name__ == "__main__":
 
 
     hw = LiveHardwareController(
-    robot_ip="192.168.56.101",
-    dry_run=False,                 # True first
-    use_advancer=False,
-    advancer_port="/dev/ttyACM0",
-    advancer_baud=115200,
-    advancer_delay_us=20,
-    advancer_min_cmd_mm=0.166,
-    xyz_min=(0.20, -1.50, -0.30),
-    xyz_max=(1.20, +1.50, +1.50),
-    max_trans_m=0.01,
-    max_rot_rad=0.2,
-    z_offset=0.28,
-    use_moveL_params=False,
-    v=0.10,
-    a=0.30,
+        robot_ip="192.168.56.101",
+        dry_run=False,                 # True first
+        use_advancer=True,
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=0.28,
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
     )
     pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
@@ -1235,7 +1239,7 @@ if __name__ == "__main__":
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
-        red_roi_path="red_roi_box.json",
+        red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=pivot_hint,

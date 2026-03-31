@@ -38,8 +38,9 @@ if __name__ == "__main__":
         # print("New pose is", repr(new_pose))
 
         # TCP_TARGET[2] +=.25
-        robo.moveL(TCP_TARGET)
-        robo.get_pose()
+        # robo.moveL(TCP_TARGET)
+        pose = robo.get_pose()
+        print(pose)
 
         print("Finished")
     finally:

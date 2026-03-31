@@ -205,10 +205,210 @@ def compute_checkerboard_homography(image_bgr):
     return H_img_to_mm
 
 
+# def detect_red_markers_in_roi(
+#     image_bgr,
+#     use_roi=True,
+#     expected_markers=3,
+
+#     # --- detection sensitivity ---
+#     min_area=1.5,
+#     merge_dist=1.5,
+
+#     # --- morphology (less aggressive; avoid merging markers) ---
+#     morph_kernel=(3, 3),
+#     close_iters=1,
+#     open_iters=1,
+
+#     # --- HSV thresholds (tighter hue, lower S/V mins) ---
+#     s_min=50,
+#     v_min=50,
+#     h_low1=0,  h_high1=15,
+#     h_low2=165, h_high2=180,
+
+#     # --- behavior when middle marker is missing ---
+#     allow_two_markers_when_expected_three=True,  # NEW
+
+#     # --- debug ---
+#     show_debug=True,
+
+#     # --- internal guard to prevent infinite fallback recursion ---
+#     _did_fallback=False,  # NEW (do not set from outside)
+# ):
+#     """
+#     Detect red blobs inside ROI. Returns marker centers in FULL-IMAGE coordinates.
+
+#     For expected_markers=3:
+#       base -> mag_start -> tip
+
+#     Output ordered by increasing y (then x) internally, but returned as:
+#       base (largest y), mag_start (middle y or None), tip (smallest y)
+#     """
+#     _show_debug_here = bool(show_debug) and bool(_did_fallback)
+#     def merge_close_points(points, dist):
+#         merged = []
+#         for p in points:
+#             p = np.asarray(p, dtype=float)
+#             placed = False
+#             for i, q in enumerate(merged):
+#                 q = np.asarray(q, dtype=float)
+#                 if np.linalg.norm(p - q) < dist:
+#                     merged[i] = tuple(((p + q) / 2.0).tolist())
+#                     placed = True
+#                     break
+#             if not placed:
+#                 merged.append(tuple(p.tolist()))
+#         return merged
+
+#     h_full, w_full = image_bgr.shape[:2]
+
+#     roi_box = None
+#     if use_roi:
+#         roi_box = load_roi_box()
+#         if roi_box is None:
+#             print("[INFO] No ROI stored yet. Draw a box around the beam region.")
+#             roi_box = select_roi_interactive(image_bgr)
+#             if roi_box is None:
+#                 raise RuntimeError("No ROI selected.")
+#             save_roi_box(roi_box)
+
+#     if roi_box is not None:
+#         x, y, w, h = roi_box
+#         x = max(0, min(x, w_full - 1))
+#         y = max(0, min(y, h_full - 1))
+#         w = max(1, min(w, w_full - x))
+#         h = max(1, min(h, h_full - y))
+#         roi_box = (x, y, w, h)
+#         roi_img = image_bgr[y:y+h, x:x+w]
+#     else:
+#         x, y, w, h = 0, 0, w_full, h_full
+#         roi_img = image_bgr
+
+#     hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
+
+#     red_ranges = [
+#         (np.array([h_low1, s_min, v_min]), np.array([h_high1, 255, 255])),
+#         (np.array([h_low2, s_min, v_min]), np.array([h_high2, 255, 255])),
+#     ]
+
+#     red_mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+#     for lo, hi in red_ranges:
+#         red_mask = cv2.bitwise_or(red_mask, cv2.inRange(hsv, lo, hi))
+
+#     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel)
+#     if close_iters > 0:
+#         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, k, iterations=close_iters)
+#     if open_iters > 0:
+#         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN,  k, iterations=open_iters)
+
+#     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+#     centers = []
+#     areas = []
+#     for cnt in contours:
+#         area = float(cv2.contourArea(cnt))
+#         if area < float(min_area):
+#             continue
+#         M = cv2.moments(cnt)
+#         if M["m00"] == 0:
+#             continue
+#         cx = float(M["m10"] / M["m00"]) + x
+#         cy = float(M["m01"] / M["m00"]) + y
+#         centers.append((cx, cy))
+#         areas.append(area)
+
+#     if _show_debug_here:
+#         dbg = image_bgr.copy()
+#         if roi_box is not None:
+#             rx, ry, rw, rh = roi_box
+#             cv2.rectangle(dbg, (rx, ry), (rx+rw, ry+rh), (0, 255, 255), 2)
+#         for (cx, cy) in centers:
+#             cv2.circle(dbg, (int(cx), int(cy)), 6, (0, 255, 255), -1)
+#         print(f"[DEBUG] raw contours={len(contours)}, kept after min_area={len(centers)}")
+#         if len(areas) > 0:
+#             print("[DEBUG] areas (kept):", sorted([round(a, 1) for a in areas], reverse=True)[:10])
+
+#         plt.figure(figsize=(10, 4))
+#         plt.subplot(1, 2, 1)
+#         plt.title("Red mask (ROI)")
+#         plt.imshow(red_mask, cmap="gray")
+#         plt.axis("off")
+
+#         plt.subplot(1, 2, 2)
+#         plt.title("Detections overlay")
+#         plt.imshow(cv2.cvtColor(dbg, cv2.COLOR_BGR2RGB))
+#         plt.axis("off")
+#         # plt.show()
+
+#     if len(centers) == 0:
+#         raise ValueError("No red markers detected inside ROI (after filtering).")
+
+#     centers = merge_close_points(centers, merge_dist)
+
+#     # --- Fallback pass: do it at most once ---
+#     if (len(centers) < expected_markers) and (not _did_fallback):
+#         return detect_red_markers_in_roi(
+#             image_bgr,
+#             use_roi=use_roi,
+#             expected_markers=expected_markers,
+#             min_area=max(5, int(min_area * 0.5)),
+#             merge_dist=merge_dist,
+#             morph_kernel=(3, 3),
+#             close_iters=0,  # key change
+#             open_iters=1,
+#             s_min=max(15, int(s_min * 0.5)),
+#             v_min=max(15, int(v_min * 0.5)),
+#             h_low1=h_low1, h_high1=h_high1,
+#             h_low2=h_low2, h_high2=h_high2,
+#             allow_two_markers_when_expected_three=allow_two_markers_when_expected_three,
+#             show_debug=show_debug,
+#             _did_fallback=True,
+#         )
+
+#     # Sort along beam (y then x)
+#     centers.sort(key=lambda p: (p[1], p[0]))
+
+#     # If more than expected (3-case), pick base, middle-near-midpoint, tip
+#     if expected_markers == 3 and len(centers) > 3:
+#         base = centers[-1]
+#         tip = centers[0]
+#         y_mid = 0.5 * (base[1] + tip[1])
+#         middle = min(centers[1:-1], key=lambda p: abs(p[1] - y_mid))
+#         centers = [tip, middle, base]
+#         centers.sort(key=lambda p: (p[1], p[0]))
+#     else:
+#         centers = centers[:expected_markers]
+
+#     # --- Handle 2-marker mode when expected_markers == 3 ---
+#     if expected_markers == 3:
+#         if len(centers) == 3:
+#             # centers sorted: [tip, mid, base] by y
+#             tip_px, mag_start_px, base_px = centers[0], centers[1], centers[2]
+#             return base_px, mag_start_px, tip_px, roi_box
+
+#         if len(centers) == 2 and allow_two_markers_when_expected_three:
+#             # centers sorted: [tip, base] by y
+#             tip_px, base_px = centers[0], centers[1]
+#             mag_start_px = None
+#             return base_px, mag_start_px, tip_px, roi_box
+
+#         raise ValueError(
+#             f"Expected 3 markers but detected {len(centers)} after fallback; "
+#             "set allow_two_markers_when_expected_three=True to accept base+tip only."
+#         )
+
+#     # Non-3-marker case: keep your original behavior
+#     return centers, roi_box
 def detect_red_markers_in_roi(
     image_bgr,
     use_roi=True,
     expected_markers=3,
+
+    # NEW: custom area support
+    roi_polygon=None,                 # list of (x, y) points
+    use_polygon=False,                # if True, prefer polygon over box
+    select_polygon_fn=None,           # function(image) -> list[(x,y)] or None
+    load_polygon_fn=None,             # function() -> polygon or None
+    save_polygon_fn=None,             # function(polygon) -> None
 
     # --- detection sensitivity ---
     min_area=1.5,
@@ -226,24 +426,31 @@ def detect_red_markers_in_roi(
     h_low2=165, h_high2=180,
 
     # --- behavior when middle marker is missing ---
-    allow_two_markers_when_expected_three=True,  # NEW
+    allow_two_markers_when_expected_three=True,
 
     # --- debug ---
     show_debug=True,
 
     # --- internal guard to prevent infinite fallback recursion ---
-    _did_fallback=False,  # NEW (do not set from outside)
+    _did_fallback=False,
 ):
     """
-    Detect red blobs inside ROI. Returns marker centers in FULL-IMAGE coordinates.
+    Detect red blobs inside a search area. Returns marker centers in FULL-IMAGE coordinates.
+
+    Search area options:
+      - rectangular ROI via load_roi_box/select_roi_interactive
+      - custom polygon via roi_polygon or load/select polygon callbacks
 
     For expected_markers=3:
-      base -> mag_start -> tip
+      returns: base_px, mag_start_px, tip_px, search_region
 
-    Output ordered by increasing y (then x) internally, but returned as:
-      base (largest y), mag_start (middle y or None), tip (smallest y)
+    search_region is:
+      - roi_box tuple (x, y, w, h) when using rectangle
+      - polygon list[(x, y), ...] when using polygon
+      - None when using full image
     """
     _show_debug_here = bool(show_debug) and bool(_did_fallback)
+
     def merge_close_points(points, dist):
         merged = []
         for p in points:
@@ -259,32 +466,82 @@ def detect_red_markers_in_roi(
                 merged.append(tuple(p.tolist()))
         return merged
 
+    def polygon_to_mask(image_shape, polygon):
+        mask = np.zeros(image_shape[:2], dtype=np.uint8)
+        pts = np.array(polygon, dtype=np.int32)
+        cv2.fillPoly(mask, [pts], 255)
+        return mask
+
     h_full, w_full = image_bgr.shape[:2]
 
     roi_box = None
-    if use_roi:
-        roi_box = load_roi_box()
-        if roi_box is None:
-            print("[INFO] No ROI stored yet. Draw a box around the beam region.")
-            roi_box = select_roi_interactive(image_bgr)
-            if roi_box is None:
-                raise RuntimeError("No ROI selected.")
-            save_roi_box(roi_box)
+    polygon = None
+    search_region = None
 
-    if roi_box is not None:
+    # ------------------------------------------------------------
+    # Select/load search region
+    # ------------------------------------------------------------
+    if use_polygon:
+        if roi_polygon is not None:
+            polygon = roi_polygon
+        elif load_polygon_fn is not None:
+            polygon = load_polygon_fn()
+
+        if polygon is None and use_roi:
+            if select_polygon_fn is None:
+                raise RuntimeError("use_polygon=True but no polygon selector was provided.")
+            print("[INFO] No custom area stored yet. Draw a polygon around the beam region.")
+            polygon = select_polygon_fn(image_bgr)
+            if polygon is None:
+                raise RuntimeError("No custom area selected.")
+            if save_polygon_fn is not None:
+                save_polygon_fn(polygon)
+
+        if polygon is not None:
+            polygon = [(int(px), int(py)) for px, py in polygon]
+            search_region = polygon
+
+    else:
+        if use_roi:
+            roi_box = load_roi_box()
+            if roi_box is None:
+                print("[INFO] No ROI stored yet. Draw a box around the beam region.")
+                roi_box = select_roi_interactive(image_bgr)
+                if roi_box is None:
+                    raise RuntimeError("No ROI selected.")
+                save_roi_box(roi_box)
+
+        if roi_box is not None:
+            x, y, w, h = roi_box
+            x = max(0, min(x, w_full - 1))
+            y = max(0, min(y, h_full - 1))
+            w = max(1, min(w, w_full - x))
+            h = max(1, min(h, h_full - y))
+            roi_box = (x, y, w, h)
+            search_region = roi_box
+
+    # ------------------------------------------------------------
+    # Build masked image for detection
+    # ------------------------------------------------------------
+    if polygon is not None:
+        area_mask = polygon_to_mask(image_bgr.shape, polygon)
+        work_img = cv2.bitwise_and(image_bgr, image_bgr, mask=area_mask)
+        hsv = cv2.cvtColor(work_img, cv2.COLOR_BGR2HSV)
+
+    elif roi_box is not None:
         x, y, w, h = roi_box
-        x = max(0, min(x, w_full - 1))
-        y = max(0, min(y, h_full - 1))
-        w = max(1, min(w, w_full - x))
-        h = max(1, min(h, h_full - y))
-        roi_box = (x, y, w, h)
         roi_img = image_bgr[y:y+h, x:x+w]
+        hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
+        area_mask = None
+
     else:
         x, y, w, h = 0, 0, w_full, h_full
-        roi_img = image_bgr
+        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+        area_mask = None
 
-    hsv = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
-
+    # ------------------------------------------------------------
+    # Threshold red
+    # ------------------------------------------------------------
     red_ranges = [
         (np.array([h_low1, s_min, v_min]), np.array([h_high1, 255, 255])),
         (np.array([h_low2, s_min, v_min]), np.array([h_high2, 255, 255])),
@@ -294,42 +551,69 @@ def detect_red_markers_in_roi(
     for lo, hi in red_ranges:
         red_mask = cv2.bitwise_or(red_mask, cv2.inRange(hsv, lo, hi))
 
+    # If using polygon, enforce polygon mask explicitly
+    if polygon is not None:
+        red_mask = cv2.bitwise_and(red_mask, area_mask)
+
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, morph_kernel)
     if close_iters > 0:
         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, k, iterations=close_iters)
     if open_iters > 0:
-        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN,  k, iterations=open_iters)
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, k, iterations=open_iters)
 
     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    # ------------------------------------------------------------
+    # Compute centers in FULL-IMAGE coordinates
+    # ------------------------------------------------------------
     centers = []
     areas = []
+
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if area < float(min_area):
             continue
+
         M = cv2.moments(cnt)
         if M["m00"] == 0:
             continue
-        cx = float(M["m10"] / M["m00"]) + x
-        cy = float(M["m01"] / M["m00"]) + y
+
+        cx = float(M["m10"] / M["m00"])
+        cy = float(M["m01"] / M["m00"])
+
+        # ROI contour coordinates are local to cropped ROI
+        if polygon is None and roi_box is not None:
+            cx += x
+            cy += y
+
         centers.append((cx, cy))
         areas.append(area)
 
+    # ------------------------------------------------------------
+    # Debug
+    # ------------------------------------------------------------
     if _show_debug_here:
         dbg = image_bgr.copy()
+
         if roi_box is not None:
             rx, ry, rw, rh = roi_box
-            cv2.rectangle(dbg, (rx, ry), (rx+rw, ry+rh), (0, 255, 255), 2)
+            cv2.rectangle(dbg, (rx, ry), (rx + rw, ry + rh), (0, 255, 255), 2)
+
+        if polygon is not None:
+            pts = np.array(polygon, dtype=np.int32)
+            cv2.polylines(dbg, [pts], isClosed=True, color=(0, 255, 255), thickness=2)
+
         for (cx, cy) in centers:
             cv2.circle(dbg, (int(cx), int(cy)), 6, (0, 255, 255), -1)
+
         print(f"[DEBUG] raw contours={len(contours)}, kept after min_area={len(centers)}")
         if len(areas) > 0:
             print("[DEBUG] areas (kept):", sorted([round(a, 1) for a in areas], reverse=True)[:10])
 
         plt.figure(figsize=(10, 4))
+
         plt.subplot(1, 2, 1)
-        plt.title("Red mask (ROI)")
+        plt.title("Red mask")
         plt.imshow(red_mask, cmap="gray")
         plt.axis("off")
 
@@ -337,23 +621,31 @@ def detect_red_markers_in_roi(
         plt.title("Detections overlay")
         plt.imshow(cv2.cvtColor(dbg, cv2.COLOR_BGR2RGB))
         plt.axis("off")
-        # plt.show()
 
     if len(centers) == 0:
-        raise ValueError("No red markers detected inside ROI (after filtering).")
+        raise ValueError("No red markers detected inside selected search area (after filtering).")
 
     centers = merge_close_points(centers, merge_dist)
 
-    # --- Fallback pass: do it at most once ---
+    # ------------------------------------------------------------
+    # Fallback pass: do it at most once
+    # ------------------------------------------------------------
     if (len(centers) < expected_markers) and (not _did_fallback):
         return detect_red_markers_in_roi(
             image_bgr,
             use_roi=use_roi,
             expected_markers=expected_markers,
-            min_area=max(5, int(min_area * 0.5)),
+
+            roi_polygon=polygon,
+            use_polygon=use_polygon,
+            select_polygon_fn=select_polygon_fn,
+            load_polygon_fn=load_polygon_fn,
+            save_polygon_fn=save_polygon_fn,
+
+            min_area=max(1.0, float(min_area) * 0.5),
             merge_dist=merge_dist,
             morph_kernel=(3, 3),
-            close_iters=0,  # key change
+            close_iters=0,
             open_iters=1,
             s_min=max(15, int(s_min * 0.5)),
             v_min=max(15, int(v_min * 0.5)),
@@ -378,27 +670,25 @@ def detect_red_markers_in_roi(
     else:
         centers = centers[:expected_markers]
 
-    # --- Handle 2-marker mode when expected_markers == 3 ---
+    # ------------------------------------------------------------
+    # Output shape
+    # ------------------------------------------------------------
     if expected_markers == 3:
         if len(centers) == 3:
-            # centers sorted: [tip, mid, base] by y
             tip_px, mag_start_px, base_px = centers[0], centers[1], centers[2]
-            return base_px, mag_start_px, tip_px, roi_box
+            return base_px, mag_start_px, tip_px, search_region
 
         if len(centers) == 2 and allow_two_markers_when_expected_three:
-            # centers sorted: [tip, base] by y
             tip_px, base_px = centers[0], centers[1]
             mag_start_px = None
-            return base_px, mag_start_px, tip_px, roi_box
+            return base_px, mag_start_px, tip_px, search_region
 
         raise ValueError(
             f"Expected 3 markers but detected {len(centers)} after fallback; "
             "set allow_two_markers_when_expected_three=True to accept base+tip only."
         )
 
-    # Non-3-marker case: keep your original behavior
-    return centers, roi_box
-
+    return centers, search_region
 def image_points_to_mm(points, H_img_to_mm):
     pts = np.array(points, dtype=np.float32)
     pts_h = np.hstack([pts, np.ones((pts.shape[0], 1), dtype=np.float32)])
@@ -407,7 +697,60 @@ def image_points_to_mm(points, H_img_to_mm):
     return [tuple(p) for p in pts_mm]
 
 
+import json
+import os
 
+POLYGON_CONFIG_FILE = "custom_area.json"
+
+def save_polygon(points, path=POLYGON_CONFIG_FILE):
+    data = {"points": [[int(x), int(y)] for x, y in points]}
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+def load_polygon(path=POLYGON_CONFIG_FILE):
+    if not os.path.exists(path):
+        return None
+    with open(path, "r") as f:
+        data = json.load(f)
+    return [(int(x), int(y)) for x, y in data["points"]]
+def select_polygon_interactive(image, window_name="Select custom area"):
+    display = image.copy()
+    points = []
+
+    def redraw():
+        temp = image.copy()
+        for i, pt in enumerate(points):
+            cv2.circle(temp, pt, 4, (0, 255, 0), -1)
+            if i > 0:
+                cv2.line(temp, points[i - 1], pt, (0, 255, 0), 2)
+        if len(points) >= 3:
+            cv2.line(temp, points[-1], points[0], (255, 0, 0), 1)
+        cv2.imshow(window_name, temp)
+
+    def mouse_callback(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            points.append((x, y))
+            redraw()
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(window_name, mouse_callback)
+    redraw()
+
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+        if key in (13, 32):  # Enter or Space
+            if len(points) >= 3:
+                break
+        elif key == ord("u"):
+            if points:
+                points.pop()
+                redraw()
+        elif key in (27, ord("q")):
+            points = None
+            break
+
+    cv2.destroyWindow(window_name)
+    return points
 def measure_beam_and_tip_lengths_mm_with_checkerboard(
     image_filename="focused_image.jpg",
     use_roi=True,
@@ -430,13 +773,15 @@ def measure_beam_and_tip_lengths_mm_with_checkerboard(
         raise ValueError("Invalid geometry: z_beam must be > 0.")
     depth_scale = z_beam / z_board
 
-    # Step 4: detect markers (base, mag_start OR None, tip)
-    base_px, mag_start_px, tip_px, roi_box = detect_red_markers_in_roi(
+    base_px, mag_start_px, tip_px, search_region = detect_red_markers_in_roi(
         image,
-        use_roi=use_roi,
+        use_roi=True,
+        use_polygon=True,
+        load_polygon_fn=load_polygon,
+        save_polygon_fn=save_polygon,
+        select_polygon_fn=select_polygon_interactive,
         expected_markers=3,
-        show_debug=show_debug_markers,
-        allow_two_markers_when_expected_three=True,  # IMPORTANT
+        show_debug=True,
     )
 
     # Step 5: pixel -> mm on checkerboard plane -> scale to beam plane
@@ -488,10 +833,13 @@ def measure_beam_and_tip_lengths_mm_with_checkerboard(
     if show:
         vis = image.copy()
 
-        if roi_box is not None:
-            rx, ry, rw, rh = roi_box
-            cv2.rectangle(vis, (rx, ry), (rx + rw, ry + rh), (0, 255, 255), 2)
-
+    if search_region is not None:
+        if isinstance(search_region, tuple) and len(search_region) == 4:
+            x, y, w, h = search_region
+            cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 255), 2)
+        else:
+            pts = np.array(search_region, dtype=np.int32)
+            cv2.polylines(vis, [pts], isClosed=True, color=(0, 255, 255), thickness=2)
         # draw base & tip always
         cv2.circle(vis, (int(base_px[0]), int(base_px[1])), 7, (255, 0, 0), -1)   # base = blue
         cv2.circle(vis, (int(tip_px[0]),  int(tip_px[1])),  7, (0, 0, 255), -1)   # tip = red
@@ -535,7 +883,7 @@ def measure_beam_and_tip_lengths_mm_with_checkerboard(
         "image_file": img_file,
         "H_img_to_mm": H_img_to_mm,
         "depth_scale": depth_scale,
-        "roi_box": roi_box,
+        # "roi_box": roi_box,
 
         "base_px": tuple(base_px),
         "mag_start_px": None if mag_start_px is None else tuple(mag_start_px),

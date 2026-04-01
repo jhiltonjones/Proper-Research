@@ -183,9 +183,11 @@ def detect_4_red_markers_in_roi(
     hue2_low=160,
     hue2_high=180,
     debug_allow_less_than_4=False,
+    min_markers=3,
+    max_markers=4,
 ):
     """
-    Detect up to 4 red markers inside either:
+    Detect red markers inside either:
       - roi_box: (x, y, w, h)
       - roi_polygon: [(x1, y1), (x2, y2), ...]
 
@@ -205,9 +207,6 @@ def detect_4_red_markers_in_roi(
 
     H, W = image_bgr.shape[:2]
 
-    # ---------------------------------------------------------
-    # Build working ROI image + spatial mask
-    # ---------------------------------------------------------
     if roi_polygon is not None:
         pts = np.array(roi_polygon, dtype=np.float32)
         if len(pts) < 3:
@@ -264,14 +263,10 @@ def detect_4_red_markers_in_roi(
     mask2 = cv2.inRange(hsv, lower2, upper2)
     mask = cv2.bitwise_or(mask1, mask2)
 
-    # restrict to custom area
     mask = cv2.bitwise_and(mask, spatial_mask)
 
-    # opening only; avoid closing because it can merge blobs
     k = np.ones((3, 3), np.uint8)
     mask_open = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
-
-    # enforce spatial mask again after morphology
     mask_open = cv2.bitwise_and(mask_open, spatial_mask)
 
     contours, _ = cv2.findContours(mask_open, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -284,7 +279,6 @@ def detect_4_red_markers_in_roi(
     raw_debug = roi.copy()
     kept_debug = roi.copy()
 
-    # visualize polygon boundary in local ROI coords
     if roi_polygon is not None:
         pts_local = np.array(
             [[int(round(px - x0)), int(round(py - y0))] for px, py in roi_polygon],
@@ -309,7 +303,6 @@ def detect_4_red_markers_in_roi(
             f"bbox=({bx},{by},{bw},{bh}), center=({cx:.1f},{cy:.1f})"
         )
 
-        # draw every raw contour
         cv2.drawContours(raw_debug, [cnt], -1, (0, 255, 0), 1)
         cv2.rectangle(raw_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)
         cv2.putText(
@@ -327,9 +320,13 @@ def detect_4_red_markers_in_roi(
         if abs(M["m00"]) <= 1e-8:
             continue
 
+        (xc_circle, yc_circle), radius = cv2.minEnclosingCircle(cnt)
+        diameter = 2.0 * radius
+
         candidates.append({
             "point": (float(cx + x0), float(cy + y0)),
             "area": float(area),
+            "diameter_px": float(diameter),
             "contour": cnt,
             "local_center": (float(cx), float(cy)),
             "bbox": (bx, by, bw, bh),
@@ -382,11 +379,13 @@ def detect_4_red_markers_in_roi(
         plt.tight_layout()
         plt.show()
 
-    if len(candidates) < 4 and not debug_allow_less_than_4:
-        raise RuntimeError(f"Expected at least 4 red markers, found {len(candidates)}")
+    if len(candidates) < min_markers and not debug_allow_less_than_4:
+        raise RuntimeError(
+            f"Expected at least {min_markers} red markers, found {len(candidates)}"
+        )
 
-    points = [c["point"] for c in candidates[:4]]
-    return points
+    selected = candidates[:max_markers]
+    return selected
 def show_red_mask(image_bgr, roi_box=None, sat_min=40, val_min=30, hue1_high=15, hue2_low=165):
     if roi_box is not None:
         x, y, w, h = roi_box

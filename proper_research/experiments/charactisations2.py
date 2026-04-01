@@ -44,7 +44,7 @@ from proper_research.parameters import default_magnet_params
 
 from proper_research.vision.bounds_beam import (
     detect_2_green_calibration_points,
-    measure_tip_state_4markers,
+    measure_tip_state_4markers, load_polygon
 )
 
 mag_params = default_magnet_params()
@@ -384,20 +384,16 @@ def build_reference_beam_frame_from_image(
     show: bool = False,
     show_debug_markers: bool = False,
 ):
-    red_roi_box = load_roi_box(red_roi_path)
-
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     ref_result = measure_tip_state_4markers(
         image_filename=image_filename,
-        roi_box=red_roi_box,
+        roi_box=None,
+        roi_polygon=roi_polygon,
         show=show,
         show_debug_markers=show_debug_markers,
-        unwrap_angle=False,
+        unwrap_angle=True,
         pivot_hint=pivot_hint,
-        base_px_ref=None,
-        ex_ref=None,
-        ey_ref=None,
     )
-
     base_px_ref = ref_result["markers"]["base_px"]
     ex_ref = np.asarray(ref_result["beam_frame_fit"]["ex"], dtype=float)
     ey_ref = np.asarray(ref_result["beam_frame_fit"]["ey"], dtype=float)
@@ -430,13 +426,13 @@ def measure_tip_from_vision_base_local(
         green_roi_box=green_roi_box,
         known_distance_mm=cfg.known_green_distance_mm,
     )
-
+    pivot_hint = (300, 391)
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     tip_result = measure_tip_state_4markers(
         image_filename=cfg.image_filename,
-        roi_box=red_roi_box,
-        show=cfg.show_debug_vision,
-        show_debug_markers=cfg.show_debug_vision,
-        unwrap_angle=False,
+        roi_box=None,
+        roi_polygon=roi_polygon,
+        unwrap_angle=True,
         pivot_hint=cfg.pivot_hint,
         base_px_ref=base_px_ref,
         ex_ref=ex_ref,
@@ -594,13 +590,14 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
 
         if cfg.capture_each_step:
             new_capture()
-
+        roi_polygon_path="/home/jack/Proper-Research/custom_area.json"
+        roi_polygon = load_polygon(roi_polygon_path)
         # ------------------------------------------------------------
         # Vision reconstruction from image
         # ------------------------------------------------------------
         recon = reconstruct_beam_within_vessel(
             image_filename=cfg.image_filename,
-            red_roi_path=cfg.red_roi_path,
+            red_roi_polygon=roi_polygon,
             blue_roi_path="blue_roi_box.json",
             green_roi_path=cfg.green_roi_path,
             pivot_hint=cfg.pivot_hint,
@@ -817,18 +814,18 @@ if __name__ == "__main__":
         xyz_max=(1.20, +1.50, +1.50),
         max_trans_m=0.01,
         max_rot_rad=0.2,
-        z_offset=0.28,
+        z_offset=0.27,
         use_moveL_params=False,
         v=0.10,
         a=0.30,
     )
 
     pivot_point = np.array([
-    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8181328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     beam_base_point_robot_m = pivot_point[:3].copy()
-    L0 = 0.055
+    L0 = 0.0534
 
     cfg = SweepEvalConfig(
         pivot_pose6=pivot_point,
@@ -836,7 +833,7 @@ if __name__ == "__main__":
         L_m=L0,
         i_fixed=0,
         j_start=0,
-        j_end=-60,
+        j_end=-85,
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
@@ -844,7 +841,7 @@ if __name__ == "__main__":
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_forward_wlumen2",
+        results_dir="results_sweep_forward_wlumen5",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

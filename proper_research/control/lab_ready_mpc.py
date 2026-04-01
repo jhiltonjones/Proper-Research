@@ -756,8 +756,8 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        # self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
-        self.w_adv = 0
+        self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
+        # self.w_adv = 1
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -1130,7 +1130,7 @@ class mpc_controller_tipxy_LTI:
                 X_aff = (Mx @ xk).reshape(Np * n, 1)
 
             i0 = int(getattr(self, "i_ref_last", 0))
-            look = int(getattr(self, "ref_lookahead_pts", 7))
+            look = int(getattr(self, "ref_lookahead_pts", 14))
             idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
             print(f"REFERENCE {idx_ref}")
 
@@ -1139,7 +1139,12 @@ class mpc_controller_tipxy_LTI:
                 X_ref[k * n + 0, 0] = Cc[idx_ref[k], 0]
                 X_ref[k * n + 1, 0] = Cc[idx_ref[k], 1]
                 X_ref[k * n + 2, 0] = Cc[idx_ref[k], 2]
+            X_aff_fixed = X_ref.copy()
 
+            for k in range(Np):
+                sl = slice(k * n, (k + 1) * n)
+                X_aff_fixed[sl.start + 0, 0] = X_aff[sl.start + 0, 0]
+                X_aff_fixed[sl.start + 1, 0] = X_aff[sl.start + 1, 0]
             Qtil = np.kron(np.eye(Np), self.Q)
 
             Mc_last = Mc
@@ -1148,10 +1153,11 @@ class mpc_controller_tipxy_LTI:
             p_seq_last = p_seq
 
             H_track = 2.0 * (Mc.T @ Qtil @ Mc)
-            f_track = 2.0 * (Mc.T @ Qtil @ (X_aff - X_ref))
+            f_track = 2.0 * (Mc.T @ Qtil @ (X_aff_fixed - X_ref))
             H += H_track
             f += f_track
-
+            print(f"x_aff is: {X_aff_fixed}")
+            print(f"x_ref is: {X_ref}")
             if dbg_terms is not None:
                 dbg_terms["track"] = (H_track.copy(), f_track.copy())
                 dbg_terms["track_model"] = dict(
@@ -1213,7 +1219,7 @@ class mpc_controller_tipxy_LTI:
                 theta0 = np.nan
                 w_adv_eff = 0.0
 
-            enable_tangent_pen = bool(getattr(self, "enable_tangent_penalty", True)) and (t_vessel is not None)
+            enable_tangent_pen = bool(getattr(self, "enable_tangent_penalty", False)) and (t_vessel is not None)
 
             if enable_tangent_pen and (self.lumen_R is not None):
                 print("Here")
@@ -1261,8 +1267,8 @@ class mpc_controller_tipxy_LTI:
                 H_tan = 2.0 * (A_tan.T @ W_tan @ A_tan)
                 f_tan = 2.0 * (A_tan.T @ W_tan @ b_tan)
 
-                H += H_tan
-                f += f_tan
+                # H += H_tan
+                # f += f_tan
 
                 if dbg_terms is not None:
                     dbg_terms["tangent"] = (H_tan.copy(), f_tan.copy())
@@ -1449,8 +1455,8 @@ class mpc_controller_tipxy_LTI:
             else:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
-            enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", False))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
+            enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.14))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2362,16 +2368,16 @@ def snapshot_forward(forward6d, p8, *, commit=False):
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8381328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
 
     
-    L0 = 0.048
+    L0 = 0.05
 
     pose6 = np.asarray(get_point(0, 0), dtype=float)
     # pose6 = hw.get_robot_pose_once()
-
+    # pose6 = np.array([0.6464871989117105, -0.5659848620070453, 0.18000000000000002, 2.822035029384029, -1.334168531318762, -0.06004322067724725], float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -2390,7 +2396,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.15
+    dt = 0.01
     return pivot_point, start_point, L0, dt
 
 
@@ -2430,25 +2436,25 @@ def build_controller(
     ], dtype=float)
 
     forward6d = DeterministicForward6D(forward_model)
-    forward_model_fastjac = EnergyMinForwardWithLumen(
-        p0_ur=forward_model.p0_ur,
-        q0_ur=forward_model.q0_ur,
-        Kinv_fun=forward_model.Kinv_fun,
-        u_star=forward_model.u_star,
-        m_body=forward_model.m_body,
-        lumen_C=forward_model.lumen_C,
-        lumen_R=forward_model.lumen_R,
-        N_nodes=10,
-        maxiter=30,
-        L0_init=forward_model.L0_init,
-        dL_internal=0.002,
-        L_tip_full=forward_model.L_tip_full,
-        L_tip_min=forward_model.L_tip_min,
-        use_lumen_jac=forward_model.use_lumen_jac,
-    )
-    forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
+    # forward_model_fastjac = EnergyMinForwardWithLumen(
+    #     p0_ur=forward_model.p0_ur,
+    #     q0_ur=forward_model.q0_ur,
+    #     Kinv_fun=forward_model.Kinv_fun,
+    #     u_star=forward_model.u_star,
+    #     m_body=forward_model.m_body,
+    #     lumen_C=forward_model.lumen_C,
+    #     lumen_R=forward_model.lumen_R,
+    #     N_nodes=10,
+    #     maxiter=35,
+    #     L0_init=forward_model.L0_init,
+    #     dL_internal=0.002,
+    #     L_tip_full=forward_model.L_tip_full,
+    #     L_tip_min=forward_model.L_tip_min,
+    #     use_lumen_jac=forward_model.use_lumen_jac,
+    # )
+    # forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
     J_fn = lambda p8: numerical_B_y_wrt_u(
-        p8, forward6d_fastjac, dt=dt, eps_u=eps_u, n_out=6
+        p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
     )
 
     mpc = mpc_controller_tipxy_LTI(
@@ -2459,7 +2465,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(35.0, 35.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(5.0, 5.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2475,12 +2481,12 @@ def build_controller(
     mpc.enable_mag_center_standoff = True
     mpc.enable_mag_tangent_inline = False
     mpc.enable_dipole_align = True
-    mpc.enable_hard_epm_tip_clearance = False
+    mpc.enable_hard_epm_tip_clearance = True
     mpc.enable_standoff_soft = True
     mpc.enable_inline_soft = True
     mpc.enable_dipole_soft = True
     mpc.enable_hard_theta = True
-    mpc.enable_tangent_penalty = True
+    mpc.enable_tangent_penalty = False
 
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
@@ -2488,17 +2494,34 @@ def build_controller(
     print(f"Finished building controller")
     return mpc, p0, p_min, p_max, u_max, forward6d
 
-def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
-    p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
-    P_local = np.asarray(points_local_m, dtype=float).copy()
+def transform_local_points_to_robot(
+    points_local_m,
+    pivot_pose6,
+    flip_y: bool = False,
+):
+    """
+    Convert lumen points from the vision/local frame into robot/world frame.
 
+    Assumes points_local_m are expressed in a pivot-attached local frame,
+    except for the historical image convention where +y must be flipped.
+    """
+    P_local = np.asarray(points_local_m, dtype=float).copy()
     if P_local.ndim == 1:
         P_local = P_local.reshape(1, 3)
 
-    P_local[:, 1] *= -1.0
-    return P_local + p_pivot_robot.reshape(1, 3)
+    # Preserve your existing vision sign convention.
+    if flip_y:
+        P_local[:, 1] *= -1.0
 
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(1, 3)
 
+    P_robot = (R_pivot @ P_local.T).T + p_pivot
+    return P_robot
+
+def pivot_rotation_matrix(pivot_pose6: np.ndarray) -> np.ndarray:
+    T = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
+    return T[:3, :3]
 
 # def transform_local_points_to_robot(points_local_m, pivot_point_pose6):
 #     p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
@@ -2509,7 +2532,7 @@ def run_control(
     mpc,
     pivot_point,
     image_filename="focused_image.jpg",
-    red_roi_path="red_roi_box.json",
+    red_roi_path="/home/jack/Proper-Research/custom_area_w_wall.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
@@ -2519,7 +2542,7 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log.csv",
+    csv_log_path="control_run_log_test2.csv",
 ):
     history = []
     csv_rows = []
@@ -2529,14 +2552,14 @@ def run_control(
 
         new_capture()
         overlay_path = f"debug_outputs_easter/reconstruction_step_{k:04d}.png"
-        roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+        roi_polygon = load_polygon(red_roi_path)
 
         vision_result = reconstruct_beam_within_vessel(
             image_filename="focused_image.jpg",
             red_roi_polygon=roi_polygon,
             blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
-            show=False,
+            show=show,
             save_overlay_path="debug_outputs/reconstruction_overlay.png",
         )
 
@@ -2763,14 +2786,15 @@ def build_initial_lumen_from_vision(
     show=True,
 ):
     new_capture()
-
+    roi_polygon_path="/home/jack/Proper-Research/custom_area.json"
+    roi_polygon = load_polygon(roi_polygon_path)
     vision_result = reconstruct_beam_within_vessel(
-        image_filename=image_filename,
-        red_roi_path=red_roi_path,
-        blue_roi_path=blue_roi_path,
-        green_roi_path=green_roi_path,
+        image_filename="focused_image.jpg",
+        red_roi_polygon=roi_polygon,
+        blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,
         show=show,
+        save_overlay_path="debug_outputs/reconstruction_overlay.png",
     )
 
     lumen_C_robot_m = transform_local_points_to_robot(
@@ -2810,12 +2834,12 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
     )
     print(f"Finished_building_model")
     return p0_ur, q0_ur, forward_model
 if __name__ == "__main__":
-    pivot_hint = (300, 391)
+    pivot_hint = (325, 371)
         # 4. dry-run control loop
     hw = LiveHardwareController(
         robot_ip="192.168.56.101",
@@ -2840,10 +2864,10 @@ if __name__ == "__main__":
     vision_init, lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
         pivot_point=pivot_point,
         image_filename="focused_image.jpg",
-        red_roi_path="red_roi_box.json",
+        red_roi_path="/home/jack/Proper-Research/custom_area.json",
         blue_roi_path="blue_roi_box.json",
         green_roi_path="green_roi_box.json",
-        pivot_hint=None,
+        pivot_hint=pivot_hint,
         show=False,
     )
 
@@ -2872,7 +2896,7 @@ if __name__ == "__main__":
             mpc=mpc,
             pivot_point=pivot_point,
             image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
+            red_roi_path="/home/jack/Proper-Research/custom_area.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
@@ -2881,7 +2905,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_easter_new_nowall2",
+            plot_dir="mpc_debug_plots_testing2",
         )
     finally:
         hw.shutdown()

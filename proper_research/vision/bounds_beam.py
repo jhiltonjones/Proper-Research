@@ -157,18 +157,29 @@ def build_lumen_from_parametric_boundaries(
     lumen_R_m = lumen_R_mm / 1000.0
 
     return lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm
-def make_fixed_local_frame(base_px_ref, mag_start_px_ref):
+def make_fixed_local_frame(base_px_ref, mag_start_px_ref=None, tangent_start_px_ref=None):
+    if base_px_ref is None:
+        raise ValueError("base_px_ref is None")
+
     base = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
-    mag_start = np.asarray(mag_start_px_ref, dtype=np.float32).reshape(2,)
+
+    if mag_start_px_ref is not None:
+        ref_pt = np.asarray(mag_start_px_ref, dtype=np.float32).reshape(2,)
+    elif tangent_start_px_ref is not None:
+        ref_pt = np.asarray(tangent_start_px_ref, dtype=np.float32).reshape(2,)
+    else:
+        raise ValueError(
+            "Need either mag_start_px_ref or tangent_start_px_ref to build fixed local frame."
+        )
 
     ref = np.array([
-        mag_start[0] - base[0],
-        -(mag_start[1] - base[1]),
+        ref_pt[0] - base[0],
+        -(ref_pt[1] - base[1]),
     ], dtype=np.float32)
 
     nr = np.linalg.norm(ref)
     if nr < 1e-12:
-        raise ValueError("Reference base->mag_start vector is zero length.")
+        raise ValueError("Reference base->reference_point vector is zero length.")
 
     ex_ref = ref / nr
     ey_ref = np.array([-ex_ref[1], ex_ref[0]], dtype=np.float32)
@@ -237,32 +248,49 @@ def compute_tip_wall_distances_with_radius(
     }
 def fit_beam_centerline_from_markers(markers, y_samples=None):
     """
-    Fit beam centerline as x(y) using a cubic through the 4 ordered markers.
+    Fit beam centerline as x(y) from available ordered markers.
 
-    markers dict must contain:
+    Expected marker keys:
       base_px, mag_start_px, tangent_start_px, tip_px
+
+    Uses:
+      - cubic fit for 4 valid markers
+      - quadratic fit for 3 valid markers
 
     Returns:
         beam_points_px: list of (x, y)
-        poly_coeffs: cubic coefficients for x(y)
+        poly_coeffs: polynomial coefficients for x(y)
+        poly_degree: polynomial degree used
     """
-    pts = np.array([
-        markers["base_px"],
-        markers["mag_start_px"],
-        markers["tangent_start_px"],
-        markers["tip_px"],
-    ], dtype=np.float32)
+    ordered_keys = ["base_px", "mag_start_px", "tangent_start_px", "tip_px"]
+
+    valid_pts = []
+    for key in ordered_keys:
+        p = markers.get(key, None)
+        if p is None:
+            continue
+        valid_pts.append(np.asarray(p, dtype=np.float32).reshape(2,))
+
+    if len(valid_pts) < 3:
+        raise ValueError(
+            f"Need at least 3 valid markers to fit beam centerline, got {len(valid_pts)}"
+        )
+
+    pts = np.vstack(valid_pts)
 
     xs = pts[:, 0]
     ys = pts[:, 1]
 
-    # sort by y so the fit is stable in the vessel direction
     order = np.argsort(ys)
     ys = ys[order]
     xs = xs[order]
 
-    # cubic fit: x = f(y)
-    coeffs = np.polyfit(ys, xs, deg=3)
+    if np.ptp(ys) < 1e-6:
+        raise ValueError("Cannot fit beam centerline: y values have near-zero spread.")
+
+    poly_degree = min(len(valid_pts) - 1, 3)
+
+    coeffs = np.polyfit(ys, xs, deg=poly_degree)
     poly = np.poly1d(coeffs)
 
     if y_samples is None:
@@ -271,8 +299,7 @@ def fit_beam_centerline_from_markers(markers, y_samples=None):
     x_samples = poly(y_samples)
 
     beam_points_px = [(float(x), float(y)) for x, y in zip(x_samples, y_samples)]
-    return beam_points_px, coeffs
-
+    return beam_points_px, coeffs, poly_degree
 def boundary_to_xy_arrays(boundary_points):
     pts = np.array(boundary_points, dtype=np.float32)
     xs = pts[:, 0]
@@ -319,15 +346,23 @@ def draw_beam_and_vessel_overlay(
             "tip_px": (0, 0, 255),
         }
         for key, p in markers.items():
-            cv2.circle(vis, (int(p[0]), int(p[1])), 6, color_map[key], -1)
+            if p is None:
+                continue
+            if key not in color_map:
+                continue
+
+            x = int(round(p[0]))
+            y = int(round(p[1]))
+
+            cv2.circle(vis, (x, y), 6, color_map[key], -1)
             cv2.putText(
                 vis, key.replace("_px", ""),
-                (int(p[0]) + 5, int(p[1]) - 5),
+                (x + 5, y - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
             )
             cv2.putText(
                 vis, key.replace("_px", ""),
-                (int(p[0]) + 5, int(p[1]) - 5),
+                (x + 5, y - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
             )
 
@@ -648,11 +683,16 @@ def plot_tip_measurement_vs_lumen_local(result, tangent_scale_mm=8.0, n_tangent_
     tip_xy = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_mm = tip_xy * float(result["mm_per_pixel"])
 
-    # measured tangent in image-cartesian
-    tip_px = np.asarray(markers["tip_px"], dtype=float)
-    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
-    base_px = np.asarray(markers["base_px"], dtype=float)
-    mag_start_px = np.asarray(markers["mag_start_px"], dtype=float)
+
+    tip_px = np.asarray(markers["tip_px"], dtype=float).reshape(2,)
+    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float).reshape(2,)
+    base_px = np.asarray(markers["base_px"], dtype=float).reshape(2,)
+
+    mag_start_raw = markers.get("mag_start_px", None)
+    if mag_start_raw is not None:
+        ref_pt_px = np.asarray(mag_start_raw, dtype=float).reshape(2,)
+    else:
+        ref_pt_px = tan_start_px
 
     v_img = np.array([
         tip_px[0] - tan_start_px[0],
@@ -665,12 +705,12 @@ def plot_tip_measurement_vs_lumen_local(result, tangent_scale_mm=8.0, n_tangent_
 
     # same beam-local basis used by image_to_base_frame() / build_lumen_from_parametric_boundaries()
     ref = np.array([
-        mag_start_px[0] - base_px[0],
-        -(mag_start_px[1] - base_px[1]),
+        ref_pt_px[0] - base_px[0],
+        -(ref_pt_px[1] - base_px[1]),
     ], dtype=float)
     nr = np.linalg.norm(ref)
     if nr < 1e-12:
-        raise ValueError("Base-to-magnet reference vector is zero-length.")
+        raise ValueError("Base-to-reference vector is zero-length.")
     ex = ref / nr
     ey = np.array([-ex[1], ex[0]], dtype=float)
 
@@ -810,7 +850,7 @@ def get_saved_2_point_calibration(path="calibration_points.json"):
     }
 def reconstruct_beam_within_vessel(
     image_filename="focused_image.jpg",
-    red_roi_path="red_roi_box.json",
+    red_roi_path="/home/jack/Proper-Research/custom_area.json",
     red_roi_polygon=None,
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
@@ -858,7 +898,10 @@ def reconstruct_beam_within_vessel(
     )
 
     markers = tip_result["markers"]
-
+    diameters = tip_result["marker_diameters_px"]
+    diameter_px_tip = diameters["tip_px"]
+    diameter_mm = diameter_px_tip * mm_per_pixel
+    print(f"Marker diameter at tip: {diameter_mm}")
     manual_vessel = load_manual_vessel_boundaries(MANUAL_VESSEL_BOUNDARY_FILE)
 
     left_smooth = manual_vessel["left_boundary_px"]
@@ -866,8 +909,9 @@ def reconstruct_beam_within_vessel(
     vessel = {"mode": "manual"}
     print("[INFO] Using manually drawn vessel boundaries.")
     base_px_ref, ex_ref, ey_ref = make_fixed_local_frame(
-    markers["base_px"],
-    markers["mag_start_px"],
+        base_px_ref=markers["base_px"],
+        mag_start_px_ref=markers["mag_start_px"],
+        tangent_start_px_ref=markers["tangent_start_px"],
     )
     tip_xy_fixed = image_to_fixed_local_frame(
         markers["tip_px"],
@@ -888,8 +932,8 @@ def reconstruct_beam_within_vessel(
     print("lumen_C_m first local =", lumen_C_m[0])
     print("lumen_C_m last local  =", lumen_C_m[-1])
     
-    # --- beam reconstruction ---
-    beam_points_px, beam_coeffs = fit_beam_centerline_from_markers(markers)
+        # --- beam reconstruction ---
+    beam_points_px, beam_coeffs, beam_degree = fit_beam_centerline_from_markers(markers)
     beam_length_px = compute_beam_length_px(beam_points_px)
     beam_length_mm = beam_length_px * mm_per_pixel
 
@@ -1204,25 +1248,44 @@ def pixel_to_mm(point_px, origin_px, mm_per_pixel):
     return tuple(delta_mm.tolist())
 def px_to_mm_distance(dist_px, mm_per_pixel):
     return float(dist_px * mm_per_pixel)
-def order_four_markers(points, pivot_hint=None):
+def order_beam_markers(points, pivot_hint=None):
     pts = [np.array(p, dtype=np.float32) for p in points]
-    if len(pts) != 4:
-        raise ValueError(f"Expected 4 points, got {len(pts)}")
 
+    if len(pts) not in (3, 4):
+        raise ValueError(f"Expected 3 or 4 points, got {len(pts)}")
+
+    # choose base
     if pivot_hint is not None:
         pivot_hint = np.array(pivot_hint, dtype=np.float32)
         start_idx = int(np.argmin([np.linalg.norm(p - pivot_hint) for p in pts]))
     else:
         start_idx = int(np.argmin([p[0] for p in pts]))
 
-    ordered = [pts.pop(start_idx)]
+    base = pts.pop(start_idx)
 
+    # chain remaining points by nearest-neighbour from base
+    ordered = [base]
     while pts:
         last = ordered[-1]
         next_idx = int(np.argmin([np.linalg.norm(p - last) for p in pts]))
         ordered.append(pts.pop(next_idx))
 
-    return [tuple(map(float, p)) for p in ordered]
+    # If 4 markers exist: [base, mag_start, tangent_start, tip]
+    if len(ordered) == 4:
+        base, mag_start, tangent_start, tip = ordered
+
+    # If 3 markers exist, mag_start is assumed missing:
+    # [base, tangent_start, tip]
+    else:
+        base, tangent_start, tip = ordered
+        mag_start = None
+
+    return (
+        tuple(map(float, base)),
+        None if mag_start is None else tuple(map(float, mag_start)),
+        tuple(map(float, tangent_start)),
+        tuple(map(float, tip)),
+    )
 
 def image_to_base_frame(point_px, base_px, mag_start_px):
     # image -> Cartesian
@@ -1272,7 +1335,37 @@ class AngleUnwrapper:
 
 unwrap_tip_angle = AngleUnwrapper()
 
+def order_beam_marker_candidates(candidates, pivot_hint=None):
+    items = list(candidates)
 
+    if len(items) not in (3, 4):
+        raise ValueError(f"Expected 3 or 4 candidates, got {len(items)}")
+
+    pts = [np.array(c["point"], dtype=np.float32) for c in items]
+
+    if pivot_hint is not None:
+        pivot_hint = np.array(pivot_hint, dtype=np.float32)
+        start_idx = int(np.argmin([np.linalg.norm(p - pivot_hint) for p in pts]))
+    else:
+        start_idx = int(np.argmin([p[0] for p in pts]))
+
+    ordered = [items.pop(start_idx)]
+
+    while items:
+        last_pt = np.array(ordered[-1]["point"], dtype=np.float32)
+        next_idx = int(np.argmin([
+            np.linalg.norm(np.array(c["point"], dtype=np.float32) - last_pt)
+            for c in items
+        ]))
+        ordered.append(items.pop(next_idx))
+
+    if len(ordered) == 4:
+        base_c, mag_start_c, tangent_start_c, tip_c = ordered
+    else:
+        base_c, tangent_start_c, tip_c = ordered
+        mag_start_c = None
+
+    return base_c, mag_start_c, tangent_start_c, tip_c
 def signed_angle_between_vectors(v1, v2):
     a1 = np.arctan2(v1[1], v1[0])
     a2 = np.arctan2(v2[1], v2[0])
@@ -1306,29 +1399,41 @@ def measure_tip_state_4markers(
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
 
-    detected_points = detect_4_red_markers_in_roi(
+    detected_candidates = detect_4_red_markers_in_roi(
         image_bgr,
         roi_box=roi_box,
         roi_polygon=roi_polygon,
-        min_area=1,
+        min_area=4,
         max_area=40000,
         sat_min=50,
         val_min=40,
         hue1_high=10,
         hue2_low=170,
         show_debug=show_debug_markers,
+        min_markers=3,
+        max_markers=4,
     )
 
-    if detected_points is None or len(detected_points) < 4:
-        raise RuntimeError(f"Expected at least 4 detected red markers, got: {detected_points}")
+    if detected_candidates is None or len(detected_candidates) < 3:
+        raise RuntimeError(
+            f"Expected at least 3 detected red markers, got: {detected_candidates}"
+        )
 
-    ordered = order_four_markers(detected_points, pivot_hint=pivot_hint)
-    base_px, mag_start_px, tangent_start_px, tip_px = ordered
+    base_c, mag_start_c, tangent_start_c, tip_c = order_beam_marker_candidates(
+        detected_candidates,
+        pivot_hint=pivot_hint
+    )
+
+    base_px = base_c["point"]
+    mag_start_px = None if mag_start_c is None else mag_start_c["point"]
+    tangent_start_px = tangent_start_c["point"]
+    tip_px = tip_c["point"]
 
     base = np.array(base_px, dtype=np.float32)
-    mag_start = np.array(mag_start_px, dtype=np.float32)
     tangent_start = np.array(tangent_start_px, dtype=np.float32)
     tip = np.array(tip_px, dtype=np.float32)
+
+    mag_start = None if mag_start_px is None else np.array(mag_start_px, dtype=np.float32)
 
     # -------------------------------------------------
     # USE STRAIGHT-IMAGE FRAME IF PROVIDED
@@ -1343,11 +1448,23 @@ def measure_tip_state_4markers(
         ex_fit = ex_fit / (np.linalg.norm(ex_fit) + 1e-12)
         ey_fit = ey_fit / (np.linalg.norm(ey_fit) + 1e-12)
     else:
-        base_cart, ex_fit, ey_fit = make_beam_frame_from_proximal_markers(
-            base_px=base,
-            mag_start_px=mag_start,
-            tangent_start_px=tangent_start,
-        )
+        if mag_start is not None:
+            base_cart, ex_fit, ey_fit = make_beam_frame_from_proximal_markers(
+                base_px=base,
+                mag_start_px=mag_start,
+                tangent_start_px=tangent_start,
+            )
+        else:
+            # fallback: use base -> tangent_start as beam axis
+            base_cart = np.array([base[0], -base[1]], dtype=float)
+
+            ex_fit = np.array([
+                tangent_start[0] - base[0],
+                -(tangent_start[1] - base[1]),
+            ], dtype=float)
+            ex_fit = ex_fit / (np.linalg.norm(ex_fit) + 1e-12)
+
+            ey_fit = np.array([-ex_fit[1], ex_fit[0]], dtype=float)
 
     tip_xy = project_point_to_beam_frame(
         point_px=tip,
@@ -1384,9 +1501,21 @@ def measure_tip_state_4markers(
         "tip_base_angle_from_ref_deg": float(tip_base_angle_info["tip_base_angle_from_ref_deg"]),
         "markers": {
             "base_px": tuple(map(float, base_px)),
-            "mag_start_px": tuple(map(float, mag_start_px)),
+            "mag_start_px": None if mag_start_px is None else tuple(map(float, mag_start_px)),
             "tangent_start_px": tuple(map(float, tangent_start_px)),
             "tip_px": tuple(map(float, tip_px)),
+        },
+        "marker_diameters_px": {
+            "base_px": float(base_c["diameter_px"]),
+            "mag_start_px": None if mag_start_c is None else float(mag_start_c["diameter_px"]),
+            "tangent_start_px": float(tangent_start_c["diameter_px"]),
+            "tip_px": float(tip_c["diameter_px"]),
+        },
+        "marker_areas_px": {
+            "base_px": float(base_c["area"]),
+            "mag_start_px": None if mag_start_c is None else float(mag_start_c["area"]),
+            "tangent_start_px": float(tangent_start_c["area"]),
+            "tip_px": float(tip_c["area"]),
         },
         "beam_frame_fit": {
             "origin_cart": tuple(map(float, base_cart)),

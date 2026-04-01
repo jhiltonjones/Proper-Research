@@ -231,7 +231,7 @@ def build_initial_lumen_from_vision(
         red_roi_polygon=roi_polygon,
         blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,
-        show=False,
+        show=show,
         save_overlay_path="debug_outputs/reconstruction_overlay.png",
     )
 
@@ -288,6 +288,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
             pivot_hint=pivot_hint,
             show=False,
         )
+        print(f"LUMEN FALSE")
         forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
@@ -296,10 +297,10 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         m_body=m_body,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
-        N_nodes=20,
-        maxiter=70,
+        N_nodes=7,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.004,
         L_tip_full=0.04,
         L_tip_min=0.01,
         use_lumen_jac=False,
@@ -321,10 +322,10 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         m_body=m_body,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
-        N_nodes=20,
-        maxiter=80,
+        N_nodes=7,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.004,
         L_tip_full=0.04,
         L_tip_min=0.01,
         use_lumen_jac=True,
@@ -488,7 +489,7 @@ def build_reference_beam_frame_from_image(
         roi_box=None,
         roi_polygon=roi_polygon,
         show=show,
-        show_debug_markers=show,
+        show_debug_markers=show_debug_markers,
         unwrap_angle=True,
         pivot_hint=pivot_hint,
     )
@@ -523,16 +524,38 @@ def measure_tip_from_vision_base_local(
         green_roi_box=green_roi_box,
         known_distance_mm=cfg.known_green_distance_mm,
     )
-
+    print(f"MM pixel: {mm_per_pixel} and known distance {cfg.known_green_distance_mm}")
     roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     tip_result = measure_tip_state_4markers(
-        image_filename="focused_image.jpg",
+        image_filename=cfg.image_filename,
         roi_box=None,
         roi_polygon=roi_polygon,
         unwrap_angle=True,
-        pivot_hint=pivot_hint,
+        pivot_hint=cfg.pivot_hint,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
     )
+    base_px = np.asarray(tip_result["markers"]["base_px"], dtype=float)
+    tip_px = np.asarray(tip_result["markers"]["tip_px"], dtype=float)
+    raw_vec_px = tip_px - base_px
+    raw_dist_px = np.linalg.norm(raw_vec_px)
+    raw_dist_px_x = tip_px[0] - base_px[0]
+    raw_dist_px_y = tip_px[1] - base_px[1]
+    tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float)
+    proj_dist_px = np.linalg.norm(tip_xy_px)
 
+
+    print("\n--- VISION SANITY CHECK ---")
+    print("raw base->tip vector [px] =", raw_vec_px)
+    print("raw base->tip distance [px] =", raw_dist_px)
+    print("projected tip_xy_from_base [px] =", tip_xy_px)
+    print("projected tip_xy_from_base [px] in x =", raw_dist_px_x)
+    print("projected tip_xy_from_base [px] in y =", raw_dist_px_y)
+    print("projected distance [px] =", proj_dist_px)
+    print("axial distance [mm] =", tip_xy_px[0] * mm_per_pixel)
+    print("lateral distance [mm] =", tip_xy_px[1] * mm_per_pixel)
+    print("euclidean distance [mm] =", np.linalg.norm(tip_xy_px) * mm_per_pixel)
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
@@ -635,7 +658,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
             red_roi_path="red_roi_box.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
-            pivot_hint=cfg.pivot_hint, lumen = True
+            pivot_hint=cfg.pivot_hint, lumen = False
     )
     dp_robot = np.asarray(cfg.test_pose6[:3], float) - np.asarray(cfg.pivot_pose6[:3], float)
     R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
@@ -882,7 +905,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         blue_roi_path="blue_roi_box.json",
         green_roi_path=cfg.green_roi_path,
         pivot_hint=cfg.pivot_hint,
-        lumen=True,
+        lumen=False,
     )
     print(f"[TIME] build with-lumen model: {(time.perf_counter()-t):.2f} s")
 
@@ -925,14 +948,14 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array([
-    0.9081328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8381328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     hw.open_robot()
     
-    L0 = 0.055
-
-    pose6 = np.asarray(get_point(0, -20), dtype=float)
+    L0 = 0.083
+    pose6 = hw.get_robot_pose_once()
+    # pose6 = np.asarray(get_point(0, 0), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -1000,8 +1023,8 @@ def plot_single_tip_comparison_local(
     plt.plot(0.0, 0.0, "ko", label="Base / pivot-local origin")
 
     # predicted / measured tip
-    plt.plot(pred_mm[0], pred_mm[1], "bs", markersize=10, label="Predicted tip")
-    plt.plot(meas_mm[0], meas_mm[1], "ro", markersize=10, label="Measured tip")
+    plt.plot(pred_mm[0], pred_mm[1], "bs", markersize=2, label="Predicted tip")
+    plt.plot(meas_mm[0], meas_mm[1], "ro", markersize=2, label="Measured tip")
 
     # connect predicted and measured
     plt.plot(
@@ -1074,49 +1097,49 @@ def plot_single_tip_comparison_local(
 
             plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
             plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
-        # predicted beam centerline
-        if beam_centerline_local_m is not None:
-            beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
-            if beam_centerline_local_m.ndim == 2 and beam_centerline_local_m.shape[1] == 3:
-                beam_mm = 1e3 * beam_centerline_local_m
-                plt.plot(
-                    beam_mm[:, 0],
-                    beam_mm[:, 1],
-                    "-b",
-                    linewidth=2.5,
-                    label="Predicted beam centerline",
-                )
-    # external magnet position
-    if src_local_m is not None:
-        src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
-        src_mm = 1e3 * src_local_m
+        # # predicted beam centerline
+        # if beam_centerline_local_m is not None:
+        #     beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
+        #     if beam_centerline_local_m.ndim == 2 and beam_centerline_local_m.shape[1] == 3:
+        #         beam_mm = 1e3 * beam_centerline_local_m
+        #         plt.plot(
+        #             beam_mm[:, 0],
+        #             beam_mm[:, 1],
+        #             "-b",
+        #             linewidth=2.5,
+        #             label="Predicted beam centerline",
+        #         )
+    # # external magnet position
+    # if src_local_m is not None:
+    #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+    #     src_mm = 1e3 * src_local_m
 
-        plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+    #     plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
 
-        plt.annotate(
-            f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
-            (src_mm[0], src_mm[1]),
-            textcoords="offset points",
-            xytext=(8, 8),
-        )
+    #     plt.annotate(
+    #         f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+    #         (src_mm[0], src_mm[1]),
+    #         textcoords="offset points",
+    #         xytext=(8, 8),
+    #     )
 
-        # optional dipole direction arrow
-        if src_dir_local is not None:
-            src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
-            dxy = src_dir_local[:2]
-            n = np.linalg.norm(dxy)
-            if n > 1e-12:
-                dxy = dxy / n
-                arrow_len_mm = 25.0
-                plt.arrow(
-                    src_mm[0],
-                    src_mm[1],
-                    arrow_len_mm * dxy[0],
-                    arrow_len_mm * dxy[1],
-                    head_width=3.0,
-                    head_length=5.0,
-                    length_includes_head=True,
-                )
+    #     # optional dipole direction arrow
+    #     if src_dir_local is not None:
+    #         src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+    #         dxy = src_dir_local[:2]
+    #         n = np.linalg.norm(dxy)
+    #         if n > 1e-12:
+    #             dxy = dxy / n
+    #             arrow_len_mm = 25.0
+    #             plt.arrow(
+    #                 src_mm[0],
+    #                 src_mm[1],
+    #                 arrow_len_mm * dxy[0],
+    #                 arrow_len_mm * dxy[1],
+    #                 head_width=3.0,
+    #                 head_length=5.0,
+    #                 length_includes_head=True,
+    #             )
 
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")
@@ -1196,7 +1219,7 @@ if __name__ == "__main__":
         xyz_max=(1.20, +1.50, +1.50),
         max_trans_m=0.01,
         max_rot_rad=0.2,
-        z_offset=0.28,
+        z_offset=0.27,
         use_moveL_params=False,
         v=0.10,
         a=0.30,
@@ -1230,7 +1253,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (300, 391)
+    pivot_hint = (320, 369)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -1243,10 +1266,10 @@ if __name__ == "__main__":
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=40.0,
         pivot_hint=pivot_hint,
-        results_dir="results_single_pose_forward_validation_test",
-        save_overlay_path="results_single_pose_forward_validation/comparison_overlay.png",
-        show_debug_vision=False,
-        show_debug_model=False,
+        results_dir="results_single_pose_forward_validation_test2",
+        save_overlay_path="results_single_pose_forward_validation/comparison_overlay2.png",
+        show_debug_vision=True,
+        show_debug_model=True,
     )
 
     evaluate_single_pose(cfg)

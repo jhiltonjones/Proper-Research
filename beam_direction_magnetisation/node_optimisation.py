@@ -6,24 +6,7 @@ from beam_direction_magnetisation.quarternions.quarternions_functions import (qu
 from beam_direction_magnetisation.cosserat_w_minimal_energy import contact_barrier_energy_and_force_fast, LumenQuery
 from proper_research.robot.transformations import get_point
 from scipy.optimize import root
-def numerical_energy_gradient(fun, q, eps=1e-6):
-    """
-    Central-difference gradient of scalar energy fun(q).
-    q: (ndof,)
-    returns grad: (ndof,)
-    """
-    q = np.asarray(q, float).copy()
-    grad = np.zeros_like(q)
 
-    for i in range(q.size):
-        dq = np.zeros_like(q)
-        dq[i] = eps
-
-        fp = fun(q + dq)
-        fm = fun(q - dq)
-        grad[i] = (fp - fm) / (2.0 * eps)
-
-    return grad
 from scipy.optimize import root
 def rod_kinematics_from_state(p, theta_twist, eps=1e-12):
     e, t, ell = edge_tangents_and_lengths(p, eps=eps)
@@ -61,29 +44,33 @@ def rod_kinematics_from_state(p, theta_twist, eps=1e-12):
         "kappa1": kappa1,
         "kappa2": kappa2,
     }
-def residual_der_q(
-    q_flat, *, p0, p1, N,
+def residual_static_force_balance(
+    q_flat, *,
+    p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src, mu_tip,
+    wire_len, r_src, m_src,
     lumen_query=None, use_lumen=False,
     M_ref_local=None,
     ref_twist=None,
 ):
-    def energy_only(q):
-        W, _ = total_energy_der_q(
-            q,
-            p0=p0, p1=p1, N=N,
-            EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
-            ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len, r_src=r_src, m_src=m_src, mu_tip=mu_tip,
-            lumen_query=lumen_query, use_lumen=use_lumen,
-            M_ref_local=M_ref_local,
-            ref_twist=ref_twist,
-        )
-        return W
+    f_min, _ = total_force_from_state_fd(
+        info_min["q_opt"],
+        p0=p0_ur, p1=p_straight[:, 1].copy(), N=N,
+        EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
+        ell_ref=ell_ref, EA_seg=EA_seg,
+        wire_len=wire_len,
+        r_src=r_src_ur, m_src=m_src,
+        lumen_query=lumen_query, use_lumen=USE_LUMEN,
+        M_ref_local=M_ref_local,
+        ref_twist=None,
+        eps=1e-6,
+    )
+    print("Residual norm at minimizer:", np.linalg.norm(f_min))
+    print("Max residual at minimizer:", np.max(np.abs(f_min)))
 
-    return numerical_energy_gradient(energy_only, q_flat)
+    # static equilibrium: total generalized force = 0
+    return f_min
 
 from scipy.optimize import root
 
@@ -127,13 +114,15 @@ def solve_nodes_twist_residual(
         lumen_query = LumenQuery(lumen_C, lumen_R)
 
     def Rfun(q_flat):
-        return residual_der_q(
+        return residual_static_force_balance(
             q_flat,
             p0=p0, p1=p1, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len, r_src=r_src, m_src=m_src, mu_tip=mu_tip,
-            lumen_query=lumen_query, use_lumen=use_lumen,
+            wire_len=wire_len,
+            r_src=r_src, m_src=m_src,
+            lumen_query=lumen_query,
+            use_lumen=use_lumen,
             M_ref_local=M_ref_local,
             ref_twist=ref_twist,
         )
@@ -147,12 +136,12 @@ def solve_nodes_twist_residual(
 
     p_opt, theta_opt = unpack_q_to_nodes_twist(sol.x, p0, p1, N)
 
-    W, dbg = total_energy_der_q(
+    W, dbg = total_energy_from_state(
         sol.x,
         p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
-        wire_len=wire_len, r_src=r_src, m_src=m_src, mu_tip=mu_tip,
+        wire_len=wire_len, r_src=r_src, m_src=m_src,
         lumen_query=lumen_query, use_lumen=use_lumen,
         M_ref_local=M_ref_local,
         ref_twist=ref_twist,
@@ -185,25 +174,12 @@ def voronoi_lengths_from_edge_lengths(ell):
     """
     ell = np.asarray(ell, float)
     return 0.5 * (ell[:-1] + ell[1:])
-def build_EA_edge_profile(s_nodes, Kinv_fun, wire_len):
-    s_mid = 0.5 * (s_nodes[:-1] + s_nodes[1:])
-    Kinv_mid = Kinv_fun(s_mid, wire_len)
 
-    EA_seg = np.zeros(s_mid.size)
-    for i in range(s_mid.size):
-        K = np.linalg.inv(Kinv_mid[:, :, i])
-        # placeholder: use your best available axial stiffness entry here
-        # adjust depending on your constitutive convention
-        EA_seg[i] = 1.0 / max(Kinv_mid[0,0,i], 1e-12)  # likely needs refinement
-    return EA_seg
 def build_EA_edge_profile_from_params(s_nodes, wire_len, EA_wire, EA_tip):
     s_mid = 0.5 * (s_nodes[:-1] + s_nodes[1:])
     EA_seg = np.where(s_mid < wire_len, EA_wire, EA_tip).astype(float)
     return EA_seg
-def stretch_energy_der(ell, ell_ref, EA_seg):
-    eps_s = stretch_strain_from_lengths(ell, ell_ref)
-    Ws = 0.5 * np.sum(EA_seg * (eps_s**2) * ell_ref)
-    return float(Ws), dict(eps_s=eps_s)
+
 def build_bending_twist_profiles(s_nodes, Kinv_fun, wire_len):
     s_mid = 0.5 * (s_nodes[:-1] + s_nodes[1:])
     Kinv_mid = Kinv_fun(s_mid, wire_len)
@@ -222,90 +198,8 @@ def build_bending_twist_profiles(s_nodes, Kinv_fun, wire_len):
     EI2_v = 0.5 * (EI2_seg[:-1] + EI2_seg[1:])
     GJ_v  = 0.5 * (GJ_seg[:-1] + GJ_seg[1:])
     return EI1_v, EI2_v, GJ_v
-def bending_energy_der_anisotropic(p, EI1_v, EI2_v, theta_twist=None, eps=1e-12):
-    der = der_bending_strains_from_frames(p, theta_twist=theta_twist, eps=eps)
 
-    kappa1 = der["kappa1"]
-    kappa2 = der["kappa2"]
-    dl = der["dl_voronoi"]
 
-    Wb = 0.5 * np.sum((EI1_v * kappa1**2 + EI2_v * kappa2**2) * dl)
-
-    dbg = dict(
-        kappa1=kappa1,
-        kappa2=kappa2,
-        kb=der["kb"],
-        dl_voronoi=dl,
-        t_bend=der["t"],
-        d1_ref=der["d1_ref"],
-        d2_ref=der["d2_ref"],
-        d3_ref=der["d3_ref"],
-        m1=der["m1"],
-        m2=der["m2"],
-        m3=der["m3"],
-    )
-    return float(Wb), dbg
-def magnetic_energy_segments_material_frame(
-    p, theta_twist, wire_len, r_src, m_src, M_ref_local
-):
-    """
-    DER-style edge magnetic energy using the material frame on each edge.
-
-    p            : (3,N) node positions
-    theta_twist  : (N-1,) twist angle per edge
-    wire_len     : scalar, segments with s_seg >= wire_len are magnetic
-    r_src        : (3,) permanent magnet position
-    m_src        : (3,) permanent magnet dipole in world frame
-    M_ref_local  : (3,) reference magnetization vector in edge material frame
-                   e.g. axial magnetization -> [0, 0, mu_tip]
-
-    Returns
-    -------
-    Wm, dbg
-    """
-    der = der_bending_strains_from_frames(p, theta_twist=theta_twist)
-
-    m1 = der["m1"]   # (3, N-1)
-    m2 = der["m2"]
-    m3 = der["m3"]
-    ell_i = der["ell"]
-    t = der["t"]
-
-    mid = segment_midpoints(p)   # (3, N-1)
-
-    s_nodes = np.zeros(p.shape[1])
-    s_nodes[1:] = np.cumsum(ell_i)
-    s_seg = 0.5 * (s_nodes[:-1] + s_nodes[1:])
-
-    B = dipole_field_points(mid, r_src, m_src)   # (3, N-1)
-
-    M_ref_local = np.asarray(M_ref_local, float).reshape(3,)
-    mag_mask = (s_seg >= wire_len).astype(float)
-
-    # world magnetization on each edge from material frame
-    M_world = (
-        m1 * M_ref_local[0]
-        + m2 * M_ref_local[1]
-        + m3 * M_ref_local[2]
-    )  # (3, N-1)
-
-    # zero magnetization in wire region
-    M_world = M_world * mag_mask[None, :]
-
-    wm = -np.sum(M_world * B, axis=0)
-    Wm = np.sum(wm * ell_i)
-
-    dbg = dict(
-        B=B,
-        s_seg=s_seg,
-        M_world=M_world,
-        mag_mask=mag_mask,
-        t_seg=t,
-        m1=m1,
-        m2=m2,
-        m3=m3,
-    )
-    return float(Wm), dbg
 def pack_q_from_nodes_twist(p, theta_twist):
     """
     p: (3,N) full node array with p[:,0], p[:,1] already fixed externally
@@ -354,77 +248,142 @@ def twist_strain_from_theta(theta_twist, dl_voronoi, ref_twist=None, eps=1e-12):
 
     kappa3 = (dtheta + ref_twist) / (dl_voronoi + eps)
     return kappa3
+def numerical_force_from_energy(energy_fun, q, eps=1e-6):
+    q = np.asarray(q, float).copy()
+    f = np.zeros_like(q)
 
+    for i in range(q.size):
+        dq = np.zeros_like(q)
+        dq[i] = eps
+        fp = energy_fun(q + dq)
+        fm = energy_fun(q - dq)
+        f[i] = -(fp - fm) / (2.0 * eps)
 
+    return f
 
-def twist_energy_der(theta_twist, dl_voronoi, GJ_v, ref_twist=None, eps=1e-12):
-    """
-    DER-style twist energy:
-      Wt = 0.5 * sum GJ * kappa3^2 * dl
-    """
-    kappa3 = twist_strain_from_theta(theta_twist, dl_voronoi, ref_twist=ref_twist, eps=eps)
-    Wt = 0.5 * np.sum(GJ_v * (kappa3**2) * dl_voronoi)
-    dbg = dict(kappa3=kappa3)
-    return float(Wt), dbg
-def total_energy_der_q(
-    q_flat, *, 
+def elastic_force_fd(
+    q_flat, *,
     p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src, mu_tip,
+    ref_twist=None,
+    eps=1e-6,
+):
+    def elastic_energy_only(q):
+        p, theta = unpack_q_to_nodes_twist(q, p0, p1, N)
+        kin = rod_kinematics_from_state(p, theta)
+
+        Ws, _ = stretch_energy_from_kinematics(kin, ell_ref, EA_seg)
+        Wb, _ = bending_energy_from_kinematics(kin, EI1_v, EI2_v)
+        Wt, _ = twist_energy_from_kinematics(theta, kin, GJ_v, ref_twist=ref_twist)
+        return Ws + Wb + Wt
+
+    return numerical_force_from_energy(elastic_energy_only, q_flat, eps=eps)
+def magnetic_force_fd(
+    q_flat, *,
+    p0, p1, N,
+    wire_len, r_src, m_src, M_ref_local,
+    eps=1e-6,
+):
+    def magnetic_energy_only(q):
+        p, theta = unpack_q_to_nodes_twist(q, p0, p1, N)
+        kin = rod_kinematics_from_state(p, theta)
+        Wm, _ = magnetic_energy_from_kinematics(
+            kin, wire_len, r_src, m_src, M_ref_local
+        )
+        return Wm
+
+    return numerical_force_from_energy(magnetic_energy_only, q_flat, eps=eps)
+def contact_force_fd(
+    q_flat, *,
+    p0, p1, N,
+    lumen_query,
+    eps=1e-6,
+):
+    def contact_energy_only(q):
+        p, _ = unpack_q_to_nodes_twist(q, p0, p1, N)
+        Wc, _ = contact_energy_from_nodes(p, lumen_query)
+        return Wc
+
+    return numerical_force_from_energy(contact_energy_only, q_flat, eps=eps)
+def total_force_from_state_fd(
+    q_flat, *,
+    p0, p1, N,
+    EI1_v, EI2_v, GJ_v,
+    ell_ref, EA_seg,
+    wire_len, r_src, m_src,
     lumen_query=None, use_lumen=False,
     M_ref_local=None,
-    ref_twist=None
+    ref_twist=None,
+    eps=1e-6,
+):
+    if M_ref_local is None:
+        raise ValueError("M_ref_local must be provided explicitly")
+    f_el = elastic_force_fd(
+        q_flat,
+        p0=p0, p1=p1, N=N,
+        EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
+        ell_ref=ell_ref, EA_seg=EA_seg,
+        ref_twist=ref_twist,
+        eps=eps,
+    )
+
+    f_mag = magnetic_force_fd(
+        q_flat,
+        p0=p0, p1=p1, N=N,
+        wire_len=wire_len,
+        r_src=r_src,
+        m_src=m_src,
+        M_ref_local=M_ref_local,
+        eps=eps,
+    )
+
+    f_con = np.zeros_like(q_flat)
+    if use_lumen and (lumen_query is not None):
+        f_con = contact_force_fd(
+            q_flat,
+            p0=p0, p1=p1, N=N,
+            lumen_query=lumen_query,
+            eps=eps,
+        )
+
+    f_total = f_el + f_mag + f_con
+
+    return f_total, {
+        "f_elastic": f_el,
+        "f_magnetic": f_mag,
+        "f_contact": f_con,
+    }
+
+def total_energy_from_state(
+    q_flat, *,
+    p0, p1, N,
+    EI1_v, EI2_v, GJ_v,
+    ell_ref, EA_seg,
+    wire_len, r_src, m_src,
+    lumen_query=None, use_lumen=False,
+    M_ref_local=None,
+    ref_twist=None,
 ):
     p, theta_twist = unpack_q_to_nodes_twist(q_flat, p0, p1, N)
+    kin = rod_kinematics_from_state(p, theta_twist)
 
-    # -------------------------
-    # Bending
-    # -------------------------
-    Wb, bend_dbg = bending_energy_der_anisotropic(
-        p, EI1_v, EI2_v, theta_twist=theta_twist
-    )
+    Ws, stretch_dbg = stretch_energy_from_kinematics(kin, ell_ref, EA_seg)
+    Wb, bend_dbg = bending_energy_from_kinematics(kin, EI1_v, EI2_v)
+    Wt, twist_dbg = twist_energy_from_kinematics(theta_twist, kin, GJ_v, ref_twist=ref_twist)
 
-    # -------------------------
-    # Twist
-    # -------------------------
-    dl_voronoi = bend_dbg["dl_voronoi"]
-    Wt, twist_dbg = twist_energy_der(
-        theta_twist,
-        dl_voronoi,
-        GJ_v,
-        ref_twist=ref_twist
-    )
-
-    # -------------------------
-    # Magnetic
-    # -------------------------
     if M_ref_local is None:
-        M_ref_local = np.array([0.0, 0.0, mu_tip], float)
+        raise ValueError("M_ref_local must be provided explicitly")
 
-    Wm, mag_dbg = magnetic_energy_segments_material_frame(
-        p, theta_twist, wire_len, r_src, m_src, M_ref_local
+    Wm, mag_dbg = magnetic_energy_from_kinematics(
+        kin, wire_len, r_src, m_src, M_ref_local
     )
 
-    # -------------------------
-    # Contact
-    # -------------------------
     Wc = 0.0
     con_dbg = {}
     if use_lumen and (lumen_query is not None):
-        Wc, con_dbg = lumen_contact_energy_nodes(p, lumen_query)
+        Wc, con_dbg = contact_energy_from_nodes(p, lumen_query)
 
-    # -------------------------
-    # Stretch
-    # -------------------------
-    der = der_bending_strains_from_frames(p, theta_twist=theta_twist)
-    ell = der["ell"]   # current edge lengths, shape (N-1,)
-
-    Ws, stretch_dbg = stretch_energy_der(ell, ell_ref, EA_seg)
-
-    # -------------------------
-    # Total
-    # -------------------------
     W = Ws + Wb + Wt + Wm + Wc
 
     dbg = {
@@ -433,13 +392,13 @@ def total_energy_der_q(
         "Wt": Wt,
         "Wm": Wm,
         "Wc": Wc,
+        "kin": kin,
         "stretch": stretch_dbg,
         "bend": bend_dbg,
         "twist": twist_dbg,
         "mag": mag_dbg,
         "contact": con_dbg,
     }
-
     return float(W), dbg
 def segment_length_residuals_q(q_flat, *, p0, p1, N, ell):
     p, theta_twist = unpack_q_to_nodes_twist(q_flat, p0, p1, N)
@@ -456,7 +415,7 @@ def solve_nodes_twist_min(
     maxiter=300,
     M_ref_local=None,
     ref_twist=None,
-    enforce_inextensibility=True,
+    enforce_inextensibility=False,
     amp_init=2e-4,
 ):
     """
@@ -521,13 +480,13 @@ def solve_nodes_twist_min(
     # Objective
     # -------------------------
     def obj(q_flat):
-        W, _ = total_energy_der_q(
+        W, _ = total_energy_from_state(
             q_flat,
             p0=p0, p1=p1, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
             wire_len=wire_len,
-            r_src=r_src, m_src=m_src, mu_tip=mu_tip,
+            r_src=r_src, m_src=m_src,
             lumen_query=lumen_query,
             use_lumen=use_lumen,
             M_ref_local=M_ref_local,
@@ -570,13 +529,13 @@ def solve_nodes_twist_min(
     # -------------------------
     p_opt, theta_opt = unpack_q_to_nodes_twist(res.x, p0, p1, N)
 
-    W, dbg = total_energy_der_q(
+    W, dbg = total_energy_from_state(
         res.x,
         p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
         wire_len=wire_len,
-        r_src=r_src, m_src=m_src, mu_tip=mu_tip,
+        r_src=r_src, m_src=m_src,
         lumen_query=lumen_query,
         use_lumen=use_lumen,
         M_ref_local=M_ref_local,
@@ -680,69 +639,7 @@ def magnetic_energy_from_kinematics(
 def contact_energy_from_nodes(p, lumen_query):
     Wc, dbg = lumen_contact_energy_nodes(p, lumen_query)
     return float(Wc), dbg
-def der_bending_strains_from_frames(p, theta_twist=None, eps=1e-12):
-    """
-    Compute DER-style bending strains at interior vertices.
 
-    Inputs
-    ------
-    p : (3, N) node positions
-    theta_twist : (N-1,) per-edge twist angles.
-                  If None, uses zero twist.
-
-    Returns
-    -------
-    out : dict with
-      ell        : (N-1,) edge lengths
-      t          : (3, N-1) edge tangents
-      d1_ref     : (3, N-1)
-      d2_ref     : (3, N-1)
-      d3_ref     : (3, N-1)
-      m1         : (3, N-1)
-      m2         : (3, N-1)
-      m3         : (3, N-1)
-      kb         : (3, N-2) curvature binormals at interior vertices
-      dl_voronoi : (N-2,) interior Voronoi lengths
-      kappa1     : (N-2,)
-      kappa2     : (N-2,)
-    """
-    e, t, ell = edge_tangents_and_lengths(p, eps=eps)
-    n_edge = t.shape[1]
-
-    if theta_twist is None:
-        theta_twist = np.zeros(n_edge, float)
-    else:
-        theta_twist = np.asarray(theta_twist, float).reshape(n_edge,)
-
-    d1_ref, d2_ref, d3_ref, ell_chk = parallel_transport_reference_frames(p)
-    m1, m2, m3 = material_frames_from_twist(d1_ref, d2_ref, d3_ref, theta_twist)
-
-    kb = curvature_binormals_from_tangents(t, ell, eps=eps)   # (3, N-2)
-    dl_voronoi = voronoi_lengths_from_edge_lengths(ell)       # (N-2,)
-
-    # vertex material directions: average adjacent edge material frames
-    m1_v = m1[:, :-1] + m1[:, 1:]   # (3, N-2)
-    m2_v = m2[:, :-1] + m2[:, 1:]   # (3, N-2)
-
-    # normalize vertex frame directions
-    m1_v /= (np.linalg.norm(m1_v, axis=0, keepdims=True) + eps)
-    m2_v /= (np.linalg.norm(m2_v, axis=0, keepdims=True) + eps)
-
-    # DER-style projected bending strains
-    # sign conventions vary by reference; consistency matters more than sign at this stage
-    kappa1 = np.sum(kb * m2_v, axis=0) / (dl_voronoi + eps)
-    kappa2 = -np.sum(kb * m1_v, axis=0) / (dl_voronoi + eps)
-
-    return dict(
-        ell=ell,
-        t=t,
-        d1_ref=d1_ref, d2_ref=d2_ref, d3_ref=d3_ref,
-        m1=m1, m2=m2, m3=m3,
-        kb=kb,
-        dl_voronoi=dl_voronoi,
-        kappa1=kappa1,
-        kappa2=kappa2,
-    )
 
 def normalize(v, eps=1e-12):
     n = np.linalg.norm(v)
@@ -1190,8 +1087,190 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
+def summarize_solution(
+    name,
+    p,
+    theta,
+    info,
+    *,
+    p0,
+    q0,
+    L,
+    N,
+    wire_len,
+    Kinv_fun,
+    r_src,
+    m_src,
+    EA_wire,
+    EA_tip,
+    M_ref_local,
+):
+    p_straight = make_initial_nodes_straight(p0, q0, L, N)
+    tip = p[:, -1]
+    tip_straight = p_straight[:, -1]
+    tip_deflection = tip - tip_straight
 
+    kin = rod_kinematics_from_state(p, theta)
+    ell = kin["ell"]
+    eps_s = stretch_strain_from_lengths(ell, np.full(N - 1, L / (N - 1)))
 
+    s_nodes = np.linspace(0.0, L, N)
+    EI1_v, EI2_v, GJ_v = build_bending_twist_profiles(s_nodes, Kinv_fun, wire_len)
+    s_vertex = s_nodes[1:-1]
+
+    kappa1 = kin["kappa1"]
+    kappa2 = kin["kappa2"]
+    kappa3 = twist_strain_from_theta(theta, kin["dl_voronoi"])
+
+    mag_dbg = info["dbg"]["mag"]
+    M_world = mag_dbg["M_world"]
+    B = mag_dbg["B"]
+
+    print(f"\n{'='*80}")
+    print(f"{name}")
+    print(f"{'='*80}")
+    print(f"success            : {info['success']}")
+    print(f"message            : {info['message']}")
+    print(f"iterations / evals : {info['nit']}")
+    print(f"W total            : {info['W']:.6e}")
+    print(f"Ws                 : {info['dbg']['Ws']:.6e}")
+    print(f"Wb                 : {info['dbg']['Wb']:.6e}")
+    print(f"Wt                 : {info['dbg']['Wt']:.6e}")
+    print(f"Wm                 : {info['dbg']['Wm']:.6e}")
+    print(f"Wc                 : {info['dbg']['Wc']:.6e}")
+    if "residual_norm" in info:
+        print(f"residual norm      : {info['residual_norm']:.6e}")
+
+    print("\n--- tip / geometry ---")
+    print(f"tip position       : {tip}")
+    print(f"straight tip       : {tip_straight}")
+    print(f"tip deflection vec : {tip_deflection}")
+    print(f"tip deflection mag : {np.linalg.norm(tip_deflection):.6e}")
+
+    print("\n--- stretch ---")
+    print(f"max |eps_s|        : {np.max(np.abs(eps_s)):.6e}")
+    print(f"mean|eps_s|        : {np.mean(np.abs(eps_s)):.6e}")
+    print(f"min edge length    : {np.min(ell):.6e}")
+    print(f"max edge length    : {np.max(ell):.6e}")
+
+    print("\n--- curvature / twist ---")
+    print(f"max |kappa1|       : {np.max(np.abs(kappa1)):.6e}")
+    print(f"max |kappa2|       : {np.max(np.abs(kappa2)):.6e}")
+    print(f"max |kappa3|       : {np.max(np.abs(kappa3)):.6e}")
+    print(f"mean dl_voronoi    : {np.mean(kin['dl_voronoi']):.6e}")
+
+    print("\n--- magnetic ---")
+    print(f"max |M_world|      : {np.max(np.linalg.norm(M_world, axis=0)):.6e}")
+    print(f"max |B|            : {np.max(np.linalg.norm(B, axis=0)):.6e}")
+    print(f"active mag segs    : {int(np.sum(mag_dbg['mag_mask'] > 0.5))}")
+
+    wire_mask = s_vertex < wire_len
+    tip_mask = s_vertex >= wire_len
+    print("\n--- curvature localization ---")
+    if np.any(wire_mask):
+        print(f"wire mean |kappa|  : {np.mean(np.sqrt(kappa1[wire_mask]**2 + kappa2[wire_mask]**2)):.6e}")
+    if np.any(tip_mask):
+        print(f"tip mean |kappa|   : {np.mean(np.sqrt(kappa1[tip_mask]**2 + kappa2[tip_mask]**2)):.6e}")
+def compare_solutions(name_a, p_a, theta_a, info_a, name_b, p_b, theta_b, info_b):
+    tip_a = p_a[:, -1]
+    tip_b = p_b[:, -1]
+
+    print(f"\n{'-'*80}")
+    print(f"COMPARISON: {name_a} vs {name_b}")
+    print(f"{'-'*80}")
+    print(f"tip diff vec        : {tip_a - tip_b}")
+    print(f"tip diff norm       : {np.linalg.norm(tip_a - tip_b):.6e}")
+    print(f"theta diff norm     : {np.linalg.norm(theta_a - theta_b):.6e}")
+    print(f"energy diff         : {abs(info_a['W'] - info_b['W']):.6e}")
+    if ("residual_norm" in info_a) and ("residual_norm" in info_b):
+        print(f"residual norms      : {info_a['residual_norm']:.6e} vs {info_b['residual_norm']:.6e}")
+def plot_solution_diagnostics(p, theta, info, *, L, N, wire_len, title_prefix="solution"):
+    kin = rod_kinematics_from_state(p, theta)
+    s_nodes = np.linspace(0.0, L, N)
+    s_vertex = s_nodes[1:-1]
+    s_edge = 0.5 * (s_nodes[:-1] + s_nodes[1:])
+
+    kappa1 = kin["kappa1"]
+    kappa2 = kin["kappa2"]
+    kappa3 = twist_strain_from_theta(theta, kin["dl_voronoi"])
+    eps_s = stretch_strain_from_lengths(kin["ell"], np.full(N - 1, L / (N - 1)))
+    Bmag = np.linalg.norm(info["dbg"]["mag"]["B"], axis=0)
+    Mmag = np.linalg.norm(info["dbg"]["mag"]["M_world"], axis=0)
+
+    plt.figure()
+    plt.plot(s_vertex, kappa1, "-o", label="kappa1")
+    plt.plot(s_vertex, kappa2, "-o", label="kappa2")
+    plt.axvline(wire_len, linestyle="--")
+    plt.xlabel("s [m]")
+    plt.ylabel("bending strain [1/m]")
+    plt.title(f"{title_prefix}: bending strains")
+    plt.legend()
+    plt.grid(True)
+
+    plt.figure()
+    plt.plot(s_vertex, kappa3, "-o", label="kappa3")
+    plt.axvline(wire_len, linestyle="--")
+    plt.xlabel("s [m]")
+    plt.ylabel("twist strain [1/m]")
+    plt.title(f"{title_prefix}: twist strain")
+    plt.legend()
+    plt.grid(True)
+
+    plt.figure()
+    plt.plot(s_edge, eps_s, "-o", label="eps_s")
+    plt.axvline(wire_len, linestyle="--")
+    plt.xlabel("s [m]")
+    plt.ylabel("stretch strain [-]")
+    plt.title(f"{title_prefix}: stretch strain")
+    plt.legend()
+    plt.grid(True)
+
+    plt.figure()
+    plt.plot(s_edge, Bmag, "-o", label="|B|")
+    plt.plot(s_edge, Mmag, "-o", label="|M_world|")
+    plt.axvline(wire_len, linestyle="--")
+    plt.xlabel("s [m]")
+    plt.ylabel("magnitude")
+    plt.title(f"{title_prefix}: magnetic quantities")
+    plt.legend()
+    plt.grid(True)
+
+    plt.show()
+def fd_force_sensitivity_check(
+    q_flat,
+    *,
+    p0, p1, N,
+    EI1_v, EI2_v, GJ_v,
+    ell_ref, EA_seg,
+    wire_len, r_src, m_src,
+    M_ref_local,
+    ref_twist=None,
+    eps_list=(1e-5, 3e-6, 1e-6, 3e-7),
+):
+    print(f"\n{'-'*80}")
+    print("FINITE-DIFFERENCE FORCE SENSITIVITY")
+    print(f"{'-'*80}")
+
+    prev = None
+    for eps in eps_list:
+        f, dbg = total_force_from_state_fd(
+            q_flat,
+            p0=p0, p1=p1, N=N,
+            EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
+            ell_ref=ell_ref, EA_seg=EA_seg,
+            wire_len=wire_len, r_src=r_src, m_src=m_src,
+            M_ref_local=M_ref_local,
+            ref_twist=ref_twist,
+            eps=eps,
+        )
+        fnorm = np.linalg.norm(f)
+        print(f"eps={eps:.1e}  ||f||={fnorm:.6e}")
+        if prev is not None:
+            rel = np.linalg.norm(f - prev) / (np.linalg.norm(prev) + 1e-12)
+            print(f"             rel change from previous = {rel:.6e}")
+        prev = f.copy()
+def wrap_angle_pi(a):
+    return (a + np.pi) % (2.0 * np.pi) - np.pi
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from scipy.spatial.transform import Rotation as Rot
@@ -1200,27 +1279,43 @@ if __name__ == "__main__":
     from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T
     from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
 
+    np.set_printoptions(precision=6, suppress=True)
+
+    # ------------------------------------------------------------------
+    # User toggles
+    # ------------------------------------------------------------------
+    RUN_MIN_SOLVER = True
+    RUN_RESIDUAL_SOLVER = False
+    MAKE_PLOTS = True
+    SHOW_FRAMES = False
+    RUN_FD_SENSITIVITY = False
+    USE_LUMEN = True
+
+    # ------------------------------------------------------------------
+    # Problem setup
+    # ------------------------------------------------------------------
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    # -----------------------------
-    # Problem setup
-    # -----------------------------
-    L_cmd = 0.045
+    L_cmd = 0.055
     mag_len = beam_params.length_of_mag
     wire_len = L_cmd - mag_len
+    N = 9
 
-    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
+    mu_tip = mag_params.mag_epm
+    # M_ref_local = np.array([0.0, 0.0, mu_tip], float)
+    mag_total = mag_params.mag_epm          # total dipole moment of the whole tip magnet
+    beam_params =default_beam_params()
+    mu_line = beam_params.mag * beam_params.A_cs     # dipole moment per unit length
+    M_ref_local = np.array([0, 0.0, mu_line], float)
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
 
     pivot_point = np.array([
-    0.7681328220229531, -0.7112731669220016,-0.1,  np.pi, 0.001,0.001
+        0.7681328220229531, -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
-    start_point = get_point(0,40)
+
+    start_point = get_point(0, 30)
     start_point[2] = -0.1
-    # start_point = np.array([
-    #     0.601, -0.649, 0.092,
-    #     -3.054, -0.476, 0.05
-    # ], float)
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -1228,49 +1323,27 @@ if __name__ == "__main__":
     T_ur_mag = ur_pose6_to_T(start_point)
     r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
 
-    # magnet dipole in world frame
-    q = q_src_ur
-    Rm = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    Rm = Rot.from_quat([q_src_ur[1], q_src_ur[2], q_src_ur[3], q_src_ur[0]]).as_matrix()
     m_src = Rm @ m_body
 
-    # -----------------------------
-    # Choose a scalar mu_tip
-    # -----------------------------
-    mu_tip = mag_params.mag_epm
-
-    # -----------------------------
-    # Solve node-based model
-    # -----------------------------
-    N = 25
-    # p_nodes, info = solve_nodes_min(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     L=L_cmd,
-    #     N=N,
-    #     wire_len=wire_len,
-    #     Kinv_fun=Kbt_inv_profile,
-    #     r_src=r_src_ur,
-    #     m_src=m_src,
-    #     mu_tip=mu_tip,
-    #     lumen_C=None,
-    #     lumen_R=None,
-    #     use_lumen=False,
-    #     maxiter=1000,
-    # )
-    # wire
+    # ------------------------------------------------------------------
+    # Material / section properties
+    # ------------------------------------------------------------------
     wire = rod_section_stiffness(
         r=200e-6,
         E=50e6,
         nu=0.4,
     )
-
-    # tip
+    # tip = rod_section_stiffness(
+    #     r=2e-3,
+    #     E=3e6,
+    #     nu=0.49,
+    # )
     tip = rod_section_stiffness(
-        r=2e-3,
-        E=3e6,
+        r=beam_params.r,
+        E=beam_params.E,
         nu=0.49,
     )
-
     EA_wire = wire["EA"]
     EI_wire = wire["EI"]
     GJ_wire = wire["GJ"]
@@ -1279,10 +1352,23 @@ if __name__ == "__main__":
     EI_tip = tip["EI"]
     GJ_tip = tip["GJ"]
 
-    print(f"EA_wire is {EA_wire}")
-    print(f"EA_tip is {EA_tip}")
-    print(f"EI wire is : {EI_wire}, and GJ_wire : {GJ_wire}")
-    print(f"EI tip is : {EI_tip}, and GJ tip : {GJ_tip}")
+    print("\n" + "=" * 80)
+    print("CASE SETUP")
+    print("=" * 80)
+    print(f"L_cmd            : {L_cmd:.6e}")
+    print(f"mag_len          : {mag_len:.6e}")
+    print(f"wire_len         : {wire_len:.6e}")
+    print(f"N                : {N}")
+    print(f"base position    : {p0_ur}")
+    print(f"magnet position  : {r_src_ur}")
+    print(f"magnet dipole    : {m_src}")
+    print(f"M_ref_local      : {M_ref_local}")
+    print(f"EA_wire          : {EA_wire:.6e}")
+    print(f"EI_wire          : {EI_wire:.6e}")
+    print(f"GJ_wire          : {GJ_wire:.6e}")
+    print(f"EA_tip           : {EA_tip:.6e}")
+    print(f"EI_tip           : {EI_tip:.6e}")
+    print(f"GJ_tip           : {GJ_tip:.6e}")
 
     Kinv_fun = make_Kbt_inv_profile(
         EI_wire=EI_wire,
@@ -1292,120 +1378,198 @@ if __name__ == "__main__":
         bend_soft=1.0,
         tors_soft=1.0,
     )
-    p_res, theta_res, info_res = solve_nodes_twist_residual(
-        p0=p0_ur,
-        q0=q0_ur,
-        L=L_cmd,
-        N=N,
+
+    p_straight = make_initial_nodes_straight(p0_ur, q0_ur, L_cmd, N)
+
+    # ------------------------------------------------------------------
+    # Shared constitutive data for debug checks
+    # ------------------------------------------------------------------
+    s_nodes = np.linspace(0.0, L_cmd, N)
+    EI1_v, EI2_v, GJ_v = build_bending_twist_profiles(s_nodes, Kinv_fun, wire_len)
+    ell_ref = np.full(N - 1, L_cmd / (N - 1), float)
+    EA_seg = build_EA_edge_profile_from_params(
+        s_nodes,
         wire_len=wire_len,
-        Kinv_fun=Kinv_fun,
-        r_src=r_src_ur,
-        m_src=m_src,
-        mu_tip=mu_tip,
         EA_wire=EA_wire,
         EA_tip=EA_tip,
-        lumen_C=None,
-        lumen_R=None,
-        use_lumen=False,
-        maxiter=200,
-        M_ref_local=np.array([0.0, 0.0, mu_tip]),
-        ref_twist=None,
     )
-    p_min, theta_min, info_min = solve_nodes_twist_min(
-        p0=p0_ur,
-        q0=q0_ur,
-        L=L_cmd,
-        N=N,
-        wire_len=wire_len,
-        Kinv_fun=Kinv_fun,
-        r_src=r_src_ur,
-        m_src=m_src,
-        mu_tip=mu_tip,
-        EA_wire=EA_wire,
-        EA_tip=EA_tip,
-        lumen_C=None,
-        lumen_R=None,
-        use_lumen=False,
-        maxiter=200,
-        M_ref_local=np.array([0.0, 0.0, mu_tip]),
-        ref_twist=None,
-    )
-    print("energy-min tip:", p_min[:, -1])
-    print("residual-solve tip:", p_res[:, -1])
-    print("residual norm:", info_res["residual_norm"])
-    # print("Ws:", info["dbg"]["Ws"])
-    # print("max |eps_s|:", np.max(np.abs(info["dbg"]["stretch"]["eps_s"])))
-    # print("mean |eps_s|:", np.mean(np.abs(info["dbg"]["stretch"]["eps_s"])))
-    # print("\n--- NODE SOLVER INFO ---")
-    # print("success:", info["success"])
-    # print("message:", info["message"])
-    # print("iterations:", info["nit"])
-    # print("W total:", info["W"])
-    # print("Wb:", info["dbg"]["Wb"])
-    # print("Wm:", info["dbg"]["Wm"])
-    # print("tip position:", p_nodes[:, -1])
-    # p_straight = make_initial_nodes_straight(p0_ur, q0_ur, L_cmd, N)
-    # der_dbg = der_bending_strains_from_frames(p_nodes, theta_twist=theta_twist_opt)
-    # print("Wt:", info["dbg"]["Wt"])
-    # print("max |kappa3|:", np.max(np.abs(info["dbg"]["twist"]["kappa3"])))
-    # M_world = info["dbg"]["mag"]["M_world"]
-    # print("max |M_world| on edges:", np.max(np.linalg.norm(M_world, axis=0)))
-    # print("max |kappa1|:", np.max(np.abs(der_dbg["kappa1"])))
-    # print("max |kappa2|:", np.max(np.abs(der_dbg["kappa2"])))
-    # print("mean Voronoi length:", np.mean(der_dbg["dl_voronoi"]))
 
-    # plot_reference_and_material_frames_3d(
-    #     p_nodes,
-    #     der_dbg["d1_ref"], der_dbg["d2_ref"], der_dbg["d3_ref"],
-    #     der_dbg["m1"], der_dbg["m2"], der_dbg["m3"],
-    #     scale=0.0015,
-    #     stride=3,
-    #     title="Reference/material frames along optimized rod"
-    # )
-    # plot_nodes_and_magnet_3d(
-    #     p_nodes,
-    #     p0=p0_ur,
-    #     r_src=r_src_ur,
-    #     m_src=m_src,          # world dipole vector
-    #     p_straight=p_straight,
-    #     title="Node-optimised rod with permanent magnet"
-    # )   
-    # print("straight tip:", p_straight[:, -1])
-    # print("solved tip:  ", p_nodes[:, -1])
-    # print("tip diff:    ", p_nodes[:, -1] - p_straight[:, -1])
-    # print("tip diff norm:", np.linalg.norm(p_nodes[:, -1] - p_straight[:, -1]))
-    # # -----------------------------
-    # # Constraint check
-    # # -----------------------------
-    # eps_s = info["dbg"]["stretch"]["eps_s"]
-    # print("max |eps_s|:", np.max(np.abs(eps_s)))
-    # print("mean |eps_s|:", np.mean(np.abs(eps_s)))
-    # # -----------------------------
-    # # Curvature localization check
-    # # -----------------------------
-    # kappa1 = info["dbg"]["bend"]["kappa1"]
-    # kappa2 = info["dbg"]["bend"]["kappa2"]
-    # s_nodes = np.linspace(0.0, L_cmd, N)
-    # EI1_v, EI2_v, GJ_v = build_bending_twist_profiles(s_nodes, Kinv_fun, wire_len)
+    from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
+    from proper_research.control.mpc_boundary import resample_polyline
 
-    # s_vertex = s_nodes[1:-1]
-    # wire_mask = s_vertex < wire_len
-    # tip_mask  = s_vertex >= wire_len
-    # print("wire_len:", wire_len)
-    # print("s_vertex[0]:", s_vertex[0], "s_vertex[-1]:", s_vertex[-1])
-    # print("num wire vertices:", np.sum(wire_mask))
-    # print("num tip vertices:", np.sum(tip_mask))
-    # print("EI1 wire mean:", EI1_v[wire_mask].mean() if np.any(wire_mask) else None)
-    # print("EI2 wire mean:", EI2_v[wire_mask].mean() if np.any(wire_mask) else None)
-    # print("EI1 tip mean:", EI1_v[tip_mask].mean() if np.any(tip_mask) else None)
-    # print("EI2 tip mean:", EI2_v[tip_mask].mean() if np.any(tip_mask) else None)
-    # plt.figure()
-    # plt.plot(s_vertex, kappa1, "-o", label="kappa1")
-    # plt.plot(s_vertex, kappa2, "-o", label="kappa2")
-    # plt.axvline(wire_len, linestyle="--")
-    # plt.xlabel("s [m]")
-    # plt.ylabel("bending strain [1/m]")
-    # plt.title("DER bending strains along rod")
-    # plt.legend()
-    # plt.show()
+    lumen_C = None
+    lumen_R = None
+    lumen_query = None
 
+    if USE_LUMEN:
+        # base tangent from your pivot pose
+        Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
+        t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
+
+        s_straight = 0.02
+        lumen_C = make_lumen_centerline_turning(
+            p_start=p0_ur,
+            t0=t0,
+            length=0.06 + s_straight,
+            n_pts=130,
+            bend_axis=np.array([0.0, 0.0, 1.0]),
+            bend_angle=np.deg2rad(40.0),
+            bend_start=0.0 + s_straight,
+            bend_end=0.03 + s_straight,
+        )
+
+        lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
+        lumen_R = np.full(len(lumen_C), 0.004)
+
+        lumen_query = LumenQuery(lumen_C, lumen_R)
+
+        print("\n--- LUMEN SETUP ---")
+        print("t0 =", t0)
+        print("z variation in lumen =", lumen_C[:, 2].min(), lumen_C[:, 2].max())
+        print("lumen pts =", len(lumen_C))
+        print("lumen radius =", lumen_R[0])
+    # ------------------------------------------------------------------
+    # Run solvers
+    # ------------------------------------------------------------------
+    p_res = theta_res = info_res = None
+    p_min = theta_min = info_min = None
+    if RUN_MIN_SOLVER:
+        p_min, theta_min, info_min = solve_nodes_twist_min(
+            p0=p0_ur,
+            q0=q0_ur,
+            L=L_cmd,
+            N=N,
+            wire_len=wire_len,
+            Kinv_fun=Kinv_fun,
+            r_src=r_src_ur,
+            m_src=m_src,
+            mu_tip=mu_tip,
+            EA_wire=EA_wire,
+            EA_tip=EA_tip,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            use_lumen=USE_LUMEN,
+            maxiter=200,
+            M_ref_local=M_ref_local,
+            ref_twist=None,
+            enforce_inextensibility=False,
+        )
+    if RUN_RESIDUAL_SOLVER:
+        p_res, theta_res, info_res = solve_nodes_twist_residual(
+            p0=p0_ur,
+            q0=q0_ur,
+            L=L_cmd,
+            N=N,
+            wire_len=wire_len,
+            Kinv_fun=Kinv_fun,
+            r_src=r_src_ur,
+            m_src=m_src,
+            mu_tip=mu_line,
+            EA_wire=EA_wire,
+            EA_tip=EA_tip,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            use_lumen=USE_LUMEN,
+            maxiter=200,
+            M_ref_local=M_ref_local,
+            ref_twist=None,
+            q_init=info_min["q_opt"],
+        )
+
+
+
+    # ------------------------------------------------------------------
+    # Summaries
+    # ------------------------------------------------------------------
+    if info_res is not None:
+        summarize_solution(
+            "RESIDUAL SOLVER",
+            p_res, theta_res, info_res,
+            p0=p0_ur, q0=q0_ur, L=L_cmd, N=N,
+            wire_len=wire_len, Kinv_fun=Kinv_fun,
+            r_src=r_src_ur, m_src=m_src,
+            EA_wire=EA_wire, EA_tip=EA_tip,
+            M_ref_local=M_ref_local,
+        )
+
+    if info_min is not None:
+        summarize_solution(
+            "ENERGY MINIMIZATION SOLVER",
+            p_min, theta_min, info_min,
+            p0=p0_ur, q0=q0_ur, L=L_cmd, N=N,
+            wire_len=wire_len, Kinv_fun=Kinv_fun,
+            r_src=r_src_ur, m_src=m_src,
+            EA_wire=EA_wire, EA_tip=EA_tip,
+            M_ref_local=M_ref_local,
+        )
+
+    if (info_res is not None) and (info_min is not None):
+        compare_solutions(
+            "residual", p_res, theta_res, info_res,
+            "minimization", p_min, theta_min, info_min
+        )
+
+    # ------------------------------------------------------------------
+    # Extra debug: force sensitivity around converged residual solution
+    # ------------------------------------------------------------------
+    if RUN_FD_SENSITIVITY and (info_res is not None):
+        q_res = info_res["q_opt"]
+        p1_res = p_straight[:, 1].copy()
+
+        fd_force_sensitivity_check(
+            q_res,
+            p0=p0_ur, p1=p1_res, N=N,
+            EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
+            ell_ref=ell_ref, EA_seg=EA_seg,
+            wire_len=wire_len,
+            r_src=r_src_ur, m_src=m_src,
+            M_ref_local=M_ref_local,
+            ref_twist=None,
+            eps_list=(1e-5, 3e-6, 1e-6, 3e-7),
+        )
+
+    # ------------------------------------------------------------------
+    # Plots
+    # ------------------------------------------------------------------
+    if MAKE_PLOTS and (info_res is not None):
+        plot_nodes_and_magnet_3d(
+            p_res,
+            p0=p0_ur,
+            r_src=r_src_ur,
+            m_src=m_src,
+            p_straight=p_straight,
+            lumen_C=lumen_C,
+            title="Residual solver result"
+        )
+        plot_solution_diagnostics(
+            p_res, theta_res, info_res,
+            L=L_cmd, N=N, wire_len=wire_len,
+            title_prefix="residual solver"
+        )
+
+    if MAKE_PLOTS and (info_min is not None):
+        plot_nodes_and_magnet_3d(
+            p_min,
+            p0=p0_ur,
+            r_src=r_src_ur,
+            m_src=m_src,
+            p_straight=p_straight,
+            lumen_C=lumen_C,
+            title="Minimization solver result"
+        )
+        plot_solution_diagnostics(
+            p_min, theta_min, info_min,
+            L=L_cmd, N=N, wire_len=wire_len,
+            title_prefix="minimization solver"
+        )
+
+    if SHOW_FRAMES and (info_res is not None):
+        kin = info_res["dbg"]["kin"]
+        plot_reference_and_material_frames_3d(
+            p_res,
+            kin["d1_ref"], kin["d2_ref"], kin["d3_ref"],
+            kin["m1"], kin["m2"], kin["m3"],
+            scale=0.0015,
+            stride=3,
+            title="Reference/material frames along residual solution"
+        )

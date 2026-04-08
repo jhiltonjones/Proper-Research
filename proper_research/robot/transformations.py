@@ -4,12 +4,12 @@ pivot_point = np.array([
 ], float)
 
 
-# start_point = np.array([
-# 0.6058941096487977, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
-# ], float)
 start_point = np.array([
-0.6158941096487977, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
+0.6058941096487977, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
 ], float)
+# start_point = np.array([
+# 0.6158941096487977, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
+# ], float)
 def rotz(theta):
     return np.array([
         [np.cos(theta), -np.sin(theta), 0],

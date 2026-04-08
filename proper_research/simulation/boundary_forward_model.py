@@ -158,11 +158,11 @@ class  EnergyMinForwardWithLumen:
         # print("[FWD] lumen_R shape =", self.lumen_R.shape)
         # print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
         # print("[FWD] use_lumen_jac =", self.use_lumen_jac)
-        print("\n[FWD PARAM DEBUG]")
-        print("L_ins =", L_ins)
-        print("L_model =", L_model)
-        print("wire_len =", wire_len)
-        print("tip_len =", tip_len)
+        # print("\n[FWD PARAM DEBUG]")
+        # print("L_ins =", L_ins)
+        # print("L_model =", L_model)
+        # print("wire_len =", wire_len)
+        # print("tip_len =", tip_len)
 
         # print("\n--- MAGNETICS ---")
         # print("m_body (source body dipole) =", self.m_body)
@@ -220,23 +220,23 @@ class  EnergyMinForwardWithLumen:
         tip = pE[:, -1].copy()
         info = hist[-1].get("info", {})
         parts = info.get("parts", {})
-        print("\n[COSSERAT ENERGY DEBUG]")
-        print(f"W total = {info.get('W', np.nan):.6e}")
-        print(f"W_el    = {parts.get('W_el', np.nan):.6e}")
-        print(f"W_b     = {parts.get('W_b', np.nan):.6e}")
-        print(f"W_t     = {parts.get('W_t', np.nan):.6e}")
-        print(f"W_m     = {parts.get('W_m', np.nan):.6e}")
-        print(f"W_g     = {parts.get('W_g', np.nan):.6e}")
-        print(f"W_cf    = {parts.get('W_cf', np.nan):.6e}")
+        # print("\n[COSSERAT ENERGY DEBUG]")
+        # print(f"W total = {info.get('W', np.nan):.6e}")
+        # print(f"W_el    = {parts.get('W_el', np.nan):.6e}")
+        # print(f"W_b     = {parts.get('W_b', np.nan):.6e}")
+        # print(f"W_t     = {parts.get('W_t', np.nan):.6e}")
+        # print(f"W_m     = {parts.get('W_m', np.nan):.6e}")
+        # print(f"W_g     = {parts.get('W_g', np.nan):.6e}")
+        # print(f"W_cf    = {parts.get('W_cf', np.nan):.6e}")
 
-        if "Bnorm" in parts:
-            print(f"max |B| = {np.max(parts['Bnorm']):.6e}")
-        if "mnorm" in parts:
-            print(f"max |m| = {np.max(parts['mnorm']):.6e}")
-        if "tau_norm" in parts:
-            print(f"max |m x B| = {np.max(parts['tau_norm']):.6e}")
-        if "angle_deg" in parts:
-            print(f"mean angle(m,B) [deg] = {np.mean(parts['angle_deg']):.6f}")
+        # if "Bnorm" in parts:
+        #     print(f"max |B| = {np.max(parts['Bnorm']):.6e}")
+        # if "mnorm" in parts:
+        #     print(f"max |m| = {np.max(parts['mnorm']):.6e}")
+        # if "tau_norm" in parts:
+        #     print(f"max |m x B| = {np.max(parts['tau_norm']):.6e}")
+        # if "angle_deg" in parts:
+        #     print(f"mean angle(m,B) [deg] = {np.mean(parts['angle_deg']):.6f}")
         # print("[FWD] tip =", tip)
         # print("[FWD] info keys =", list(info.keys()))
 

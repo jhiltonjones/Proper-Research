@@ -973,6 +973,8 @@ class mpc_controller_tipxy_LTI:
         for it in range(int(self.N_sqp)):
             p0 = self.p.copy()
             print(f"P0 is {p0}")
+            print("[DBG] Jxy_fn(p0) shape =", np.asarray(self.Jxy_fn(p0)).shape)
+            print("[DBG] expected shape =", (self.n, self.m))
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
             print("built prediction mats")
             print("p_seq shape:", np.shape(p_seq))
@@ -2214,66 +2216,106 @@ def vision_result_to_x_meas_robot(
         t_robot[1],
         t_robot[2],
     ], dtype=float)
-def numerical_B_y_wrt_u_xy_wz_L_forward(p8, forward_y_fn, dt, eps_u, n_out, delta_L=1e-3):
+import numpy as np
+import time
+
+def quat_from_yaw_wxyz(dpsi):
+    c = np.cos(0.5 * dpsi)
+    s = np.sin(0.5 * dpsi)
+    return np.array([c, 0.0, 0.0, s], dtype=float)   # rotation about z
+
+def numerical_J_robot_xy_yaw_dL(
+    p8,
+    forward_y_fn,
+    dx=5e-3,
+    dy=5e-3,
+    dyaw=np.deg2rad(5.0),
+    dL=1e-3,
+    n_out=3,
+):
     import time
+    import numpy as np
+
     t0 = time.perf_counter()
 
-    p8 = np.asarray(p8, float).ravel()
-    B_red = np.zeros((n_out, 4), float)
+    p8 = np.asarray(p8, float).ravel().copy()
+    J = np.zeros((n_out, 4), float)
 
-    tint = 0.0
-    tfwd = 0.0
+    def eval_y(p):
+        y_full = np.asarray(forward_y_fn(p), float).reshape(-1)
+        return y_full[:n_out]
 
-    a = time.perf_counter()
-    y0 = np.asarray(forward_y_fn(p8), float).reshape(n_out,)
-    b = time.perf_counter()
-    tfwd += (b - a)
+    print("[DBG] p8 =", p8)
 
-    selected = [0, 1, 5]   # vx, vy, wz
+    # nominal
+    y0 = eval_y(p8)
+    print("[DBG] y0 =", y0)
 
-    for j, i in enumerate(selected):
-        du = np.zeros(7)
-        du[i] = eps_u[i]
-
-        a = time.perf_counter()
-        p_plus = integrate_pose8_body(p8, du, dt)
-        b = time.perf_counter()
-        tint += (b - a)
-
-        a = time.perf_counter()
-        y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-        b = time.perf_counter()
-        tfwd += (b - a)
-
-        B_red[:, j] = (y_plus - y0) / (eps_u[i])
-
+    # 1) x central difference
     p_plus = p8.copy()
-    p_plus[7] += delta_L
+    p_minus = p8.copy()
+    p_plus[0] += dx
+    p_minus[0] -= dx
 
-    a = time.perf_counter()
-    y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-    b = time.perf_counter()
-    tfwd += (b - a)
+    y_plus = eval_y(p_plus)
+    y_minus = eval_y(p_minus)
 
-    dy_dL = (y_plus - y0) / delta_L
-    B_red[:, 3] = dt * dy_dL
+    print("[DBG] x+ =", y_plus, "x- =", y_minus, "central dy =", y_plus - y_minus)
+    J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
+
+    # 2) y central difference
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+    p_plus[1] += dy
+    p_minus[1] -= dy
+
+    y_plus = eval_y(p_plus)
+    y_minus = eval_y(p_minus)
+
+    print("[DBG] y+ =", y_plus, "y- =", y_minus, "central dy =", y_plus - y_minus)
+    J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
+
+    # 3) yaw-z central difference
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+
+    q = quat_wxyz_normalize(p8[3:7])
+    dqz_plus = quat_from_yaw_wxyz(+dyaw)
+    dqz_minus = quat_from_yaw_wxyz(-dyaw)
+
+    # world-z perturbation
+    p_plus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_plus, q))
+    p_minus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_minus, q))
+
+    y_plus = eval_y(p_plus)
+    y_minus = eval_y(p_minus)
+
+    print("[DBG] yaw+ =", y_plus, "yaw- =", y_minus, "central dy =", y_plus - y_minus)
+    J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw)
+
+    # 4) L central difference
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+    p_plus[7] += dL
+    p_minus[7] -= dL
+
+    y_plus = eval_y(p_plus)
+    y_minus = eval_y(p_minus)
+
+    print("[DBG] L+ =", y_plus, "L- =", y_minus, "central dy =", y_plus - y_minus)
+    J[:, 3] = (y_plus - y_minus) / (2.0 * dL)
 
     t1 = time.perf_counter()
-    print(f"[TIME] numerical_B forward total: {(t1-t0)*1e3:.2f} ms")
-    print(f"[TIME] integrate total: {(tint)*1e3:.2f} ms")
-    print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
+    print("[DBG] J =\n", J)
+    print(f"[TIME] numerical_J_robot total: {(t1-t0)*1e3:.2f} ms")
 
-    return B_red
-def J_fn_full_from_reduced(p8, eps_u):
-    J_red = numerical_B_y_wrt_u_xy_wz_L_forward(
-        p8, forward6d, dt=dt, eps_u=eps_u, n_out=3
-    )  # shape (3,4)
-
-    J_full = np.zeros((3, 7), float)
-    J_full[:, 0] = J_red[:, 0]   # vx
-    J_full[:, 1] = J_red[:, 1]   # vy
-    J_full[:, 5] = J_red[:, 2]   # wz
-    J_full[:, 6] = J_red[:, 3]   # L
+    return J
+def J_full_from_robot_reduced(J_red, n_out_full=6):
+    J_full = np.zeros((n_out_full, 7), float)
+    J_full[0:3, 0] = J_red[:, 0]   # x translation
+    J_full[0:3, 1] = J_red[:, 1]   # y translation
+    J_full[0:3, 5] = J_red[:, 2]   # z rotation
+    J_full[0:3, 6] = J_red[:, 3]   # dL
     return J_full
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     import time
@@ -2435,8 +2477,8 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     
     L0 = 0.05
 
-    pose6 = np.asarray(get_point(0, 0), dtype=float)
-    # pose6 = hw.get_robot_pose_once()
+    # pose6 = np.asarray(get_point(0, 0), dtype=float)
+    pose6 = hw.get_robot_pose_once()
     # pose6 = np.array([0.6464871989117105, -0.5659848620070453, 0.18000000000000002, 2.822035029384029, -1.334168531318762, -0.06004322067724725], float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
@@ -2495,28 +2537,26 @@ def build_controller(
         dL / dt
     ], dtype=float)
 
+
     forward6d = DeterministicForward6D(forward_model)
-    # forward_model_fastjac = EnergyMinForwardWithLumen(
-    #     p0_ur=forward_model.p0_ur,
-    #     q0_ur=forward_model.q0_ur,
-    #     Kinv_fun=forward_model.Kinv_fun,
-    #     u_star=forward_model.u_star,
-    #     m_body=forward_model.m_body,
-    #     lumen_C=forward_model.lumen_C,
-    #     lumen_R=forward_model.lumen_R,
-    #     N_nodes=10,
-    #     maxiter=35,
-    #     L0_init=forward_model.L0_init,
-    #     dL_internal=0.002,
-    #     L_tip_full=forward_model.L_tip_full,
-    #     L_tip_min=forward_model.L_tip_min,
-    #     use_lumen_jac=forward_model.use_lumen_jac,
-    # )
-    # forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
-    J_fn = lambda p8: numerical_B_y_wrt_u_xy_wz_L_forward(
-        p8, forward6d, dt=dt, eps_u=eps_u, n_out=3
-    )
-    J_fn = J_fn_full_from_reduced(p8, eps_u)
+
+
+
+    def J_fn(p8):
+        print("[DBG] entered J_fn")
+        Jred = numerical_J_robot_xy_yaw_dL(
+            p8,
+            forward6d,
+            dx=dr / dt,
+            dy=dr / dt,
+            dyaw=dtheta / dt,
+            dL=dL / dt,
+            n_out=3,
+        )
+        print("[DBG] finished Jred, shape =", Jred.shape)
+        Jfull = J_full_from_robot_reduced(Jred, n_out_full=6)
+        print("[DBG] finished Jfull, shape =", Jfull.shape)
+        return Jfull
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d,
@@ -2879,11 +2919,40 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     )
 
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+    # tip = rod_section_stiffness(
+    #     r=2e-3,
+    #     E=3e6,
+    #     nu=0.49,
+    # )
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+    EA_wire = wire["EA"]
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
 
+    EA_tip = tip["EA"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
     forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
+        Kinv_fun=Kinv_fun,
         u_star=np.zeros(3),
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
@@ -2892,12 +2961,49 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.002,
-        L_tip_full=0.04,
-        L_tip_min=0.01,
         use_lumen_jac=True,
+        L_tip_full=tip_len_model,
+        L_tip_min=0.01,
     )
     print(f"Finished_building_model")
     return p0_ur, q0_ur, forward_model
+def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
+    def Kbt_inv_profile(s, len_wire):
+        s = np.asarray(s, float)
+        mask_tip = (s >= len_wire)
+
+        EI_s = np.where(mask_tip, EI_tip, EI_wire)
+        GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
+
+        Kinv = np.zeros((3, 3, s.size), float)
+        Kinv[0, 0, :] = tors_soft / GJ_s
+        Kinv[1, 1, :] = bend_soft / EI_s
+        Kinv[2, 2, :] = bend_soft / EI_s
+        return Kinv
+
+    return Kbt_inv_profile
+def rod_section_stiffness(r, E, nu):
+    A = np.pi * r**2
+    I = np.pi * r**4 / 4.0
+    J = 0.5 * np.pi * r**4
+    G = E / (2.0 * (1.0 + nu))
+
+    EA = E * A
+    EI = E * I
+    GJ = G * J
+
+    return {
+        "r": r,
+        "E": E,
+        "nu": nu,
+        "A": A,
+        "I": I,
+        "J": J,
+        "G": G,
+        "EA": EA,
+        "EI": EI,
+        "GJ": GJ,
+    }
 if __name__ == "__main__":
     pivot_hint = (325, 371)
         # 4. dry-run control loop

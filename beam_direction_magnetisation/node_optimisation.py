@@ -54,23 +54,19 @@ def residual_static_force_balance(
     M_ref_local=None,
     ref_twist=None,
 ):
-    f_min, _ = total_force_from_state_fd(
-        info_min["q_opt"],
-        p0=p0_ur, p1=p_straight[:, 1].copy(), N=N,
+    f_total, _ = total_force_from_state_fd(
+        q_flat,
+        p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
         wire_len=wire_len,
-        r_src=r_src_ur, m_src=m_src,
-        lumen_query=lumen_query, use_lumen=USE_LUMEN,
+        r_src=r_src, m_src=m_src,
+        lumen_query=lumen_query,
+        use_lumen=use_lumen,
         M_ref_local=M_ref_local,
-        ref_twist=None,
-        eps=1e-6,
+        ref_twist=ref_twist,
     )
-    print("Residual norm at minimizer:", np.linalg.norm(f_min))
-    print("Max residual at minimizer:", np.max(np.abs(f_min)))
-
-    # static equilibrium: total generalized force = 0
-    return f_min
+    return f_total
 
 from scipy.optimize import root
 
@@ -360,7 +356,7 @@ def total_energy_from_state(
     p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src,
+    wire_len, tip_len,r_src, m_src,
     lumen_query=None, use_lumen=False,
     M_ref_local=None,
     ref_twist=None,
@@ -376,7 +372,7 @@ def total_energy_from_state(
         raise ValueError("M_ref_local must be provided explicitly")
 
     Wm, mag_dbg = magnetic_energy_from_kinematics(
-        kin, wire_len, r_src, m_src, M_ref_local
+        kin, wire_len, tip_len, r_src, m_src, M_ref_local
     )
 
     Wc = 0.0
@@ -400,14 +396,386 @@ def total_energy_from_state(
         "contact": con_dbg,
     }
     return float(W), dbg
+def cumulative_arclength_from_nodes(p):
+    """
+    p: (3,N)
+    returns s_nodes: (N,), starting at 0
+    """
+    e = p[:, 1:] - p[:, :-1]
+    ell = np.linalg.norm(e, axis=0)
+    s = np.zeros(p.shape[1], float)
+    s[1:] = np.cumsum(ell)
+    return s
+
+
+def resample_nodes_by_arclength(p_old, N_new):
+    """
+    Resample a centerline p_old: (3,N_old) onto N_new nodes by arc length.
+    """
+    p_old = np.asarray(p_old, float)
+    s_old = cumulative_arclength_from_nodes(p_old)
+    L_old = s_old[-1]
+
+    s_new = np.linspace(0.0, L_old, N_new)
+    p_new = np.zeros((3, N_new), float)
+
+    for k in range(3):
+        p_new[k, :] = np.interp(s_new, s_old, p_old[k, :])
+
+    return p_new
+
+
+def resample_edge_data(theta_old, N_old, N_new):
+    """
+    theta_old: (N_old-1,) edge-wise data
+    returns theta_new: (N_new-1,)
+    """
+    theta_old = np.asarray(theta_old, float).reshape(-1)
+    if theta_old.size != N_old - 1:
+        raise ValueError("theta_old size mismatch")
+
+    s_edge_old = (np.arange(N_old - 1) + 0.5) / (N_old - 1)
+    s_edge_new = (np.arange(N_new - 1) + 0.5) / (N_new - 1)
+
+    theta_new = np.interp(s_edge_new, s_edge_old, theta_old)
+    return theta_new
+
+
+def project_first_two_nodes_to_base(p, p0, q0, L):
+    """
+    After resampling/interpolation, re-impose the fixed base node and fixed second node.
+    """
+    p = np.asarray(p, float).copy()
+    N = p.shape[1]
+
+    p_straight = make_initial_nodes_straight(p0, q0, L, N)
+    p[:, 0] = p0
+    p[:, 1] = p_straight[:, 1]
+    return p
+
+
+def make_q_init_from_solution(p_old, theta_old, p0, q0, L_new, N_new):
+    """
+    Build a valid q_init for a new (L_new, N_new) problem by:
+      1. resampling nodes,
+      2. re-imposing fixed base/second node,
+      3. interpolating theta.
+    """
+    N_old = p_old.shape[1]
+
+    p_new = resample_nodes_by_arclength(p_old, N_new)
+    p_new = project_first_two_nodes_to_base(p_new, p0, q0, L_new)
+
+    theta_new = resample_edge_data(theta_old, N_old, N_new)
+
+    return pack_q_from_nodes_twist(p_new, theta_new)
+def solve_one_der_case(
+    *,
+    p0, q0, L, N,
+    wire_len, tip_len,
+    Kinv_fun,
+    r_src, m_src,
+    mu_tip,
+    EA_wire, EA_tip,
+    lumen_C=None, lumen_R=None,
+    use_lumen=False,
+    maxiter=300,
+    M_ref_local=None,
+    ref_twist=None,
+    enforce_inextensibility=False,
+    amp_init=2e-4,
+    q_init=None,
+):
+    return solve_nodes_twist_min(
+        p0=p0,
+        q0=q0,
+        L=L,
+        N=N,
+        wire_len=wire_len,
+        tip_len=tip_len,
+        Kinv_fun=Kinv_fun,
+        r_src=r_src,
+        m_src=m_src,
+        mu_tip=mu_tip,
+        EA_wire=EA_wire,
+        EA_tip=EA_tip,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        use_lumen=use_lumen,
+        maxiter=maxiter,
+        M_ref_local=M_ref_local,
+        ref_twist=ref_twist,
+        enforce_inextensibility=enforce_inextensibility,
+        amp_init=amp_init,
+        q_init=q_init,
+    )
+def solve_der_continuation_in_L(
+    *,
+    p0, q0,
+    L_values,
+    N,
+    L_tip_full,
+    L_tip_min,
+    Kinv_fun,
+    r_src, m_src,
+    mu_tip,
+    EA_wire, EA_tip,
+    lumen_C=None, lumen_R=None,
+    use_lumen=False,
+    maxiter=300,
+    M_ref_local=None,
+    ref_twist=None,
+    enforce_inextensibility=False,
+    amp_init=2e-4,
+    q_init0=None,
+    verbose=True,
+):
+    """
+    Solve along a sequence of lengths, warm-starting each from the previous solution.
+    """
+    hist = []
+    q_init = q_init0
+
+    for L in L_values:
+        tip_len = min(float(L), float(L_tip_full))
+        wire_len = max(float(L) - float(L_tip_full), 0.0)
+        L_model = max(float(L), float(L_tip_min))
+        tip_len = min(tip_len, L_model)
+
+        p_opt, theta_opt, info = solve_one_der_case(
+            p0=p0, q0=q0,
+            L=L_model,
+            N=N,
+            wire_len=wire_len,
+            tip_len=tip_len,
+            Kinv_fun=Kinv_fun,
+            r_src=r_src,
+            m_src=m_src,
+            mu_tip=mu_tip,
+            EA_wire=EA_wire,
+            EA_tip=EA_tip,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            use_lumen=use_lumen,
+            maxiter=maxiter,
+            M_ref_local=M_ref_local,
+            ref_twist=ref_twist,
+            enforce_inextensibility=enforce_inextensibility,
+            amp_init=amp_init,
+            q_init=q_init,
+        )
+
+        hist.append(dict(
+            L=L_model,
+            wire_len=wire_len,
+            tip_len=tip_len,
+            p=p_opt,
+            theta=theta_opt,
+            info=info,
+        ))
+
+        if verbose:
+            print(
+                f"[L-cont] L={L_model:.6f}, "
+                f"success={info['success']}, "
+                f"W={info['W']:.6e}, "
+                f"tip={p_opt[:, -1]}"
+            )
+
+        if not info["success"]:
+            break
+
+        q_init = info["q_opt"].copy()
+
+    return hist
+def solve_der_continuation_in_N(
+    *,
+    p0, q0,
+    L,
+    N_values,
+    L_tip_full,
+    L_tip_min,
+    Kinv_fun,
+    r_src, m_src,
+    mu_tip,
+    EA_wire, EA_tip,
+    lumen_C=None, lumen_R=None,
+    use_lumen=False,
+    maxiter=300,
+    M_ref_local=None,
+    ref_twist=None,
+    enforce_inextensibility=False,
+    amp_init=2e-4,
+    q_init0=None,
+    verbose=True,
+):
+    """
+    Solve on a sequence of meshes, interpolating each solution to the next N.
+    """
+    hist = []
+
+    tip_len = min(float(L), float(L_tip_full))
+    wire_len = max(float(L) - float(L_tip_full), 0.0)
+    L_model = max(float(L), float(L_tip_min))
+    tip_len = min(tip_len, L_model)
+
+    q_init = q_init0
+    p_prev = None
+    theta_prev = None
+    N_prev = None
+
+    for N in N_values:
+        if p_prev is not None and theta_prev is not None:
+            q_init = make_q_init_from_solution(
+                p_prev, theta_prev,
+                p0=p0, q0=q0,
+                L_new=L_model,
+                N_new=N,
+            )
+
+        p_opt, theta_opt, info = solve_one_der_case(
+            p0=p0, q0=q0,
+            L=L_model,
+            N=N,
+            wire_len=wire_len,
+            tip_len=tip_len,
+            Kinv_fun=Kinv_fun,
+            r_src=r_src,
+            m_src=m_src,
+            mu_tip=mu_tip,
+            EA_wire=EA_wire,
+            EA_tip=EA_tip,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
+            use_lumen=use_lumen,
+            maxiter=maxiter,
+            M_ref_local=M_ref_local,
+            ref_twist=ref_twist,
+            enforce_inextensibility=enforce_inextensibility,
+            amp_init=amp_init,
+            q_init=q_init,
+        )
+
+        hist.append(dict(
+            N=N,
+            L=L_model,
+            wire_len=wire_len,
+            tip_len=tip_len,
+            p=p_opt,
+            theta=theta_opt,
+            info=info,
+        ))
+
+        if verbose:
+            print(
+                f"[N-cont] N={N}, "
+                f"success={info['success']}, "
+                f"W={info['W']:.6e}, "
+                f"tip={p_opt[:, -1]}"
+            )
+
+        if not info["success"]:
+            break
+
+        p_prev = p_opt.copy()
+        theta_prev = theta_opt.copy()
+        N_prev = N
+        q_init = info["q_opt"].copy()
+
+    return hist
+def solve_der_continuation_L_then_N(
+    *,
+    p0, q0,
+    L_values,
+    N_values,
+    L_tip_full,
+    L_tip_min,
+    Kinv_fun,
+    r_src, m_src,
+    mu_tip,
+    EA_wire, EA_tip,
+    lumen_C=None, lumen_R=None,
+    use_lumen=False,
+    maxiter=300,
+    M_ref_local=None,
+    ref_twist=None,
+    enforce_inextensibility=False,
+    amp_init=2e-4,
+    verbose=True,
+):
+    """
+    1) Continue in L on the coarsest mesh.
+    2) At final L, continue in N to the finest mesh.
+    """
+    N0 = int(N_values[0])
+
+    hist_L = solve_der_continuation_in_L(
+        p0=p0, q0=q0,
+        L_values=L_values,
+        N=N0,
+        L_tip_full=L_tip_full,
+        L_tip_min=L_tip_min,
+        Kinv_fun=Kinv_fun,
+        r_src=r_src,
+        m_src=m_src,
+        mu_tip=mu_tip,
+        EA_wire=EA_wire,
+        EA_tip=EA_tip,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        use_lumen=use_lumen,
+        maxiter=maxiter,
+        M_ref_local=M_ref_local,
+        ref_twist=ref_twist,
+        enforce_inextensibility=enforce_inextensibility,
+        amp_init=amp_init,
+        q_init0=None,
+        verbose=verbose,
+    )
+
+    if len(hist_L) == 0 or not hist_L[-1]["info"]["success"]:
+        return dict(success=False, hist_L=hist_L, hist_N=[])
+
+    p_last = hist_L[-1]["p"]
+    theta_last = hist_L[-1]["theta"]
+    L_final = hist_L[-1]["L"]
+
+    q_init_final = pack_q_from_nodes_twist(p_last, theta_last)
+
+    hist_N = solve_der_continuation_in_N(
+        p0=p0, q0=q0,
+        L=L_final,
+        N_values=N_values,
+        L_tip_full=L_tip_full,
+        L_tip_min=L_tip_min,
+        Kinv_fun=Kinv_fun,
+        r_src=r_src,
+        m_src=m_src,
+        mu_tip=mu_tip,
+        EA_wire=EA_wire,
+        EA_tip=EA_tip,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        use_lumen=use_lumen,
+        maxiter=maxiter,
+        M_ref_local=M_ref_local,
+        ref_twist=ref_twist,
+        enforce_inextensibility=enforce_inextensibility,
+        amp_init=amp_init,
+        q_init0=q_init_final,
+        verbose=verbose,
+    )
+
+    success = len(hist_N) > 0 and hist_N[-1]["info"]["success"]
+    return dict(success=success, hist_L=hist_L, hist_N=hist_N)
 def segment_length_residuals_q(q_flat, *, p0, p1, N, ell):
     p, theta_twist = unpack_q_to_nodes_twist(q_flat, p0, p1, N)
     Ls = edge_lengths(p)
     return Ls[1:]**2 - ell**2
 def solve_nodes_twist_min(
-    *, 
+    *,
     p0, q0, L, N,
-    wire_len, Kinv_fun,
+    wire_len, tip_len,Kinv_fun,
     r_src, m_src, mu_tip,
     EA_wire, EA_tip,
     lumen_C=None, lumen_R=None,
@@ -417,6 +785,7 @@ def solve_nodes_twist_min(
     ref_twist=None,
     enforce_inextensibility=False,
     amp_init=2e-4,
+    q_init=None,
 ):
     """
     Solve DER-style node + twist energy minimization.
@@ -439,12 +808,20 @@ def solve_nodes_twist_min(
     # -------------------------
     # Initial geometry / twist
     # -------------------------
-    p_init = make_initial_nodes_perturbed_feasible(p0, q0, L, N, amp=amp_init)
-    p1 = p_init[:, 1].copy()
+    if q_init is None:
+        p_init = make_initial_nodes_perturbed_feasible(p0, q0, L, N, amp=amp_init)
+        theta0 = np.zeros(N - 1, float)
+        q0_flat = pack_q_from_nodes_twist(p_init, theta0)
+    else:
+        q0_flat = np.asarray(q_init, float).copy()
+        p_init, _ = unpack_q_to_nodes_twist(
+            q0_flat,
+            p0,
+            make_initial_nodes_straight(p0, q0, L, N)[:, 1].copy(),
+            N
+        )
 
-    theta0 = np.zeros(N - 1, float)
-    q0_flat = pack_q_from_nodes_twist(p_init, theta0)
-
+    p1 = make_initial_nodes_straight(p0, q0, L, N)[:, 1].copy()
     # -------------------------
     # Discrete constitutive profiles
     # -------------------------
@@ -485,7 +862,7 @@ def solve_nodes_twist_min(
             p0=p0, p1=p1, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len,
+            wire_len=wire_len, tip_len = tip_len,
             r_src=r_src, m_src=m_src,
             lumen_query=lumen_query,
             use_lumen=use_lumen,
@@ -511,15 +888,17 @@ def solve_nodes_twist_min(
     # -------------------------
     # Solve
     # -------------------------
+    method = "SLSQP" if enforce_inextensibility else "L-BFGS-B"
+
     res = minimize(
         obj,
         q0_flat,
-        method="SLSQP",
-        constraints=constraints,
+        method=method,
+        constraints=constraints if enforce_inextensibility else (),
         options=dict(
             maxiter=maxiter,
-            ftol=1e-6,
-            eps=1e-7,
+            ftol=1e-12,
+            maxls=50,
             disp=True,
         ),
     )
@@ -534,7 +913,7 @@ def solve_nodes_twist_min(
         p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
-        wire_len=wire_len,
+        wire_len=wire_len, tip_len = tip_len,
         r_src=r_src, m_src=m_src,
         lumen_query=lumen_query,
         use_lumen=use_lumen,
@@ -602,8 +981,17 @@ def stretch_energy_from_kinematics(kin, ell_ref, EA_seg):
     eps_s = stretch_strain_from_lengths(ell, ell_ref)
     Ws = 0.5 * np.sum(EA_seg * (eps_s**2) * ell_ref)
     return float(Ws), {"eps_s": eps_s}
+def smooth_top_hat(s, s0, s1, eps):
+    s = np.asarray(s, float)
+    return 0.5 * (np.tanh((s - s0) / eps) - np.tanh((s - s1) / eps))
 def magnetic_energy_from_kinematics(
-    kin, wire_len, r_src, m_src, M_ref_local
+    kin,
+    wire_len,
+    tip_len,
+    r_src,
+    m_src,
+    M_ref_local,
+    eps_m=1e-3,
 ):
     m1 = kin["m1"]
     m2 = kin["m2"]
@@ -616,25 +1004,45 @@ def magnetic_energy_from_kinematics(
     s_seg = 0.5 * (s_nodes[:-1] + s_nodes[1:])
 
     B = dipole_field_points(mid, r_src, m_src)
+    Bmag = np.linalg.norm(B, axis=0)
 
     M_ref_local = np.asarray(M_ref_local, float).reshape(3,)
-    mag_mask = (s_seg >= wire_len).astype(float)
+    w_seg = smooth_top_hat(s_seg, wire_len, wire_len + tip_len, eps_m)
 
     M_world = (
         m1 * M_ref_local[0]
         + m2 * M_ref_local[1]
         + m3 * M_ref_local[2]
     )
-    M_world *= mag_mask[None, :]
+    M_world *= w_seg[None, :]
 
-    wm = -np.sum(M_world * B, axis=0)
-    Wm = np.sum(wm * ell_i)
+    Mmag = np.linalg.norm(M_world, axis=0)
+    Mhat = M_world / (Mmag[None, :] + 1e-12)
+    that = kin["t"]
+
+    cos_axial_der = np.sum(Mhat * that, axis=0)
+    active = Mmag > 1e-9
+
+    mdotB = np.sum(M_world * B, axis=0)
+    wm_density = -mdotB
+    wm_seg = wm_density * ell_i
+    Wm = np.sum(wm_seg)
 
     return float(Wm), {
         "B": B,
+        "Bmag": Bmag,
         "M_world": M_world,
-        "mag_mask": mag_mask,
+        "Mmag": Mmag,
         "s_seg": s_seg,
+        "ell_i": ell_i,
+        "mdotB": mdotB,
+        "wm_density": wm_density,
+        "wm_seg": wm_seg,
+        "wire_len": float(wire_len),
+        "tip_len": float(tip_len),
+        "w_seg": w_seg,
+        "cos_axial_der": cos_axial_der,
+        "active_mask": active,
     }
 def contact_energy_from_nodes(p, lumen_query):
     Wc, dbg = lumen_contact_energy_nodes(p, lumen_query)
@@ -1289,7 +1697,7 @@ if __name__ == "__main__":
     MAKE_PLOTS = True
     SHOW_FRAMES = False
     RUN_FD_SENSITIVITY = False
-    USE_LUMEN = True
+    USE_LUMEN = False
 
     # ------------------------------------------------------------------
     # Problem setup
@@ -1297,7 +1705,7 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.055
+    L_cmd = 0.075
     mag_len = beam_params.length_of_mag
     wire_len = L_cmd - mag_len
     N = 9
@@ -1313,8 +1721,10 @@ if __name__ == "__main__":
     pivot_point = np.array([
         0.7681328220229531, -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
-
-    start_point = get_point(0, 30)
+    base_point = np.array([
+        (pivot_point[0]-(L_cmd+0.08)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
+    ], float)
+    start_point = get_point(0, 60, base_point,  pivot_point)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -1434,12 +1844,16 @@ if __name__ == "__main__":
     p_res = theta_res = info_res = None
     p_min = theta_min = info_min = None
     if RUN_MIN_SOLVER:
-        p_min, theta_min, info_min = solve_nodes_twist_min(
+        L_values = np.linspace(0.03, L_cmd, 6)   # coarse continuation in length
+        N_values = [9, 15, 21, 30]               # coarse-to-fine mesh continuation
+
+        out = solve_der_continuation_L_then_N(
             p0=p0_ur,
             q0=q0_ur,
-            L=L_cmd,
-            N=N,
-            wire_len=wire_len,
+            L_values=L_values,
+            N_values=N_values,
+            L_tip_full=mag_len,
+            L_tip_min=0.01,
             Kinv_fun=Kinv_fun,
             r_src=r_src_ur,
             m_src=m_src,
@@ -1453,7 +1867,18 @@ if __name__ == "__main__":
             M_ref_local=M_ref_local,
             ref_twist=None,
             enforce_inextensibility=False,
+            amp_init=1e-3,
+            verbose=True,
         )
+
+        if out["success"]:
+            final = out["hist_N"][-1]
+            p_min = final["p"]
+            theta_min = final["theta"]
+            info_min = final["info"]
+            N = final["p"].shape[1]
+        else:
+            print("Continuation solve failed")
     if RUN_RESIDUAL_SOLVER:
         p_res, theta_res, info_res = solve_nodes_twist_residual(
             p0=p0_ur,

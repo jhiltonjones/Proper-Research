@@ -2214,7 +2214,67 @@ def vision_result_to_x_meas_robot(
         t_robot[1],
         t_robot[2],
     ], dtype=float)
+def numerical_B_y_wrt_u_xy_wz_L_forward(p8, forward_y_fn, dt, eps_u, n_out, delta_L=1e-3):
+    import time
+    t0 = time.perf_counter()
 
+    p8 = np.asarray(p8, float).ravel()
+    B_red = np.zeros((n_out, 4), float)
+
+    tint = 0.0
+    tfwd = 0.0
+
+    a = time.perf_counter()
+    y0 = np.asarray(forward_y_fn(p8), float).reshape(n_out,)
+    b = time.perf_counter()
+    tfwd += (b - a)
+
+    selected = [0, 1, 5]   # vx, vy, wz
+
+    for j, i in enumerate(selected):
+        du = np.zeros(7)
+        du[i] = eps_u[i]
+
+        a = time.perf_counter()
+        p_plus = integrate_pose8_body(p8, du, dt)
+        b = time.perf_counter()
+        tint += (b - a)
+
+        a = time.perf_counter()
+        y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+        b = time.perf_counter()
+        tfwd += (b - a)
+
+        B_red[:, j] = (y_plus - y0) / (eps_u[i])
+
+    p_plus = p8.copy()
+    p_plus[7] += delta_L
+
+    a = time.perf_counter()
+    y_plus = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    b = time.perf_counter()
+    tfwd += (b - a)
+
+    dy_dL = (y_plus - y0) / delta_L
+    B_red[:, 3] = dt * dy_dL
+
+    t1 = time.perf_counter()
+    print(f"[TIME] numerical_B forward total: {(t1-t0)*1e3:.2f} ms")
+    print(f"[TIME] integrate total: {(tint)*1e3:.2f} ms")
+    print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
+
+    return B_red
+def J_fn_full_from_reduced(p8, eps_u):
+    J_red = numerical_B_y_wrt_u_xy_wz_L_forward(
+        p8, forward6d, dt=dt, eps_u=eps_u, n_out=3
+    )  # shape (3,4)
+
+    J_full = np.zeros((3, 7), float)
+    J_full[:, 0] = J_red[:, 0]   # vx
+    J_full[:, 1] = J_red[:, 1]   # vy
+    J_full[:, 5] = J_red[:, 2]   # wz
+    J_full[:, 6] = J_red[:, 3]   # L
+    return J_full
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     import time
     t0 = time.perf_counter()
@@ -2453,10 +2513,10 @@ def build_controller(
     #     use_lumen_jac=forward_model.use_lumen_jac,
     # )
     # forward6d_fastjac = DeterministicForward6D(forward_model_fastjac)
-    J_fn = lambda p8: numerical_B_y_wrt_u(
-        p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
+    J_fn = lambda p8: numerical_B_y_wrt_u_xy_wz_L_forward(
+        p8, forward6d, dt=dt, eps_u=eps_u, n_out=3
     )
-
+    J_fn = J_fn_full_from_reduced(p8, eps_u)
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d,

@@ -41,69 +41,7 @@ class LumenQuery:
         i, t, q = best
         Rloc = (1-t)*self.R[i] + t*self.R[i+1]
         return dmin, Rloc, q
-def contact_penalty_softplus(p, lumen_query, *,
-                             k_in=5e4,      # near-wall stiffness
-                             k_out=5e5,     # outside stiffness (bigger!)
-                             g0=5e-4,       # activation thickness (0.5mm)
-                             alpha=80.0,    # softplus sharpness
-                             window=3, eps=1e-9):
-    """
-    Returns:
-      C: (N,) penalty energy per node
-      F: (3,N) penalty force per node (negative gradient wrt p)
-      g: (N,) clearance g = R - delta
-    """
-    p = np.asarray(p, float)
-    N = p.shape[1]
-    C = np.zeros(N)
-    F = np.zeros((3,N))
-    g_arr = np.zeros(N)
 
-    for j in range(N):
-        x = p[:,j]
-        delta, Rloc, q = lumen_query.closest(x, window=window)
-        g = Rloc - delta
-        g_arr[j] = g
-
-        # outward normal (from centerline to point)
-        if delta > eps:
-            n = (x - q) / delta
-        else:
-            n = np.array([1.0,0.0,0.0])
-
-        # penetration amount (>=0 outside)
-        pen = max(-g, 0.0)
-
-        # softplus near-wall barrier (active when g < g0)
-        # z = (g0 - g) / g0  (0 deep inside, 1 at wall, >1 outside)
-        z = (g0 - g) / (g0 + 1e-12)
-
-        # softplus(z) ~ 0 for z<<0, ~ z for z>>0
-        sp = (1.0/alpha) * np.log1p(np.exp(alpha*z))
-
-        # energy:
-        # - inside near wall: k_in * sp^2
-        # - outside: add strong quadratic on penetration
-        Cj = 0.5 * k_in * sp*sp + 0.5 * k_out * pen*pen
-        C[j] = Cj
-
-        # derivative wrt g:
-        # z = (g0-g)/g0 => dz/dg = -1/g0
-        # d(sp)/dz = sigmoid(alpha*z)
-        sig = 1.0 / (1.0 + np.exp(-alpha*z))
-        dsp_dg = sig * (-1.0/(g0 + 1e-12))
-
-        dC_dg = k_in * sp * dsp_dg  # from 0.5*k_in*sp^2
-        if pen > 0.0:
-            # pen = -g => d(0.5*k_out*pen^2)/dg = -k_out*pen
-            dC_dg += -k_out * pen
-
-        # g = R - delta, delta increases outward:
-        # ∂g/∂x = -∂delta/∂x = -n
-        # Force = -∂C/∂x = - (dC/dg) * ∂g/∂x = - dC/dg * (-n) = (dC/dg)*n
-        F[:,j] = dC_dg * n
-
-    return C, F, g_arr
 def contact_barrier_energy_and_force_fast(
     p, lumen_query: LumenQuery, *,
     Kc=5e3,
@@ -200,74 +138,7 @@ def point_to_polyline_closest(p, C):
             d_min = d
     i, t, q, seg_tan = best
     return d_min, i, t, q, seg_tan
-def contact_friction_density(p, lumen_C, lumen_R, *,
-                             k_n=5e4,          # normal stiffness (outside)
-                             g0=2e-4,          # contact shell thickness (0.2 mm)
-                             k_shell=0.0,      # optional near-wall attraction; start 0
-                             mu=0.05,          # friction coefficient
-                             ins_dir=np.array([1.0,0.0,0.0]), # insertion direction (world)
-                             eps=1e-6):
-    """
-    p: (3,N)
-    Returns w_contact: (N,) energy density along s.
-    NOTE: This is a quasi-static friction *proxy* as an energy term.
-    """
-    ins_dir = np.asarray(ins_dir, float).reshape(3,)
-    ins_dir = ins_dir / (np.linalg.norm(ins_dir) + 1e-12)
 
-    N = p.shape[1]
-    w = np.zeros(N, float)
-
-    for j in range(N):
-        pj = p[:, j]
-        d, i, t, q, seg_tan = point_to_polyline_closest(pj, lumen_C)
-        Rloc = interpolate_radius(lumen_R, i, t)
-
-        # gap (positive inside)
-        g = Rloc - d
-
-        # outside penetration amount
-        pen = max(-g, 0.0)      # = max(d - R, 0)
-
-        # normal penalty (outside)
-        phi_out = 0.5 * k_n * pen * pen
-
-        # optional shell term (keeps you near wall when within g0)
-        # activates when g < g0
-        xi = (g0 - g) / (g0 + 1e-12)
-        w_shell = smoothstep01(xi)  # 0 deep inside, 1 at wall/outside
-        phi_shell = 0.5 * k_shell * w_shell * (max(g0 - g, 0.0)**2)
-
-        # approximate normal force magnitude (from penalty gradient proxy)
-        # N ~ k_n * pen (outside) + k_shell * w_shell * max(g0-g,0)
-        Nmag = k_n * pen + k_shell * w_shell * max(g0 - g, 0.0)
-
-        # normal direction (only defined if d>0)
-        if d > eps:
-            n = (pj - q) / d
-        else:
-            n = np.array([1.0,0.0,0.0])
-
-        # tangent direction along vessel projected into contact plane
-        tv = seg_tan
-        tproj = tv - np.dot(tv, n) * n
-        tnorm = np.linalg.norm(tproj)
-        if tnorm > eps:
-            tdir = tproj / tnorm
-        else:
-            # fallback: pick any orthogonal
-            tmp = np.array([1.0,0.0,0.0])
-            if abs(np.dot(tmp,n)) > 0.9: tmp = np.array([0.0,1.0,0.0])
-            tdir = np.cross(n, tmp)
-            tdir = tdir / (np.linalg.norm(tdir) + 1e-12)
-
-        # friction "work" proxy per unit length:
-        # resist motion along insertion direction projected onto contact tangent
-        slip = abs(np.dot(ins_dir, tdir))
-        phi_fric = w_shell * mu * Nmag * slip
-        w[j] = phi_out + phi_shell + phi_fric
-
-    return w
 
 def lumen_violation_profile(p, lumen_C, lumen_R):
     """
@@ -317,7 +188,57 @@ def _as_scalar(x, name="value"):
 def dipole_from_pose(q_src, m_body):
     R = quat_to_R(q_src)
     return R @ m_body  # (3,)
+def magnetic_tip_wrench_about_interface(p, q, s, *, r_src, m_src, m_local_fun, m_moment, wire_len):
+    """
+    Compute net magnetic wrench on the magnetic tip, resolved about the wire-tip interface.
+    Returns a dict with force, direct torque, moment from force, and total moment.
+    """
+    s = np.asarray(s, float).ravel()
+    p = np.asarray(p, float)
+    q = np.asarray(q, float)
 
+    tip_mask = s >= wire_len
+    if not np.any(tip_mask):
+        return dict(
+            F_tip=np.zeros(3),
+            Tau_tip=np.zeros(3),
+            M_force=np.zeros(3),
+            M_total=np.zeros(3),
+            p_interface=None,
+        )
+
+    p_tip = p[:, tip_mask]
+    q_tip = q[:, tip_mask]
+    s_tip = s[tip_mask]
+
+    f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
+        p_tip, q_tip, s_tip, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+
+    # interface point = first point in tip region
+    p_int = p_tip[:, 0]
+
+    # net force on tip
+    F_tip = np.trapezoid(f_mag, s_tip, axis=1)
+
+    # direct integrated torque density on tip
+    Tau_tip = np.trapezoid(tau_mag, s_tip, axis=1)
+
+    # moment from distributed force about interface
+    lever = p_tip - p_int[:, None]                    # (3,Nt)
+    force_moment_density = np.cross(lever.T, f_mag.T).T
+    M_force = np.trapezoid(force_moment_density, s_tip, axis=1)
+
+    # total moment about interface
+    M_total = Tau_tip + M_force
+
+    return dict(
+        F_tip=F_tip,
+        Tau_tip=Tau_tip,
+        M_force=M_force,
+        M_total=M_total,
+        p_interface=p_int,
+    )
 def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wire_len,  u_star=None):
     e1 = np.array([-1.0, 0.0, 0.0])
     if u_star is None:
@@ -852,89 +773,113 @@ def energy_from_u(
     m_src, r_src, m_local_fun, m_moment, wire_len,
     lumen_C=None, lumen_R=None,
     contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
-    contact_mode="tip", include_gravity=False,  # <- set default False for safety
+    contact_mode="tip", include_gravity=False,
     contact_s_on=0.0, contact_s_off=0.0,
     lumen_query=None, use_lumen=True,
-    debug_mag=True, debug_every=1, debug_head=8
+    debug_mag=False, debug_every=1, debug_head=8
 ):
     """
-    Computes total potential energy Π(u) in 3D.
-    If debug_mag=True: prints per-node magnetic energy density info.
-    """
-    p, q, u_seg = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)  # p: (3,N), q: (N,4) or (4,N)
-    s = np.asarray(s, float).ravel()
-    N = s.size
+    Computes total potential energy Π(u) in 3D using:
+      - elastic energy
+      - distributed magnetic energy only
+      - optional gravity
+      - optional lumen/contact penalty
 
+    u_flat is full segment strain: shape (3*(N-1),)
+    """
+    p, q, u_seg = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)
+    s = np.asarray(s, float).ravel()
     ds = np.diff(s)
     u_star = np.asarray(u_star, float).reshape(3,)
 
+    # -------------------------
     # Elastic energy
-    W_s = 0.0
+    # -------------------------
+    W_el = 0.0
+    W_t = 0.0
+    W_b = 0.0
+
+    W_t_seg = []
+    W_b_seg = []
+    W_el_seg = []
+
     for i in range(len(ds)):
-        du = (u_seg[i] - u_star)
-        W_s += 0.5 * du @ K_seg[i] @ du * ds[i]
-    # m_body = np.asarray(m_local_fun(s, None), float)  # (3,N)
-    # mag_mask = np.linalg.norm(m_body, axis=0) > 1e-12
-    # if np.any(mag_mask):
-    #     print("[MAG] region s in [%.4f, %.4f], len=%.4f" % (s[mag_mask][0], s[mag_mask][-1], s[mag_mask][-1]-s[mag_mask][0]))
-    # else:
-    #     print("[MAG] no magnetisation active")
-    # Magnetic field at nodes
-    # print("[DBG-energy] r_src used:", np.asarray(r_src).ravel())
-    # print("[DBG-energy] m_src used:", np.asarray(m_src).ravel())
-    f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
+        du = u_seg[i] - u_star
+        K = K_seg[i]
+
+        # full elastic contribution
+        dW_el = 0.5 * du @ K @ du * ds[i]
+
+        # split twist vs bending
+        du_t = du[0:1]          # twist
+        du_b = du[1:3]          # bending
+        K_tt = K[0:1, 0:1]
+        K_bb = K[1:3, 1:3]
+
+        dW_t = 0.5 * du_t @ K_tt @ du_t * ds[i]
+        dW_b = 0.5 * du_b @ K_bb @ du_b * ds[i]
+
+        W_el += dW_el
+        W_t += float(dW_t)
+        W_b += float(dW_b)
+
+        W_el_seg.append(float(dW_el))
+        W_t_seg.append(float(dW_t))
+        W_b_seg.append(float(dW_b))
+
+    # -------------------------
+    # Distributed magnetic energy
+    # -------------------------
+    _, _, B = magnetic_wrench_density_cosserat_profile(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
-    )  # B: (3,N)
+    )  # B: (3,N), world frame
 
-    R_all = quat_to_rot(quat_normalize(q))   # (N,3,3)
+    qn = quat_normalize(q)
+    R_all = quat_to_rot(qn)  # (N,3,3)
 
+    # body magnetization profile -> world frame
     m_body = np.asarray(m_local_fun(s, m_moment), float)   # (3,N)
     m_world = np.einsum('nij,jn->in', R_all, m_body)       # (3,N)
+    dp = np.diff(p, axis=1)                        # (3, N-1)
+    t_mid = dp / (np.linalg.norm(dp, axis=0, keepdims=True) + 1e-12)
+    t_nodes = np.zeros_like(p)
+    t_nodes[:, 1:-1] = 0.5 * (t_mid[:, :-1] + t_mid[:, 1:])
+    t_nodes[:, 0] = t_mid[:, 0]
+    t_nodes[:, -1] = t_mid[:, -1]
+    t_nodes /= (np.linalg.norm(t_nodes, axis=0, keepdims=True) + 1e-12)
+    mnorm = np.linalg.norm(m_world, axis=0) + 1e-12
+    mhat = m_world / mnorm[None, :]
+    cos_axial = np.sum(mhat * t_nodes, axis=0)
 
-    # Convert world-field into local/body frame: B_local = R^T B_world
-    R_all_T = np.transpose(R_all, (0, 2, 1))
-    B_local = np.einsum('nij,jn->in', R_all_T, B)          # (3,N)
-
-    # for i in range(max(0, len(s) - 5), len(s)):
-    #     print(
-    #         i,
-    #         "B_world =", B[:, i],
-    #         "B_local =", B_local[:, i],
-    #         "m_local =", m_body[:, i],
-    #         "m_world =", m_world[:, i],
-    #     )
-    # print("\n[MAG ENERGY DEBUG]")
-    # print("max |B| =", np.max(np.linalg.norm(B, axis=0)))
-    # print("max |m_local| =", np.max(np.linalg.norm(m_body, axis=0)))
-    # print("max |m_world| =", np.max(np.linalg.norm(m_world, axis=0)))
-    # print("max |m x B| =", np.max(np.linalg.norm(np.cross(m_world.T, B.T), axis=1)))
-    # print("sum m·B =", np.sum(np.sum(m_world * B, axis=0)))
-    # m_dot_B = np.sum(m_world * B, axis=0)   # (N,)
-    # w_m = -m_dot_B
-    # W_m = np.trapezoid(w_m, s)
+    # print("\n[COSSERAT AXIS CHECK]")
+    # print("mean cos(m,t) =", np.mean(cos_axial))
+    # print("min  cos(m,t) =", np.min(cos_axial))
+    # print("max  cos(m,t) =", np.max(cos_axial))
     m_dot_B = np.sum(m_world * B, axis=0)
-    w_m_dist = -m_dot_B
-    W_m_dist = np.trapezoid(w_m_dist, s)
+    w_m = -m_dot_B
+    W_m = np.trapezoid(w_m, s)
+    Bnorm = np.linalg.norm(B, axis=0)
+    mnorm = np.linalg.norm(m_world, axis=0)
 
-    W_m_eq = magnetic_tip_equivalent_energy(
-        s=s,
-        q=q,
-        B=B,
-        m_local_fun=m_local_fun,
-        m_moment=m_moment,
-        wire_len=wire_len,
-    )
+    cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm + 1e-16)
+    cos_th = np.clip(cos_th, -1.0, 1.0)
+    th_deg = np.degrees(np.arccos(cos_th))
 
-    eta_eq = 0.5   # start here; then test 0.2, 0.5, 1.0
-    W_m = W_m_dist + eta_eq * W_m_eq
-    # Gravity (disable unless you really want it)
+    tau_proxy = np.cross(m_world.T, B.T).T
+    tau_norm = np.linalg.norm(tau_proxy, axis=0)
+    # -------------------------
+    # Gravity
+    # -------------------------
     W_g = 0.0
     if include_gravity:
         fg = np.asarray(beam_params.f_g, float).reshape(3,)
         W_g = -np.trapezoid(np.sum(fg[:, None] * p, axis=0), s)
 
+    # -------------------------
     # Contact / lumen
+    # -------------------------
     W_cf = 0.0
+    min_d = np.nan
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
             p, lumen_query,
@@ -948,72 +893,51 @@ def energy_from_u(
             window=3,
         )
         W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
-    # print(f"W_s  = {W_s:.6e}")
-    # print(f"W_m  = {W_m:.6e}")
-    # print(f"W_cf = {W_cf:.6e}")
-    # print(f"min d = {np.min(d_nodes):.6e}")
-    # print(f"max penetration = {max(0.0, -np.min(d_nodes)):.6e}")
-    # print(f"max |F_contact| = {np.max(np.linalg.norm(F_nodes, axis=0)):.6e}")
-    # print(f"DEBUG Elastic: {W_s}, Magnetic {W_m}, Gravity {W_g}, Barrier {W_cf}")
-    W_total = W_s + W_m+ W_g + W_cf
-    # W_total = W_m
-    # if debug_mag:
-    #     Bnorm = np.linalg.norm(B, axis=0) + 1e-16
-    #     mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
+        min_d = float(np.min(d_nodes))
 
-    #     # alignment cos and angle
-    #     cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
-    #     cos_th = np.clip(cos_th, -1.0, 1.0)
-    #     th_deg = np.degrees(np.arccos(cos_th))
+    W_total = W_el + W_m + W_g + W_cf
 
-    #     # torque density proxy (direction + magnitude)
-    #     tau = np.cross(m_world.T, B.T).T          # (3,N)
-    #     tau_norm = np.linalg.norm(tau, axis=0)    # (N,)
+    if debug_mag:
+        Bnorm = np.linalg.norm(B, axis=0) + 1e-16
+        mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
+        cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
+        cos_th = np.clip(cos_th, -1.0, 1.0)
+        th_deg = np.degrees(np.arccos(cos_th))
+        tau_proxy = np.cross(m_world.T, B.T).T
+        tau_norm = np.linalg.norm(tau_proxy, axis=0)
 
-    #     # scalar energy density and cumulative
-    #     m_dot_B = np.sum(m_world * B, axis=0)
-    #     w_m = -m_dot_B
-    #     Wm_cum = np.zeros(N, float)
-    #     for i in range(1, N):
-    #         Wm_cum[i] = np.trapezoid(w_m[:i+1], s[:i+1])
+        print("\n[DBG-MAG]")
+        print(f"W_s={W_s:.6e}  W_m={W_m:.6e}  W_g={W_g:.6e}  W_cf={W_cf:.6e}")
+        print(f"max |B|={np.max(Bnorm):.6e}")
+        print(f"max |m|={np.max(mnorm):.6e}")
+        print(f"max |m x B|={np.max(tau_norm):.6e}")
+        print(f"max angle(m,B) [deg]={np.max(th_deg):.3f}")
+        if use_lumen and (lumen_query is not None):
+            print(f"min clearance d={min_d:.6e}")
 
-    #     print("\n[DBG-MAG] per-node magnetic + alignment")
-    #     print(" i  s(mm)  x(mm)  y(mm)  z(mm)   |B|     Bx      By      Bz      "
-    #         "m·B     theta(deg)  |m×B|     w_m      Wm_cum")
+    parts = dict(
+        W_el=float(W_el),
+        W_b=float(W_b),
+        W_t=float(W_t),
+        W_m=float(W_m),
+        W_g=float(W_g),
+        W_cf=float(W_cf),
 
-    #     head = int(debug_head)
-    #     step = int(debug_every)
+        s=np.asarray(s, float).copy(),
+        B=np.asarray(B, float).copy(),
+        Bnorm=np.asarray(Bnorm, float).copy(),
+        m_world=np.asarray(m_world, float).copy(),
+        mnorm=np.asarray(mnorm, float).copy(),
+        m_dot_B=np.asarray(m_dot_B, float).copy(),
+        w_m=np.asarray(w_m, float).copy(),
+        angle_deg=np.asarray(th_deg, float).copy(),
+        tau_norm=np.asarray(tau_norm, float).copy(),
 
-    #     def _row(i):
-    #         return (f"{i:2d} {1e3*s[i]:6.2f} "
-    #                 f"{1e3*p[0,i]:6.2f} {1e3*p[1,i]:6.2f} {1e3*p[2,i]:6.2f} "
-    #                 f"{Bnorm[i]:+7.2e} {B[0,i]:+7.2e} {B[1,i]:+7.2e} {B[2,i]:+7.2e} "
-    #                 f"{m_dot_B[i]:+7.2e} {th_deg[i]:8.2f} {tau_norm[i]:+7.2e} "
-    #                 f"{w_m[i]:+8.2e} {Wm_cum[i]:+8.2e}")
-
-    #     # head
-    #     count = 0
-    #     for i in range(0, N, step):
-    #         print(_row(i))
-    #         count += 1
-    #         if count >= head:
-    #             break
-
-    #     # tail
-    #     if N > head:
-    #         print(" ...")
-    #         for i in range(max(0, N - head), N, step):
-    #             print(_row(i))
-
-    #     print(f"[DBG-MAG] max theta(deg) = {np.max(th_deg):.3f}")
-    #     print(f"[DBG-MAG] max |m×B|      = {np.max(tau_norm):.3e}")
-
-    parts = dict(W_s=float(W_s), W_m=float(W_m), W_m_dist=float(W_m_dist),
-                W_m_eq=float(W_m_eq), W_g=float(W_g), W_cf=float(W_cf))    
+        W_el_seg=np.asarray(W_el_seg, float),
+        W_b_seg=np.asarray(W_b_seg, float),
+        W_t_seg=np.asarray(W_t_seg, float),
+    )
     return float(W_total), parts
-    # W_total = float(W_s + W_m + W_g + W_c)
-    # parts = dict(W_s=float(W_s),  _m=float(W_m), W_g=float(W_g), W_c=float(W_c))
-
 def contact_barrier_energy_and_force(
     p, lumen_C, lumen_R, *,
     Kc=1e-2,          # stiffness parameter (tune!)
@@ -1077,101 +1001,101 @@ def contact_barrier_energy_and_force(
                 F[:, j] = -k_out * pen * n
 
     return C, F, d_arr
-def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
-                        r_src, m_src, m_local_fun, m_moment,
-                        N=20, u0_flat=None, maxiter=200, lumen_C=None, lumen_R=None,use_lumen=True,
-                        contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
-                        contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0, u_ctrl_init=None,
-                        K=8):
+def solve_energy_min_3d(
+    *, p0, q0, L, wire_len, Kinv_fun, u_star,
+    r_src, m_src, m_local_fun, m_moment,
+    N=60, u0_flat=None, maxiter=300,
+    lumen_C=None, lumen_R=None, use_lumen=True,
+    contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
+    contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0
+):
     """
-    Minimises Π(u) using K control points for u(s).
-    Returns (p, q, u_seg, info).
+    Minimise Π(u) over full segment strain vector u_flat, shape (3*(N-1),).
+
+    This is closer to a DER-style discretisation than the reduced K-control-point version.
     """
     s = np.linspace(0.0, float(L), int(N))
+    n_seg = N - 1
     K_seg = precompute_K_segments(s, Kinv_fun, wire_len)
 
-    # ----- init control points -----
-    # default: zeros
-    u_ctrl0 = np.zeros((K, 3), float)
-
-    # if you have a warm start in segment space, compress it to control points
-    if u0_flat is not None:
+    # -------------------------
+    # Initial guess
+    # -------------------------
+    if u0_flat is None:
+        u0_flat = np.zeros(3 * n_seg, float)
+    else:
         u0_flat = np.asarray(u0_flat, float).reshape(-1)
-        # expect segment strains
-        if u0_flat.size == 3*(N-1):
-            u0_seg = u0_flat.reshape(N-1, 3)
-            # sample K points from the segment midpoints
-            s_seg = 0.5*(s[:-1] + s[1:])
-            s_ctrl = np.linspace(s_seg[0], s_seg[-1], K)
-            # simple nearest sampling (good enough); you can spline-fit too
-            idx = np.clip(np.searchsorted(s_seg, s_ctrl), 0, len(s_seg)-1)
-            u_ctrl0 = u0_seg[idx, :]
-        else:
-            # if caller already passes control warm start, allow it
-            if u0_flat.size == 3*K:
-                u_ctrl0 = u0_flat.reshape(K, 3)
 
-    u_ctrl0_flat = u_ctrl0.reshape(-1)
+        # if warm start is from another discretisation, try to adapt
+        if u0_flat.size != 3 * n_seg:
+            raise ValueError(
+                f"u0_flat has size {u0_flat.size}, expected {3*n_seg} for N={N}"
+            )
+
+    # optional scaling to improve conditioning
+    u_scale = 30.0
+    z0 = u0_flat / u_scale
+
     lumen_query = None
     if lumen_C is not None and lumen_R is not None:
         lumen_query = LumenQuery(lumen_C, lumen_R)
-    # ----- objective in control space -----
-    u_scale = 30.0   # start with 5; try 10, 20 if needed
 
-    def obj_ctrl(z_flat):
-        z = z_flat.reshape(K, 3)
-        u_ctrl = u_scale * z
-        u_flat = u_flat_from_ctrl(u_ctrl, s)
-
+    # -------------------------
+    # Objective in scaled vars
+    # -------------------------
+    def obj(z):
+        u_flat = u_scale * np.asarray(z, float)
         W, _ = energy_from_u(
             u_flat,
             p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
-            m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
-            wire_len=wire_len, include_gravity=False,
-            lumen_C=lumen_C, lumen_R=lumen_R, lumen_query=lumen_query, use_lumen=use_lumen, debug_mag=False,
+            m_src=m_src, r_src=r_src,
+            m_local_fun=m_local_fun, m_moment=m_moment,
+            wire_len=wire_len,
+            include_gravity=False,
+            lumen_C=lumen_C, lumen_R=lumen_R,
+            lumen_query=lumen_query, use_lumen=use_lumen,
+            contact_k=contact_k,
+            contact_beta=contact_beta,
+            contact_delta=contact_delta,
+            contact_mode=contact_mode,
+            contact_s_on=contact_s_on,
+            contact_s_off=contact_s_off,
+            debug_mag=False,
         )
-
         return W
 
-    z0_flat = (u_ctrl0_flat / u_scale)
-    # u_test = u_ctrl0_flat.copy()
-    # u_test[0] = 5.0  # curvature-ish magnitude (1/m); try also 1.0, 10.0
-
-    # print("W(u0)   =", obj_ctrl(u_ctrl0_flat))
-    # print("W(pert) =", obj_ctrl(u_test))
     res = minimize(
-        obj_ctrl,
-        z0_flat,
+        obj,
+        z0,
         method="L-BFGS-B",
         options=dict(
             maxiter=maxiter,
             ftol=1e-9,
-            eps=1e-2,     # try 1e-2 then 1e-1
-            maxls=40
-        )
-    ) 
-    z_opt = res.x.reshape(K,3)
-    u_ctrl_opt = u_scale * z_opt
-    u_flat_opt = u_flat_from_ctrl(u_ctrl_opt, s)# ----- reconstruct final solution in segment space -----
-    # u_ctrl_opt = res.x.reshape(K, 3)
-    # u_flat_opt = u_flat_from_ctrl(u_ctrl_opt, s)   # shape (3*(N-1),)
+            eps=1e-2,
+            maxls=40,
+        ),
+    )
+
+    u_flat_opt = u_scale * np.asarray(res.x, float)
     p, q, u_seg = integrate_pq_from_u(u_flat_opt, p0=p0, q0=q0, s=s)
 
-    # recompute energies consistently (IMPORTANT: use u_flat_opt)
     W, parts = energy_from_u(
         u_flat_opt,
         p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
-        m_src=m_src, r_src=r_src, m_local_fun=m_local_fun, m_moment=m_moment,
-        wire_len=wire_len, include_gravity=False,
+        m_src=m_src, r_src=r_src,
+        m_local_fun=m_local_fun, m_moment=m_moment,
+        wire_len=wire_len,
+        include_gravity=False,
         lumen_C=lumen_C, lumen_R=lumen_R,
-        contact_k=contact_k, contact_beta=contact_beta, contact_delta=contact_delta,
-        contact_mode=contact_mode, contact_s_on=contact_s_on, contact_s_off=contact_s_off, lumen_query=lumen_query, 
-        use_lumen=use_lumen, debug_mag=True,
+        lumen_query=lumen_query, use_lumen=use_lumen,
+        contact_k=contact_k,
+        contact_beta=contact_beta,
+        contact_delta=contact_delta,
+        contact_mode=contact_mode,
+        contact_s_on=contact_s_on,
+        contact_s_off=contact_s_off,
+        debug_mag=False,
     )
-    # print("\n[ENERGY PARTS DEBUG]")
-    # print("W_total =", W)
-    # print("parts =", parts)
-    # print("parts:", parts)
 
     info = dict(
         success=bool(res.success),
@@ -1180,12 +1104,10 @@ def solve_energy_min_3d(*, p0, q0, L, wire_len, Kinv_fun, u_star,
         W=float(W),
         parts=parts,
         s=s,
-        # store BOTH so you can choose what to warm-start with
-        u_ctrl_opt=res.x.copy(),        # (3*K,)
-        u_flat_opt=u_flat_opt.copy(),   # (3*(N-1),)
+        u_flat_opt=u_flat_opt.copy(),
+        z_opt=np.asarray(res.x, float).copy(),
     )
-    info["z_opt"] = res.x.copy()
-    info["u_ctrl_opt"] = u_ctrl_opt.reshape(-1).copy()
+
     return p, q, u_seg, info
 def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     s = np.linspace(0.0, float(L), int(N))
@@ -1204,7 +1126,7 @@ def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
 
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.089
+    L_cmd = 0.012
     mag_len = beam_params.length_of_mag
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
@@ -1226,7 +1148,7 @@ if __name__ == "__main__":
         p0=p0_ur,
         q0=q0_ur,
         Kinv_fun=Kbt_inv_profile,
-        m_local_fun=make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0),
+        m_local_fun=make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0, len_tip=0.04),
         m_moment=0.0,
         wire_len=wire_len,
     )

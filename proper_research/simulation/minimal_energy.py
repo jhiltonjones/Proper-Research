@@ -21,6 +21,28 @@ from proper_research.simulation.boundary_forward_model import EnergyMinForwardWi
 from scipy.spatial.transform import Rotation as Rot
 import numpy as np
 import matplotlib.pyplot as plt
+def dipole_field_points(x, r_src, m_src, mu0_over_4pi=1e-7, r_min=1e-6):
+    """
+    x: (3,M) field points
+    r_src: (3,)
+    m_src: (3,)
+    Returns B: (3,M)
+    """
+    x = np.asarray(x, float)
+    r_src = np.asarray(r_src, float).reshape(3,1)
+    m_src = np.asarray(m_src, float).reshape(3,1)
+
+    r = x - r_src
+    rn = np.linalg.norm(r, axis=0)
+    rn = np.maximum(rn, r_min)
+
+    rhat = r / rn[None, :]
+    mdotr = np.sum(m_src * rhat, axis=0)
+
+    B = mu0_over_4pi * (
+        (3.0 * rhat * mdotr[None, :] - m_src) / (rn[None, :]**3)
+    )
+    return B
 def debug_forward_solution(
     *,
     forward_model,
@@ -126,7 +148,7 @@ def debug_forward_solution(
     # ------------------------------------------------------------------
     try:
         m_src_world = dipole_from_pose(q_src_ur, m_body)
-        from beam_direction_magnetisation.simulation.boundary_forward_model import dipole_field_points
+
         B = dipole_field_points(p, r_src_ur, m_src_world)   # (3, Npts)
         Bmag = np.linalg.norm(B, axis=0)
 
@@ -246,22 +268,25 @@ def plot_wire_tip_split(centerline, wire_len, s):
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
-L_min_energy = 0.077
-mag_len = beam_params.length_of_mag
-m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
+L_cmd = 0.065
+N_nodes = 10
+USE_LUMEN = True
 
 pivot_point = np.array([
-0.7681328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.7681328220229531, -0.7112731669220016, -0.1,
+    np.pi, 0.001, 0.001
 ], float)
 
+base_point = np.array([
+    pivot_point[0] - (L_cmd + 0.15),
+    pivot_point[1],
+    -0.1,
+    np.pi, 0.001, 0.001
+], float)
 
-
-L0 = 0.077
-
-pose6 = np.asarray(get_point(0, -50), dtype=float)
-pose6[2] = -0.1
-start_point = pose6
-
+start_point = np.asarray(get_point(0, 20, base_point, pivot_point), dtype=float)
+start_point[2] = -0.1
+m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
 # pivot pose
 T_ur_pivot = ur_pose6_to_T(pivot_point)
 p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -281,7 +306,7 @@ lumen_C = make_lumen_centerline_turning(
     length=0.06 + s_straight,
     n_pts=130,
     bend_axis=np.array([0.0, 0.0, 1.0]),
-    bend_angle=np.deg2rad(90.0),
+    bend_angle=np.deg2rad(40.0),
     bend_start=0.0 + s_straight,
     bend_end=0.03 + s_straight,
 )
@@ -302,7 +327,7 @@ forward_model = EnergyMinForwardWithLumen(
     dL_internal=0.002,
     L_tip_full=0.02,
     L_tip_min=0.01,
-    use_lumen_jac=False
+    use_lumen_jac=True
 )
 print("t0 =", t0)
 print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
@@ -324,7 +349,7 @@ print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
 # )
 fwd6 = DeterministicForward6D(forward_model)
 # fwd6_wrong = DeterministicForward6D(forward_model_wrong)
-L_ins = L_min_energy
+L_ins = L_cmd
 r_src = start_point[:3]
 rvec_src = start_point[3:6]
 

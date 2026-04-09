@@ -351,3 +351,31 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
+class WarmForward6D:
+    """
+    Warm-start wrapper:
+    keeps the forward model cache alive between calls.
+    """
+    def __init__(self, fwd_model):
+        self.fwd = fwd_model
+        self.last_info = None
+
+    def __call__(self, p7):
+        y = self.fwd(p7)
+        self.last_info = getattr(self.fwd, "last_info", None)
+        return y
+
+    def reset(self):
+        if hasattr(self.fwd, "_last"):
+            try:
+                for k in self.fwd._last.keys():
+                    self.fwd._last[k] = None
+            except Exception:
+                pass
+        for name in ["last_tip", "last_p_centerline", "last_theta", "last_info"]:
+            if hasattr(self.fwd, name):
+                try:
+                    setattr(self.fwd, name, None)
+                except Exception:
+                    pass
+        self.last_info = None

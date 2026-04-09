@@ -56,8 +56,8 @@ def Kbt_inv_profile(s, len_wire, bend_soft=2, tors_soft=2):
 
     EI_s = np.where(mask_tip, EI_tip, EI_wire)
     GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
-    print(f"EI wire is : {EI_wire}, and GJ_wire : {GJ_wire}")
-    print(f"EI tip is : {EI_tip}, and GJ tip : {GJ_tip}")
+    # print(f"EI wire is : {EI_wire}, and GJ_wire : {GJ_wire}")
+    # print(f"EI tip is : {EI_tip}, and GJ tip : {GJ_tip}")
     Kinv = np.zeros((3, 3, s.size))
     Kinv[0, 0, :] = tors_soft / GJ_s
     Kinv[1, 1, :] = bend_soft / EI_s

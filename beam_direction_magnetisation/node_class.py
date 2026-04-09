@@ -6,9 +6,6 @@ from beam_direction_magnetisation.node_optimisation import (
     make_Kbt_inv_profile,
     make_initial_nodes_straight,
     set_axes_equal_3d,
-    solve_der_continuation_in_L,
-    solve_der_continuation_in_N,
-    solve_der_continuation_L_then_N,
 )
 class DEREnergyMinForwardWithLumen:
     def __init__(
@@ -29,7 +26,7 @@ class DEREnergyMinForwardWithLumen:
         enforce_inextensibility=False,
         use_lumen=True,
         L0_init=0.01,
-        dL_internal=0.01,
+        dL_internal=0.002,
         L_tip_full=0.04,
         L_tip_min=0.01,
         ref_twist=None,
@@ -40,7 +37,18 @@ class DEREnergyMinForwardWithLumen:
         self.use_continuation = bool(use_continuation)
         self.N_coarse = int(N_coarse)
 
-
+        if N_schedule is None:
+            if self.N_nodes <= self.N_coarse:
+                self.N_schedule = [self.N_nodes]
+            else:
+                vals = [self.N_coarse]
+                cur = self.N_coarse
+                while cur < self.N_nodes:
+                    cur = min(cur + 6, self.N_nodes)
+                    vals.append(cur)
+                self.N_schedule = vals
+        else:
+            self.N_schedule = list(N_schedule)
         self.p0_ur = np.asarray(p0_ur, float).reshape(3,)
         self.q0_ur = np.asarray(q0_ur, float).reshape(4,)
 
@@ -65,18 +73,7 @@ class DEREnergyMinForwardWithLumen:
         self.L_tip_full = float(L_tip_full)
         self.L_tip_min = float(L_tip_min)
         self.ref_twist = ref_twist
-        if N_schedule is None:
-            if self.N_nodes <= self.N_coarse:
-                self.N_schedule = [self.N_nodes]
-            else:
-                vals = [self.N_coarse]
-                cur = self.N_coarse
-                while cur < self.N_nodes:
-                    cur = min(cur + 9, self.N_nodes)
-                    vals.append(cur)
-                self.N_schedule = vals
-        else:
-            self.N_schedule = list(N_schedule)
+
         # internal cache
         self._last = dict(
             p=None,             # last 7D command
@@ -182,70 +179,29 @@ class DEREnergyMinForwardWithLumen:
                 q_init = self._last["q_init"].copy()
 
         # solve
-        # solve
-        if not self.use_continuation or self.N_nodes <= self.N_coarse:
-            p_opt, theta_opt, info = solve_nodes_twist_min(
-                p0=self.p0_ur,
-                q0=self.q0_ur,
-                L=L_model,
-                N=self.N_nodes,
-                wire_len=wire_len,
-                tip_len=tip_len,
-                Kinv_fun=self.Kinv_fun,
-                r_src=r_src,
-                m_src=m_src,
-                mu_tip=np.linalg.norm(self.M_ref_local),
-                EA_wire=self.EA_wire,
-                EA_tip=self.EA_tip,
-                lumen_C=self.lumen_C,
-                lumen_R=self.lumen_R,
-                use_lumen=use_lumen_now,
-                maxiter=self.maxiter,
-                M_ref_local=self.M_ref_local,
-                ref_twist=self.ref_twist,
-                enforce_inextensibility=self.enforce_inextensibility,
-                amp_init=self.amp_init,
-                q_init=q_init,
-            )
-        else:
-            L_values = self._make_L_schedule(L_model)
-
-            out = solve_der_continuation_L_then_N(
-                p0=self.p0_ur,
-                q0=self.q0_ur,
-                L_values=L_values,
-                N_values=self.N_schedule,
-                L_tip_full=self.L_tip_full,
-                L_tip_min=self.L_tip_min,
-                Kinv_fun=self.Kinv_fun,
-                r_src=r_src,
-                m_src=m_src,
-                mu_tip=np.linalg.norm(self.M_ref_local),
-                EA_wire=self.EA_wire,
-                EA_tip=self.EA_tip,
-                lumen_C=self.lumen_C,
-                lumen_R=self.lumen_R,
-                use_lumen=use_lumen_now,
-                maxiter=self.maxiter,
-                M_ref_local=self.M_ref_local,
-                ref_twist=self.ref_twist,
-                enforce_inextensibility=self.enforce_inextensibility,
-                amp_init=self.amp_init,
-                verbose=False,
-            )
-
-            if out["success"]:
-                final = out["hist_N"][-1]
-            elif len(out["hist_N"]) > 0:
-                final = out["hist_N"][-1]
-            elif len(out["hist_L"]) > 0:
-                final = out["hist_L"][-1]
-            else:
-                raise RuntimeError("DER continuation returned no history")
-
-            p_opt = final["p"]
-            theta_opt = final["theta"]
-            info = final["info"]
+        p_opt, theta_opt, info = solve_nodes_twist_min(
+            p0=self.p0_ur,
+            q0=self.q0_ur,
+            L=L_model,
+            N=self.N_nodes,
+            wire_len=wire_len,
+            tip_len = tip_len,
+            Kinv_fun=self.Kinv_fun,
+            r_src=r_src,
+            m_src=m_src,
+            mu_tip=np.linalg.norm(self.M_ref_local),
+            EA_wire=self.EA_wire,
+            EA_tip=self.EA_tip,
+            lumen_C=self.lumen_C,
+            lumen_R=self.lumen_R,
+            use_lumen=use_lumen_now,
+            maxiter=self.maxiter,
+            M_ref_local=self.M_ref_local,
+            ref_twist=self.ref_twist,
+            enforce_inextensibility=self.enforce_inextensibility,
+            amp_init=self.amp_init,
+            q_init=q_init,   # <-- add this
+        )
 
         # reconstruct packed state for warm-start
         q_opt = info["q_opt"].copy()
@@ -264,18 +220,18 @@ class DEREnergyMinForwardWithLumen:
 
         mag = info["dbg"]["mag"]
 
-        # print("\n[DER MAG DEBUG]")
-        # print("Wm                :", info["dbg"]["Wm"])
-        # print("wire_len          :", mag.get("wire_len", wire_len))
-        # print("tip_len           :", mag.get("tip_len", tip_len))
-        # print("s_seg             :", mag.get("s_seg"))
-        # print("ell_i             :", mag.get("ell_i"))
-        # print("mdotB             :", mag.get("mdotB"))
-        # print("wm_density        :", mag.get("wm_density"))
-        # print("wm_seg            :", mag.get("wm_seg"))
-        # print("Bmag              :", mag.get("Bmag"))
-        # print("Mmag              :", mag.get("Mmag"))
-        # print_der_magnetic_debug(info)
+        print("\n[DER MAG DEBUG]")
+        print("Wm                :", info["dbg"]["Wm"])
+        print("wire_len          :", mag.get("wire_len", wire_len))
+        print("tip_len           :", mag.get("tip_len", tip_len))
+        print("s_seg             :", mag.get("s_seg"))
+        print("ell_i             :", mag.get("ell_i"))
+        print("mdotB             :", mag.get("mdotB"))
+        print("wm_density        :", mag.get("wm_density"))
+        print("wm_seg            :", mag.get("wm_seg"))
+        print("Bmag              :", mag.get("Bmag"))
+        print("Mmag              :", mag.get("Mmag"))
+        print_der_magnetic_debug(info)
         # cache
         if info["success"]:
             self._last.update(
@@ -330,25 +286,25 @@ def print_der_magnetic_debug(info, max_rows=None):
     print(f"max M·B           : {np.max(mdotB):.6e}")
     print(f"sum wm_seg        : {np.sum(wm_seg):.6e}")
 
-    # print("\n[DER MAG SEGMENTS]")
-    # print(" i |    s_seg |    ell_i | active |      |B| |      |M| |       M·B |  wm_density |     wm_seg")
-    # print("-" * 100)
+    print("\n[DER MAG SEGMENTS]")
+    print(" i |    s_seg |    ell_i | active |      |B| |      |M| |       M·B |  wm_density |     wm_seg")
+    print("-" * 100)
 
-    # n = len(s_seg)
-    # rows = range(n) if max_rows is None else range(min(n, max_rows))
+    n = len(s_seg)
+    rows = range(n) if max_rows is None else range(min(n, max_rows))
 
-    # for i in rows:
-    #     print(
-    #         f"{i:2d} | "
-    #         f"{s_seg[i]:8.5f} | "
-    #         f"{ell_i[i]:8.5f} | "
-    #         f"{int(active[i]):6d} | "
-    #         f"{Bmag[i]:9.3e} | "
-    #         f"{Mmag[i]:9.3e} | "
-    #         f"{mdotB[i]:11.3e} | "
-    #         f"{wm_density[i]:11.3e} | "
-    #         f"{wm_seg[i]:11.3e}"
-    #     )
+    for i in rows:
+        print(
+            f"{i:2d} | "
+            f"{s_seg[i]:8.5f} | "
+            f"{ell_i[i]:8.5f} | "
+            f"{int(active[i]):6d} | "
+            f"{Bmag[i]:9.3e} | "
+            f"{Mmag[i]:9.3e} | "
+            f"{mdotB[i]:11.3e} | "
+            f"{wm_density[i]:11.3e} | "
+            f"{wm_seg[i]:11.3e}"
+        )
 if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt

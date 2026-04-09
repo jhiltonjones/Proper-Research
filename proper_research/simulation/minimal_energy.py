@@ -6,6 +6,7 @@ from beam_direction_magnetisation.cosserat_w_minimal_energy import (
     solve_quasistatic_insertion,
     lumen_violation_profile, magnetic_tip_wrench_about_interface
 )
+
 from beam_direction_magnetisation.post_processing.post_processing import (
     plot_energy_only_3d,
     make_lumen_centerline_double_turn,
@@ -17,10 +18,42 @@ from proper_research.parameters import default_magnet_params, default_beam_param
 from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T, T_to_p_quat_wxyz
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
 from proper_research.control.mpc_boundary import resample_polyline
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
 from scipy.spatial.transform import Rotation as Rot
 import numpy as np
 import matplotlib.pyplot as plt
+def eval_branch(fwd6, p8, label="", x_ref=None):
+    # fwd6.start_step()
+    y = np.asarray(fwd6(p8, commit=True), float).reshape(6,)
+    pcl = np.asarray(fwd6.last_p_centerline, float)
+
+    tip = y[:3]
+    tan = y[3:6]
+
+    print(f"\n===== {label} =====")
+    print("p8 =", p8)
+    print("y  =", y)
+    print("tip =", tip)
+    print("tan =", tan)
+    print("pcl first =", pcl[:, 0])
+    print("pcl last  =", pcl[:, -1])
+    print("dist tip to first =", np.linalg.norm(tip - pcl[:, 0]))
+    print("dist tip to last  =", np.linalg.norm(tip - pcl[:, -1]))
+
+    if x_ref is not None:
+        x_ref = np.asarray(x_ref, float).reshape(6,)
+        tip_err = np.linalg.norm(tip - x_ref[:3])
+        tan_dot = float(np.dot(tan, x_ref[3:6]))
+        print("tip_err_vs_ref =", tip_err)
+        print("tan_dot_vs_ref =", tan_dot)
+
+    return {
+        "p8": p8.copy(),
+        "y": y.copy(),
+        "tip": tip.copy(),
+        "tan": tan.copy(),
+        "pcl": pcl.copy(),
+    }
 def dipole_field_points(x, r_src, m_src, mu0_over_4pi=1e-7, r_min=1e-6):
     """
     x: (3,M) field points
@@ -265,6 +298,43 @@ def plot_wire_tip_split(centerline, wire_len, s):
     ax.legend()
     ax.set_title("Centerline split into wire and tip")
     plt.show()
+def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
+    def Kbt_inv_profile(s, len_wire):
+        s = np.asarray(s, float)
+        mask_tip = (s >= len_wire)
+
+        EI_s = np.where(mask_tip, EI_tip, EI_wire)
+        GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
+
+        Kinv = np.zeros((3, 3, s.size), float)
+        Kinv[0, 0, :] = tors_soft / GJ_s
+        Kinv[1, 1, :] = bend_soft / EI_s
+        Kinv[2, 2, :] = bend_soft / EI_s
+        return Kinv
+
+    return Kbt_inv_profile
+def rod_section_stiffness(r, E, nu):
+    A = np.pi * r**2
+    I = np.pi * r**4 / 4.0
+    J = 0.5 * np.pi * r**4
+    G = E / (2.0 * (1.0 + nu))
+
+    EA = E * A
+    EI = E * I
+    GJ = G * J
+
+    return {
+        "r": r,
+        "E": E,
+        "nu": nu,
+        "A": A,
+        "I": I,
+        "J": J,
+        "G": G,
+        "EA": EA,
+        "EI": EI,
+        "GJ": GJ,
+    }
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
@@ -312,23 +382,58 @@ lumen_C = make_lumen_centerline_turning(
 )
 lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
 lumen_R = np.full(len(lumen_C), 0.004)
+L_model, wire_len_model, tip_len_model = effective_lengths(L_cmd)
+print(
+    f"[INIT] L_ins={L_cmd:.3f} -> "
+    f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
+)
+wire = rod_section_stiffness(
+    r=200e-6,
+    E=50e6,
+    nu=0.4,
+)
+# tip = rod_section_stiffness(
+#     r=2e-3,
+#     E=3e6,
+#     nu=0.49,
+# )
+tip = rod_section_stiffness(
+    r=beam_params.r,
+    E=beam_params.E,
+    nu=0.49,
+)
+EA_wire = wire["EA"]
+EI_wire = wire["EI"]
+GJ_wire = wire["GJ"]
 
+EA_tip = tip["EA"]
+EI_tip = tip["EI"]
+GJ_tip = tip["GJ"]
+Kinv_fun = make_Kbt_inv_profile(
+    EI_wire=EI_wire,
+    EI_tip=EI_tip,
+    GJ_wire=GJ_wire,
+    GJ_tip=GJ_tip,
+    bend_soft=1.0,
+    tors_soft=1.0,
+)
 forward_model = EnergyMinForwardWithLumen(
     p0_ur=p0_ur,
     q0_ur=q0_ur,
-    Kinv_fun=Kbt_inv_profile,
+    Kinv_fun=Kinv_fun,
     u_star=np.zeros(3),
     m_body=m_body,
-    lumen_C=lumen_C,
-    lumen_R=lumen_R,
-    N_nodes=20,
+    lumen_C=np.asarray(lumen_C, float),
+    lumen_R=np.asarray(lumen_R, float),
+    N_nodes=8,
     maxiter=30,
     L0_init=0.01,
     dL_internal=0.002,
-    L_tip_full=0.02,
+    use_lumen_jac=False,
+    L_tip_full=tip_len_model,
     L_tip_min=0.01,
-    use_lumen_jac=True
 )
+
 print("t0 =", t0)
 print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
 # forward_model_wrong = EnergyMinForwardWithLumen(
@@ -347,7 +452,7 @@ print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
 #     L_tip_min=0.01,
 #     use_lumen_jac=False
 # )
-fwd6 = DeterministicForward6D(forward_model)
+fwd6 = WarmForwardP8TipTangent(forward_model)
 # fwd6_wrong = DeterministicForward6D(forward_model_wrong)
 L_ins = L_cmd
 r_src = start_point[:3]
@@ -357,7 +462,7 @@ q_xyzw = Rot.from_rotvec(rvec_src).as_quat()
 q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
 p8 = np.hstack([r_src, q_wxyz, L_ins])
 
-fwd6.start_step()
+# fwd6.start_step()
 y = fwd6(p8, commit=True)
 
 tip_pos = y[:3]
@@ -434,3 +539,22 @@ plot_energy_only_3d(
     mag_arrow_len=0.02,
     show=True,
 )
+p0_good = np.array([
+    5.51141362e-01, -7.11278590e-01, -1.00000000e-01,
+    5.39964856e-04,  9.99999749e-01,  3.22682731e-04,  3.26505816e-04,
+    7.49543617e-02
+], float)
+
+p0_bad = np.array([
+    5.47115615e-01, -7.31269877e-01, -1.00000000e-01,
+    5.39263042e-04,  9.99999297e-01, -1.00666627e-03,  3.20264949e-04,
+    7.69276531e-02
+], float)
+
+x_meas_like = np.array([
+    0.69389495, -0.71370919, -0.1,
+    -0.99693916, 0.0781813, 0.0
+], float)
+
+res_good = eval_branch(fwd6, p0_good, label="GOOD pose", x_ref=x_meas_like)
+res_bad  = eval_branch(fwd6, p0_bad,  label="BAD pose",  x_ref=x_meas_like)

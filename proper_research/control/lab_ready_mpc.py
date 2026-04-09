@@ -773,7 +773,7 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
 
         self.enable_mag_center_standoff = True
-        self.w_mag_center_standoff = 15
+        self.w_mag_center_standoff = 12
         self.mag_center_standoff_m = 0.2
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
@@ -1513,7 +1513,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.14))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2647,7 +2647,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     
-    L0 = 0.067
+    L0 = 0.047
     pivot_point = np.array([
         0.7681328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
@@ -2732,8 +2732,8 @@ def build_controller(
         Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
             p8,
             forward6d,
-            dx=5e-3,
-            dy=5e-3,
+            dx=1e-2,
+            dy=1e-2,
             dyaw=3e-1,
             dL=1e-3,
             n_out=6,   # [tip_x, tip_y, tip_z, tx, ty]
@@ -3083,7 +3083,7 @@ def build_initial_lumen_from_vision(
         blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,
         show=show,
-        save_overlay_path="debug_outputs/reconstruction_overlay.png",
+        save_overlay_path="debug_outputs_new/reconstruction_overlay2.png",
     )
 
     lumen_C_robot_m = transform_local_points_to_robot(
@@ -3107,7 +3107,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
 
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     wire = rod_section_stiffness(
         r=200e-6,
         E=50e6,
@@ -3150,7 +3150,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.002,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
@@ -3260,7 +3260,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_testing2",
+            plot_dir="mpc_debug_plots_testing3",
         )
     finally:
         hw.shutdown()

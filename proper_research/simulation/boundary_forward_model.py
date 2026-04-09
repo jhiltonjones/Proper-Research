@@ -351,24 +351,61 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
+import copy
+import numpy as np
+
 class WarmForwardP8TipTangent:
     def __init__(self, fwd_model):
         self.fwd = fwd_model
         self.last_info = None
 
+    def _snapshot(self):
+        snap = {}
+        for name in ["last_info", "last_p_centerline", "last_tip", "_last"]:
+            if hasattr(self.fwd, name):
+                snap[name] = copy.deepcopy(getattr(self.fwd, name))
+        return snap
+
+    def _restore(self, snap):
+        for k, v in snap.items():
+            setattr(self.fwd, k, copy.deepcopy(v))
+
     def __call__(self, p8, commit=True):
         p7 = pose8_quat_to_pose7_rotvec(p8)
-        tip = np.asarray(self.fwd(p7), float).reshape(3,)
-        self.last_info = getattr(self.fwd, "last_info", None)
 
-        pcl = getattr(self.fwd, "last_p_centerline", None)
-        if pcl is None or pcl.shape[1] < 2:
+        if commit:
+            tip = np.asarray(self.fwd(p7), float).reshape(3,)
+            self.last_info = copy.deepcopy(getattr(self.fwd, "last_info", None))
+            pcl = getattr(self.fwd, "last_p_centerline", None)
+        else:
+            snap = self._snapshot()
+            try:
+                tip = np.asarray(self.fwd(p7), float).reshape(3,)
+                pcl = copy.deepcopy(getattr(self.fwd, "last_p_centerline", None))
+                self.last_info = copy.deepcopy(getattr(self.fwd, "last_info", None))
+            finally:
+                self._restore(snap)
+
+        if pcl is None:
             raise RuntimeError("Tip tangent unavailable")
 
-        t_tip = pcl[:, -1] - pcl[:, -2]
+        pcl = np.asarray(pcl, float)
+        if pcl.ndim != 2:
+            raise RuntimeError(f"Unexpected centerline shape: {pcl.shape}")
+
+        if pcl.shape[0] == 3 and pcl.shape[1] >= 2:
+            pnm1 = pcl[:, -2]
+            pn = pcl[:, -1]
+        elif pcl.shape[1] == 3 and pcl.shape[0] >= 2:
+            pnm1 = pcl[-2, :]
+            pn = pcl[-1, :]
+        else:
+            raise RuntimeError(f"Unexpected centerline shape: {pcl.shape}")
+
+        t_tip = pn - pnm1
         nt = np.linalg.norm(t_tip)
         if nt < 1e-12:
             raise RuntimeError("Degenerate tip tangent")
         t_tip = t_tip / nt
 
-        return np.hstack([tip, t_tip])   # shape (6,)
+        return np.hstack([tip, t_tip])

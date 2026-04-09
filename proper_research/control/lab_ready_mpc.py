@@ -773,7 +773,7 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
 
         self.enable_mag_center_standoff = True
-        self.w_mag_center_standoff = 20
+        self.w_mag_center_standoff = 15
         self.mag_center_standoff_m = 0.2
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
@@ -975,6 +975,61 @@ class mpc_controller_tipxy_LTI:
             print(f"P0 is {p0}")
             print("[DBG] Jxy_fn(p0) shape =", np.asarray(self.Jxy_fn(p0)).shape)
             print("[DBG] expected shape =", (self.n, self.m))
+
+            # Evaluate wrapped forward model once at p0
+            y0 = np.asarray(self.forward_tip_fn(p0, commit=False), float).reshape(-1)
+            tip = y0[:3]
+
+            # Get raw centerline from underlying forward model
+            pcl = getattr(self.forward_tip_fn.fwd, "last_p_centerline", None)
+            if pcl is None:
+                print("[DBG] last_p_centerline is None")
+            else:
+                pcl = np.asarray(pcl, float)
+
+                print("y0 =", y0)
+                print("tip =", tip)
+                print("pcl shape =", pcl.shape)
+
+                if pcl.ndim != 2:
+                    print("[DBG] unexpected pcl ndim:", pcl.ndim)
+                else:
+                    # Handle either (3,N) or (N,3)
+                    if pcl.shape[0] == 3:
+                        p_first = pcl[:, 0]
+                        p_last  = pcl[:, -1]
+                        dist_first = np.linalg.norm(tip - p_first)
+                        dist_last  = np.linalg.norm(tip - p_last)
+
+                        print("pcl first =", p_first)
+                        print("pcl last  =", p_last)
+                        print("dist tip to first =", dist_first)
+                        print("dist tip to last  =", dist_last)
+
+                        if dist_first < dist_last:
+                            print("[DBG] centerline appears ordered TIP->BASE")
+                        else:
+                            print("[DBG] centerline appears ordered BASE->TIP")
+
+                    elif pcl.shape[1] == 3:
+                        p_first = pcl[0, :]
+                        p_last  = pcl[-1, :]
+                        dist_first = np.linalg.norm(tip - p_first)
+                        dist_last  = np.linalg.norm(tip - p_last)
+
+                        print("pcl first =", p_first)
+                        print("pcl last  =", p_last)
+                        print("dist tip to first =", dist_first)
+                        print("dist tip to last  =", dist_last)
+
+                        if dist_first < dist_last:
+                            print("[DBG] centerline appears ordered TIP->BASE")
+                        else:
+                            print("[DBG] centerline appears ordered BASE->TIP")
+
+                    else:
+                        print("[DBG] unexpected pcl shape:", pcl.shape)
+            
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
             print("built prediction mats")
             print("p_seq shape:", np.shape(p_seq))
@@ -2519,8 +2574,7 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
     J = np.zeros((n_out, 4), float)
 
     def eval_y_from_p8(p):
-        p7 = pose8_quat_to_pose7_rotvec(p)
-        y = np.asarray(forward_model(p7), float).reshape(-1)
+        y = np.asarray(forward_model(p), float).reshape(-1)
         return y[:n_out]
 
     # First solve nominal point ONCE to establish current branch
@@ -2586,21 +2640,33 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
 
     t1 = time.perf_counter()
     print(f"[TIME] numerical_J_robot_warm_branch total: {(t1-t0)*1e3:.2f} ms")
+
     return J
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    pivot_point = np.array([
-    0.8381328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
-    ], float)
 
 
     
-    L0 = 0.05
+    L0 = 0.067
+    pivot_point = np.array([
+        0.7681328220229531, -0.7112731669220016, -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
 
+    base_point = np.array([
+        pivot_point[0] - (L0 + 0.15),
+        pivot_point[1],
+        -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
+
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    start_point[2] = -0.1
+    pose6 = start_point
     # pose6 = np.asarray(get_point(0, 0), dtype=float)
-    pose6 = hw.get_robot_pose_once()
+    # pose6 = hw.get_robot_pose_once()
     # pose6 = np.array([0.6464871989117105, -0.5659848620070453, 0.18000000000000002, 2.822035029384029, -1.334168531318762, -0.06004322067724725], float)
-    pose6[2] = -0.1
+    # pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
     T = ur_pose6_to_T(pose6)
@@ -2663,16 +2729,21 @@ def build_controller(
 
 
     def J_fn(p8):
-        Jred = numerical_J_robot_xy_yaw_dL_warm_branch(
+        Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
             p8,
             forward6d,
             dx=5e-3,
             dy=5e-3,
             dyaw=3e-1,
             dL=1e-3,
-            n_out=5,   # [tip_x, tip_y, tip_z, tx, ty]
+            n_out=6,   # [tip_x, tip_y, tip_z, tx, ty]
         )
-        Jfull = J_full_from_robot_reduced_tip_tangent(Jred, n_out_full=5)
+        Jred_control = Jred_state.copy()
+        Jred_control[:,0]*= dt
+        Jred_control[:,1]*= dt
+        Jred_control[:,2]*= dt
+        Jred_control[:,3]*= dt
+        Jfull = J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
         return Jfull
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
@@ -2702,7 +2773,7 @@ def build_controller(
     mpc.enable_standoff_soft = True
     mpc.enable_inline_soft = True
     mpc.enable_dipole_soft = True
-    mpc.enable_hard_theta = True
+    mpc.enable_hard_theta = False
     mpc.enable_tangent_penalty = False
 
     mpc.lumen_C = np.asarray(lumen_C, float)
@@ -2850,6 +2921,7 @@ def run_control(
 
         mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
         mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
+
 
         if hw is not None:
             L_meas = float(vision_result["beam_length_mm"]) / 1000.0
@@ -3183,7 +3255,7 @@ if __name__ == "__main__":
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
-            max_steps=2,
+            max_steps=100,
             show=False,
             send_commands=True,
             hw=hw,

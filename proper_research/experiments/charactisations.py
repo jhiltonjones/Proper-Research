@@ -32,7 +32,10 @@ Files:
     result_summary.json
     comparison_overlay.png   (if your vision code saves it)
 """
-
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
+import copy
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
+import time
 import json
 import os
 from dataclasses import dataclass
@@ -334,7 +337,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
 
 
 
-    return DeterministicForward6D(forward_model)
+    return WarmForwardP8TipTangent(forward_model)
 
 
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
@@ -392,7 +395,7 @@ def robot_points_to_base_local(points_robot_m, pivot_pose6, beam_base_point_robo
 # ============================================================
 
 def predict_tip_local_from_model(
-    forward6d: DeterministicForward6D,
+    forward6d: WarmForwardP8TipTangent,
     pose6: np.ndarray,
     L_m: float,
     pivot_pose6: np.ndarray,
@@ -947,13 +950,23 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
+    L0 = 0.069
     pivot_point = np.array([
-    0.8381328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+        0.7681328220229531, -0.7112731669220016, -0.1,
+        np.pi, 0.001, 0.001
     ], float)
 
-    hw.open_robot()
-    
-    L0 = 0.083
+    base_point = np.array([
+        pivot_point[0] - (L0 + 0.15),
+        pivot_point[1],
+        -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
+
+    # start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    # start_point[2] = -0.1
+
+    # pose6=start_point
     pose6 = hw.get_robot_pose_once()
     # pose6 = np.asarray(get_point(0, 0), dtype=float)
     pose6[2] = -0.1
@@ -1154,6 +1167,123 @@ def plot_single_tip_comparison_local(
     plt.close()
 
     print(f"Saved local tip plot to: {out_path}")
+
+def snapshot_forward_cache(fwd_model):
+    snap = {}
+    if hasattr(fwd_model, "_last"):
+        snap["_last"] = copy.deepcopy(fwd_model._last)
+    for name in ["last_tip", "last_p_centerline", "last_theta", "last_info"]:
+        if hasattr(fwd_model, name):
+            snap[name] = copy.deepcopy(getattr(fwd_model, name))
+    return snap
+
+def restore_forward_cache(fwd_model, snap):
+    if "_last" in snap and hasattr(fwd_model, "_last"):
+        fwd_model._last = copy.deepcopy(snap["_last"])
+    for name in ["last_tip", "last_p_centerline", "last_theta", "last_info"]:
+        if name in snap and hasattr(fwd_model, name):
+            setattr(fwd_model, name, copy.deepcopy(snap[name]))
+
+def quat_from_yaw_wxyz(dpsi):
+    c = np.cos(0.5 * dpsi)
+    s = np.sin(0.5 * dpsi)
+    return np.array([c, 0.0, 0.0, s], dtype=float)
+def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):
+    """
+    J_red shape: (5,4)
+        columns = [x, y, yaw_z, L]
+
+    Returns full robot Jacobian in 7 controls:
+        [vx, vy, vz, wx, wy, wz, dL]
+    """
+    J_full = np.zeros((n_out_full, 7), float)
+    J_full[:, 0] = J_red[:, 0]   # x translation
+    J_full[:, 1] = J_red[:, 1]   # y translation
+    J_full[:, 5] = J_red[:, 2]   # yaw about z
+    J_full[:, 6] = J_red[:, 3]   # insertion
+    return J_full
+def numerical_J_robot_xy_yaw_dL_warm_branch(
+    p8,
+    forward_model,   # the actual warm wrapper object, not just a plain fn
+    dx=5e-3,
+    dy=5e-3,
+    dyaw=np.deg2rad(5.0),
+    dL=1e-3,
+    n_out=5,         # e.g. [tip_x, tip_y, tip_z, tx, ty]
+):
+    t0 = time.perf_counter()
+
+    p8 = np.asarray(p8, float).ravel().copy()
+    J = np.zeros((n_out, 4), float)
+
+    def eval_y_from_p8(p):
+        y = np.asarray(forward_model(p), float).reshape(-1)
+        return y[:n_out]
+
+    # First solve nominal point ONCE to establish current branch
+    y0 = eval_y_from_p8(p8)
+
+    # Snapshot warm branch state at nominal point
+    snap0 = snapshot_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model)
+
+    # 1) x
+    p_plus = p8.copy();  p_plus[0] += dx
+    p_minus = p8.copy(); p_minus[0] -= dx
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_plus = eval_y_from_p8(p_plus)
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_minus = eval_y_from_p8(p_minus)
+
+    J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
+
+    # 2) y
+    p_plus = p8.copy();  p_plus[1] += dy
+    p_minus = p8.copy(); p_minus[1] -= dy
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_plus = eval_y_from_p8(p_plus)
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_minus = eval_y_from_p8(p_minus)
+
+    J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
+
+    # 3) yaw
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+
+    q = quat_wxyz_normalize(p8[3:7])
+    dqz_plus = quat_from_yaw_wxyz(+dyaw)
+    dqz_minus = quat_from_yaw_wxyz(-dyaw)
+
+    p_plus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_plus, q))
+    p_minus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_minus, q))
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_plus = eval_y_from_p8(p_plus)
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_minus = eval_y_from_p8(p_minus)
+
+    J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw)
+
+    # 4) L
+    p_plus = p8.copy();  p_plus[7] += dL
+    p_minus = p8.copy(); p_minus[7] -= dL
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_plus = eval_y_from_p8(p_plus)
+
+    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+    y_minus = eval_y_from_p8(p_minus)
+
+    J[:, 3] = (y_plus - y_minus) / (2.0 * dL)
+
+    t1 = time.perf_counter()
+    print(f"[TIME] numerical_J_robot_warm_branch total: {(t1-t0)*1e3:.2f} ms")
+    return J
 def compute_model_jacobian(forward6d, pose6, L_m, dt=0.01,
                            dr=5e-3, dtheta_deg=50.0, dL=1e-3, n_out=6):
     p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
@@ -1169,7 +1299,7 @@ def compute_model_jacobian(forward6d, pose6, L_m, dt=0.01,
     if hasattr(forward6d, "start_step"):
         forward6d.start_step()
 
-    J = numerical_B_y_wrt_u(
+    J = numerical_J_robot_xy_yaw_dL_warm_branch(
         p8=p8,
         forward_y_fn=lambda pp: forward6d(pp, commit=False),
         dt=dt,

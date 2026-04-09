@@ -351,17 +351,26 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
-class WarmForward6D:
+class WarmForwardP8:
     """
-    Warm-start wrapper:
-    keeps the forward model cache alive between calls.
+    Warm-start wrapper around EnergyMinForwardWithLumen.
+
+    Input:
+        p8 = [x, y, z, qw, qx, qy, qz, L]
+
+    Internally converts to:
+        p7 = [x, y, z, rx, ry, rz, L]
+
+    Output:
+        by default tip position only, shape (3,)
     """
     def __init__(self, fwd_model):
         self.fwd = fwd_model
         self.last_info = None
 
-    def __call__(self, p7):
-        y = self.fwd(p7)
+    def __call__(self, p8):
+        p7 = pose8_quat_to_pose7_rotvec(p8)
+        y = np.asarray(self.fwd(p7), float).reshape(3,)
         self.last_info = getattr(self.fwd, "last_info", None)
         return y
 
@@ -372,10 +381,12 @@ class WarmForward6D:
                     self.fwd._last[k] = None
             except Exception:
                 pass
-        for name in ["last_tip", "last_p_centerline", "last_theta", "last_info"]:
+
+        for name in ["last_tip", "last_p_centerline", "last_theta", "last_info", "last_hist"]:
             if hasattr(self.fwd, name):
                 try:
                     setattr(self.fwd, name, None)
                 except Exception:
                     pass
+
         self.last_info = None

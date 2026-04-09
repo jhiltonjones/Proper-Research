@@ -7,7 +7,7 @@ from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from beam_direction_magnetisation.post_processing.post_processing import quat_wxyz_to_R
 from scipy.spatial.transform import Rotation as Rot
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForward6D
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
@@ -2658,7 +2658,7 @@ def build_controller(
     ], dtype=float)
 
 
-    forward6d = WarmForward6D(forward_model)
+    forward6d = WarmForwardP8(forward_model)
 
 
 

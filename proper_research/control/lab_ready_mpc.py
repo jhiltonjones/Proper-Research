@@ -2658,7 +2658,7 @@ def build_controller(
     ], dtype=float)
 
 
-    forward6d = WarmForwardP8(forward_model)
+    forward6d = WarmForwardP8TipTangent(forward_model)
 
 
 

@@ -351,42 +351,24 @@ class DeterministicForward6D:
         # also mirror attributes for MPC consumption
         self.last_p_centerline = None if self.last_p_centerline is None else self.last_p_centerline.copy()
         return y
-class WarmForwardP8:
-    """
-    Warm-start wrapper around EnergyMinForwardWithLumen.
-
-    Input:
-        p8 = [x, y, z, qw, qx, qy, qz, L]
-
-    Internally converts to:
-        p7 = [x, y, z, rx, ry, rz, L]
-
-    Output:
-        by default tip position only, shape (3,)
-    """
+class WarmForwardP8TipTangent:
     def __init__(self, fwd_model):
         self.fwd = fwd_model
         self.last_info = None
 
-    def __call__(self, p8):
+    def __call__(self, p8, commit=True):
         p7 = pose8_quat_to_pose7_rotvec(p8)
-        y = np.asarray(self.fwd(p7), float).reshape(3,)
+        tip = np.asarray(self.fwd(p7), float).reshape(3,)
         self.last_info = getattr(self.fwd, "last_info", None)
-        return y
 
-    def reset(self):
-        if hasattr(self.fwd, "_last"):
-            try:
-                for k in self.fwd._last.keys():
-                    self.fwd._last[k] = None
-            except Exception:
-                pass
+        pcl = getattr(self.fwd, "last_p_centerline", None)
+        if pcl is None or pcl.shape[1] < 2:
+            raise RuntimeError("Tip tangent unavailable")
 
-        for name in ["last_tip", "last_p_centerline", "last_theta", "last_info", "last_hist"]:
-            if hasattr(self.fwd, name):
-                try:
-                    setattr(self.fwd, name, None)
-                except Exception:
-                    pass
+        t_tip = pcl[:, -1] - pcl[:, -2]
+        nt = np.linalg.norm(t_tip)
+        if nt < 1e-12:
+            raise RuntimeError("Degenerate tip tangent")
+        t_tip = t_tip / nt
 
-        self.last_info = None
+        return np.hstack([tip, t_tip])   # shape (6,)

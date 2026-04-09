@@ -7,7 +7,7 @@ from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from beam_direction_magnetisation.post_processing.post_processing import quat_wxyz_to_R
 from scipy.spatial.transform import Rotation as Rot
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
@@ -3078,7 +3078,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.002,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
@@ -3183,7 +3183,7 @@ if __name__ == "__main__":
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
-            max_steps=100,
+            max_steps=2,
             show=False,
             send_commands=True,
             hw=hw,

@@ -1198,7 +1198,6 @@ def summarize_solution(
     print("\n--- magnetic ---")
     print(f"max |M_world|      : {np.max(np.linalg.norm(M_world, axis=0)):.6e}")
     print(f"max |B|            : {np.max(np.linalg.norm(B, axis=0)):.6e}")
-    print(f"active mag segs    : {int(np.sum(mag_dbg['mag_mask'] > 0.5))}")
 
     wire_mask = s_vertex < wire_len
     tip_mask = s_vertex >= wire_len
@@ -1321,7 +1320,7 @@ if __name__ == "__main__":
     # User toggles
     # ------------------------------------------------------------------
     RUN_MIN_SOLVER = True
-    RUN_RESIDUAL_SOLVER = False
+    RUN_RESIDUAL_SOLVER = False 
     MAKE_PLOTS = True
     SHOW_FRAMES = False
     RUN_FD_SENSITIVITY = False
@@ -1333,10 +1332,10 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.075
+    L_cmd = 0.065
     mag_len = beam_params.length_of_mag
     wire_len = L_cmd - mag_len
-    N = 9
+    N = 15
 
     mu_tip = mag_params.mag_epm
     # M_ref_local = np.array([0.0, 0.0, mu_tip], float)
@@ -1350,9 +1349,9 @@ if __name__ == "__main__":
         0.7681328220229531, -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
     base_point = np.array([
-        (pivot_point[0]-(L_cmd+0.08)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
+        (pivot_point[0]-(L_cmd+0.2)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
-    start_point = get_point(0, 60, base_point,  pivot_point)
+    start_point = get_point(0, 40, base_point,  pivot_point)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -1368,9 +1367,9 @@ if __name__ == "__main__":
     # Material / section properties
     # ------------------------------------------------------------------
     wire = rod_section_stiffness(
-        r=200e-6,
-        E=50e6,
-        nu=0.4,
+        r=400e-6,
+        E=3e6,
+        nu=0.49,
     )
     # tip = rod_section_stiffness(
     #     r=2e-3,
@@ -1478,6 +1477,7 @@ if __name__ == "__main__":
             L=L_cmd,
             N=N,
             wire_len=wire_len,
+            tip_len = mag_len,
             Kinv_fun=Kinv_fun,
             r_src=r_src_ur,
             m_src=m_src,
@@ -1487,10 +1487,10 @@ if __name__ == "__main__":
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             use_lumen=USE_LUMEN,
-            maxiter=200,
+            maxiter=400,
             M_ref_local=M_ref_local,
             ref_twist=None,
-            enforce_inextensibility=False,
+            enforce_inextensibility=True,
         )
     if RUN_RESIDUAL_SOLVER:
         p_res, theta_res, info_res = solve_nodes_twist_residual(

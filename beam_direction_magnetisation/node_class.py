@@ -37,18 +37,7 @@ class DEREnergyMinForwardWithLumen:
         self.use_continuation = bool(use_continuation)
         self.N_coarse = int(N_coarse)
 
-        if N_schedule is None:
-            if self.N_nodes <= self.N_coarse:
-                self.N_schedule = [self.N_nodes]
-            else:
-                vals = [self.N_coarse]
-                cur = self.N_coarse
-                while cur < self.N_nodes:
-                    cur = min(cur + 6, self.N_nodes)
-                    vals.append(cur)
-                self.N_schedule = vals
-        else:
-            self.N_schedule = list(N_schedule)
+
         self.p0_ur = np.asarray(p0_ur, float).reshape(3,)
         self.q0_ur = np.asarray(q0_ur, float).reshape(4,)
 
@@ -499,7 +488,7 @@ if __name__ == "__main__":
         base_point = np.array([
             (pivot_point[0]-(L_ins+0.08)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
         ], float)
-        start_point = get_point(0, 60, base_point,  pivot_point)
+        start_point = get_point(0, 20, base_point,  pivot_point)
         start_point[2] = -0.1
 
         T_ur_pivot = ur_pose6_to_T(pivot_point)

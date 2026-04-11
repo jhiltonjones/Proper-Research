@@ -126,9 +126,9 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.065
+    L_cmd = 0.05
     N_nodes = 10
-    USE_LUMEN = True
+    USE_LUMEN = False
 
     pivot_point = np.array([
         0.7681328220229531, -0.7112731669220016, -0.1,
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.15),
+        pivot_point[0] - (L_cmd + 0.08),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -684,19 +684,19 @@ if __name__ == "__main__":
     # ------------------------------------------------------------
     # nominal state
     # ------------------------------------------------------------
-    # r_src = start_point[:3]
-    # rvec_src = start_point[3:6]
-    # p7_nom = np.hstack([r_src, rvec_src, L_cmd])
-    # p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+    r_src = start_point[:3]
+    rvec_src = start_point[3:6]
+    p7_nom = np.hstack([r_src, rvec_src, L_cmd])
+    p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
 
     # # deterministic forward handle
-    # forward6d = DeterministicForward6D(fwd_cos)
-    # forward_tip_cos = make_forward_tip_fn_no_cache(forward6d, "Cosserat")
+    forward6d = DeterministicForward6D(fwd_cos)
+    forward_tip_cos = make_forward_tip_fn_no_cache(forward6d, "Cosserat")
 
     # # ------------------------------------------------------------
     # # choose nominal perturbations
     # # ------------------------------------------------------------
-    # dt = 1
+    dt = 1
     # dr = 5e-3
     # dtheta = 3e-1
     # dL = 1e-3
@@ -739,25 +739,25 @@ if __name__ == "__main__":
     # # ------------------------------------------------------------
     # # perturbation sweeps
     # # ------------------------------------------------------------
-    # deltas_vx = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
-    # deltas_vy = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
-    # deltas_wz = np.array([5e-2, 1e-1, 2e-1, 3e-1, 5e-1], float)
-    # deltas_L  = np.array([1e-3, 2e-3, 5e-3, 1e-2, 3e-2], float)
+    deltas_vx = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
+    deltas_vy = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
+    deltas_wz = np.array([5e-2, 1e-1, 2e-1, 3e-1, 5e-1], float)
+    deltas_L  = np.array([1e-3, 2e-3, 5e-3, 1e-2, 3e-2], float)
 
-    # cols_vx = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=0, deltas=deltas_vx)
-    # cols_vy = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=1, deltas=deltas_vy)
-    # cols_wz = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=5, deltas=deltas_wz)
-    # cols_L  = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=6, deltas=deltas_L)
+    cols_vx = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=0, deltas=deltas_vx)
+    cols_vy = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=1, deltas=deltas_vy)
+    cols_wz = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=5, deltas=deltas_wz)
+    cols_L  = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=6, deltas=deltas_L)
 
-    # print_fd_sweep_results("vx", deltas_vx, cols_vx)
-    # print_fd_sweep_results("vy", deltas_vy, cols_vy)
-    # print_fd_sweep_results("wz", deltas_wz, cols_wz)
-    # print_fd_sweep_results("L",  deltas_L, cols_L)
+    print_fd_sweep_results("vx", deltas_vx, cols_vx)
+    print_fd_sweep_results("vy", deltas_vy, cols_vy)
+    print_fd_sweep_results("wz", deltas_wz, cols_wz)
+    print_fd_sweep_results("L",  deltas_L, cols_L)
 
-    # analyze_fd_plateau("vx", deltas_vx, cols_vx, rel_tol=0.15)
-    # analyze_fd_plateau("vy", deltas_vy, cols_vy, rel_tol=0.15)
-    # analyze_fd_plateau("wz", deltas_wz, cols_wz, rel_tol=0.15)
-    # analyze_fd_plateau("L",  deltas_L, cols_L, rel_tol=0.15)
+    analyze_fd_plateau("vx", deltas_vx, cols_vx, rel_tol=0.15)
+    analyze_fd_plateau("vy", deltas_vy, cols_vy, rel_tol=0.15)
+    analyze_fd_plateau("wz", deltas_wz, cols_wz, rel_tol=0.15)
+    analyze_fd_plateau("L",  deltas_L, cols_L, rel_tol=0.15)
     def make_forward_tip_fn(fwd_model, name="Cosserat"):
         def forward_y_fn(p8):
             p7 = pose8_quat_to_pose7_rotvec(p8)

@@ -237,7 +237,7 @@ mag_params = default_magnet_params()
 
 L_cmd = 0.065
 N_nodes = 10
-USE_LUMEN = True
+USE_LUMEN = False
 
 pivot_point = np.array([
     0.7681328220229531, -0.7112731669220016, -0.1,
@@ -251,7 +251,7 @@ base_point = np.array([
     np.pi, 0.001, 0.001
 ], float)
 
-start_point = np.asarray(get_point(0, 20, base_point, pivot_point), dtype=float)
+start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
 start_point[2] = -0.1
 
 T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -328,7 +328,7 @@ if USE_LUMEN:
         length=0.06 + s_straight,
         n_pts=130,
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(40.0),
+        bend_angle=np.deg2rad(0.0),
         bend_start=0.0 + s_straight,
         bend_end=0.03 + s_straight,
     )

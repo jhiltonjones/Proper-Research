@@ -42,7 +42,7 @@ def new_capture(filename="focused_image.jpg",
                 cam_index=0,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=18,
-                exposure=100.0,     # try 200..5000 initially
+                exposure=25.0,     # try 200..5000 initially
                 gain=0.0,
                 auto_exposure_manual=1.0,  # working for you
                 brightness=None,     # e.g. 0.0
@@ -908,19 +908,19 @@ def measure_beam_and_tip_lengths_mm_with_checkerboard(
 
 
 if __name__ == "__main__":
-    result = measure_beam_and_tip_lengths_mm_with_checkerboard(
-        image_filename="focused_image.jpg",
-        use_roi=True,
-        show=True,
-        show_debug_markers=True,   # shows mask/overlay from detector
-    )
+    # result = measure_beam_and_tip_lengths_mm_with_checkerboard(
+    #     image_filename="focused_image.jpg",
+    #     use_roi=True,
+    #     show=True,
+    #     show_debug_markers=True,   # shows mask/overlay from detector
+    # )
 
-    print("\nResult:")
-    for k, v in result.items():
-        print(f"  {k}: {v}")
-    print(result[""])
+    # print("\nResult:")
+    # for k, v in result.items():
+    #     print(f"  {k}: {v}")
+    # print(result[""])
 
-
+    new_capture()
     # print("\nResult:")
     # for k, v in result.items():
     #     print(f"  {k}: {v}")

@@ -192,7 +192,7 @@ def build_initial_lumen_from_vision(
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
-    show=True,
+    show=False,
 ):
     new_capture()
 
@@ -821,11 +821,11 @@ if __name__ == "__main__":
     )
 
     pivot_point = np.array([
-    0.8181328220229531, -0.7112731669220016, -0.1,  np.pi, 0.001,0.001
+    0.7981328220229531, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
     ], float)
 
     beam_base_point_robot_m = pivot_point[:3].copy()
-    L0 = 0.0534
+    L0 = 0.02
 
     cfg = SweepEvalConfig(
         pivot_pose6=pivot_point,
@@ -839,9 +839,9 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=40.0,
+        known_green_distance_mm=20.0,
         pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_forward_wlumen5",
+        results_dir="results_sweep_stiff_tip_new2",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

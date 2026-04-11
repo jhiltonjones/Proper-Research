@@ -6,12 +6,12 @@ import matplotlib.pyplot as plt
 # ----------------------------
 # Load run 5 (CSV)
 # ----------------------------
-df5 = pd.read_csv("/home/jack/Proper-Research/results_sweep_forward_wlumen6/sweep_results.csv")
+df5 = pd.read_csv("results_sweep_stiff_tip_new2/sweep_results.csv")
 
 # ----------------------------
 # Load run 6 (JSON)
 # ----------------------------
-with open("/home/jack/Proper-Research/results_sweep_forward_wo_lumen/sweep_results.json", "r") as f:
+with open("/home/jack/Proper-Research/results_sweep_soft_tip_new2/sweep_results.json", "r") as f:
     data6 = json.load(f)
 
 # Extract run 6 tip data
@@ -49,18 +49,18 @@ plt.plot(
 )
 
 # Run 6
-# plt.plot(
-#     pred_x6,
-#     pred_y6,
-#     "o--",
-#     label="Predicted (run 6)"
-# )
-# plt.plot(
-#     meas_x6,
-#     meas_y6,
-#     "s--",
-#     label="Measured (run 6)"
-# )
+plt.plot(
+    pred_x6,
+    pred_y6,
+    "o--",
+    label="Predicted (run 6)"
+)
+plt.plot(
+    meas_x6,
+    meas_y6,
+    "s--",
+    label="Measured (run 6)"
+)
 
 # Pivot origin
 plt.plot(0, 0, "k+", markersize=10, label="Pivot")

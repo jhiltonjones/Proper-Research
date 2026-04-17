@@ -126,23 +126,23 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.05
+    L_cmd = 0.02
     N_nodes = 10
     USE_LUMEN = False
 
     pivot_point = np.array([
-        0.7681328220229531, -0.7112731669220016, -0.1,
+        0.7981328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.08),
+        pivot_point[0] - (L_cmd + 0.15),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 40, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -215,12 +215,12 @@ if __name__ == "__main__":
         lumen_C = make_lumen_centerline_turning(
             p_start=p0_ur,
             t0=t0,
-            length=0.08,
+            length=0.03,
             n_pts=130,
             bend_axis=np.array([0.0, 0.0, 1.0]),
-            bend_angle=np.deg2rad(40.0),
-            bend_start=0.02,
-            bend_end=0.05,
+            bend_angle=np.deg2rad(90.0),
+            bend_start=0.005,
+            bend_end=0.03,
         )
         lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
         lumen_R = np.full(len(lumen_C), 0.004)
@@ -251,452 +251,584 @@ if __name__ == "__main__":
         L_tip_full=mag_len,
         L_tip_min=0.01,
     )
+    # # ------------------------------------------------------------
+    # # build DER wrapper
+    # # ------------------------------------------------------------
+    fwd_der = DEREnergyMinForwardWithLumen(
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        Kinv_fun=Kinv_fun,
+        EA_wire=EA_wire,
+        EA_tip=EA_tip,
+        M_ref_local=M_ref_local,
+        m_body=m_body,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        N_nodes=N_nodes,
+        maxiter=1e3,
+        amp_init=2e-4,
+        enforce_inextensibility=True,
+        use_lumen=USE_LUMEN,
+        L_tip_full=mag_len,
+        L_tip_min=0.01,
+        ref_twist=None,
+        use_continuation=False,
+        N_coarse=9,
+    )
 
     # ------------------------------------------------------------
-    # helper printing
-    # ------------------------------------------------------------
-    def print_jacobian_table(J, row_labels=None, col_labels=None, title="Jacobian", fmt="{: .6e}"):
-        J = np.asarray(J, float)
-        n_row, n_col = J.shape
-
-        if row_labels is None:
-            row_labels = [f"y{i}" for i in range(n_row)]
-        if col_labels is None:
-            col_labels = [f"u{i}" for i in range(n_col)]
-
-        row_name_w = max(len(r) for r in row_labels + ["out"])
-        col_w = max(max(len(c) for c in col_labels), 13)
-
-        print(f"\n[{title}]")
-        header = "out".ljust(row_name_w) + " | " + " | ".join(c.rjust(col_w) for c in col_labels)
-        print(header)
-        print("-" * len(header))
-
-        for i in range(n_row):
-            vals = " | ".join(fmt.format(J[i, j]).rjust(col_w) for j in range(n_col))
-            print(row_labels[i].ljust(row_name_w) + " | " + vals)
-
-    def print_jacobian_comparison(Ja, Jb, row_labels=None, col_labels=None, name_a="A", name_b="B"):
-        Ja = np.asarray(Ja, float)
-        Jb = np.asarray(Jb, float)
-
-        if Ja.shape != Jb.shape:
-            print(f"\n[ERROR] shape mismatch: {name_a} {Ja.shape} vs {name_b} {Jb.shape}")
-            return
-
-        dJ = Jb - Ja
-
-        print_jacobian_table(Ja, row_labels, col_labels, title=name_a)
-        print_jacobian_table(Jb, row_labels, col_labels, title=name_b)
-        print_jacobian_table(dJ, row_labels, col_labels, title=f"{name_b} - {name_a}")
-
-        print("\n[DIFF NORMS]")
-        print("columnwise 2-norms :", np.linalg.norm(dJ, axis=0))
-        print("frobenius norm     :", np.linalg.norm(dJ))
-        print("max abs diff       :", np.max(np.abs(dJ)))
-
-    # ------------------------------------------------------------
-    # pose propagation
-    # ------------------------------------------------------------
-    def integrate_pose8_body(p8, u7, dt):
-        """
-        p8 = [x,y,z, qw,qx,qy,qz, L]
-        u7 = [vx,vy,vz, wx,wy,wz, dL]  (angular velocity in BODY frame)
-        """
-        p8 = np.asarray(p8, float).copy()
-        u7 = np.asarray(u7, float).ravel()
-
-        p8[0:3] += dt * u7[0:3]
-        p8[7]   += dt * u7[6]
-
-        q = quat_wxyz_normalize(p8[3:7])
-        dphi = dt * u7[3:6]
-        dq = small_rot_quat_wxyz(dphi)
-        q_new = quat_wxyz_mul(q, dq)
-        p8[3:7] = quat_wxyz_normalize(q_new)
-
-        return p8
-
-    def pose8_quat_to_pose7_rotvec(p8):
-        p8 = np.asarray(p8, float).ravel()
-        t = p8[0:3]
-        q = quat_wxyz_normalize(p8[3:7])
-        L = p8[7]
-        rvec = quat_wxyz_to_rotvec(q)
-        return np.array([t[0], t[1], t[2], rvec[0], rvec[1], rvec[2], L], float)
-
-    # ------------------------------------------------------------
-    # deterministic forward wrapper
-    # ------------------------------------------------------------
-    class DeterministicForward6D:
-        """
-        Small wrapper so every evaluation is as deterministic as possible.
-        """
-        def __init__(self, fwd_model):
-            self.fwd = fwd_model
-            self.last_info = None
-
-        def __call__(self, p7):
-            # clear any warm-start / cache state if present
-            if hasattr(self.fwd, "_last"):
-                try:
-                    self.fwd._last["q_init"] = None
-                    self.fwd._last["L"] = None
-                except Exception:
-                    pass
-
-            y = self.fwd(p7)
-            self.last_info = getattr(self.fwd, "last_info", None)
-            return y
-
-    def make_forward_tip_fn_no_cache(fwd_model, name="Cosserat"):
-        def forward_y_fn(p8):
-            p7 = pose8_quat_to_pose7_rotvec(p8)
-            y = np.asarray(fwd_model(p7), float).reshape(3,)
-            info = getattr(fwd_model, "last_info", None)
-            if info is not None and not info.get("success", True):
-                print(f"[WARN] {name} failed: {info.get('message', 'unknown')}")
-            return y
-        return forward_y_fn
-    class ColdForward6D:
-        """
-        Always clears internal warm-start/cache state before evaluation.
-        """
-        def __init__(self, fwd_model):
-            self.fwd = fwd_model
-            self.last_info = None
-
-        def __call__(self, p7):
-            if hasattr(self.fwd, "_last"):
-                try:
-                    self.fwd._last["q_init"] = None
-                    self.fwd._last["L"] = None
-                except Exception:
-                    pass
-
-            y = self.fwd(p7)
-            self.last_info = getattr(self.fwd, "last_info", None)
-            return y
-    def benchmark_jacobian_mode(
-        label,
-        forward_tip_fn,
-        p8_nom,
-        dt,
-        eps_u,
-        dL,
-        n_out=3,
-        n_repeat=3,
-    ):
-        import time
-
-        forward_times = []
-        full_times = []
-        red_times = []
-
-        B_full_last = None
-        B_red_last = None
-
-        for k in range(n_repeat):
-            t0 = time.perf_counter()
-            y = forward_tip_fn(p8_nom)
-            t1 = time.perf_counter()
-            forward_times.append((t1 - t0) * 1e3)
-
-            t0 = time.perf_counter()
-            B_full_last = numerical_B_y_wrt_u_central(
-                p8_nom, forward_tip_fn, dt=dt, eps_u=eps_u, n_out=n_out, delta_L=dL
-            )
-            t1 = time.perf_counter()
-            full_times.append((t1 - t0) * 1e3)
-
-            t0 = time.perf_counter()
-            B_red_last = numerical_B_y_wrt_u_xy_wz_L_central(
-                p8_nom, forward_tip_fn, dt=dt, eps_u=eps_u, n_out=n_out, delta_L=dL
-            )
-            t1 = time.perf_counter()
-            red_times.append((t1 - t0) * 1e3)
-
-        print("\n" + "=" * 80)
-        print(f"JACOBIAN BENCHMARK: {label}")
-        print("=" * 80)
-        print(f"forward mean [ms]       : {np.mean(forward_times):.2f}")
-        print(f"forward min/max [ms]    : {np.min(forward_times):.2f} / {np.max(forward_times):.2f}")
-        print(f"full jac mean [ms]      : {np.mean(full_times):.2f}")
-        print(f"full jac min/max [ms]   : {np.min(full_times):.2f} / {np.max(full_times):.2f}")
-        print(f"reduced jac mean [ms]   : {np.mean(red_times):.2f}")
-        print(f"reduced jac min/max [ms]: {np.min(red_times):.2f} / {np.max(red_times):.2f}")
-
-        return {
-            "label": label,
-            "forward_times_ms": np.array(forward_times),
-            "full_times_ms": np.array(full_times),
-            "reduced_times_ms": np.array(red_times),
-            "B_full": B_full_last,
-            "B_red": B_red_last,
-        }
-    def compare_jacobian_modes(cold, warm):
-        print("\n" + "=" * 80)
-        print("COLD vs WARM JACOBIAN COMPARISON")
-        print("=" * 80)
-
-        speedup_fwd = np.mean(cold["forward_times_ms"]) / np.mean(warm["forward_times_ms"])
-        speedup_full = np.mean(cold["full_times_ms"]) / np.mean(warm["full_times_ms"])
-        speedup_red = np.mean(cold["reduced_times_ms"]) / np.mean(warm["reduced_times_ms"])
-
-        print(f"forward speedup (warm)       : {speedup_fwd:.2f}x")
-        print(f"full Jacobian speedup (warm) : {speedup_full:.2f}x")
-        print(f"red Jacobian speedup (warm)  : {speedup_red:.2f}x")
-
-        for name in ["B_full", "B_red"]:
-            Jc = cold[name]
-            Jw = warm[name]
-            dJ = Jw - Jc
-
-            abs_fro = np.linalg.norm(dJ)
-            rel_fro = abs_fro / (np.linalg.norm(Jc) + 1e-12)
-            col_err = np.linalg.norm(dJ, axis=0)
-            col_ref = np.linalg.norm(Jc, axis=0) + 1e-12
-            col_rel = col_err / col_ref
-
-            print(f"\n{name}:")
-            print(f"  abs Fro diff        : {abs_fro:.6e}")
-            print(f"  rel Fro diff        : {rel_fro:.6e}")
-            print(f"  col abs diff norms  : {col_err}")
-            print(f"  col rel diff norms  : {col_rel}")
-            print(f"  max abs entry diff  : {np.max(np.abs(dJ)):.6e}")
-    class WarmForward6D:
-        """
-        Leaves internal cache/warm-start state untouched.
-        """
-        def __init__(self, fwd_model):
-            self.fwd = fwd_model
-            self.last_info = None
-
-        def __call__(self, p7):
-            y = self.fwd(p7)
-            self.last_info = getattr(self.fwd, "last_info", None)
-            return y
-    # ------------------------------------------------------------
-    # central-difference Jacobians only
-    # ------------------------------------------------------------
-    def numerical_B_y_wrt_u_central(p8, forward_y_fn, dt, eps_u, n_out, delta_L=None):
-        import time
-        t0 = time.perf_counter()
-
-        p8 = np.asarray(p8, float).ravel()
-        B = np.zeros((n_out, 7), float)
-
-        if delta_L is None:
-            delta_L = dt * eps_u[6]
-
-        tint = 0.0
-        tfwd = 0.0
-
-        for i in range(6):
-            du = np.zeros(7, float)
-            du[i] = eps_u[i]
-
-            a = time.perf_counter()
-            p_plus  = integrate_pose8_body(p8, +du, dt)
-            p_minus = integrate_pose8_body(p8, -du, dt)
-            b = time.perf_counter()
-            tint += (b - a)
-
-            a = time.perf_counter()
-            y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-            y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-            b = time.perf_counter()
-            tfwd += (b - a)
-
-            B[:, i] = (y_plus - y_minus) / (2.0 * eps_u[i])
-
-        p_plus = p8.copy()
-        p_minus = p8.copy()
-        p_plus[7]  += delta_L
-        p_minus[7] -= delta_L
-
-        a = time.perf_counter()
-        y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-        y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-        b = time.perf_counter()
-        tfwd += (b - a)
-
-        dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
-        B[:, 6] = dt * dy_dL
-
-        t1 = time.perf_counter()
-        print(f"[TIME] central full Jacobian total: {(t1-t0)*1e3:.2f} ms")
-        print(f"[TIME] integrate total          : {(tint)*1e3:.2f} ms")
-        print(f"[TIME] forward total            : {(tfwd)*1e3:.2f} ms")
-
-        return B
-
-    def numerical_B_y_wrt_u_xy_wz_L_central(p8, forward_y_fn, dt, eps_u, n_out, delta_L=None):
-        import time
-        t0 = time.perf_counter()
-
-        p8 = np.asarray(p8, float).ravel()
-        B_red = np.zeros((n_out, 4), float)
-
-        if delta_L is None:
-            delta_L = dt * eps_u[6]
-
-        tint = 0.0
-        tfwd = 0.0
-
-        selected = [0, 1, 5]  # vx, vy, wz
-
-        for j, i in enumerate(selected):
-            du = np.zeros(7, float)
-            du[i] = eps_u[i]
-
-            a = time.perf_counter()
-            p_plus  = integrate_pose8_body(p8, +du, dt)
-            p_minus = integrate_pose8_body(p8, -du, dt)
-            b = time.perf_counter()
-            tint += (b - a)
-
-            a = time.perf_counter()
-            y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-            y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-            b = time.perf_counter()
-            tfwd += (b - a)
-
-            B_red[:, j] = (y_plus - y_minus) / (2.0 * eps_u[i])
-
-        p_plus = p8.copy()
-        p_minus = p8.copy()
-        p_plus[7]  += delta_L
-        p_minus[7] -= delta_L
-
-        a = time.perf_counter()
-        y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-        y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-        b = time.perf_counter()
-        tfwd += (b - a)
-
-        dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
-        B_red[:, 3] = dt * dy_dL
-
-        t1 = time.perf_counter()
-        print(f"[TIME] central reduced Jacobian total: {(t1-t0)*1e3:.2f} ms")
-        print(f"[TIME] integrate total             : {(tint)*1e3:.2f} ms")
-        print(f"[TIME] forward total               : {(tfwd)*1e3:.2f} ms")
-
-        return B_red
-
-    # ------------------------------------------------------------
-    # perturbation sweep
-    # ------------------------------------------------------------
-    def fd_column_sweep_central(p8, forward_y_fn, dt, channel, deltas, n_out=3):
-        """
-        channel:
-            0=vx, 1=vy, 2=vz, 3=wx, 4=wy, 5=wz, 6=L
-
-        deltas:
-            actual perturbation magnitudes in state space:
-              x,y,z -> meters
-              wx,wy,wz -> radians
-              L -> meters
-        """
-        p8 = np.asarray(p8, float).ravel()
-        cols = []
-
-        for d in deltas:
-            if channel < 6:
-                du = np.zeros(7, float)
-                du[channel] = d / dt
-
-                p_plus  = integrate_pose8_body(p8, +du, dt)
-                p_minus = integrate_pose8_body(p8, -du, dt)
-
-                y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-                y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-
-                col = (y_plus - y_minus) / (2.0 * du[channel])
-
-            else:
-                p_plus = p8.copy()
-                p_minus = p8.copy()
-                p_plus[7]  += d
-                p_minus[7] -= d
-
-                y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
-                y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
-
-                col = dt * (y_plus - y_minus) / (2.0 * d)
-
-            cols.append(col)
-
-        return np.asarray(cols, float)   # (n_delta, n_out)
-
-    def print_fd_sweep_results(name, deltas, cols):
-        print(f"\n[FD SWEEP] {name}")
-        print("delta         | dtip_x          dtip_y          dtip_z          ||col||")
-        print("-" * 78)
-        for d, c in zip(deltas, cols):
-            print(f"{d:12.3e} | {c[0]: .6e}  {c[1]: .6e}  {c[2]: .6e}  {np.linalg.norm(c):.6e}")
-
-    def analyze_fd_plateau(name, deltas, cols, rel_tol=0.15):
-        """
-        Very simple plateau detector:
-        compares neighboring columns and marks where relative change is small.
-        """
-        norms = np.linalg.norm(cols, axis=1)
-        print(f"\n[FD PLATEAU ANALYSIS] {name}")
-        print("delta         | ||col||        | rel change to next")
-        print("-" * 56)
-
-        rel_changes = []
-        for i in range(len(deltas)):
-            if i < len(deltas) - 1:
-                denom = np.linalg.norm(cols[i]) + 1e-12
-                rel = np.linalg.norm(cols[i+1] - cols[i]) / denom
-                rel_changes.append(rel)
-                print(f"{deltas[i]:12.3e} | {norms[i]:12.6e} | {rel:12.6e}")
-            else:
-                print(f"{deltas[i]:12.3e} | {norms[i]:12.6e} | {'-':>12}")
-
-        good = [i for i, r in enumerate(rel_changes) if r < rel_tol]
-        if len(good) == 0:
-            print("No obvious plateau found.")
-        else:
-            print("Candidate plateau intervals:")
-            for i in good:
-                print(f"  {deltas[i]:.3e} -> {deltas[i+1]:.3e}")
-
-    def benchmark_forward(forward_y_fn, p8_nom, n_repeat=3):
-        import time
-        times = []
-        y_last = None
-        for _ in range(n_repeat):
-            t0 = time.perf_counter()
-            y_last = forward_y_fn(p8_nom)
-            t1 = time.perf_counter()
-            times.append((t1 - t0) * 1e3)
-        print("\n[FORWARD BENCHMARK]")
-        print(f"mean forward time : {np.mean(times):.2f} ms")
-        print(f"min  forward time : {np.min(times):.2f} ms")
-        print(f"max  forward time : {np.max(times):.2f} ms")
-        print(f"last y            : {y_last}")
-        return np.array(times)
-
-    # ------------------------------------------------------------
-    # nominal state
+    # single comparison
     # ------------------------------------------------------------
     r_src = start_point[:3]
     rvec_src = start_point[3:6]
-    p7_nom = np.hstack([r_src, rvec_src, L_cmd])
-    p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+    p7 = np.hstack([r_src, rvec_src, L_cmd])
 
-    # # deterministic forward handle
-    forward6d = DeterministicForward6D(fwd_cos)
-    forward_tip_cos = make_forward_tip_fn_no_cache(forward6d, "Cosserat")
+    tip_cos, tip_der = compare_models(
+        fwd_cos,
+        fwd_der,
+        p7,
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        L_cmd=L_cmd,
+        lumen_C=lumen_C,
+    )
+    tip = fwd_der(p7)
+
+    from beam_direction_magnetisation.node_optimisation import dipole_field_points
+    from beam_direction_magnetisation.magnetism.magnetic_methods import dipole_field_from_source
+
+    kin = fwd_der.last_info["dbg"]["kin"]
+    pts = kin["mid"].T
+    m_src = fwd_der.last_info["m_src"]
+    r_src_used = fwd_der.last_info["r_src"]
+
+    B_cos = dipole_field_from_source(pts, r_src_used, m_src, r_min=1e-6)
+    B_der = dipole_field_points(pts.T, r_src_used, m_src, r_min=1e-6).T
+
+    err = np.linalg.norm(B_cos - B_der, axis=1)
+
+    print("\n" + "=" * 80)
+    print("FIELD LAW COMPARISON ON IDENTICAL POINTS")
+    print("=" * 80)
+    print("max |B_cos - B_der| =", np.max(err))
+    print("mean|B_cos - B_der| =", np.mean(err))
+    print("max |B_cos|         =", np.max(np.linalg.norm(B_cos, axis=1)))
+    print("max |B_der|         =", np.max(np.linalg.norm(B_der, axis=1)))
+    print("rel max error       =", np.max(err) / (np.max(np.linalg.norm(B_cos, axis=1)) + 1e-12))
+    mag = fwd_der.last_info["dbg"]["mag"]
+    kin = fwd_der.last_info["dbg"]["kin"]
+
+    pts = kin["mid"].T                    # (n_seg,3)
+    B_same = dipole_field_from_source(pts, r_src_used, m_src, r_min=1e-6)   # (n_seg,3)
+
+    M_world = mag["M_world"].T            # (n_seg,3)
+    ell_i = mag["ell_i"]
+
+    mdotB_same = np.sum(M_world * B_same, axis=1)
+    Wm_same_midpoint = np.sum(-mdotB_same * ell_i)
+
+    print("DER Wm stored        =", mag["wm_seg"].sum())
+    print("DER Wm recomputed    =", Wm_same_midpoint)
+    print("difference           =", Wm_same_midpoint - mag["wm_seg"].sum())
+    # ------------------------------------------------------------
+    # length sweep comparison
+    # ------------------------------------------------------------
+    print("\n" + "=" * 80)
+    print("LENGTH SWEEP COMPARISON")
+    print("=" * 80)
+
+    L_vals = np.linspace(0.045, L_cmd, 6)
+    tips_cos = []
+    tips_der = []
+    angle_vals = np.linspace(0,90, 10)
+    for angle_val in angle_vals:
+        base_point_i = np.array([
+            pivot_point[0] - (0.15),
+            pivot_point[1],
+            -0.1,
+            np.pi, 0.001, 0.001
+        ], float)
+
+        start_point_i = np.asarray(get_point(0, angle_val, base_point_i, pivot_point), dtype=float)
+        start_point_i[2] = -0.1
+
+        r_src_i = start_point_i[:3]
+        rvec_src_i = start_point_i[3:6]
+        p7_i = np.hstack([r_src_i, rvec_src_i, L_cmd])
+
+        tip_cos_i = fwd_cos(p7_i)
+        tip_der_i = fwd_der(p7_i)
+
+        tips_cos.append(tip_cos_i.copy())
+        tips_der.append(tip_der_i.copy())
+
+        print(
+            f"Angle={angle_val:.6f} | "
+            f"Cos tip={tip_cos_i} | "
+            f"DER tip={tip_der_i} | "
+            f"diff={np.linalg.norm(tip_der_i - tip_cos_i):.6e}"
+        )
+
+    tips_cos = np.asarray(tips_cos)
+    tips_der = np.asarray(tips_der)
+
+    plt.figure(figsize=(9, 6))
+    # plt.plot(angle_vals, tips_cos[:, 0], "-o", label="Cos x")
+    plt.plot(angle_vals, tips_cos[:, 1], "-o", label="Cos y")
+    # plt.plot(angle_vals, tips_der[:, 0], "--s", label="DER x")
+    plt.plot(angle_vals, tips_der[:, 1], "--s", label="DER y")
+    plt.xlabel("Insertion length [m]")
+    plt.ylabel("Tip position [m]")
+    plt.title("Cosserat vs DER: tip position vs insertion")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    # # ------------------------------------------------------------
+    # # helper printing
+    # # ------------------------------------------------------------
+    # def print_jacobian_table(J, row_labels=None, col_labels=None, title="Jacobian", fmt="{: .6e}"):
+    #     J = np.asarray(J, float)
+    #     n_row, n_col = J.shape
+
+    #     if row_labels is None:
+    #         row_labels = [f"y{i}" for i in range(n_row)]
+    #     if col_labels is None:
+    #         col_labels = [f"u{i}" for i in range(n_col)]
+
+    #     row_name_w = max(len(r) for r in row_labels + ["out"])
+    #     col_w = max(max(len(c) for c in col_labels), 13)
+
+    #     print(f"\n[{title}]")
+    #     header = "out".ljust(row_name_w) + " | " + " | ".join(c.rjust(col_w) for c in col_labels)
+    #     print(header)
+    #     print("-" * len(header))
+
+    #     for i in range(n_row):
+    #         vals = " | ".join(fmt.format(J[i, j]).rjust(col_w) for j in range(n_col))
+    #         print(row_labels[i].ljust(row_name_w) + " | " + vals)
+
+    # def print_jacobian_comparison(Ja, Jb, row_labels=None, col_labels=None, name_a="A", name_b="B"):
+    #     Ja = np.asarray(Ja, float)
+    #     Jb = np.asarray(Jb, float)
+
+    #     if Ja.shape != Jb.shape:
+    #         print(f"\n[ERROR] shape mismatch: {name_a} {Ja.shape} vs {name_b} {Jb.shape}")
+    #         return
+
+    #     dJ = Jb - Ja
+
+    #     print_jacobian_table(Ja, row_labels, col_labels, title=name_a)
+    #     print_jacobian_table(Jb, row_labels, col_labels, title=name_b)
+    #     print_jacobian_table(dJ, row_labels, col_labels, title=f"{name_b} - {name_a}")
+
+    #     print("\n[DIFF NORMS]")
+    #     print("columnwise 2-norms :", np.linalg.norm(dJ, axis=0))
+    #     print("frobenius norm     :", np.linalg.norm(dJ))
+    #     print("max abs diff       :", np.max(np.abs(dJ)))
 
     # # ------------------------------------------------------------
-    # # choose nominal perturbations
+    # # pose propagation
     # # ------------------------------------------------------------
-    dt = 1
+    # def integrate_pose8_body(p8, u7, dt):
+    #     """
+    #     p8 = [x,y,z, qw,qx,qy,qz, L]
+    #     u7 = [vx,vy,vz, wx,wy,wz, dL]  (angular velocity in BODY frame)
+    #     """
+    #     p8 = np.asarray(p8, float).copy()
+    #     u7 = np.asarray(u7, float).ravel()
+
+    #     p8[0:3] += dt * u7[0:3]
+    #     p8[7]   += dt * u7[6]
+
+    #     q = quat_wxyz_normalize(p8[3:7])
+    #     dphi = dt * u7[3:6]
+    #     dq = small_rot_quat_wxyz(dphi)
+    #     q_new = quat_wxyz_mul(q, dq)
+    #     p8[3:7] = quat_wxyz_normalize(q_new)
+
+    #     return p8
+
+    # def pose8_quat_to_pose7_rotvec(p8):
+    #     p8 = np.asarray(p8, float).ravel()
+    #     t = p8[0:3]
+    #     q = quat_wxyz_normalize(p8[3:7])
+    #     L = p8[7]
+    #     rvec = quat_wxyz_to_rotvec(q)
+    #     return np.array([t[0], t[1], t[2], rvec[0], rvec[1], rvec[2], L], float)
+
+    # # ------------------------------------------------------------
+    # # deterministic forward wrapper
+    # # ------------------------------------------------------------
+    # class DeterministicForward6D:
+    #     """
+    #     Small wrapper so every evaluation is as deterministic as possible.
+    #     """
+    #     def __init__(self, fwd_model):
+    #         self.fwd = fwd_model
+    #         self.last_info = None
+
+    #     def __call__(self, p7):
+    #         # clear any warm-start / cache state if present
+    #         if hasattr(self.fwd, "_last"):
+    #             try:
+    #                 self.fwd._last["q_init"] = None
+    #                 self.fwd._last["L"] = None
+    #             except Exception:
+    #                 pass
+
+    #         y = self.fwd(p7)
+    #         self.last_info = getattr(self.fwd, "last_info", None)
+    #         return y
+
+    # def make_forward_tip_fn_no_cache(fwd_model, name="Cosserat"):
+    #     def forward_y_fn(p8):
+    #         p7 = pose8_quat_to_pose7_rotvec(p8)
+    #         y = np.asarray(fwd_model(p7), float).reshape(3,)
+    #         info = getattr(fwd_model, "last_info", None)
+    #         if info is not None and not info.get("success", True):
+    #             print(f"[WARN] {name} failed: {info.get('message', 'unknown')}")
+    #         return y
+    #     return forward_y_fn
+    # class ColdForward6D:
+    #     """
+    #     Always clears internal warm-start/cache state before evaluation.
+    #     """
+    #     def __init__(self, fwd_model):
+    #         self.fwd = fwd_model
+    #         self.last_info = None
+
+    #     def __call__(self, p7):
+    #         if hasattr(self.fwd, "_last"):
+    #             try:
+    #                 self.fwd._last["q_init"] = None
+    #                 self.fwd._last["L"] = None
+    #             except Exception:
+    #                 pass
+
+    #         y = self.fwd(p7)
+    #         self.last_info = getattr(self.fwd, "last_info", None)
+    #         return y
+    # def benchmark_jacobian_mode(
+    #     label,
+    #     forward_tip_fn,
+    #     p8_nom,
+    #     dt,
+    #     eps_u,
+    #     dL,
+    #     n_out=3,
+    #     n_repeat=3,
+    # ):
+    #     import time
+
+    #     forward_times = []
+    #     full_times = []
+    #     red_times = []
+
+    #     B_full_last = None
+    #     B_red_last = None
+
+    #     for k in range(n_repeat):
+    #         t0 = time.perf_counter()
+    #         y = forward_tip_fn(p8_nom)
+    #         t1 = time.perf_counter()
+    #         forward_times.append((t1 - t0) * 1e3)
+
+    #         t0 = time.perf_counter()
+    #         B_full_last = numerical_B_y_wrt_u_central(
+    #             p8_nom, forward_tip_fn, dt=dt, eps_u=eps_u, n_out=n_out, delta_L=dL
+    #         )
+    #         t1 = time.perf_counter()
+    #         full_times.append((t1 - t0) * 1e3)
+
+    #         t0 = time.perf_counter()
+    #         B_red_last = numerical_B_y_wrt_u_xy_wz_L_central(
+    #             p8_nom, forward_tip_fn, dt=dt, eps_u=eps_u, n_out=n_out, delta_L=dL
+    #         )
+    #         t1 = time.perf_counter()
+    #         red_times.append((t1 - t0) * 1e3)
+
+    #     print("\n" + "=" * 80)
+    #     print(f"JACOBIAN BENCHMARK: {label}")
+    #     print("=" * 80)
+    #     print(f"forward mean [ms]       : {np.mean(forward_times):.2f}")
+    #     print(f"forward min/max [ms]    : {np.min(forward_times):.2f} / {np.max(forward_times):.2f}")
+    #     print(f"full jac mean [ms]      : {np.mean(full_times):.2f}")
+    #     print(f"full jac min/max [ms]   : {np.min(full_times):.2f} / {np.max(full_times):.2f}")
+    #     print(f"reduced jac mean [ms]   : {np.mean(red_times):.2f}")
+    #     print(f"reduced jac min/max [ms]: {np.min(red_times):.2f} / {np.max(red_times):.2f}")
+
+    #     return {
+    #         "label": label,
+    #         "forward_times_ms": np.array(forward_times),
+    #         "full_times_ms": np.array(full_times),
+    #         "reduced_times_ms": np.array(red_times),
+    #         "B_full": B_full_last,
+    #         "B_red": B_red_last,
+    #     }
+    # def compare_jacobian_modes(cold, warm):
+    #     print("\n" + "=" * 80)
+    #     print("COLD vs WARM JACOBIAN COMPARISON")
+    #     print("=" * 80)
+
+    #     speedup_fwd = np.mean(cold["forward_times_ms"]) / np.mean(warm["forward_times_ms"])
+    #     speedup_full = np.mean(cold["full_times_ms"]) / np.mean(warm["full_times_ms"])
+    #     speedup_red = np.mean(cold["reduced_times_ms"]) / np.mean(warm["reduced_times_ms"])
+
+    #     print(f"forward speedup (warm)       : {speedup_fwd:.2f}x")
+    #     print(f"full Jacobian speedup (warm) : {speedup_full:.2f}x")
+    #     print(f"red Jacobian speedup (warm)  : {speedup_red:.2f}x")
+
+    #     for name in ["B_full", "B_red"]:
+    #         Jc = cold[name]
+    #         Jw = warm[name]
+    #         dJ = Jw - Jc
+
+    #         abs_fro = np.linalg.norm(dJ)
+    #         rel_fro = abs_fro / (np.linalg.norm(Jc) + 1e-12)
+    #         col_err = np.linalg.norm(dJ, axis=0)
+    #         col_ref = np.linalg.norm(Jc, axis=0) + 1e-12
+    #         col_rel = col_err / col_ref
+
+    #         print(f"\n{name}:")
+    #         print(f"  abs Fro diff        : {abs_fro:.6e}")
+    #         print(f"  rel Fro diff        : {rel_fro:.6e}")
+    #         print(f"  col abs diff norms  : {col_err}")
+    #         print(f"  col rel diff norms  : {col_rel}")
+    #         print(f"  max abs entry diff  : {np.max(np.abs(dJ)):.6e}")
+    # class WarmForward6D:
+    #     """
+    #     Leaves internal cache/warm-start state untouched.
+    #     """
+    #     def __init__(self, fwd_model):
+    #         self.fwd = fwd_model
+    #         self.last_info = None
+
+    #     def __call__(self, p7):
+    #         y = self.fwd(p7)
+    #         self.last_info = getattr(self.fwd, "last_info", None)
+    #         return y
+    # # ------------------------------------------------------------
+    # # central-difference Jacobians only
+    # # ------------------------------------------------------------
+    # def numerical_B_y_wrt_u_central(p8, forward_y_fn, dt, eps_u, n_out, delta_L=None):
+    #     import time
+    #     t0 = time.perf_counter()
+
+    #     p8 = np.asarray(p8, float).ravel()
+    #     B = np.zeros((n_out, 7), float)
+
+    #     if delta_L is None:
+    #         delta_L = dt * eps_u[6]
+
+    #     tint = 0.0
+    #     tfwd = 0.0
+
+    #     for i in range(6):
+    #         du = np.zeros(7, float)
+    #         du[i] = eps_u[i]
+
+    #         a = time.perf_counter()
+    #         p_plus  = integrate_pose8_body(p8, +du, dt)
+    #         p_minus = integrate_pose8_body(p8, -du, dt)
+    #         b = time.perf_counter()
+    #         tint += (b - a)
+
+    #         a = time.perf_counter()
+    #         y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #         y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+    #         b = time.perf_counter()
+    #         tfwd += (b - a)
+
+    #         B[:, i] = (y_plus - y_minus) / (2.0 * eps_u[i])
+
+    #     p_plus = p8.copy()
+    #     p_minus = p8.copy()
+    #     p_plus[7]  += delta_L
+    #     p_minus[7] -= delta_L
+
+    #     a = time.perf_counter()
+    #     y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #     y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+    #     b = time.perf_counter()
+    #     tfwd += (b - a)
+
+    #     dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
+    #     B[:, 6] = dt * dy_dL
+
+    #     t1 = time.perf_counter()
+    #     print(f"[TIME] central full Jacobian total: {(t1-t0)*1e3:.2f} ms")
+    #     print(f"[TIME] integrate total          : {(tint)*1e3:.2f} ms")
+    #     print(f"[TIME] forward total            : {(tfwd)*1e3:.2f} ms")
+
+    #     return B
+
+    # def numerical_B_y_wrt_u_xy_wz_L_central(p8, forward_y_fn, dt, eps_u, n_out, delta_L=None):
+    #     import time
+    #     t0 = time.perf_counter()
+
+    #     p8 = np.asarray(p8, float).ravel()
+    #     B_red = np.zeros((n_out, 4), float)
+
+    #     if delta_L is None:
+    #         delta_L = dt * eps_u[6]
+
+    #     tint = 0.0
+    #     tfwd = 0.0
+
+    #     selected = [0, 1, 5]  # vx, vy, wz
+
+    #     for j, i in enumerate(selected):
+    #         du = np.zeros(7, float)
+    #         du[i] = eps_u[i]
+
+    #         a = time.perf_counter()
+    #         p_plus  = integrate_pose8_body(p8, +du, dt)
+    #         p_minus = integrate_pose8_body(p8, -du, dt)
+    #         b = time.perf_counter()
+    #         tint += (b - a)
+
+    #         a = time.perf_counter()
+    #         y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #         y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+    #         b = time.perf_counter()
+    #         tfwd += (b - a)
+
+    #         B_red[:, j] = (y_plus - y_minus) / (2.0 * eps_u[i])
+
+    #     p_plus = p8.copy()
+    #     p_minus = p8.copy()
+    #     p_plus[7]  += delta_L
+    #     p_minus[7] -= delta_L
+
+    #     a = time.perf_counter()
+    #     y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #     y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+    #     b = time.perf_counter()
+    #     tfwd += (b - a)
+
+    #     dy_dL = (y_plus - y_minus) / (2.0 * delta_L)
+    #     B_red[:, 3] = dt * dy_dL
+
+    #     t1 = time.perf_counter()
+    #     print(f"[TIME] central reduced Jacobian total: {(t1-t0)*1e3:.2f} ms")
+    #     print(f"[TIME] integrate total             : {(tint)*1e3:.2f} ms")
+    #     print(f"[TIME] forward total               : {(tfwd)*1e3:.2f} ms")
+
+    #     return B_red
+
+    # # ------------------------------------------------------------
+    # # perturbation sweep
+    # # ------------------------------------------------------------
+    # def fd_column_sweep_central(p8, forward_y_fn, dt, channel, deltas, n_out=3):
+    #     """
+    #     channel:
+    #         0=vx, 1=vy, 2=vz, 3=wx, 4=wy, 5=wz, 6=L
+
+    #     deltas:
+    #         actual perturbation magnitudes in state space:
+    #           x,y,z -> meters
+    #           wx,wy,wz -> radians
+    #           L -> meters
+    #     """
+    #     p8 = np.asarray(p8, float).ravel()
+    #     cols = []
+
+    #     for d in deltas:
+    #         if channel < 6:
+    #             du = np.zeros(7, float)
+    #             du[channel] = d / dt
+
+    #             p_plus  = integrate_pose8_body(p8, +du, dt)
+    #             p_minus = integrate_pose8_body(p8, -du, dt)
+
+    #             y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #             y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+
+    #             col = (y_plus - y_minus) / (2.0 * du[channel])
+
+    #         else:
+    #             p_plus = p8.copy()
+    #             p_minus = p8.copy()
+    #             p_plus[7]  += d
+    #             p_minus[7] -= d
+
+    #             y_plus  = np.asarray(forward_y_fn(p_plus), float).reshape(n_out,)
+    #             y_minus = np.asarray(forward_y_fn(p_minus), float).reshape(n_out,)
+
+    #             col = dt * (y_plus - y_minus) / (2.0 * d)
+
+    #         cols.append(col)
+
+    #     return np.asarray(cols, float)   # (n_delta, n_out)
+
+    # def print_fd_sweep_results(name, deltas, cols):
+    #     print(f"\n[FD SWEEP] {name}")
+    #     print("delta         | dtip_x          dtip_y          dtip_z          ||col||")
+    #     print("-" * 78)
+    #     for d, c in zip(deltas, cols):
+    #         print(f"{d:12.3e} | {c[0]: .6e}  {c[1]: .6e}  {c[2]: .6e}  {np.linalg.norm(c):.6e}")
+
+    # def analyze_fd_plateau(name, deltas, cols, rel_tol=0.15):
+    #     """
+    #     Very simple plateau detector:
+    #     compares neighboring columns and marks where relative change is small.
+    #     """
+    #     norms = np.linalg.norm(cols, axis=1)
+    #     print(f"\n[FD PLATEAU ANALYSIS] {name}")
+    #     print("delta         | ||col||        | rel change to next")
+    #     print("-" * 56)
+
+    #     rel_changes = []
+    #     for i in range(len(deltas)):
+    #         if i < len(deltas) - 1:
+    #             denom = np.linalg.norm(cols[i]) + 1e-12
+    #             rel = np.linalg.norm(cols[i+1] - cols[i]) / denom
+    #             rel_changes.append(rel)
+    #             print(f"{deltas[i]:12.3e} | {norms[i]:12.6e} | {rel:12.6e}")
+    #         else:
+    #             print(f"{deltas[i]:12.3e} | {norms[i]:12.6e} | {'-':>12}")
+
+    #     good = [i for i, r in enumerate(rel_changes) if r < rel_tol]
+    #     if len(good) == 0:
+    #         print("No obvious plateau found.")
+    #     else:
+    #         print("Candidate plateau intervals:")
+    #         for i in good:
+    #             print(f"  {deltas[i]:.3e} -> {deltas[i+1]:.3e}")
+
+    # def benchmark_forward(forward_y_fn, p8_nom, n_repeat=3):
+    #     import time
+    #     times = []
+    #     y_last = None
+    #     for _ in range(n_repeat):
+    #         t0 = time.perf_counter()
+    #         y_last = forward_y_fn(p8_nom)
+    #         t1 = time.perf_counter()
+    #         times.append((t1 - t0) * 1e3)
+    #     print("\n[FORWARD BENCHMARK]")
+    #     print(f"mean forward time : {np.mean(times):.2f} ms")
+    #     print(f"min  forward time : {np.min(times):.2f} ms")
+    #     print(f"max  forward time : {np.max(times):.2f} ms")
+    #     print(f"last y            : {y_last}")
+    #     return np.array(times)
+
+    # # ------------------------------------------------------------
+    # # nominal state
+    # # ------------------------------------------------------------
+    # r_src = start_point[:3]
+    # rvec_src = start_point[3:6]
+    # p7_nom = np.hstack([r_src, rvec_src, L_cmd])
+    # p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+
+    # # # deterministic forward handle
+    # forward6d = DeterministicForward6D(fwd_cos)
+    # forward_tip_cos = make_forward_tip_fn_no_cache(forward6d, "Cosserat")
+
+    # # # ------------------------------------------------------------
+    # # # choose nominal perturbations
+    # # # ------------------------------------------------------------
+    # dt = 1
     # dr = 5e-3
     # dtheta = 3e-1
     # dL = 1e-3
@@ -739,90 +871,90 @@ if __name__ == "__main__":
     # # ------------------------------------------------------------
     # # perturbation sweeps
     # # ------------------------------------------------------------
-    deltas_vx = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
-    deltas_vy = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
-    deltas_wz = np.array([5e-2, 1e-1, 2e-1, 3e-1, 5e-1], float)
-    deltas_L  = np.array([1e-3, 2e-3, 5e-3, 1e-2, 3e-2], float)
+    # deltas_vx = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
+    # deltas_vy = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2], float)
+    # deltas_wz = np.array([5e-2, 1e-1, 2e-1, 3e-1, 5e-1], float)
+    # deltas_L  = np.array([1e-3, 2e-3, 5e-3, 1e-2, 3e-2], float)
 
-    cols_vx = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=0, deltas=deltas_vx)
-    cols_vy = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=1, deltas=deltas_vy)
-    cols_wz = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=5, deltas=deltas_wz)
-    cols_L  = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=6, deltas=deltas_L)
+    # cols_vx = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=0, deltas=deltas_vx)
+    # cols_vy = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=1, deltas=deltas_vy)
+    # cols_wz = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=5, deltas=deltas_wz)
+    # cols_L  = fd_column_sweep_central(p8_nom, forward_tip_cos, dt, channel=6, deltas=deltas_L)
 
-    print_fd_sweep_results("vx", deltas_vx, cols_vx)
-    print_fd_sweep_results("vy", deltas_vy, cols_vy)
-    print_fd_sweep_results("wz", deltas_wz, cols_wz)
-    print_fd_sweep_results("L",  deltas_L, cols_L)
+    # print_fd_sweep_results("vx", deltas_vx, cols_vx)
+    # print_fd_sweep_results("vy", deltas_vy, cols_vy)
+    # print_fd_sweep_results("wz", deltas_wz, cols_wz)
+    # print_fd_sweep_results("L",  deltas_L, cols_L)
 
-    analyze_fd_plateau("vx", deltas_vx, cols_vx, rel_tol=0.15)
-    analyze_fd_plateau("vy", deltas_vy, cols_vy, rel_tol=0.15)
-    analyze_fd_plateau("wz", deltas_wz, cols_wz, rel_tol=0.15)
-    analyze_fd_plateau("L",  deltas_L, cols_L, rel_tol=0.15)
-    def make_forward_tip_fn(fwd_model, name="Cosserat"):
-        def forward_y_fn(p8):
-            p7 = pose8_quat_to_pose7_rotvec(p8)
-            y = np.asarray(fwd_model(p7), float).reshape(3,)
-            info = getattr(fwd_model, "last_info", None)
-            if info is not None and not info.get("success", True):
-                print(f"[WARN] {name} failed: {info.get('message', 'unknown')}")
-            return y
-        return forward_y_fn
-    # ------------------------------------------------------------
-    # nominal state
-    # ------------------------------------------------------------
-    r_src = start_point[:3]
-    rvec_src = start_point[3:6]
-    p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+    # analyze_fd_plateau("vx", deltas_vx, cols_vx, rel_tol=0.15)
+    # analyze_fd_plateau("vy", deltas_vy, cols_vy, rel_tol=0.15)
+    # analyze_fd_plateau("wz", deltas_wz, cols_wz, rel_tol=0.15)
+    # analyze_fd_plateau("L",  deltas_L, cols_L, rel_tol=0.15)
+    # def make_forward_tip_fn(fwd_model, name="Cosserat"):
+    #     def forward_y_fn(p8):
+    #         p7 = pose8_quat_to_pose7_rotvec(p8)
+    #         y = np.asarray(fwd_model(p7), float).reshape(3,)
+    #         info = getattr(fwd_model, "last_info", None)
+    #         if info is not None and not info.get("success", True):
+    #             print(f"[WARN] {name} failed: {info.get('message', 'unknown')}")
+    #         return y
+    #     return forward_y_fn
+    # # ------------------------------------------------------------
+    # # nominal state
+    # # ------------------------------------------------------------
+    # r_src = start_point[:3]
+    # rvec_src = start_point[3:6]
+    # p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
 
-    # ------------------------------------------------------------
-    # choose nominal perturbations
-    # ------------------------------------------------------------
-    dt = 1.0
-    dr = 5e-3
-    dtheta = 3e-1
-    dL = 1e-3
+    # # ------------------------------------------------------------
+    # # choose nominal perturbations
+    # # ------------------------------------------------------------
+    # dt = 1.0
+    # dr = 5e-3
+    # dtheta = 3e-1
+    # dL = 1e-3
 
-    eps_u = np.array([
-        dr / dt, dr / dt, dr / dt,
-        dtheta / dt, dtheta / dt, dtheta / dt,
-        dL / dt
-    ], dtype=float)
+    # eps_u = np.array([
+    #     dr / dt, dr / dt, dr / dt,
+    #     dtheta / dt, dtheta / dt, dtheta / dt,
+    #     dL / dt
+    # ], dtype=float)
 
-    # ------------------------------------------------------------
-    # build cold and warm forward handles
-    # ------------------------------------------------------------
-    cold6d = ColdForward6D(fwd_cos)
-    warm6d = WarmForward6D(fwd_cos)
+    # # ------------------------------------------------------------
+    # # build cold and warm forward handles
+    # # ------------------------------------------------------------
+    # cold6d = ColdForward6D(fwd_cos)
+    # warm6d = WarmForward6D(fwd_cos)
 
-    forward_tip_cold = make_forward_tip_fn(cold6d, "Cosserat cold")
-    forward_tip_warm = make_forward_tip_fn(warm6d, "Cosserat warm")
+    # forward_tip_cold = make_forward_tip_fn(cold6d, "Cosserat cold")
+    # forward_tip_warm = make_forward_tip_fn(warm6d, "Cosserat warm")
 
-    # optional: prime the warm cache once
-    _ = forward_tip_warm(p8_nom)
+    # # optional: prime the warm cache once
+    # _ = forward_tip_warm(p8_nom)
 
-    # ------------------------------------------------------------
-    # benchmark both
-    # ------------------------------------------------------------
-    cold_stats = benchmark_jacobian_mode(
-        "COLD",
-        forward_tip_cold,
-        p8_nom,
-        dt=dt,
-        eps_u=eps_u,
-        dL=dL,
-        n_out=3,
-        n_repeat=3,
-    )
+    # # ------------------------------------------------------------
+    # # benchmark both
+    # # ------------------------------------------------------------
+    # cold_stats = benchmark_jacobian_mode(
+    #     "COLD",
+    #     forward_tip_cold,
+    #     p8_nom,
+    #     dt=dt,
+    #     eps_u=eps_u,
+    #     dL=dL,
+    #     n_out=3,
+    #     n_repeat=3,
+    # )
 
-    warm_stats = benchmark_jacobian_mode(
-        "WARM",
-        forward_tip_warm,
-        p8_nom,
-        dt=dt,
-        eps_u=eps_u,
-        dL=dL,
-        n_out=3,
-        n_repeat=3,
-    )
+    # warm_stats = benchmark_jacobian_mode(
+    #     "WARM",
+    #     forward_tip_warm,
+    #     p8_nom,
+    #     dt=dt,
+    #     eps_u=eps_u,
+    #     dL=dL,
+    #     n_out=3,
+    #     n_repeat=3,
+    # )
 
-    compare_jacobian_modes(cold_stats, warm_stats)
+    # compare_jacobian_modes(cold_stats, warm_stats)

@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.integrate import solve_bvp
-from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_profile
+from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_profile, magnetic_wrench_density_cosserat_profile_segments
 from beam_direction_magnetisation.quarternions.quarternions_functions import (quat_derivative_body, quat_normalize, 
                                                                               quat_to_rot, quat_to_R,
                                                                               T_to_p_quat_wxyz)
@@ -11,6 +11,45 @@ from proper_research.parameters import default_magnet_params, default_beam_param
 from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.post_processing.post_processing import (plot_centerlines_with_lumen_3d, make_lumen_centerline_turning, 
                                                                           plot_error_vs_s, closest_point_on_segment, point_to_polyline_distance)
+from proper_research.robot.transformations import get_point
+L_tip_full=0.04
+def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
+    def Kbt_inv_profile(s, len_wire):
+        s = np.asarray(s, float)
+        mask_tip = (s >= len_wire)
+
+        EI_s = np.where(mask_tip, EI_tip, EI_wire)
+        GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
+
+        Kinv = np.zeros((3, 3, s.size), float)
+        Kinv[0, 0, :] = tors_soft / GJ_s
+        Kinv[1, 1, :] = bend_soft / EI_s
+        Kinv[2, 2, :] = bend_soft / EI_s
+        return Kinv
+
+    return Kbt_inv_profile
+def rod_section_stiffness(r, E, nu):
+    A = np.pi * r**2
+    I = np.pi * r**4 / 4.0
+    J = 0.5 * np.pi * r**4
+    G = E / (2.0 * (1.0 + nu))
+
+    EA = E * A
+    EI = E * I
+    GJ = G * J
+
+    return {
+        "r": r,
+        "E": E,
+        "nu": nu,
+        "A": A,
+        "I": I,
+        "J": J,
+        "G": G,
+        "EA": EA,
+        "EI": EI,
+        "GJ": GJ,
+    }
 import matplotlib.pyplot as plt
 beam_params = default_beam_params()
 def smoothstep01(x):
@@ -117,6 +156,7 @@ def u_flat_from_ctrl(u_ctrl, s):
         u_seg[:, k] = cs(s_seg)
 
     return u_seg.reshape(-1)
+
 def point_to_polyline_closest(p, C):
     """
     p: (3,)
@@ -159,16 +199,11 @@ def get_centerline_bvp(sol, s):
     return p
 
 
-
-
-
-
 def interpolate_radius(R, i, t):
     # linear interpolation of radius along segment i->i+1
     return (1.0 - t) * R[i] + t * R[i+1]
-beam_params = default_beam_params()
-mag_params = default_magnet_params()
-def tip_bending_angles_from_tangent(sol, L, e1=np.array([1.0,0.0,0.0])):
+
+def tip_bending_angles_from_tangent(sol, L, e1=np.array([-1.0,0.0,0.0])):
     YL = sol.sol(np.array([L]))
     qL = quat_normalize(YL[3:7, :])
     RL = quat_to_rot(qL)[0]
@@ -264,13 +299,21 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wi
         f_ext, tau_ext, _B = magnetic_wrench_density_cosserat_profile(
             p, qn, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
         )
+
+        # Robust shape fix
+        if f_ext.shape[1] == p.shape[1] - 1:
+            f_ext = mid_to_node_values(f_ext)
+        if tau_ext.shape[1] == p.shape[1] - 1:
+            tau_ext = mid_to_node_values(tau_ext)
         # f_wall = wall_force_density(p, vessel_centerline, R_vessel, k_wall=k_wall)
         # f_ext = f_ext + f_wall
-        fg = np.asarray(beam_params.f_g, float)
-        if fg.ndim == 1:
-            f_ext = f_ext + fg[:, None]   # (3,N) + (3,1)
-        else:
-            f_ext = f_ext + fg            # if you intentionally supply (3,N)
+        include_gravity = False
+        if include_gravity == True:
+            fg = np.asarray(beam_params.f_g, float)
+            if fg.ndim == 1:
+                f_ext = f_ext + fg[:, None]   # (3,N) + (3,1)
+            else:
+                f_ext = f_ext + fg            # if you intentionally supply (3,N)
         # f_ext = f_ext + f_g
 
         # f_ext = np.zeros_like(p)       # same shape as p (3,N)
@@ -443,29 +486,25 @@ class CosseratForwardModel:
         p = Y[0:3, :]
         q = quat_normalize(Y[3:7, :])
 
-        f_ext, tau_ext, B = magnetic_wrench_density_cosserat_profile(
+        f_mid, tau_mid, B_mid, m_mid_world, s_mid = magnetic_wrench_density_cosserat_profile_segments(
             p, q, s_out, m_src, r_src, self.m_local_fun, self.m_moment, r_min=1e-6
         )
         # f_ext = f_ext*0
         # tau_ext = tau_ext*0
         # f_ext = f_ext*0
         # tau_ext = tau_ext*0
-        Fy = np.trapezoid(f_ext[1, :], s_out)
-        Fz = np.trapezoid(f_ext[2, :], s_out)
-        Ty = np.trapezoid(tau_ext[1, :], s_out)
-        Tz = np.trapezoid(tau_ext[2, :], s_out)
+        Fy = np.trapezoid(f_mid[1, :], s_mid)
+        Fz = np.trapezoid(f_mid[2, :], s_mid)
+        Ty = np.trapezoid(tau_mid[1, :], s_mid)
+        Tz = np.trapezoid(tau_mid[2, :], s_mid)
 
-        # print("Net transverse force:", Fy, Fz)
-        # print("Net transverse torque:", Ty, Tz)
-
-        # Integrals (net)
-        F_net = np.trapezoid(f_ext, s_out, axis=1)
-        T_net = np.trapezoid(tau_ext, s_out, axis=1)
+        F_net = np.trapezoid(f_mid, s_mid, axis=1)
+        T_net = np.trapezoid(tau_mid, s_mid, axis=1)
 
         # Tip values
         p_tip = p[:, -1]
         q_tip = q[:, -1]
-        B_tip = float(np.linalg.norm(B[:, -1]))
+        B_tip = float(np.linalg.norm(B_mid[:, -1]))
 
         # Bending angles from tangent at tip
         theta_y, theta_z, theta_tot = tip_bending_angles_from_tangent(sol, L=float(L))
@@ -479,7 +518,7 @@ class CosseratForwardModel:
             B_tip=B_tip,
             F_net=F_net,
             T_net=T_net,
-            profiles=dict(s=s_out, p=p, q=q, f_ext=f_ext, tau_ext=tau_ext, B=B),
+            profiles=dict(s=s_mid, p=p, q=q, f_ext=f_mid, tau_ext=tau_mid, B=B_mid),
         )
 
 
@@ -494,14 +533,6 @@ def quat_mul(q1, q2):
         w1*z2 + x1*y2 - y1*x2 + z1*w2
     ], dtype=float)
 
-def quat_from_axis_angle(axis, angle):
-    axis = np.asarray(axis, float)
-    axis = axis / (np.linalg.norm(axis) + 1e-12)
-    h = 0.5 * angle
-    return np.array([np.cos(h), *(np.sin(h) * axis)], dtype=float)
-
-# def quat_normalize_np(q):
-#     return q / (np.linalg.norm(q) + 1e-12)
 
 def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_moment, wire_len,
                          u_star=np.zeros(3), contact_penalty_fun=None, s_out_n=400):
@@ -547,13 +578,17 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
 
     # Field along rod from your existing function
     # (it already uses p,q and magnet pose; B is typically in world frame)
-    _, _, B = magnetic_wrench_density_cosserat_profile(
+    f_mid, tau_mid, B_mid, m_mid_world, s_mid = magnetic_wrench_density_cosserat_profile_segments(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
     )
 
-    w_m = -np.sum(m_local_world * B, axis=0)  # (N,)
-    W_m = np.trapezoid(w_m, s)
-
+    # w_m = -np.sum(m_local_world * B, axis=0)  # (N,)
+    # W_m = np.trapezoid(w_m, s)
+    m_dot_B_mid = np.sum(m_mid_world * B_mid, axis=0)     # (N-1,)
+    w_m_mid = -m_dot_B_mid                                 # (N-1,)
+    ds = np.diff(s)
+    # midpoint quadrature
+    W_m = np.sum(w_m_mid * ds)
     # Optional vessel/contact penalty
     W_v = 0.0
     if contact_penalty_fun is not None:
@@ -569,7 +604,7 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
     W_v = _as_scalar(W_v, "W_v")
     W_g = _as_scalar(W_g, "W_g")
 
-    W_total = W_s + W_m + W_v + W_g
+    W_total = W_s + W_m + W_g + W_v
     W_total = _as_scalar(W_total, "W_total")
     return W_total, parts
 
@@ -618,25 +653,254 @@ def solve_quasistatic_insertion(*,
         # print("m_local_fun =", m_local_fun)
         # print("m_moment =", m_moment)
         # print("Kinv_fun =", Kinv_fun)
-        p, q, u_seg, info = solve_energy_min_3d(
-            p0=p0, q0=q0, L=L_model,
-            wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
-            r_src=r_src, m_src=m_src,
-            m_local_fun=m_local_fun_k, m_moment=m_moment,
-            N=N, u0_flat=u0, maxiter=maxiter,
-            lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
-        )
+        # s = np.linspace(0.0, L, N)
+        # m = m_local_fun(s, None)      # (3,N)
+        # mx_int = np.trapezoid(m[0, :], s)
+        # my_int = np.trapezoid(m[1, :], s)
+        # mz_int = np.trapezoid(m[2, :], s)
+        # print(f"DEBUG for magnetisation: {N, mx_int, my_int, mz_int}")
+        mesh_schedule = [12]
+
+        for N in mesh_schedule:
+            # if u0 is not None and N_prev is not None and N_prev != N:
+            #     print(f"\n[INTERP DEBUG] {N_prev} -> {N}")
+            #     u_prev_seg = np.asarray(u0, float).reshape(N_prev - 1, 3)
+            #     print(
+            #         "before interp component rms:",
+            #         np.sqrt(np.mean(u_prev_seg[:, 0] ** 2)),
+            #         np.sqrt(np.mean(u_prev_seg[:, 1] ** 2)),
+            #         np.sqrt(np.mean(u_prev_seg[:, 2] ** 2)),
+            #     )
+
+            #     u0 = interp_u_flat_between_meshes(u0, L_model, N_from=N_prev, N_to=N)
+
+            #     u_new_seg = np.asarray(u0, float).reshape(N - 1, 3)
+            #     print(
+            #         "after interp component rms:",
+            #         np.sqrt(np.mean(u_new_seg[:, 0] ** 2)),
+            #         np.sqrt(np.mean(u_new_seg[:, 1] ** 2)),
+            #         np.sqrt(np.mean(u_new_seg[:, 2] ** 2)),
+            #     )
+
+            u0_before = None if u0 is None else u0.copy()
+            if N >=200:
+                u0_pert = u0.copy()
+                u0_pert += 1e-4 * np.random.randn(*u0_pert.shape)
+                p, q, u_seg, info = solve_energy_min_3d(
+                    p0=p0, q0=q0, L=L_model,
+                    wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
+                    r_src=r_src, m_src=m_src,
+                    m_local_fun=m_local_fun_k, m_moment=m_moment,
+                    N=N, u0_flat=u0_pert, maxiter=maxiter,
+                    lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
+                )
+            else:
+                p, q, u_seg, info = solve_energy_min_3d(
+                p0=p0, q0=q0, L=L_model,
+                wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
+                r_src=r_src, m_src=m_src,
+                m_local_fun=m_local_fun_k, m_moment=m_moment,
+                N=N, u0_flat=u0, maxiter=maxiter,
+                lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
+                )
+            u_opt = info["u_flat_opt"].copy()
+            parts = info["parts"]
+            print(f"message={info['message']}")
+            du_init = np.nan
+            if u0_before is not None and u0_before.size == u_opt.size:
+                du_init = np.linalg.norm(u_opt - u0_before)
+
+            print(
+                f"N={N:3d}, success={info['success']}, nit={info['nit']:4d}, "
+                f"W0={info['W0']:.6e}, W={info['W']:.6e}, dW={info['dW']:.6e}, "
+                f"W_el={parts['W_el']:.6e}, W_m={parts['W_m']:.6e}, W_cf={parts['W_cf']:.6e}, "
+                f"||u||={np.linalg.norm(u_opt):.6e}, ||u-u_init||={du_init:.6e}"
+            )
+
+            # CRITICAL: carry optimized solution forward
+            u0 = u_opt
+            N_prev = N
 
         hist.append(dict(L=L_model, p=p, q=q, info=info, len_wire=len_wire, len_tip=len_tip))
-
-        if not info.get("success", False):
-            break
-
-        u0 = info.get("u_flat_opt", u0)
         L += dL
 
     return hist
+def compare_common_metrics(
+    s, p_bvp, q_bvp, p_em, q_em, *,
+    m_src, r_src, m_local_fun, m_moment
+):
+    """
+    Compare two solutions on the same arclength grid `s` using the same
+    post-processing magnetic quadrature and geometric error metrics.
 
+    Parameters
+    ----------
+    s : (N,) array
+        Common node arclength grid.
+    p_bvp, p_em : (3,N) arrays
+        Centerlines of BVP and energy-min solutions.
+    q_bvp, q_em : (4,N) arrays
+        Quaternions along rod for BVP and energy-min solutions.
+    """
+    s = np.asarray(s, float).ravel()
+    p_bvp = np.asarray(p_bvp, float)
+    p_em  = np.asarray(p_em, float)
+    q_bvp = quat_normalize(np.asarray(q_bvp, float))
+    q_em  = quat_normalize(np.asarray(q_em, float))
+
+    if p_bvp.shape != p_em.shape:
+        raise ValueError(f"p_bvp shape {p_bvp.shape} != p_em shape {p_em.shape}")
+    if q_bvp.shape != q_em.shape:
+        raise ValueError(f"q_bvp shape {q_bvp.shape} != q_em shape {q_em.shape}")
+    if p_bvp.shape[1] != s.size:
+        raise ValueError(f"p_bvp has {p_bvp.shape[1]} nodes but s has {s.size}")
+    if q_bvp.shape[1] != s.size:
+        raise ValueError(f"q_bvp has {q_bvp.shape[1]} nodes but s has {s.size}")
+
+    # Midpoint magnetic quantities, same evaluator for both solutions
+    f_b, tau_b, B_b, m_b, s_mid_b = magnetic_wrench_density_cosserat_profile_segments(
+        p_bvp, q_bvp, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+    f_e, tau_e, B_e, m_e, s_mid_e = magnetic_wrench_density_cosserat_profile_segments(
+        p_em, q_em, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+
+    if not np.allclose(s_mid_b, s_mid_e):
+        raise ValueError("s_mid grids differ unexpectedly")
+
+    ds = np.diff(s)
+
+    # Common midpoint magnetic energy
+    Wm_b = float(np.sum(-np.sum(m_b * B_b, axis=0) * ds))
+    Wm_e = float(np.sum(-np.sum(m_e * B_e, axis=0) * ds))
+
+    # Common net magnetic wrench
+    F_b = np.sum(f_b * ds[None, :], axis=1)
+    F_e = np.sum(f_e * ds[None, :], axis=1)
+    T_b = np.sum(tau_b * ds[None, :], axis=1)
+    T_e = np.sum(tau_e * ds[None, :], axis=1)
+
+    # Geometry errors
+    tip_err = np.linalg.norm(p_bvp[:, -1] - p_em[:, -1])
+    centerline_err = np.linalg.norm(p_bvp - p_em, axis=0)
+
+    # Tangent error
+    dp_b = np.diff(p_bvp, axis=1)
+    dp_e = np.diff(p_em, axis=1)
+    t_b = dp_b / (np.linalg.norm(dp_b, axis=0, keepdims=True) + 1e-12)
+    t_e = dp_e / (np.linalg.norm(dp_e, axis=0, keepdims=True) + 1e-12)
+    tan_err = np.linalg.norm(t_b - t_e, axis=0)
+
+    print("\n" + "-" * 80)
+    print("COMMON POST-PROCESS COMPARISON")
+    print("-" * 80)
+    print(f"Wm_bvp            = {Wm_b:.12e}")
+    print(f"Wm_energy         = {Wm_e:.12e}")
+    print(f"|ΔWm|             = {abs(Wm_b - Wm_e):.12e}")
+    print(f"|ΔF_net|          = {np.linalg.norm(F_b - F_e):.12e}")
+    print(f"|ΔT_net|          = {np.linalg.norm(T_b - T_e):.12e}")
+    print(f"tip error         = {tip_err:.12e}")
+    print(f"max centerline    = {np.max(centerline_err):.12e}")
+    print(f"mean centerline   = {np.mean(centerline_err):.12e}")
+    print(f"max tangent err   = {np.max(tan_err):.12e}")
+    print(f"mean tangent err  = {np.mean(tan_err):.12e}")
+
+    return dict(
+        Wm_bvp=Wm_b,
+        Wm_energy=Wm_e,
+        dWm=abs(Wm_b - Wm_e),
+        F_bvp=F_b,
+        F_energy=F_e,
+        T_bvp=T_b,
+        T_energy=T_e,
+        tip_err=tip_err,
+        centerline_err=centerline_err,
+        tangent_err=tan_err,
+        s_mid=s_mid_b,
+        B_bvp=B_b,
+        B_energy=B_e,
+        m_bvp=m_b,
+        m_energy=m_e,
+    )
+def print_comparison_setup(*, L_model, wire_len, tip_len, p0, q0, r_src, q_src, m_src):
+    print("\n" + "=" * 80)
+    print("COMPARISON SETUP CHECK")
+    print("=" * 80)
+    print(f"L_model   = {float(L_model):.12e}")
+    print(f"wire_len  = {float(wire_len):.12e}")
+    print(f"tip_len   = {float(tip_len):.12e}")
+    print(f"p0        = {np.asarray(p0, float)}")
+    print(f"q0        = {np.asarray(q0, float)}")
+    print(f"r_src     = {np.asarray(r_src, float)}")
+    print(f"q_src     = {np.asarray(q_src, float)}")
+    print(f"m_src     = {np.asarray(m_src, float)}")
+def compare_strains(u_bvp_seg, u_em_seg):
+    du = u_bvp_seg - u_em_seg
+    print("\n" + "-"*80)
+    print("STRAIN COMPARISON")
+    print("-"*80)
+    print(f"max |Δtwist| = {np.max(np.abs(du[:,0])):.12e}")
+    print(f"max |Δbend1| = {np.max(np.abs(du[:,1])):.12e}")
+    print(f"max |Δbend2| = {np.max(np.abs(du[:,2])):.12e}")
+    print(f"rms strain diff = {np.sqrt(np.mean(du**2)):.12e}")
+def recover_segment_strain_from_bvp(sol, *, L, wire_len, Kinv_fun, u_star=np.zeros(3), N=12):
+    s = np.linspace(0.0, float(L), int(N))
+    Y = sol.sol(s)
+    q = quat_normalize(Y[3:7, :])
+    m_world = Y[10:13, :]
+    R = quat_to_rot(q)
+    m_body = np.einsum('nij,jn->in', np.transpose(R, (0,2,1)), m_world)
+    Kinv = Kinv_fun(s, wire_len)
+    u_nodes = np.einsum('ijn,jn->in', Kinv, m_body) + np.asarray(u_star)[:, None]
+    u_seg = 0.5 * (u_nodes[:, :-1] + u_nodes[:, 1:]).T
+    return s, u_seg
+def compare_common_metrics(s, p_bvp, q_bvp, p_em, q_em, *, m_src, r_src, m_local_fun, m_moment):
+    # midpoint magnetic comparison
+    f_b, tau_b, B_b, m_b, s_mid_b = magnetic_wrench_density_cosserat_profile_segments(
+        p_bvp, q_bvp, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+    f_e, tau_e, B_e, m_e, s_mid_e = magnetic_wrench_density_cosserat_profile_segments(
+        p_em, q_em, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+
+    ds = np.diff(s)
+    Wm_b = float(np.sum(-np.sum(m_b * B_b, axis=0) * ds))
+    Wm_e = float(np.sum(-np.sum(m_e * B_e, axis=0) * ds))
+
+    tip_err = np.linalg.norm(p_bvp[:, -1] - p_em[:, -1])
+    centerline_err = np.linalg.norm(p_bvp - p_em, axis=0)
+
+    print("\n" + "-"*80)
+    print("COMMON POST-PROCESS COMPARISON")
+    print("-"*80)
+    print(f"Wm_bvp          = {Wm_b:.12e}")
+    print(f"Wm_energy       = {Wm_e:.12e}")
+    print(f"|ΔWm|           = {abs(Wm_b - Wm_e):.12e}")
+    print(f"tip error       = {tip_err:.12e}")
+    print(f"max centerline  = {np.max(centerline_err):.12e}")
+    print(f"mean centerline = {np.mean(centerline_err):.12e}")
+def print_comparison_setup(*, L_model, wire_len, tip_len, p0, q0, r_src, q_src, m_src):
+    print("\n" + "="*80)
+    print("COMPARISON SETUP CHECK")
+    print("="*80)
+    print(f"L_model   = {L_model:.12e}")
+    print(f"wire_len  = {wire_len:.12e}")
+    print(f"tip_len   = {tip_len:.12e}")
+    print(f"p0        = {np.asarray(p0)}")
+    print(f"q0        = {np.asarray(q0)}")
+    print(f"r_src     = {np.asarray(r_src)}")
+    print(f"q_src     = {np.asarray(q_src)}")
+    print(f"m_src     = {np.asarray(m_src)}")
+def format_array_for_paste(name, arr, per_line=6):
+    """
+    Print an array in a pasteable Python format.
+    """
+    arr = np.asarray(arr, float).reshape(-1)
+    print(f"{name} = np.array([")
+    for i in range(0, len(arr), per_line):
+        chunk = ", ".join(f"{x:.16e}" for x in arr[i:i+per_line])
+        print(f"    {chunk},")
+    print("], dtype=float)")
 def make_initial_guess(L, n_nodes, *, bend_axis="y", bend_sign=0, m_seed=5e-4):
     """
     bend_sign: 0 (straight), +1, -1
@@ -687,7 +951,7 @@ def integrate_pq_from_u(u_flat, *, p0, q0, s, e1=np.array([-1.0,0.0,0.0])):
     s = np.asarray(s, float)
     N = s.size
     ds = np.diff(s)
-    u_seg = u_flat.reshape(N-1, 3)
+    u_seg = np.asarray(u_flat, float).reshape(len(s)-1, 3)
 
     p = np.zeros((3, N), float)
     q = np.zeros((4, N), float)
@@ -712,6 +976,26 @@ def effective_wire_and_tip(L_ins, *, L_tip_full=0.04, L_tip_stub=0.01):
         len_tip  = L_tip_full
         L_model  = len_wire + len_tip        # = L_ins
         return len_wire, len_tip, L_model
+def u_flat_to_seg(u_flat, N):
+    return np.asarray(u_flat, float).reshape(N - 1, 3)
+
+def u_seg_to_flat(u_seg):
+    return np.asarray(u_seg, float).reshape(-1)
+
+def interp_u_flat_between_meshes(u_flat_coarse, L, N_from, N_to):
+    u_seg_from = u_flat_to_seg(u_flat_coarse, N_from)  # (N_from-1, 3)
+
+    s_from = np.linspace(0.0, float(L), N_from)
+    s_from_mid = 0.5 * (s_from[:-1] + s_from[1:])
+
+    s_to = np.linspace(0.0, float(L), N_to)
+    s_to_mid = 0.5 * (s_to[:-1] + s_to[1:])
+
+    u_seg_to = np.zeros((N_to - 1, 3), dtype=float)
+    for k in range(3):
+        u_seg_to[:, k] = np.interp(s_to_mid, s_from_mid, u_seg_from[:, k])
+
+    return u_seg_to_flat(u_seg_to)
 def precompute_K_segments(s, Kinv_fun, wire_len):
     """
     Returns K_seg: (N-1, 3, 3) stiffness per segment midpoint.
@@ -729,45 +1013,7 @@ def precompute_K_segments(s, Kinv_fun, wire_len):
     for i in range(smid.size):
         K_seg[i] = np.linalg.inv(Kinv[:, :, i])
     return K_seg
-def magnetic_tip_equivalent_energy(
-    s, q, B, m_local_fun, m_moment, wire_len
-):
-    """
-    Equivalent magnetic energy for the whole magnetic tip.
-    Uses average tip orientation + average tip field.
-    Returns scalar W_m_eq.
-    """
-    s = np.asarray(s, float).ravel()
-    tip_mask = (s >= wire_len)
-    if not np.any(tip_mask):
-        return 0.0
 
-    s_tip = s[tip_mask]
-    q_tip = quat_normalize(q[:, tip_mask])              # (4, Nt)
-    B_tip = B[:, tip_mask]                              # (3, Nt)
-    m_body_tip = np.asarray(m_local_fun(s_tip, m_moment), float)  # (3, Nt)
-
-    # net body dipole of tip
-    m_eq_body = np.trapezoid(m_body_tip, s_tip, axis=1)   # (3,)
-
-    # average rotation over tip
-    R_tip = quat_to_rot(q_tip)   # (Nt, 3, 3)
-    R_rep = np.mean(R_tip, axis=0)
-
-    # project back to nearest rotation matrix
-    U, _, Vt = np.linalg.svd(R_rep)
-    R_rep = U @ Vt
-    if np.linalg.det(R_rep) < 0:
-        U[:, -1] *= -1.0
-        R_rep = U @ Vt
-
-    m_eq_world = R_rep @ m_eq_body
-
-    # average field over tip
-    B_rep = np.trapezoid(B_tip, s_tip, axis=1) / max(s_tip[-1] - s_tip[0], 1e-12)
-
-    W_m_eq = -float(np.dot(m_eq_world, B_rep))
-    return W_m_eq
 def energy_from_u(
     u_flat, *, p0, q0, s, K_seg, u_star,
     m_src, r_src, m_local_fun, m_moment, wire_len,
@@ -830,43 +1076,68 @@ def energy_from_u(
     # -------------------------
     # Distributed magnetic energy
     # -------------------------
-    _, _, B = magnetic_wrench_density_cosserat_profile(
+    # _, _, B = magnetic_wrench_density_cosserat_profile(
+    #     p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    # )  # B: (3,N), world frame
+
+    # qn = quat_normalize(q)
+    # R_all = quat_to_rot(qn)  # (N,3,3)
+
+    # # body magnetization profile -> world frame
+    # m_body = np.asarray(m_local_fun(s, m_moment), float)   # (3,N)
+    # m_world = np.einsum('nij,jn->in', R_all, m_body)       # (3,N)
+    # dp = np.diff(p, axis=1)                        # (3, N-1)
+    # t_mid = dp / (np.linalg.norm(dp, axis=0, keepdims=True) + 1e-12)
+    # t_nodes = np.zeros_like(p)
+    # t_nodes[:, 1:-1] = 0.5 * (t_mid[:, :-1] + t_mid[:, 1:])
+    # t_nodes[:, 0] = t_mid[:, 0]
+    # t_nodes[:, -1] = t_mid[:, -1]
+    # t_nodes /= (np.linalg.norm(t_nodes, axis=0, keepdims=True) + 1e-12)
+    # mnorm = np.linalg.norm(m_world, axis=0) + 1e-12
+    # mhat = m_world / mnorm[None, :]
+    # cos_axial = np.sum(mhat * t_nodes, axis=0)
+
+    # # print("\n[COSSERAT AXIS CHECK]")
+    # # print("mean cos(m,t) =", np.mean(cos_axial))
+    # # print("min  cos(m,t) =", np.min(cos_axial))
+    # # print("max  cos(m,t) =", np.max(cos_axial))
+    # m_dot_B = np.sum(m_world * B, axis=0)
+    # w_m = -m_dot_B
+    # W_m = np.trapezoid(w_m, s)
+    # Bnorm = np.linalg.norm(B, axis=0)
+    # mnorm = np.linalg.norm(m_world, axis=0)
+
+    # cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm + 1e-16)
+    # cos_th = np.clip(cos_th, -1.0, 1.0)
+    # th_deg = np.degrees(np.arccos(cos_th))
+
+    # tau_proxy = np.cross(m_world.T, B.T).T
+    # tau_norm = np.linalg.norm(tau_proxy, axis=0)
+    # -------------------------
+    # Distributed magnetic energy (segment-based)
+    # -------------------------
+    f_mid, tau_mid, B_mid, m_world_mid, s_mid = magnetic_wrench_density_cosserat_profile_segments(
         p, q, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
-    )  # B: (3,N), world frame
+    )
 
-    qn = quat_normalize(q)
-    R_all = quat_to_rot(qn)  # (N,3,3)
+    # segment lengths
+    ds = np.diff(s)   # already computed earlier; reuse if available
 
-    # body magnetization profile -> world frame
-    m_body = np.asarray(m_local_fun(s, m_moment), float)   # (3,N)
-    m_world = np.einsum('nij,jn->in', R_all, m_body)       # (3,N)
-    dp = np.diff(p, axis=1)                        # (3, N-1)
-    t_mid = dp / (np.linalg.norm(dp, axis=0, keepdims=True) + 1e-12)
-    t_nodes = np.zeros_like(p)
-    t_nodes[:, 1:-1] = 0.5 * (t_mid[:, :-1] + t_mid[:, 1:])
-    t_nodes[:, 0] = t_mid[:, 0]
-    t_nodes[:, -1] = t_mid[:, -1]
-    t_nodes /= (np.linalg.norm(t_nodes, axis=0, keepdims=True) + 1e-12)
-    mnorm = np.linalg.norm(m_world, axis=0) + 1e-12
-    mhat = m_world / mnorm[None, :]
-    cos_axial = np.sum(mhat * t_nodes, axis=0)
+    # magnetic energy density at segment midpoints
+    m_dot_B_mid = np.sum(m_world_mid * B_mid, axis=0)     # (N-1,)
+    w_m_mid = -m_dot_B_mid                                 # (N-1,)
 
-    # print("\n[COSSERAT AXIS CHECK]")
-    # print("mean cos(m,t) =", np.mean(cos_axial))
-    # print("min  cos(m,t) =", np.min(cos_axial))
-    # print("max  cos(m,t) =", np.max(cos_axial))
-    m_dot_B = np.sum(m_world * B, axis=0)
-    w_m = -m_dot_B
-    W_m = np.trapezoid(w_m, s)
-    Bnorm = np.linalg.norm(B, axis=0)
-    mnorm = np.linalg.norm(m_world, axis=0)
+    # midpoint quadrature
+    W_m = np.sum(w_m_mid * ds)
 
-    cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm + 1e-16)
+    Bnorm = np.linalg.norm(B_mid, axis=0)
+    mnorm = np.linalg.norm(m_world_mid, axis=0)
+
+    cos_th = np.sum(m_world_mid * B_mid, axis=0) / (Bnorm * mnorm + 1e-16)
     cos_th = np.clip(cos_th, -1.0, 1.0)
     th_deg = np.degrees(np.arccos(cos_th))
 
-    tau_proxy = np.cross(m_world.T, B.T).T
-    tau_norm = np.linalg.norm(tau_proxy, axis=0)
+    tau_norm = np.linalg.norm(tau_mid, axis=0)
     # -------------------------
     # Gravity
     # -------------------------
@@ -896,7 +1167,7 @@ def energy_from_u(
         min_d = float(np.min(d_nodes))
 
     W_total = W_el + W_m + W_g + W_cf
-
+    # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")
     if debug_mag:
         Bnorm = np.linalg.norm(B, axis=0) + 1e-16
         mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
@@ -924,20 +1195,29 @@ def energy_from_u(
         W_cf=float(W_cf),
 
         s=np.asarray(s, float).copy(),
-        B=np.asarray(B, float).copy(),
+        B=np.asarray(B_mid, float).copy(),
         Bnorm=np.asarray(Bnorm, float).copy(),
-        m_world=np.asarray(m_world, float).copy(),
+        m_world=np.asarray(m_world_mid, float).copy(),
         mnorm=np.asarray(mnorm, float).copy(),
-        m_dot_B=np.asarray(m_dot_B, float).copy(),
-        w_m=np.asarray(w_m, float).copy(),
+        m_dot_B=np.asarray(m_dot_B_mid, float).copy(),
+        w_m=np.asarray(w_m_mid, float).copy(),
         angle_deg=np.asarray(th_deg, float).copy(),
         tau_norm=np.asarray(tau_norm, float).copy(),
+        s_mid=np.asarray(s_mid, float).copy(),
 
         W_el_seg=np.asarray(W_el_seg, float),
         W_b_seg=np.asarray(W_b_seg, float),
         W_t_seg=np.asarray(W_t_seg, float),
     )
     return float(W_total), parts
+
+def tip_len_fun(LL):
+    # magnet grows with LL until full physical tip inside
+    return min(float(LL), L_tip_full)
+
+def wire_len_fun(LL):
+    # wire exists only after full tip is inside
+    return max(float(LL) - L_tip_full, 0.0)
 def contact_barrier_energy_and_force(
     p, lumen_C, lumen_R, *,
     Kc=1e-2,          # stiffness parameter (tune!)
@@ -1022,7 +1302,7 @@ def solve_energy_min_3d(
     # Initial guess
     # -------------------------
     if u0_flat is None:
-        u0_flat = np.zeros(3 * n_seg, float)
+        u0_flat = 1e-3 * np.random.randn(3 * n_seg)
     else:
         u0_flat = np.asarray(u0_flat, float).reshape(-1)
 
@@ -1063,16 +1343,17 @@ def solve_energy_min_3d(
             debug_mag=False,
         )
         return W
-
+    W0 = obj(z0)
     res = minimize(
         obj,
         z0,
         method="L-BFGS-B",
         options=dict(
             maxiter=maxiter,
-            ftol=1e-9,
-            eps=1e-2,
-            maxls=40,
+            ftol=1e-12,
+            gtol=1e-10,
+            eps=1e-8,
+            maxls=100,
         ),
     )
 
@@ -1096,7 +1377,7 @@ def solve_energy_min_3d(
         contact_s_off=contact_s_off,
         debug_mag=False,
     )
-
+    W_final = float(W)
     info = dict(
         success=bool(res.success),
         message=str(res.message),
@@ -1104,11 +1385,74 @@ def solve_energy_min_3d(
         W=float(W),
         parts=parts,
         s=s,
+        W0=float(W0),
+        dW=float(W_final - W0),
         u_flat_opt=u_flat_opt.copy(),
         z_opt=np.asarray(res.x, float).copy(),
+        max_bend=float(np.max(np.linalg.norm(u_seg[:, 1:3], axis=1))),
+        mean_bend=float(np.mean(np.linalg.norm(u_seg[:, 1:3], axis=1))),
     )
 
     return p, q, u_seg, info
+def advance_cursor_monotone(path, x, i_ref, window=30):
+    """
+    Find closest index to x, but only search forward from i_ref.
+    window: how far ahead you allow matching (in points).
+    """
+    M = path.shape[0]
+    i_lo = int(i_ref)
+    i_hi = int(min(M, i_ref + window))
+    seg = path[i_lo:i_hi]
+    if seg.shape[0] == 0:
+        return M - 1
+    d2 = np.sum((seg - x.reshape(1, 3))**2, axis=1)
+    return i_lo + int(np.argmin(d2))
+
+def arc_length_param(C):
+    """C: (M,3) -> s: (M,) cumulative arc-length."""
+    C = np.asarray(C, float)
+    ds = np.linalg.norm(np.diff(C, axis=0), axis=1)
+    s = np.zeros(len(C))
+    s[1:] = np.cumsum(ds)
+    return s
+def resample_polyline(C, ds_target=1e-3):
+    """
+    Resample polyline C to approximately uniform spacing ds_target.
+    Returns C_rs: (Mr,3), s_rs: (Mr,)
+    """
+    C = np.asarray(C, float)
+    s = arc_length_param(C)
+    L = s[-1]
+    if L < 1e-12:
+        return C.copy(), s
+
+    s_rs = np.arange(0.0, L + 0.5*ds_target, ds_target)
+    C_rs = np.zeros((len(s_rs), 3), float)
+
+    # piecewise-linear interpolation in arc-length
+    for k in range(3):
+        C_rs[:, k] = np.interp(s_rs, s, C[:, k])
+
+    return C_rs, s_rs
+def mid_to_node_values(v_mid):
+    """
+    Convert segment-midpoint values (3, N-1) to node values (3, N)
+    by endpoint copy + interior averaging.
+    """
+    v_mid = np.asarray(v_mid, float)
+    if v_mid.ndim != 2 or v_mid.shape[0] != 3:
+        raise ValueError(f"Expected v_mid shape (3, N-1), got {v_mid.shape}")
+
+    Nmid = v_mid.shape[1]
+    N = Nmid + 1
+    v = np.zeros((3, N), float)
+
+    v[:, 0] = v_mid[:, 0]
+    v[:, -1] = v_mid[:, -1]
+    if N > 2:
+        v[:, 1:-1] = 0.5 * (v_mid[:, :-1] + v_mid[:, 1:])
+
+    return v
 def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     s = np.linspace(0.0, float(L), int(N))
     Y = sol.sol(s)
@@ -1121,34 +1465,103 @@ def u0_from_bvp(sol, *, L, wire_len, Kinv_fun, N=60, u_star=np.zeros(3)):
     u = np.einsum('ijn,jn->in', Kinv, m_body) + np.asarray(u_star)[:,None]  # (3,N)
 
     # segment strains: average adjacent nodes
-    u_seg = 0.5*(u[:, :-1] + u[:, 1:]).T  # (N-1,3)
-    return u_seg.reshape(-1)
+    u_seg = 0.5*(u[:, :-1] + u[:, 1:]).T   # (N-1,3)
+    return u_seg_to_flat(u_seg)
+def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
+    """
+    L_ins      : commanded insertion (what MPC tracks)
+    L_tip_full : physical magnetic tip length (4 cm)
+    L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
 
+    Returns (L_model, wire_len, tip_len)
+    """
+    L_ins = float(L_ins)
+
+    # Magnetised tip inside grows with insertion until full tip is inside
+    tip_len = min(L_ins, L_tip_full)
+
+    # Wire is everything beyond the physical tip length
+    wire_len = max(L_ins - L_tip_full, 0.0)
+
+    # Total model length is the inserted length, but don't go below minimum model length
+    L_model = max(L_ins, L_tip_min)
+
+    # If we are below L_tip_min, we still model a minimum rod,
+    # but magnetisation should NOT exceed what's actually inserted:
+    tip_len = min(tip_len, L_model)
+
+    return L_model, wire_len, tip_len
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.012
+    L_cmd = 0.02
+    beam_params = default_beam_params()
+    mag_params = default_magnet_params()
     mag_len = beam_params.length_of_mag
     m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
-    0.8581328220229531, -0.7055298925316631, -0.1, -3.10153453698904, 0.024928591141737892, 0.06094868352765547
+        0.7981328220229531, -0.7112731669220016, -0.1,
+        np.pi, 0.001, 0.001
     ], float)
 
+    base_point = np.array([
+        pivot_point[0] - (L_cmd + 0.13),
+        pivot_point[1],
+        -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
 
-    start_point = np.array([ 0.681, -0.649,  0.092, -3.054, -0.476 ,
-        0.05 ])
+    start_point = np.asarray(get_point(0, -70, base_point, pivot_point), dtype=float)
+    start_point[2] = -0.1
     # start_point[2] -=0.25
-    wire_len = L_cmd - mag_len
+    L_model, wire_len, tip_len = effective_lengths(
+        L_cmd,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
+
+    m_local_fun = make_m_local_fun_wire_tip(
+        wire_len,
+        len_tip=tip_len,
+        mode="axial",
+        alpha_end=0.0,
+        eps=1e-3,
+    )
     T_ur_pivot = ur_pose6_to_T(pivot_point)   
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
     T_ur_mag = ur_pose6_to_T(start_point)      
     r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+    EA_wire = wire["EA"]
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
 
+    EA_tip = tip["EA"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
+
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
     model = CosseratForwardModel(
         p0=p0_ur,
         q0=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
-        m_local_fun=make_m_local_fun_wire_tip(wire_len, mode="axial", alpha_end=0.0, len_tip=0.04),
+        Kinv_fun=Kinv_fun,
+        m_local_fun=make_m_local_fun_wire_tip(wire_len, len_tip=tip_len, mode="axial", alpha_end=0.0),
         m_moment=0.0,
         wire_len=wire_len,
     )
@@ -1172,20 +1585,34 @@ if __name__ == "__main__":
     global INSERTION_DIR_WORLD
     INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
     # lumen centerline starts at pivot base and bends
-    s_straight = 0.01
+    # s_straight = 0.01
+    Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
+    t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.08 + s_straight,     
-        n_pts=130,                      
+        length=0.03,
+        n_pts=130,
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(-40.0),
-        bend_start=0.01 + s_straight,    
-        bend_end=0.08 + s_straight       
+        bend_angle=np.deg2rad(90.0),
+        bend_start=0.005,
+        bend_end=0.03,
     )
+    lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
+    lumen_R = np.full(len(lumen_C), 0.004)
+    # # lumen_C = make_lumen_centerline_turning(
+    #     p_start=p0_ur,
+    #     t0=t0,
+    #     length=0.08 + s_straight,     
+    #     n_pts=130,                      
+    #     bend_axis=np.array([0.0, 0.0, 1.0]),
+    #     bend_angle=np.deg2rad(-40.0),
+    #     bend_start=0.01 + s_straight,    
+    #     bend_end=0.08 + s_straight       
+    # )
 
-    lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
+    # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
     print("Base tangent direction (UR) =", t0)
     p_tip_pred = p0_ur + L_cmd * t0
     print("Pred straight tip:", p_tip_pred)
@@ -1214,7 +1641,7 @@ if __name__ == "__main__":
     m_src = dipole_from_pose(q_src_ur, m_body)
     sol_bvp = model.solve(L=L_cmd, r_src=r_src_ur, m_src=m_src, wire_len=wire_len)
 
-    u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile, N=60)
+    u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kinv_fun, N=60)
     # pE, qE, uE, info = solve_energy_with_wall_continuation(
     #     p0=p0_ur, q0=q0_ur, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile,
     #     u_star=np.zeros(3), r_src=r_src_ur, m_src=m_src,
@@ -1222,19 +1649,36 @@ if __name__ == "__main__":
     #     lumen_C=lumen_C, lumen_R=lumen_R,
     #     N=60, u0_flat=u0, maxiter=200
     # )
+    L_model, wire_len, tip_len = effective_lengths(
+    L_cmd,
+    L_tip_full=0.04,
+    L_tip_min=0.01,
+    )
+    m_local_fun = make_m_local_fun_wire_tip(
+        wire_len,
+        len_tip=tip_len,
+        mode="axial",
+        alpha_end=0.0,
+        eps=1e-3
+    )
+    u_init = None
     hist = solve_quasistatic_insertion(
         p0=p0_ur, q0=q0_ur,
         L0=0.010, Lf=L_cmd, dL=0.002,
-        wire_len_fun=lambda L: L - mag_len,
-        Kinv_fun=Kbt_inv_profile, u_star=np.zeros(3),
+        wire_len_fun=wire_len_fun,
+        tip_len_fun=tip_len_fun,
+        Kinv_fun=Kinv_fun, u_star=np.zeros(3),
         r_src=r_src_ur, m_src=m_src,
-        m_local_fun=model.m_local_fun, m_moment=0.0,
+        m_local_fun=m_local_fun, m_moment=0.0,
         lumen_C=lumen_C, lumen_R=lumen_R,
-        N=20, maxiter=20, use_lumen = True,
-        u_init=u0
+        N=12, maxiter=30,
+        use_lumen=False,
+        u_init=u_init,
+        debug=True
     )
     # take final
     pE = hist[-1]["p"]
+    qE = hist[-1]["q"]
     info = hist[-1]["info"]
     viol = lumen_violation_profile(pE, lumen_C, lumen_R)
     print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
@@ -1261,3 +1705,30 @@ if __name__ == "__main__":
     )
 
     plot_error_vs_s(s_cmp, p_bvp, p_energy)
+    s_cmp = info["s"]                 # energy-min node grid
+    p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+
+    Y_bvp = sol_bvp.sol(s_cmp)
+    q_bvp = quat_normalize(Y_bvp[3:7, :])
+
+    p_energy = pE
+    q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
+    metrics = compare_common_metrics(
+    s_cmp,
+    p_bvp, q_bvp,
+    p_energy, q_energy,
+    m_src=m_src,
+    r_src=r_src_ur,
+    m_local_fun=m_local_fun,
+    m_moment=0.0,
+    )
+    print_comparison_setup(
+        L_model=L_model,
+        wire_len=wire_len,
+        tip_len=tip_len,
+        p0=p0_ur,
+        q0=q0_ur,
+        r_src=r_src_ur,
+        q_src=q_src_ur,
+        m_src=m_src,
+    )

@@ -69,3 +69,81 @@ def magnetic_wrench_density_cosserat_profile(p, q, s, m_ext, r_src, m_local_fun,
     tau = np.cross(m_pts.T, B.T).T         # (3,N)
     # tau = tau*0
     return f, tau, B
+def magnetic_wrench_density_cosserat_profile_segments(
+    p, q, s, m_ext, r_src, m_local_fun, m_front_or_overhead, r_min=1e-6
+):
+    """
+    Segment-based magnetic quantities evaluated at segment midpoints.
+
+    Parameters
+    ----------
+    p : ndarray, shape (3, N)
+        Node positions.
+    q : ndarray, shape (N, 4) or compatible with quat_to_rot
+        Node quaternions.
+    s : ndarray, shape (N,)
+        Node arclength coordinates.
+    m_ext : ndarray, shape (3,)
+        External/source dipole in world frame.
+    r_src : ndarray, shape (3,)
+        External/source position in world frame.
+    m_local_fun : callable
+        Returns local magnetization profile in body frame.
+    m_front_or_overhead : any
+        Passed through to m_local_fun.
+    r_min : float
+        Minimum radius for dipole singularity protection.
+
+    Returns
+    -------
+    f_mid : ndarray, shape (3, N-1)
+        Magnetic force density at segment midpoints, world frame.
+    tau_mid : ndarray, shape (3, N-1)
+        Magnetic torque density at segment midpoints, world frame.
+    B_mid : ndarray, shape (3, N-1)
+        Magnetic field at segment midpoints, world frame.
+    m_mid_world : ndarray, shape (3, N-1)
+        Magnetization at segment midpoints, world frame.
+    s_mid : ndarray, shape (N-1,)
+        Segment midpoint arclengths.
+    """
+    s = np.asarray(s, float).ravel()
+    qn = quat_normalize(q)
+    R_nodes = quat_to_rot(qn)   # (N,3,3)
+
+    # segment midpoints in arclength and position
+    s_mid = 0.5 * (s[:-1] + s[1:])
+    p_mid = 0.5 * (p[:, :-1] + p[:, 1:])
+
+    # q is assumed shape (4, N)
+    q0 = qn[:, :-1].copy()   # (4, N-1)
+    q1 = qn[:, 1:].copy()    # (4, N-1)
+
+    # enforce same hemisphere per segment
+    flip = np.sum(q0 * q1, axis=0) < 0.0
+    q1[:, flip] *= -1.0
+
+    q_mid = q0 + q1
+    q_mid /= (np.linalg.norm(q_mid, axis=0, keepdims=True) + 1e-12)
+
+    R_mid = quat_to_rot(q_mid)   # if quat_to_rot supports (4, N-1)
+
+    # local magnetization in body frame at segment midpoints
+    m_loc_mid = np.asarray(m_local_fun(s_mid, m_front_or_overhead), float)  # (3,N-1)
+
+    # rotate to world frame
+    m_mid_world = np.einsum('nij,jn->in', R_mid, m_loc_mid)                 # (3,N-1)
+
+    # field at segment midpoints
+    r_mid_pts = p_mid.T                                                      # (N-1,3)
+    B_mid = dipole_field_from_source(r_mid_pts, r_src, m_ext, r_min=r_min).T  # (3,N-1)
+
+    # force density at segment midpoints
+    f_mid = magnetic_force_analytical(
+        r_mid_pts, m_mid_world.T, r_src, m_ext, r_min=r_min
+    ).T                                                                      # (3,N-1)
+
+    # torque density at segment midpoints
+    tau_mid = np.cross(m_mid_world.T, B_mid.T).T                             # (3,N-1)
+
+    return f_mid, tau_mid, B_mid, m_mid_world, s_mid

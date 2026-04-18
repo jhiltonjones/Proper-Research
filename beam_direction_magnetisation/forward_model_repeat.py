@@ -5,6 +5,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as Rot
+from proper_research.robot.transformations import get_point
 
 from proper_research.parameters import default_magnet_params, default_beam_params
 from proper_research.robot.transformations import get_point
@@ -235,17 +236,17 @@ def plot_repeatability_cloud(results, title="Repeatability cloud"):
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
-L_cmd = 0.065
-N_nodes = 10
-USE_LUMEN = False
+L_cmd = 0.02
+N_nodes = 5
+USE_LUMEN = True
 
 pivot_point = np.array([
-    0.7681328220229531, -0.7112731669220016, -0.1,
+    0.7981328220229531, -0.7112731669220016, -0.1,
     np.pi, 0.001, 0.001
 ], float)
 
 base_point = np.array([
-    pivot_point[0] - (L_cmd + 0.15),
+    pivot_point[0] - (L_cmd + 0.1),
     pivot_point[1],
     -0.1,
     np.pi, 0.001, 0.001
@@ -321,19 +322,19 @@ if USE_LUMEN:
     Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
     t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
 
-    s_straight = 0.03
+    s_straight = 0.005
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
         t0=t0,
-        length=0.06 + s_straight,
+        length=0.02 + s_straight,
         n_pts=130,
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(0.0),
+        bend_angle=np.deg2rad(70.0),
         bend_start=0.0 + s_straight,
-        bend_end=0.03 + s_straight,
+        bend_end=0.02 + s_straight,
     )
     lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.004)
+    lumen_R = np.full(len(lumen_C), 0.003)
 
 # ------------------------------------------------------------
 # build Cosserat wrapper only
@@ -356,7 +357,7 @@ fwd_cos = EnergyMinForwardWithLumen(
     N_nodes=N_nodes,
     maxiter=30,
     L0_init=0.01,
-    dL_internal=0.002,
+    dL_internal=0.01,
     use_lumen_jac=USE_LUMEN,
     L_tip_full=mag_len,
     L_tip_min=0.01,

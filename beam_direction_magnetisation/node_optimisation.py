@@ -49,7 +49,7 @@ def residual_static_force_balance(
     p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src,
+    wire_len, tip_len, r_src, m_src,
     lumen_query=None, use_lumen=False,
     M_ref_local=None,
     ref_twist=None,
@@ -59,7 +59,7 @@ def residual_static_force_balance(
         p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
-        wire_len=wire_len,
+        wire_len=wire_len, tip_len=tip_len,
         r_src=r_src, m_src=m_src,
         lumen_query=lumen_query,
         use_lumen=use_lumen,
@@ -72,7 +72,7 @@ from scipy.optimize import root
 
 def solve_nodes_twist_residual(
     *, p0, q0, L, N,
-    wire_len, Kinv_fun,
+    wire_len, tip_len, Kinv_fun,
     r_src, m_src, mu_tip,
     EA_wire, EA_tip,
     lumen_C=None, lumen_R=None,
@@ -115,7 +115,7 @@ def solve_nodes_twist_residual(
             p0=p0, p1=p1, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len,
+            wire_len=wire_len, tip_len=tip_len,
             r_src=r_src, m_src=m_src,
             lumen_query=lumen_query,
             use_lumen=use_lumen,
@@ -137,7 +137,7 @@ def solve_nodes_twist_residual(
         p0=p0, p1=p1, N=N,
         EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
         ell_ref=ell_ref, EA_seg=EA_seg,
-        wire_len=wire_len, r_src=r_src, m_src=m_src,
+        wire_len=wire_len, tip_len = tip_len, r_src=r_src, m_src=m_src,
         lumen_query=lumen_query, use_lumen=use_lumen,
         M_ref_local=M_ref_local,
         ref_twist=ref_twist,
@@ -278,14 +278,14 @@ def elastic_force_fd(
 def magnetic_force_fd(
     q_flat, *,
     p0, p1, N,
-    wire_len, r_src, m_src, M_ref_local,
+    wire_len, r_src, m_src, M_ref_local, tip_len,
     eps=1e-6,
 ):
     def magnetic_energy_only(q):
         p, theta = unpack_q_to_nodes_twist(q, p0, p1, N)
         kin = rod_kinematics_from_state(p, theta)
         Wm, _ = magnetic_energy_from_kinematics(
-            kin, wire_len, r_src, m_src, M_ref_local
+            kin, wire_len, tip_len, r_src, m_src, M_ref_local,
         )
         return Wm
 
@@ -307,7 +307,7 @@ def total_force_from_state_fd(
     p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src,
+    wire_len, tip_len, r_src, m_src,
     lumen_query=None, use_lumen=False,
     M_ref_local=None,
     ref_twist=None,
@@ -328,6 +328,7 @@ def total_force_from_state_fd(
         q_flat,
         p0=p0, p1=p1, N=N,
         wire_len=wire_len,
+        tip_len = tip_len,
         r_src=r_src,
         m_src=m_src,
         M_ref_local=M_ref_local,
@@ -396,6 +397,7 @@ def total_energy_from_state(
         "contact": con_dbg,
     }
     return float(W), dbg
+
 def segment_length_residuals_q(q_flat, *, p0, p1, N, ell):
     p, theta_twist = unpack_q_to_nodes_twist(q_flat, p0, p1, N)
     Ls = edge_lengths(p)
@@ -1182,7 +1184,17 @@ def summarize_solution(
     print(f"straight tip       : {tip_straight}")
     print(f"tip deflection vec : {tip_deflection}")
     print(f"tip deflection mag : {np.linalg.norm(tip_deflection):.6e}")
+    # 1. Normalize the vectors (assuming they start at [0,0,0])
+    v1_u = tip / np.linalg.norm(tip)
+    v2_u = tip_straight / np.linalg.norm(tip_straight)
 
+    # 2. Compute the angle
+    # Use np.clip to prevent floating point errors from exceeding [-1, 1]
+    dot_product = np.dot(v1_u, v2_u)
+    angle_rad = np.arccos(np.clip(dot_product, -1.0, 1.0))
+    angle_deg = np.degrees(angle_rad)
+
+    print(f"tip angle (deg)    : {angle_deg:.6f}")
     print("\n--- stretch ---")
     print(f"max |eps_s|        : {np.max(np.abs(eps_s)):.6e}")
     print(f"mean|eps_s|        : {np.mean(np.abs(eps_s)):.6e}")
@@ -1277,7 +1289,7 @@ def fd_force_sensitivity_check(
     p0, p1, N,
     EI1_v, EI2_v, GJ_v,
     ell_ref, EA_seg,
-    wire_len, r_src, m_src,
+    wire_len, tip_len, r_src, m_src,
     M_ref_local,
     ref_twist=None,
     eps_list=(1e-5, 3e-6, 1e-6, 3e-7),
@@ -1293,7 +1305,7 @@ def fd_force_sensitivity_check(
             p0=p0, p1=p1, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len, r_src=r_src, m_src=m_src,
+            wire_len=wire_len, tip_len=tip_len, r_src=r_src, m_src=m_src,
             M_ref_local=M_ref_local,
             ref_twist=ref_twist,
             eps=eps,
@@ -1320,10 +1332,10 @@ if __name__ == "__main__":
     # User toggles
     # ------------------------------------------------------------------
     RUN_MIN_SOLVER = True
-    RUN_RESIDUAL_SOLVER = False 
+    RUN_RESIDUAL_SOLVER = True 
     MAKE_PLOTS = True
-    SHOW_FRAMES = False
-    RUN_FD_SENSITIVITY = False
+    SHOW_FRAMES = True
+    RUN_FD_SENSITIVITY = True
     USE_LUMEN = False
 
     # ------------------------------------------------------------------
@@ -1332,10 +1344,10 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.065
+    L_cmd = 0.02
     mag_len = beam_params.length_of_mag
     wire_len = L_cmd - mag_len
-    N = 15
+    N = 10
 
     mu_tip = mag_params.mag_epm
     # M_ref_local = np.array([0.0, 0.0, mu_tip], float)
@@ -1346,12 +1358,12 @@ if __name__ == "__main__":
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
 
     pivot_point = np.array([
-        0.7681328220229531, -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
+        0.7981328220229531, -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
     base_point = np.array([
-        (pivot_point[0]-(L_cmd+0.2)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
+        (pivot_point[0]-(L_cmd+0.08)), -0.7112731669220016, -0.1, np.pi, 0.001, 0.001
     ], float)
-    start_point = get_point(0, 40, base_point,  pivot_point)
+    start_point = get_point(0, 90, base_point,  pivot_point)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -1381,6 +1393,7 @@ if __name__ == "__main__":
         E=beam_params.E,
         nu=0.49,
     )
+
     EA_wire = wire["EA"]
     EI_wire = wire["EI"]
     GJ_wire = wire["GJ"]
@@ -1450,7 +1463,7 @@ if __name__ == "__main__":
             length=0.06 + s_straight,
             n_pts=130,
             bend_axis=np.array([0.0, 0.0, 1.0]),
-            bend_angle=np.deg2rad(40.0),
+            bend_angle=np.deg2rad(90.0),
             bend_start=0.0 + s_straight,
             bend_end=0.03 + s_straight,
         )
@@ -1490,7 +1503,7 @@ if __name__ == "__main__":
             maxiter=400,
             M_ref_local=M_ref_local,
             ref_twist=None,
-            enforce_inextensibility=True,
+            enforce_inextensibility=False,
         )
     if RUN_RESIDUAL_SOLVER:
         p_res, theta_res, info_res = solve_nodes_twist_residual(
@@ -1499,6 +1512,7 @@ if __name__ == "__main__":
             L=L_cmd,
             N=N,
             wire_len=wire_len,
+            tip_len = mag_len,
             Kinv_fun=Kinv_fun,
             r_src=r_src_ur,
             m_src=m_src,
@@ -1559,7 +1573,7 @@ if __name__ == "__main__":
             p0=p0_ur, p1=p1_res, N=N,
             EI1_v=EI1_v, EI2_v=EI2_v, GJ_v=GJ_v,
             ell_ref=ell_ref, EA_seg=EA_seg,
-            wire_len=wire_len,
+            wire_len=wire_len, tip_len=mag_len,
             r_src=r_src_ur, m_src=m_src,
             M_ref_local=M_ref_local,
             ref_twist=None,

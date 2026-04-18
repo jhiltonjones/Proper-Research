@@ -50,8 +50,7 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
-import matplotlib.pyplot as plt
-beam_params = default_beam_params()
+
 def smoothstep01(x):
     x = np.clip(x, 0.0, 1.0)
     return x*x*(3 - 2*x)
@@ -140,44 +139,7 @@ def contact_barrier_energy_and_force_fast(
 
     return C, F, d_arr
 
-def u_flat_from_ctrl(u_ctrl, s):
-    """
-    u_ctrl: (K,3) control values along s_ctrl
-    returns u_flat for (N-1) segments -> shape (3*(N-1),)
-    """
-    N = len(s)
-    s_seg = 0.5*(s[:-1] + s[1:])          # segment midpoints
-    K = u_ctrl.shape[0]
-    s_ctrl = np.linspace(s_seg[0], s_seg[-1], K)
 
-    u_seg = np.zeros((N-1, 3))
-    for k in range(3):
-        cs = CubicSpline(s_ctrl, u_ctrl[:, k], bc_type="natural")
-        u_seg[:, k] = cs(s_seg)
-
-    return u_seg.reshape(-1)
-
-def point_to_polyline_closest(p, C):
-    """
-    p: (3,)
-    C: (M,3)
-    Returns:
-      d_min, i, t, q, seg_tangent
-    """
-    d_min = np.inf
-    best = None
-    for i in range(len(C) - 1):
-        a = C[i]; b = C[i+1]
-        q, t = closest_point_on_segment(p, a, b)
-        d = np.linalg.norm(p - q)
-        if d < d_min:
-            d_min = d
-            seg_tan = b - a
-            seg_tan = seg_tan / (np.linalg.norm(seg_tan) + 1e-12)
-            best = (i, t, q, seg_tan)
-            d_min = d
-    i, t, q, seg_tan = best
-    return d_min, i, t, q, seg_tan
 
 
 def lumen_violation_profile(p, lumen_C, lumen_R):
@@ -223,57 +185,7 @@ def _as_scalar(x, name="value"):
 def dipole_from_pose(q_src, m_body):
     R = quat_to_R(q_src)
     return R @ m_body  # (3,)
-def magnetic_tip_wrench_about_interface(p, q, s, *, r_src, m_src, m_local_fun, m_moment, wire_len):
-    """
-    Compute net magnetic wrench on the magnetic tip, resolved about the wire-tip interface.
-    Returns a dict with force, direct torque, moment from force, and total moment.
-    """
-    s = np.asarray(s, float).ravel()
-    p = np.asarray(p, float)
-    q = np.asarray(q, float)
 
-    tip_mask = s >= wire_len
-    if not np.any(tip_mask):
-        return dict(
-            F_tip=np.zeros(3),
-            Tau_tip=np.zeros(3),
-            M_force=np.zeros(3),
-            M_total=np.zeros(3),
-            p_interface=None,
-        )
-
-    p_tip = p[:, tip_mask]
-    q_tip = q[:, tip_mask]
-    s_tip = s[tip_mask]
-
-    f_mag, tau_mag, B = magnetic_wrench_density_cosserat_profile(
-        p_tip, q_tip, s_tip, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
-    )
-
-    # interface point = first point in tip region
-    p_int = p_tip[:, 0]
-
-    # net force on tip
-    F_tip = np.trapezoid(f_mag, s_tip, axis=1)
-
-    # direct integrated torque density on tip
-    Tau_tip = np.trapezoid(tau_mag, s_tip, axis=1)
-
-    # moment from distributed force about interface
-    lever = p_tip - p_int[:, None]                    # (3,Nt)
-    force_moment_density = np.cross(lever.T, f_mag.T).T
-    M_force = np.trapezoid(force_moment_density, s_tip, axis=1)
-
-    # total moment about interface
-    M_total = Tau_tip + M_force
-
-    return dict(
-        F_tip=F_tip,
-        Tau_tip=Tau_tip,
-        M_force=M_force,
-        M_total=M_total,
-        p_interface=p_int,
-    )
 def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wire_len,  u_star=None):
     e1 = np.array([-1.0, 0.0, 0.0])
     if u_star is None:
@@ -296,7 +208,7 @@ def make_cosserat_kirchhoff_ode(m_src, r_src, Kinv_fun, m_local_fun,m_moment, wi
 
         q_s = quat_derivative_body(qn, u)
 
-        f_ext, tau_ext, _B = magnetic_wrench_density_cosserat_profile(
+        f_ext, tau_ext, _B,_,_ = magnetic_wrench_density_cosserat_profile_segments(
             p, qn, s, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
         )
 
@@ -362,7 +274,7 @@ class CosseratForwardModel:
         return s, Y
 
 
-    def solve(self, *, L, r_src, m_src, wire_len, try_energy_selection=True):
+    def solve(self, *, L, r_src, m_src, wire_len, try_energy_selection=False):
         L = float(L)
         r_src = np.asarray(r_src, float).reshape(3,)
         m_src = np.asarray(m_src, float).reshape(3,)
@@ -534,7 +446,7 @@ def quat_mul(q1, q2):
     ], dtype=float)
 
 
-def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_moment, wire_len,
+def   compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_moment, wire_len,
                          u_star=np.zeros(3), contact_penalty_fun=None, s_out_n=400):
     """
     Returns: (W_total, parts_dict)
@@ -573,8 +485,7 @@ def compute_total_energy(sol, *, L, r_src, m_src, Kinv_fun, m_local_fun, m_momen
     # Your m_local_fun returns body-frame magnetisation distribution (3,N)
     m_local_body = m_local_fun(s, None)       # (3,N)
 
-    # Convert to world frame: m_world = R * m_body_local
-    m_local_world = np.einsum('nij,jn->in', R, m_local_body)  # (3,N)
+
 
     # Field along rod from your existing function
     # (it already uses p,q and magnet pose; B is typically in world frame)
@@ -659,7 +570,7 @@ def solve_quasistatic_insertion(*,
         # my_int = np.trapezoid(m[1, :], s)
         # mz_int = np.trapezoid(m[2, :], s)
         # print(f"DEBUG for magnetisation: {N, mx_int, my_int, mz_int}")
-        mesh_schedule = [12]
+        mesh_schedule = [N]
 
         for N in mesh_schedule:
             # if u0 is not None and N_prev is not None and N_prev != N:
@@ -1169,16 +1080,16 @@ def energy_from_u(
     W_total = W_el + W_m + W_g + W_cf
     # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")
     if debug_mag:
-        Bnorm = np.linalg.norm(B, axis=0) + 1e-16
-        mnorm = np.linalg.norm(m_world, axis=0) + 1e-16
-        cos_th = np.sum(m_world * B, axis=0) / (Bnorm * mnorm)
+        Bnorm = np.linalg.norm(B_mid, axis=0) + 1e-16
+        mnorm = np.linalg.norm(m_world_mid, axis=0) + 1e-16
+        cos_th = np.sum(m_world_mid * B_mid, axis=0) / (Bnorm * mnorm)
         cos_th = np.clip(cos_th, -1.0, 1.0)
         th_deg = np.degrees(np.arccos(cos_th))
-        tau_proxy = np.cross(m_world.T, B.T).T
+        tau_proxy = np.cross(m_world_mid.T, B_mid.T).T
         tau_norm = np.linalg.norm(tau_proxy, axis=0)
 
         print("\n[DBG-MAG]")
-        print(f"W_s={W_s:.6e}  W_m={W_m:.6e}  W_g={W_g:.6e}  W_cf={W_cf:.6e}")
+        print(f"W_s={W_el:.6e}  W_m={W_m:.6e}  W_g={W_g:.6e}  W_cf={W_cf:.6e}")
         print(f"max |B|={np.max(Bnorm):.6e}")
         print(f"max |m|={np.max(mnorm):.6e}")
         print(f"max |m x B|={np.max(tau_norm):.6e}")
@@ -1578,7 +1489,7 @@ if __name__ == "__main__":
     print("Magnetic torque is the cross product", (out["T_net"]))
 
 
-    # base tangent direction (same convention you already use)
+    # base tangent direction
     q = q0_ur
     R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
@@ -1662,73 +1573,75 @@ if __name__ == "__main__":
         eps=1e-3
     )
     u_init = None
-    hist = solve_quasistatic_insertion(
-        p0=p0_ur, q0=q0_ur,
-        L0=0.010, Lf=L_cmd, dL=0.002,
-        wire_len_fun=wire_len_fun,
-        tip_len_fun=tip_len_fun,
-        Kinv_fun=Kinv_fun, u_star=np.zeros(3),
-        r_src=r_src_ur, m_src=m_src,
-        m_local_fun=m_local_fun, m_moment=0.0,
-        lumen_C=lumen_C, lumen_R=lumen_R,
-        N=12, maxiter=30,
-        use_lumen=False,
-        u_init=u_init,
-        debug=True
-    )
-    # take final
-    pE = hist[-1]["p"]
-    qE = hist[-1]["q"]
-    info = hist[-1]["info"]
-    viol = lumen_violation_profile(pE, lumen_C, lumen_R)
-    print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
-    print("mean positive violation [m] =", np.maximum(viol,0).mean())
-    print(info["parts"])
-    print("energy-min tip:", pE[:, -1])
-    # choose a common comparison grid
-    s_cmp = info["s"]                      # energy-min grid
-    p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
-    p_energy = pE
+    n_values = np.linspace(4,200, 5 )
+    for n in n_values:
+        hist = solve_quasistatic_insertion(
+            p0=p0_ur, q0=q0_ur,
+            L0=0.010, Lf=L_cmd, dL=0.002,
+            wire_len_fun=wire_len_fun,
+            tip_len_fun=tip_len_fun,
+            Kinv_fun=Kinv_fun, u_star=np.zeros(3),
+            r_src=r_src_ur, m_src=m_src,
+            m_local_fun=m_local_fun, m_moment=0.0,
+            lumen_C=lumen_C, lumen_R=lumen_R,
+            N=12, maxiter=30,
+            use_lumen=False,
+            u_init=u_init,
+            debug=True
+        )
+        # take final
+        pE = hist[-1]["p"]
+        qE = hist[-1]["q"]
+        info = hist[-1]["info"]
+        viol = lumen_violation_profile(pE, lumen_C, lumen_R)
+        print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
+        print("mean positive violation [m] =", np.maximum(viol,0).mean())
+        print(info["parts"])
+        print("energy-min tip:", pE[:, -1])
+        # choose a common comparison grid
+        s_cmp = info["s"]                      # energy-min grid
+        p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+        p_energy = pE
 
-    # optional straight baseline (same convention as your earlier straight tip)
-    # build straight line from base tangent
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-    p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
+        # optional straight baseline (same convention as your earlier straight tip)
+        # build straight line from base tangent
+        q = q0_ur
+        R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+        t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
+        p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
 
-    plot_centerlines_with_lumen_3d(
-        p_bvp, p_energy,
-        lumen_C=lumen_C, lumen_R=lumen_R,
-        p0=p0_ur, p_straight=p_straight,
-        title="Cosserat vs Energy-min + Lumen constraint"
-    )
+        plot_centerlines_with_lumen_3d(
+            p_bvp, p_energy,
+            lumen_C=lumen_C, lumen_R=lumen_R,
+            p0=p0_ur, p_straight=p_straight,
+            title="Cosserat vs Energy-min + Lumen constraint"
+        )
 
-    plot_error_vs_s(s_cmp, p_bvp, p_energy)
-    s_cmp = info["s"]                 # energy-min node grid
-    p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+        plot_error_vs_s(s_cmp, p_bvp, p_energy)
+        s_cmp = info["s"]                 # energy-min node grid
+        p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
 
-    Y_bvp = sol_bvp.sol(s_cmp)
-    q_bvp = quat_normalize(Y_bvp[3:7, :])
+        Y_bvp = sol_bvp.sol(s_cmp)
+        q_bvp = quat_normalize(Y_bvp[3:7, :])
 
-    p_energy = pE
-    q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
-    metrics = compare_common_metrics(
-    s_cmp,
-    p_bvp, q_bvp,
-    p_energy, q_energy,
-    m_src=m_src,
-    r_src=r_src_ur,
-    m_local_fun=m_local_fun,
-    m_moment=0.0,
-    )
-    print_comparison_setup(
-        L_model=L_model,
-        wire_len=wire_len,
-        tip_len=tip_len,
-        p0=p0_ur,
-        q0=q0_ur,
-        r_src=r_src_ur,
-        q_src=q_src_ur,
+        p_energy = pE
+        q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
+        metrics = compare_common_metrics(
+        s_cmp,
+        p_bvp, q_bvp,
+        p_energy, q_energy,
         m_src=m_src,
-    )
+        r_src=r_src_ur,
+        m_local_fun=m_local_fun,
+        m_moment=0.0,
+        )
+        print_comparison_setup(
+            L_model=L_model,
+            wire_len=wire_len,
+            tip_len=tip_len,
+            p0=p0_ur,
+            q0=q0_ur,
+            r_src=r_src_ur,
+            q_src=q_src_ur,
+            m_src=m_src,
+        )

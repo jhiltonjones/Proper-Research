@@ -21,7 +21,7 @@ class DEREnergyMinForwardWithLumen:
         lumen_C=None,
         lumen_R=None,
         N_nodes=15,
-        maxiter=50,
+        maxiter=300,
         amp_init=2e-4,
         enforce_inextensibility=False,
         use_lumen=True,
@@ -209,18 +209,18 @@ class DEREnergyMinForwardWithLumen:
 
         mag = info["dbg"]["mag"]
 
-        print("\n[DER MAG DEBUG]")
-        print("Wm                :", info["dbg"]["Wm"])
-        print("wire_len          :", mag.get("wire_len", wire_len))
-        print("tip_len           :", mag.get("tip_len", tip_len))
-        print("s_seg             :", mag.get("s_seg"))
-        print("ell_i             :", mag.get("ell_i"))
-        print("mdotB             :", mag.get("mdotB"))
-        print("wm_density        :", mag.get("wm_density"))
-        print("wm_seg            :", mag.get("wm_seg"))
-        print("Bmag              :", mag.get("Bmag"))
-        print("Mmag              :", mag.get("Mmag"))
-        print_der_magnetic_debug(info)
+        # print("\n[DER MAG DEBUG]")
+        # print("Wm                :", info["dbg"]["Wm"])
+        # print("wire_len          :", mag.get("wire_len", wire_len))
+        # print("tip_len           :", mag.get("tip_len", tip_len))
+        # print("s_seg             :", mag.get("s_seg"))
+        # print("ell_i             :", mag.get("ell_i"))
+        # print("mdotB             :", mag.get("mdotB"))
+        # print("wm_density        :", mag.get("wm_density"))
+        # print("wm_seg            :", mag.get("wm_seg"))
+        # print("Bmag              :", mag.get("Bmag"))
+        # print("Mmag              :", mag.get("Mmag"))
+        # print_der_magnetic_debug(info)
         # cache
         if info["success"]:
             self._last.update(
@@ -264,36 +264,36 @@ def print_der_magnetic_debug(info, max_rows=None):
 
     active = Mmag > 1e-9
 
-    print("\n[DER MAGNETIC BREAKDOWN]")
-    print(f"Wm total          : {dbg.get('Wm', np.nan):.6e}")
-    print(f"wire_len          : {mag.get('wire_len', np.nan):.6e}")
-    print(f"tip_len           : {mag.get('tip_len', np.nan):.6e}")
-    print(f"active segs       : {int(np.sum(active))}")
-    print(f"max |B|           : {np.max(Bmag):.6e}")
-    print(f"max |M|           : {np.max(Mmag):.6e}")
-    print(f"min M·B           : {np.min(mdotB):.6e}")
-    print(f"max M·B           : {np.max(mdotB):.6e}")
-    print(f"sum wm_seg        : {np.sum(wm_seg):.6e}")
+    # print("\n[DER MAGNETIC BREAKDOWN]")
+    # print(f"Wm total          : {dbg.get('Wm', np.nan):.6e}")
+    # print(f"wire_len          : {mag.get('wire_len', np.nan):.6e}")
+    # print(f"tip_len           : {mag.get('tip_len', np.nan):.6e}")
+    # print(f"active segs       : {int(np.sum(active))}")
+    # print(f"max |B|           : {np.max(Bmag):.6e}")
+    # print(f"max |M|           : {np.max(Mmag):.6e}")
+    # print(f"min M·B           : {np.min(mdotB):.6e}")
+    # print(f"max M·B           : {np.max(mdotB):.6e}")
+    # print(f"sum wm_seg        : {np.sum(wm_seg):.6e}")
 
-    print("\n[DER MAG SEGMENTS]")
-    print(" i |    s_seg |    ell_i | active |      |B| |      |M| |       M·B |  wm_density |     wm_seg")
-    print("-" * 100)
+    # print("\n[DER MAG SEGMENTS]")
+    # print(" i |    s_seg |    ell_i | active |      |B| |      |M| |       M·B |  wm_density |     wm_seg")
+    # print("-" * 100)
 
     n = len(s_seg)
     rows = range(n) if max_rows is None else range(min(n, max_rows))
 
-    for i in rows:
-        print(
-            f"{i:2d} | "
-            f"{s_seg[i]:8.5f} | "
-            f"{ell_i[i]:8.5f} | "
-            f"{int(active[i]):6d} | "
-            f"{Bmag[i]:9.3e} | "
-            f"{Mmag[i]:9.3e} | "
-            f"{mdotB[i]:11.3e} | "
-            f"{wm_density[i]:11.3e} | "
-            f"{wm_seg[i]:11.3e}"
-        )
+    # for i in rows:
+    #     print(
+    #         f"{i:2d} | "
+    #         f"{s_seg[i]:8.5f} | "
+    #         f"{ell_i[i]:8.5f} | "
+    #         f"{int(active[i]):6d} | "
+    #         f"{Bmag[i]:9.3e} | "
+    #         f"{Mmag[i]:9.3e} | "
+    #         f"{mdotB[i]:11.3e} | "
+    #         f"{wm_density[i]:11.3e} | "
+    #         f"{wm_seg[i]:11.3e}"
+    #     )
 if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt

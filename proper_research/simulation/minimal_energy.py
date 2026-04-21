@@ -1,22 +1,20 @@
 from beam_direction_magnetisation.cosserat_w_minimal_energy import (
     make_lumen_centerline_turning,
-    CosseratForwardModel,
-    dipole_from_pose,
-    u0_from_bvp,
-    solve_quasistatic_insertion,
-    lumen_violation_profile, magnetic_tip_wrench_about_interface
+    dipole_from_pose,magnetic_wrench_density_cosserat_profile_segments,
+    lumen_violation_profile
 )
 
 from beam_direction_magnetisation.post_processing.post_processing import (
     plot_energy_only_3d,
-    make_lumen_centerline_double_turn,
+
 )
+import csv
 from proper_research.robot.transformations import get_point
 
 from proper_research.control.no_path_plan_mpc import DeterministicForward6D
 from proper_research.parameters import default_magnet_params, default_beam_params
 from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T, T_to_p_quat_wxyz
-from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile, make_m_local_fun_wire_tip
+from beam_direction_magnetisation.magnetism.beam_geometry import make_m_local_fun_wire_tip
 from proper_research.control.mpc_boundary import resample_polyline
 from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
 from scipy.spatial.transform import Rotation as Rot
@@ -54,6 +52,63 @@ def eval_branch(fwd6, p8, label="", x_ref=None):
         "tan": tan.copy(),
         "pcl": pcl.copy(),
     }
+def magnetic_tip_wrench_about_interface(p, q, s, *, r_src, m_src, m_local_fun, m_moment, wire_len):
+    """
+    Compute net magnetic wrench on the magnetic tip, resolved about the wire-tip interface.
+    Returns a dict with force, direct torque, moment from force, and total moment.
+    """
+    s = np.asarray(s, float).ravel()
+    p = np.asarray(p, float)
+    q = np.asarray(q, float)
+
+    tip_mask = s >= wire_len
+    if not np.any(tip_mask):
+        return dict(
+            F_tip=np.zeros(3),
+            Tau_tip=np.zeros(3),
+            M_force=np.zeros(3),
+            M_total=np.zeros(3),
+            p_interface=None,
+        )
+
+    p_tip = p[:, tip_mask]
+    q_tip = q[:, tip_mask]
+    s_tip = s[tip_mask]
+
+    f_mag, tau_mag, B, _, _ = magnetic_wrench_density_cosserat_profile_segments(
+        p_tip, q_tip, s_tip, m_src, r_src, m_local_fun, m_moment, r_min=1e-6
+    )
+
+    p_int = p_tip[:, 0]
+
+    # If wrench densities are defined on segments, use segment-center arclengths
+    if f_mag.shape[1] == len(s_tip) - 1:
+        s_int = 0.5 * (s_tip[:-1] + s_tip[1:])
+        p_force = 0.5 * (p_tip[:, :-1] + p_tip[:, 1:])
+    elif f_mag.shape[1] == len(s_tip):
+        s_int = s_tip
+        p_force = p_tip
+    else:
+        raise ValueError(
+            f"Incompatible shapes: f_mag.shape={f_mag.shape}, tau_mag.shape={tau_mag.shape}, len(s_tip)={len(s_tip)}"
+        )
+
+    F_tip = np.trapezoid(f_mag, s_int, axis=1)
+    Tau_tip = np.trapezoid(tau_mag, s_int, axis=1)
+
+    lever = p_force - p_int[:, None]
+    force_moment_density = np.cross(lever.T, f_mag.T).T
+    M_force = np.trapezoid(force_moment_density, s_int, axis=1)
+
+    M_total = Tau_tip + M_force
+
+    return dict(
+        F_tip=F_tip,
+        Tau_tip=Tau_tip,
+        M_force=M_force,
+        M_total=M_total,
+        p_interface=p_int,
+    )
 def dipole_field_points(x, r_src, m_src, mu0_over_4pi=1e-7, r_min=1e-6):
     """
     x: (3,M) field points
@@ -335,226 +390,231 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
+def csv_writer(tip_pos, angle, tip_angle, log_csv_path):
+    if angle == 0:
+        with open(log_csv_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["Angle","Tip Position", "Tip Angle"])
+    row = [angle, tip_pos[:2], tip_angle]
+    with open(log_csv_path, "a", newline="") as f:
+        csv.writer(f).writerow(row)
+
+
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
-L_cmd = 0.065
-N_nodes = 10
+L_cmd = 0.02
+N_nodes = 5
 USE_LUMEN = True
 
 pivot_point = np.array([
-    0.7681328220229531, -0.7112731669220016, -0.1,
+    0.7981328220229531, -0.7112731669220016, -0.1,
     np.pi, 0.001, 0.001
 ], float)
 
 base_point = np.array([
-    pivot_point[0] - (L_cmd + 0.15),
+    pivot_point[0] - (L_cmd + 0.1),
     pivot_point[1],
     -0.1,
     np.pi, 0.001, 0.001
 ], float)
+# start_point = np.array([
+#     0.687,
+#     -0.746,
+#     -0.1,
+#     3.041,0.782,0.002
+# ], float)
+for i in range(70,75,5):
+    start_point = np.asarray(get_point(0, i, base_point, pivot_point), dtype=float)
+    start_point[2] = -0.1
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
+    # pivot pose
+    T_ur_pivot = ur_pose6_to_T(pivot_point)
+    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
-start_point = np.asarray(get_point(0, 20, base_point, pivot_point), dtype=float)
-start_point[2] = -0.1
-m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
-# pivot pose
-T_ur_pivot = ur_pose6_to_T(pivot_point)
-p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+    # source magnet pose
+    T_ur_mag = ur_pose6_to_T(start_point)
+    r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
 
-# source magnet pose
-T_ur_mag = ur_pose6_to_T(start_point)
-r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+    # initial lumen tangent
+    Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
+    t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
 
-# initial lumen tangent
-Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
-t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
+    s_straight = 0.005
+    lumen_C = make_lumen_centerline_turning(
+        p_start=p0_ur,
+        t0=t0,
+        length=0.02 + s_straight,
+        n_pts=130,
+        bend_axis=np.array([0.0, 0.0, 1.0]),
+        bend_angle=np.deg2rad(-30.0),
+        bend_start=0.0 + s_straight,
+        bend_end=0.02 + s_straight,
+    )
+    lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
+    lumen_R = np.full(len(lumen_C), 0.003)
+    L_model, wire_len_model, tip_len_model = effective_lengths(L_cmd)
+    print(
+        f"[INIT] L_ins={L_cmd:.3f} -> "
+        f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
+    )
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+    # tip = rod_section_stiffness(
+    #     r=2e-3,
+    #     E=3e6,
+    #     nu=0.49,
+    # )
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+    EA_wire = wire["EA"]
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
 
-s_straight = 0.03
-lumen_C = make_lumen_centerline_turning(
-    p_start=p0_ur,
-    t0=t0,
-    length=0.06 + s_straight,
-    n_pts=130,
-    bend_axis=np.array([0.0, 0.0, 1.0]),
-    bend_angle=np.deg2rad(40.0),
-    bend_start=0.0 + s_straight,
-    bend_end=0.03 + s_straight,
-)
-lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
-lumen_R = np.full(len(lumen_C), 0.004)
-L_model, wire_len_model, tip_len_model = effective_lengths(L_cmd)
-print(
-    f"[INIT] L_ins={L_cmd:.3f} -> "
-    f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
-)
-wire = rod_section_stiffness(
-    r=200e-6,
-    E=50e6,
-    nu=0.4,
-)
-# tip = rod_section_stiffness(
-#     r=2e-3,
-#     E=3e6,
-#     nu=0.49,
-# )
-tip = rod_section_stiffness(
-    r=beam_params.r,
-    E=beam_params.E,
-    nu=0.49,
-)
-EA_wire = wire["EA"]
-EI_wire = wire["EI"]
-GJ_wire = wire["GJ"]
+    EA_tip = tip["EA"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
 
-EA_tip = tip["EA"]
-EI_tip = tip["EI"]
-GJ_tip = tip["GJ"]
-Kinv_fun = make_Kbt_inv_profile(
-    EI_wire=EI_wire,
-    EI_tip=EI_tip,
-    GJ_wire=GJ_wire,
-    GJ_tip=GJ_tip,
-    bend_soft=1.0,
-    tors_soft=1.0,
-)
-forward_model = EnergyMinForwardWithLumen(
-    p0_ur=p0_ur,
-    q0_ur=q0_ur,
-    Kinv_fun=Kinv_fun,
-    u_star=np.zeros(3),
-    m_body=m_body,
-    lumen_C=np.asarray(lumen_C, float),
-    lumen_R=np.asarray(lumen_R, float),
-    N_nodes=8,
-    maxiter=30,
-    L0_init=0.01,
-    dL_internal=0.002,
-    use_lumen_jac=False,
-    L_tip_full=tip_len_model,
-    L_tip_min=0.01,
-)
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
+    forward_model = EnergyMinForwardWithLumen(
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_body=m_body,
+        lumen_C=np.asarray(lumen_C, float),
+        lumen_R=np.asarray(lumen_R, float),
+        N_nodes=N_nodes,
+        maxiter=1e7,
+        L0_init=0.01,
+        dL_internal=0.01,
+        use_lumen_jac=USE_LUMEN,
+        L_tip_full=tip_len_model,
+        L_tip_min=0.01,
+    )
 
-print("t0 =", t0)
-print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
-# forward_model_wrong = EnergyMinForwardWithLumen(
-#     p0_ur=p0_ur,
-#     q0_ur=q0_ur,
-#     Kinv_fun=Kbt_inv_profile,
-#     u_star=np.zeros(3),
-#     m_body=m_body,
-#     lumen_C=lumen_C,
-#     lumen_R=lumen_R,
-#     N_nodes=35,
-#     maxiter=70,
-#     L0_init=0.01,
-#     dL_internal=0.002,
-#     L_tip_full=0.04,
-#     L_tip_min=0.01,
-#     use_lumen_jac=False
-# )
-fwd6 = WarmForwardP8TipTangent(forward_model)
-# fwd6_wrong = DeterministicForward6D(forward_model_wrong)
-L_ins = L_cmd
-r_src = start_point[:3]
-rvec_src = start_point[3:6]
+    print("t0 =", t0)
+    print("z variation in lumen =", lumen_C[:,2].min(), lumen_C[:,2].max())
+    # forward_model_wrong = EnergyMinForwardWithLumen(
+    #     p0_ur=p0_ur,
+    #     q0_ur=q0_ur,
+    #     Kinv_fun=Kbt_inv_profile,
+    #     u_star=np.zeros(3),
+    #     m_body=m_body,
+    #     lumen_C=lumen_C,
+    #     lumen_R=lumen_R,
+    #     N_nodes=35,
+    #     maxiter=70,
+    #     L0_init=0.01,
+    #     dL_internal=0.002,
+    #     L_tip_full=0.04,
+    #     L_tip_min=0.01,
+    #     use_lumen_jac=False
+    # )
+    # fwd6 = WarmForwardP8TipTangent(forward_model)
+    fwd6 = DeterministicForward6D(forward_model)
+    L_ins = L_cmd
+    r_src = start_point[:3]
+    rvec_src = start_point[3:6]
 
-q_xyzw = Rot.from_rotvec(rvec_src).as_quat()
-q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
-p8 = np.hstack([r_src, q_wxyz, L_ins])
+    q_xyzw = Rot.from_rotvec(rvec_src).as_quat()
+    q_wxyz = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+    p8 = np.hstack([r_src, q_wxyz, L_ins])
 
-# fwd6.start_step()
-y = fwd6(p8, commit=True)
+    # fwd6.start_step()
+    y = fwd6(p8, commit=True)
 
-tip_pos = y[:3]
-tip_tangent = y[3:6]
-centreline = fwd6.last_p_centerline
-debug_geometry_split(forward_model, L_ins)
+    tip_pos = y[:3]
+    tip_tangent = y[3:6]
+    centreline = fwd6.last_p_centerline
+    debug_geometry_split(forward_model, L_ins)
 
-debug_forward_solution(
-    forward_model=forward_model,
-    p0_ur=p0_ur,
-    q0_ur=q0_ur,
-    r_src_ur=r_src_ur,
-    q_src_ur=q_src_ur,
-    m_body=m_body,
-    L_ins=L_ins,
-)
-print("tip position:", tip_pos)
-print("tip tangent:", tip_tangent)
-print("centreline shape:", None if centreline is None else centreline.shape)
-print("tip position:", tip_pos)
-print("tip tangent:", tip_tangent)
-print("centreline shape:", None if centreline is None else centreline.shape)
+    debug_forward_solution(
+        forward_model=forward_model,
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        r_src_ur=r_src_ur,
+        q_src_ur=q_src_ur,
+        m_body=m_body,
+        L_ins=L_ins,
+    )
+    print("tip position:", tip_pos)
+    print("tip tangent:", tip_tangent)
+    print("centreline shape:", None if centreline is None else centreline.shape)
+    print("tip position:", tip_pos)
+    print("tip tangent:", tip_tangent)
+    print("centreline shape:", None if centreline is None else centreline.shape)
 
-p_mag = np.hstack([r_src_ur, q_src_ur, 0.0])
-L_model, wire_len, tip_len = effective_lengths(
-    L_ins,
-    L_tip_full=forward_model.L_tip_full,
-    L_tip_min=forward_model.L_tip_min,
-)
-info = forward_model.last_info
-s = np.asarray(info["s"], float)
-p = np.asarray(forward_model.last_p_centerline, float)
+    p_mag = np.hstack([r_src_ur, q_src_ur, 0.0])
+    L_model, wire_len, tip_len = effective_lengths(
+        L_ins,
+        L_tip_full=forward_model.L_tip_full,
+        L_tip_min=forward_model.L_tip_min,
+    )
+    info = forward_model.last_info
+    s = np.asarray(info["s"], float)
+    p = np.asarray(forward_model.last_p_centerline, float)
 
-# if your info doesn't store q yet, you'll need to store it from the solve
-# ideally add q to info or to the wrapper
-q = forward_model.last_hist[-1]["q"]
+    # if your info doesn't store q yet, you'll need to store it from the solve
+    # ideally add q to info or to the wrapper
+    q = forward_model.last_hist[-1]["q"]
 
-wrench = magnetic_tip_wrench_about_interface(
-    p, q, s,
-    r_src=r_src_ur,
-    m_src=dipole_from_pose(q_src_ur, m_body),
-    m_local_fun=make_m_local_fun_wire_tip(
-        wire_len, len_tip=tip_len, mode="axial", alpha_end=0.0, eps=1e-3
-    ),
-    m_moment=0.0,
-    wire_len=wire_len,
-)
+    wrench = magnetic_tip_wrench_about_interface(
+        p, q, s,
+        r_src=r_src_ur,
+        m_src=dipole_from_pose(q_src_ur, m_body),
+        m_local_fun=make_m_local_fun_wire_tip(
+            wire_len, len_tip=tip_len, mode="axial", alpha_end=0.0, eps=1e-3
+        ),
+        m_moment=0.0,
+        wire_len=wire_len,
+    )
 
-print("F_tip    =", wrench["F_tip"])
-print("Tau_tip  =", wrench["Tau_tip"])
-print("M_force  =", wrench["M_force"])
-print("M_total  =", wrench["M_total"])
-print("|M_total| =", np.linalg.norm(wrench["M_total"]))
-plot_bending_profile_from_info(
-    forward_model.last_info,
-    wire_len=wire_len,
-    title="Wire vs tip bending"
-)
-plot_wire_tip_split(
-    forward_model.last_p_centerline,
-    wire_len=wire_len,
-    s=forward_model.last_info["s"]
-)
+    print("F_tip    =", wrench["F_tip"])
+    print("Tau_tip  =", wrench["Tau_tip"])
+    print("M_force  =", wrench["M_force"])
+    print("M_total  =", wrench["M_total"])
+    print("|M_total| =", np.linalg.norm(wrench["M_total"]))
+    # plot_bending_profile_from_info(
+    #     forward_model.last_info,
+    #     wire_len=wire_len,
+    #     title="Wire vs tip bending"
+    # )
+    # plot_wire_tip_split(
+    #     forward_model.last_p_centerline,
+    #     wire_len=wire_len,
+    #     s=forward_model.last_info["s"]
+    # )
 
-plot_energy_only_3d(
-    centreline,
-    lumen_C=lumen_C,
-    lumen_R=lumen_R,
-    p0=p0_ur,
-    tip=tip_pos,
-    tip_from_centerline=centreline[:, -1],
-    p_mag=p_mag,
-    mag_axis="x",
-    mag_arrow_len=0.02,
-    show=True,
-)
-p0_good = np.array([
-    5.51141362e-01, -7.11278590e-01, -1.00000000e-01,
-    5.39964856e-04,  9.99999749e-01,  3.22682731e-04,  3.26505816e-04,
-    7.49543617e-02
-], float)
+    plot_energy_only_3d(
+        centreline,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        p0=p0_ur,
+        tip=tip_pos,
+        tip_from_centerline=centreline[:, -1],
+        p_mag=p_mag,
+        mag_axis="x",
+        mag_arrow_len=0.02,
+        show=True,
+    )
+    u_flat = np.asarray(info["u_flat_opt"], float)
+    u_seg = u_flat.reshape(len(s) - 1, 3)
 
-p0_bad = np.array([
-    5.47115615e-01, -7.31269877e-01, -1.00000000e-01,
-    5.39263042e-04,  9.99999297e-01, -1.00666627e-03,  3.20264949e-04,
-    7.69276531e-02
-], float)
-
-x_meas_like = np.array([
-    0.69389495, -0.71370919, -0.1,
-    -0.99693916, 0.0781813, 0.0
-], float)
-
-res_good = eval_branch(fwd6, p0_good, label="GOOD pose", x_ref=x_meas_like)
-res_bad  = eval_branch(fwd6, p0_bad,  label="BAD pose",  x_ref=x_meas_like)
+    s_mid = 0.5 * (s[:-1] + s[1:])
+    kappa_twist = np.abs(u_seg[:, 0])
+    kappa_b = np.linalg.norm(u_seg[:, 1:3], axis=1)
+    csv_writer(tip_pos=tip_pos, angle=i, tip_angle=np.mean(kappa_b), log_csv_path="csv_data_bend_100")

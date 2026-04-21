@@ -475,16 +475,16 @@ def plot_clearance_compare(
     plt.tight_layout()
     plt.show()
 if __name__ == "__main__":
-    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_90_low_tangent_3step_ltv/lumen_C.npy")
-    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_90_low_tangent_3step_ltv/lumen_R.npy")
+    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing/lumen_C.npy")
+    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing/lumen_R.npy")
 
     summary_bc, series_bc = analyze_run(
-        "/Users/jackhilton-jones/Proper-Research/mpc_run_90_beam/log.csv",
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_3step/log.csv",
         lumen_C, lumen_R, dt=0.01
     )
 
     summary_nobc, series_nobc = analyze_run(
-        "/Users/jackhilton-jones/Proper-Research/mpc_run_90_beam_tan/log.csv",
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline/log.csv",
         lumen_C, lumen_R, dt=0.01
     )
 
@@ -506,8 +506,8 @@ if __name__ == "__main__":
         lumen_R,
         series_bc_f["tip"],
         series_nobc_f["tip"],
-        label1="3 step",
-        label2="1 step",
+        label1="bc",
+        label2="no bc",
         ring_step=5,
         ring_n=24,
         title=f"Tip path vs vessel (world), k={k_min}..{k_max}"
@@ -516,8 +516,8 @@ if __name__ == "__main__":
     plot_prediction_error_compare(
         series_bc,
         series_nobc,
-        label1="3 step",
-        label2="1 step",
+        label1="bc",
+        label2="no bc",
         dt=0.01,
         title_prefix="MPC 1-step prediction error",
         k_min=k_min,
@@ -527,8 +527,8 @@ if __name__ == "__main__":
     plot_clearance_compare(
         series_bc,
         series_nobc,
-        label1="3 step",
-        label2="1 step",
+        label1="bc",
+        label2="no bc",
         k_min=k_min,
         k_max=k_max,
     )

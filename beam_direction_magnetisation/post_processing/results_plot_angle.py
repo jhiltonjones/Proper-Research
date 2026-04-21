@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 # =========================
 # EDIT THESE PATHS
 # =========================
-CSV_FILE_1 = r"mpc_run_90_low_tangent/log.csv"
-CSV_FILE_2 = r"mpc_run_90_low_tangent_3step_ltv/log.csv"
+CSV_FILE_1 = r"/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step/log.csv"
+CSV_FILE_2 = r"mpc_run_testing_centreline_3step/log.csv"
 
 # Choose x-axis column. If not found, row index will be used instead.
 X_AXIS_COLUMN = "k"

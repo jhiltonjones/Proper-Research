@@ -498,7 +498,7 @@ if __name__ == "__main__":
     RUN_DER_RESIDUAL = False
     RUN_DIRECT_COSSERAT = True
 
-    USE_LUMEN = True
+    USE_LUMEN = False
 
     # ============================================================
     # Helpers
@@ -582,7 +582,9 @@ if __name__ == "__main__":
         set_axes_equal_3d(ax)
         plt.tight_layout()
         plt.show()
-
+    def dipole_from_pose(q_src, m_body):
+        R = quat_to_R(q_src)
+        return R @ m_body  # (3,)
     def compare_tips(results):
         names = list(results.keys())
         print("\n" + "=" * 80)
@@ -609,8 +611,8 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.02
-    N_nodes = 4
+    L_cmd = 0.015
+    N_nodes = 50
 
     pivot_point = np.array([
         0.7981328220229531, -0.7112731669220016, -0.1,
@@ -624,7 +626,7 @@ if __name__ == "__main__":
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 90, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 60, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -635,7 +637,7 @@ if __name__ == "__main__":
 
     # Source dipole in body frame
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
-
+    m_src = dipole_from_pose(q_src_ur, m_body)
     mag_len = beam_params.length_of_mag
     mu_line = beam_params.mag * beam_params.A_cs
     M_ref_local = np.array([0.0, 0.0, mu_line], float)
@@ -730,7 +732,7 @@ if __name__ == "__main__":
             N_nodes=N_nodes,
             maxiter=30,
             L0_init=0.01,
-            dL_internal=0.002,
+            dL_internal=0.005,
             use_lumen_jac=USE_LUMEN,
             L_tip_full=mag_len,
             L_tip_min=0.01,
@@ -749,7 +751,7 @@ if __name__ == "__main__":
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             N_nodes=N_nodes,
-            maxiter=300,
+            maxiter=30,
             amp_init=2e-4,
             enforce_inextensibility=True,
             use_lumen=USE_LUMEN,
@@ -814,7 +816,7 @@ if __name__ == "__main__":
             tip_len=tip_len,
             Kinv_fun=Kinv_fun,
             r_src=r_src_ur,
-            m_src=m_body,   # replace with world-frame source dipole if your solver expects that
+            m_src=m_src,   # replace with world-frame source dipole if your solver expects that
             mu_tip=mu_line,
             EA_wire=EA_wire,
             EA_tip=EA_tip,
@@ -850,7 +852,7 @@ if __name__ == "__main__":
             tip_len=tip_len,
             Kinv_fun=Kinv_fun,
             r_src=r_src_ur,
-            m_src=m_body,   # replace with world-frame source dipole if expected
+            m_src=m_src,   # replace with world-frame source dipole if expected
             mu_tip=mu_line,
             EA_wire=EA_wire,
             EA_tip=EA_tip,
@@ -1010,11 +1012,11 @@ jac_forward_fns = {}
 
 # wrapper models: cold versions are fairest for Jacobians
 if fwd_cos is not None:
-    fwd_cos_cold = ColdForwardP7(fwd_cos)
+    fwd_cos_cold = WarmForwardP7(fwd_cos)
     jac_forward_fns["cos_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_cos_cold, "cos_wrapper")
 
 if fwd_der is not None:
-    fwd_der_cold = ColdForwardP7(fwd_der)
+    fwd_der_cold = WarmForwardP7(fwd_der)
     jac_forward_fns["der_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_der_cold, "der_wrapper")
 
 # direct models

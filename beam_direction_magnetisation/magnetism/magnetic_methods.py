@@ -1,5 +1,5 @@
 import numpy as np
-from beam_direction_magnetisation.quarternions.quarternions_functions import quat_normalize, quat_to_rot
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_normalize, quat_to_rot, quat_to_R
 
 MU0_over_4pi = 1e-7
 def magnetic_force_analytical(r_pts, m_pts, r_src, m_src, r_min = 1e-6):
@@ -147,3 +147,79 @@ def magnetic_wrench_density_cosserat_profile_segments(
     tau_mid = np.cross(m_mid_world.T, B_mid.T).T                             # (3,N-1)
 
     return f_mid, tau_mid, B_mid, m_mid_world, s_mid
+def magnetic_wrench_density_cosserat_point(
+    *,
+    s,
+    p,
+    q,
+    m_ext,
+    r_src,
+    m_local_fun,
+    m_front_or_overhead,
+    r_min=1e-6,
+):
+    """
+    Pointwise magnetic quantities at one arclength location.
+
+    Parameters
+    ----------
+    s : float
+        Arclength coordinate.
+    p : ndarray, shape (3,)
+        Position in world frame.
+    q : ndarray, shape (4,)
+        Quaternion at this location.
+    m_ext : ndarray, shape (3,)
+        External/source dipole in world frame.
+    r_src : ndarray, shape (3,)
+        External/source position in world frame.
+    m_local_fun : callable
+        Returns local magnetization profile in body frame.
+    m_front_or_overhead : any
+        Passed through to m_local_fun.
+    r_min : float
+        Minimum radius for dipole singularity protection.
+
+    Returns
+    -------
+    f_ext : ndarray, shape (3,)
+        Magnetic force density in world frame.
+    tau_ext : ndarray, shape (3,)
+        Magnetic torque density in world frame.
+    B : ndarray, shape (3,)
+        Magnetic field in world frame.
+    m_world : ndarray, shape (3,)
+        Local magnetization in world frame.
+    """
+    s = float(s)
+    p = np.asarray(p, float).reshape(3,)
+    q = quat_normalize(np.asarray(q, float).reshape(4,))
+    m_ext = np.asarray(m_ext, float).reshape(3,)
+    r_src = np.asarray(r_src, float).reshape(3,)
+
+    # rotation at this point
+    R = quat_to_R(q)   # must return (3,3) for one quaternion
+
+    # body-frame magnetization profile at this point
+    m_loc = np.asarray(
+        m_local_fun(np.array([s], dtype=float), m_front_or_overhead),
+        float
+    ).reshape(3,)
+
+    # rotate to world frame
+    m_world = R @ m_loc
+
+    # magnetic field at this point
+    B = dipole_field_from_source(
+        p[None, :], r_src, m_ext, r_min=r_min
+    )[0]
+
+    # force density at this point
+    f_ext = magnetic_force_analytical(
+        p[None, :], m_world[None, :], r_src, m_ext, r_min=r_min
+    )[0]
+
+    # torque density at this point
+    tau_ext = np.cross(m_world, B)
+
+    return f_ext, tau_ext, B, m_world

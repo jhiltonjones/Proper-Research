@@ -1171,7 +1171,7 @@ class mpc_controller_tipxy_LTI:
 
             H_effort = 2.0 * Rtil
             H_smooth = 2.0 * H_du if not np.isscalar(H_du) else None
-            H = H_effort.copy()
+            # H = H_effort.copy()
             f = np.zeros((Np * m, 1), float)
 
             if dbg_terms is not None:
@@ -1211,7 +1211,7 @@ class mpc_controller_tipxy_LTI:
 
             H_track = 2.0 * (Mc.T @ Qtil @ Mc)
             f_track = 2.0 * (Mc.T @ Qtil @ (X_aff_fixed - X_ref))
-            H += H_track
+            H = H_track.copy()
             f += f_track
             print(f"x_aff is: {X_aff_fixed}")
             print(f"x_ref is: {X_ref}")
@@ -1489,7 +1489,7 @@ class mpc_controller_tipxy_LTI:
             l_list.append(-dL_back_max * np.ones(Np))
             u_list.append(np.full(Np, np.inf))
 
-            enable_theta_eff = bool(getattr(self, "enable_hard_theta", True)) and (t_vessel is not None)
+            enable_theta_eff = bool(getattr(self, "enable_hard_theta", False)) and (t_vessel is not None)
             theta_clearance_thresh_m = float(getattr(self, "theta_clearance_thresh_m", 0.4e-3))
 
             clearance_m = np.full(Np, np.inf, float)
@@ -1513,7 +1513,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.09))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2148,49 +2148,50 @@ def vision_result_to_x_meas_robot(
     markers = tip_result["markers"]
     mm_per_pixel = float(vision_result["mm_per_pixel"])
 
-    # ----------------------------------
-    # 1) tip position in the SAME local frame
-    #    as your validated script
-    # ----------------------------------
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
-    # Match validated code:
-    # tip_base_local_m = [-tip_xy_m[0], +tip_xy_m[1], 0]
     p_local = np.array([
         tip_xy_m[0],
         -tip_xy_m[1],
-         0.0,
+        0.0,
     ], dtype=float)
-    p_local_wrong = np.array([ tip_xy_m[0], tip_xy_m[1], 0.0 ])
-    p_local_right = np.array([-tip_xy_m[0], tip_xy_m[1], 0.0 ])
+
+    p_local_wrong = np.array([tip_xy_m[0], tip_xy_m[1], 0.0], dtype=float)
+    p_local_right = np.array([-tip_xy_m[0], tip_xy_m[1], 0.0], dtype=float)
 
     p_pivot = np.asarray(pivot_point_pose6[:3], float)
 
     print("wrong p_robot =", p_pivot + p_local_wrong)
     print("right p_robot =", p_pivot + p_local_right)
 
-    # ----------------------------------
-    # 2) tangent in the SAME local frame
-    # ----------------------------------
     tip_px = np.asarray(markers["tip_px"], dtype=float)
     tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
     base_px = np.asarray(markers["base_px"], dtype=float)
-    mag_start_px = np.asarray(markers["mag_start_px"], dtype=float)
 
-    # image-Cartesian reference axis from base -> magnet marker
-    ref = np.array([
-        mag_start_px[0] - base_px[0],
-        -(mag_start_px[1] - base_px[1]),
-    ], dtype=float)
+    mag_start_px_raw = markers.get("mag_start_px", None)
+
+    if mag_start_px_raw is not None:
+        mag_start_px = np.asarray(mag_start_px_raw, dtype=float)
+        ref = np.array([
+            mag_start_px[0] - base_px[0],
+            -(mag_start_px[1] - base_px[1]),
+        ], dtype=float)
+        ref_source = "base->mag_start"
+    else:
+        # fallback convention
+        ref = np.array([
+            tip_px[0] - base_px[0],
+            -(tip_px[1] - base_px[1]),
+        ], dtype=float)
+        ref_source = "base->tip (fallback)"
 
     nref = np.linalg.norm(ref)
     if nref < 1e-12:
-        raise ValueError("Base-to-magnet reference vector is zero length.")
+        raise ValueError(f"Reference vector is zero length. source={ref_source}")
     ex = ref / nref
     ey = np.array([-ex[1], ex[0]], dtype=float)
 
-    # measured tangent in image-Cartesian
     v_img = np.array([
         tip_px[0] - tan_start_px[0],
         -(tip_px[1] - tan_start_px[1]),
@@ -2201,8 +2202,6 @@ def vision_result_to_x_meas_robot(
         raise ValueError("Measured tangent from vision is zero-length.")
     v_img /= nv
 
-    # Match validated straight-beam convention:
-    # straight beam is along local -x
     tx_local = -float(np.dot(v_img, ex))
     ty_local =  float(np.dot(v_img, ey))
 
@@ -2213,13 +2212,7 @@ def vision_result_to_x_meas_robot(
         raise ValueError("Measured tangent in local frame is zero-length.")
     t_local /= nrm
 
-    # ----------------------------------
-    # 3) convert local -> robot frame
-    #    using your validated convention:
-    #    translation only, NO rotation
-    # ----------------------------------
     p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
-
     p_robot = p_pivot_robot + p_local
     t_robot = t_local.copy()
 
@@ -2231,6 +2224,8 @@ def vision_result_to_x_meas_robot(
     print("[DBG TAN]")
     print("  tip_xy_m =", tip_xy_m)
     print("  p_local =", p_local)
+    print("  ref_source =", ref_source)
+    print("  ref =", ref)
     print("  v_img =", v_img)
     print("  ex =", ex)
     print("  ey =", ey)
@@ -2239,10 +2234,6 @@ def vision_result_to_x_meas_robot(
     print("  p_robot =", p_robot)
     print("  t_robot =", t_robot)
 
-    # ----------------------------------
-    # 4) optional tangent sign alignment
-    #    with lumen direction
-    # ----------------------------------
     lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
     if align_tangent_with_lumen and (lumen_C_robot_m is not None):
         C = np.asarray(lumen_C_robot_m, dtype=float)
@@ -2647,14 +2638,13 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     
-    L0 = 0.047
+    L0 = 0.018
     pivot_point = np.array([
-        0.7681328220229531, -0.7112731669220016, -0.1,
-        np.pi, 0.001, 0.001
+    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.15),
+        pivot_point[0] - (L0 + 0.14),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -3146,10 +3136,10 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=8,
+        N_nodes=5,
         maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.005,
         use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
@@ -3260,7 +3250,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_testing3",
+            plot_dir="mpc_debug_plots_18",
         )
     finally:
         hw.shutdown()

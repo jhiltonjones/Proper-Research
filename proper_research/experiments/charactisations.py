@@ -34,7 +34,7 @@ Files:
 """
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 import copy
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, WarmForwardP8TipTangent
 import time
 import json
 import os
@@ -53,15 +53,14 @@ from proper_research.robot.transformations import get_point
 
 from proper_research.simulation.boundary_forward_model import (
     EnergyMinForwardWithLumen,
-    DeterministicForward6D,
-    effective_lengths
+    DeterministicForward6D
 )
 from proper_research.control.lab_ready_mpc import integrate_pose8_body
 from proper_research.vision.measure_length import new_capture
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, get_saved_2_point_calibration
 
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from proper_research.parameters import default_magnet_params
+from proper_research.parameters import default_magnet_params, default_beam_params
 
 # ---- vision side ----
 # Update this import path if your vision utilities live elsewhere.
@@ -74,7 +73,7 @@ from proper_research.vision.bounds_beam import (
 
 mag_params = default_magnet_params()
 
-
+beam_params = default_beam_params()
 # ============================================================
 # Config
 # ============================================================
@@ -224,18 +223,28 @@ def build_initial_lumen_from_vision(
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
     show=True,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
 ):
     new_capture()
 
     roi_polygon = load_polygon(roi_polygon_path)
-
+    print("[DBG lumen frame actually passed through]")
+    print("  base_px_ref =", base_px_ref)
+    print("  ex_ref =", ex_ref)
+    print("  ey_ref =", ey_ref)
     vision_result = reconstruct_beam_within_vessel(
-        image_filename="focused_image.jpg",
+        image_filename=image_filename,
         red_roi_polygon=roi_polygon,
-        blue_roi_path="blue_roi_box.json",
+        blue_roi_path=blue_roi_path,
+        green_roi_path=green_roi_path,
         pivot_hint=pivot_hint,
         show=show,
         save_overlay_path="debug_outputs/reconstruction_overlay.png",
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
     )
 
 
@@ -249,6 +258,67 @@ def build_initial_lumen_from_vision(
     vision_result["lumen_R_robot_m"] = lumen_R_robot_m
 
     return lumen_C_robot_m, lumen_R_robot_m
+def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
+    """
+    L_ins      : commanded insertion (what MPC tracks)
+    L_tip_full : physical magnetic tip length (4 cm)
+    L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
+
+    Returns (L_model, wire_len, tip_len)
+    """
+    L_ins = float(L_ins)
+
+    # Magnetised tip inside grows with insertion until full tip is inside
+    tip_len = min(L_ins, L_tip_full)
+
+    # Wire is everything beyond the physical tip length
+    wire_len = max(L_ins - L_tip_full, 0.0)
+
+    # Total model length is the inserted length, but don't go below minimum model length
+    L_model = max(L_ins, L_tip_min)
+
+    # If we are below L_tip_min, we still model a minimum rod,
+    # but magnetisation should NOT exceed what's actually inserted:
+    tip_len = min(tip_len, L_model)
+
+    return L_model, wire_len, tip_len
+def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
+    def Kbt_inv_profile(s, len_wire):
+        s = np.asarray(s, float)
+        mask_tip = (s >= len_wire)
+
+        EI_s = np.where(mask_tip, EI_tip, EI_wire)
+        GJ_s = np.where(mask_tip, GJ_tip, GJ_wire)
+
+        Kinv = np.zeros((3, 3, s.size), float)
+        Kinv[0, 0, :] = tors_soft / GJ_s
+        Kinv[1, 1, :] = bend_soft / EI_s
+        Kinv[2, 2, :] = bend_soft / EI_s
+        return Kinv
+
+    return Kbt_inv_profile
+def rod_section_stiffness(r, E, nu):
+    A = np.pi * r**2
+    I = np.pi * r**4 / 4.0
+    J = 0.5 * np.pi * r**4
+    G = E / (2.0 * (1.0 + nu))
+
+    EA = E * A
+    EI = E * I
+    GJ = G * J
+
+    return {
+        "r": r,
+        "E": E,
+        "nu": nu,
+        "A": A,
+        "I": I,
+        "J": J,
+        "G": G,
+        "EA": EA,
+        "EI": EI,
+        "GJ": GJ,
+    }
 def build_dummy_straight_lumen_from_pivot(
     pivot_pose6: np.ndarray,
     length_m: float = 0.12,
@@ -268,10 +338,30 @@ def build_dummy_straight_lumen_from_pivot(
     )
     lumen_R = np.full(len(lumen_C), float(radius_m), dtype=float)
     return lumen_C, lumen_R
-def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, image_filename, red_roi_path, blue_roi_path, green_roi_path, pivot_hint, lumen = False) -> DeterministicForward6D:
+def build_forward_model_no_lumen_effect(
+    pivot_pose6: np.ndarray,
+    L0: float,
+    image_filename,
+    red_roi_path,
+    blue_roi_path,
+    green_roi_path,
+    pivot_hint,
+    lumen=False,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
+) -> DeterministicForward6D:
     """
-    Build the same solver stack as the controller uses, but with a dummy
-    straight/wide lumen so the comparison is effectively 'beam theory only'.
+    Build the same solver stack as the controller uses.
+
+    If lumen=True, use lumen reconstructed from vision.
+    If lumen=False, still uses the same forward class here, but you can later
+    swap in a dummy lumen if you want a true no-lumen comparison.
+
+    IMPORTANT:
+    base_px_ref / ex_ref / ey_ref are the fixed straight-reference frame used
+    for both measured tip and reconstructed lumen, so all vision-derived points
+    stay in one consistent local frame.
     """
     T_ur_pivot = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -281,63 +371,81 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
-    if lumen == False:
-        lumen_C, lumen_R =  build_initial_lumen_from_vision(
-            pivot_point = pivot_pose6,
-            image_filename="focused_image.jpg",
-            blue_roi_path="blue_roi_box.json",
-            green_roi_path="green_roi_box.json",
+
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
+
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
+
+    if lumen:
+        lumen_C, lumen_R = build_initial_lumen_from_vision(
+            pivot_point=pivot_pose6,
+            image_filename=image_filename,
+            blue_roi_path=blue_roi_path,
+            green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=False,
+            base_px_ref=base_px_ref,
+            ex_ref=ex_ref,
+            ey_ref=ey_ref,
         )
-        print(f"LUMEN FALSE")
-        forward_model = EnergyMinForwardWithLumen(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
-        u_star=np.zeros(3),
-        m_body=m_body,
-        lumen_C=lumen_C,
-        lumen_R=lumen_R,
-        N_nodes=7,
-        maxiter=30,
-        L0_init=0.01,
-        dL_internal=0.004,
-        L_tip_full=0.04,
-        L_tip_min=0.01,
-        use_lumen_jac=False,
-    )
+        print("[DBG] using vision lumen in fixed reference frame")
     else:
-        lumen_C, lumen_R =  build_initial_lumen_from_vision(
-            pivot_point = pivot_pose6,
-            image_filename="focused_image.jpg",
-            blue_roi_path="blue_roi_box.json",
-            green_roi_path="green_roi_box.json",
+        lumen_C, lumen_R = build_initial_lumen_from_vision(
+            pivot_point=pivot_pose6,
+            image_filename=image_filename,
+            blue_roi_path=blue_roi_path,
+            green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=False,
+            base_px_ref=base_px_ref,
+            ex_ref=ex_ref,
+            ey_ref=ey_ref,
         )
-        forward_model = EnergyMinForwardWithLumen(
+        print("[DBG] lumen=False branch still using vision lumen")
+        # later you can replace this with build_dummy_straight_lumen_from_pivot(...)
+
+    forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
+        Kinv_fun=Kinv_fun,
         u_star=np.zeros(3),
         m_body=m_body,
-        lumen_C=lumen_C,
-        lumen_R=lumen_R,
-        N_nodes=7,
-        maxiter=30,
+        lumen_C=np.asarray(lumen_C, float),
+        lumen_R=np.asarray(lumen_R, float),
+        N_nodes=50,
+        maxiter=1e7,
         L0_init=0.01,
-        dL_internal=0.004,
-        L_tip_full=0.04,
+        dL_internal=0.002,
+        use_lumen_jac=False,
+        L_tip_full=tip_len_model,
         L_tip_min=0.01,
-        use_lumen_jac=True,
     )
 
-
-
-
-    return WarmForwardP8TipTangent(forward_model)
+    return DeterministicForward6D(forward_model)
 
 
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
@@ -401,6 +509,7 @@ def predict_tip_local_from_model(
     pivot_pose6: np.ndarray,
 ) -> Dict:
     p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
+    print(f"length: {L_m}")
     print(f"Inside prediction pose: {pose6}")
     if hasattr(forward6d, "start_step"):
         forward6d.start_step()
@@ -655,13 +764,18 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         print("base_px_ref =", ref_frame["base_px_ref"])
         print("ex_ref      =", ref_frame["ex_ref"])
         print("ey_ref      =", ref_frame["ey_ref"])
-    forward6d = build_forward_model_no_lumen_effect(
+    fwd_no_lumen = build_forward_model_no_lumen_effect(
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
-        L0=float(cfg.L_m),image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
-            blue_roi_path="blue_roi_box.json",
-            green_roi_path="green_roi_box.json",
-            pivot_hint=cfg.pivot_hint, lumen = False
+        L0=float(cfg.L_m),
+        image_filename=cfg.image_filename,
+        red_roi_path=cfg.red_roi_path,
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path=cfg.green_roi_path,
+        pivot_hint=cfg.pivot_hint,
+        lumen=False,
+        base_px_ref=ref_frame["base_px_ref"] if ref_frame is not None else None,
+        ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
+        ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
     )
     dp_robot = np.asarray(cfg.test_pose6[:3], float) - np.asarray(cfg.pivot_pose6[:3], float)
     R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
@@ -673,7 +787,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
 
 
     pred = predict_tip_local_from_model(
-        forward6d=forward6d,
+        forward6d=fwd_no_lumen,
         pose6=np.asarray(cfg.test_pose6, dtype=float),
         L_m=float(cfg.L_m),
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
@@ -856,6 +970,9 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
             green_roi_path=cfg.green_roi_path,
             pivot_hint=cfg.pivot_hint,
             show=False,
+            base_px_ref=ref_frame["base_px_ref"] if ref_frame is not None else None,
+            ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
+            ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
         )
     else:
         lumen_C_robot_m, lumen_R_robot_m = build_dummy_straight_lumen_from_pivot(
@@ -950,14 +1067,13 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.069
+    L0 = 0.04
     pivot_point = np.array([
-        0.7681328220229531, -0.7112731669220016, -0.1,
-        np.pi, 0.001, 0.001
+    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.15),
+        pivot_point[0] - (L0 + 0.14),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -968,7 +1084,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     # pose6=start_point
     pose6 = hw.get_robot_pose_once()
-    # pose6 = np.asarray(get_point(0, 0), dtype=float)
+    # pose6 = np.asarray(get_point(0, 20), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
     print(f"POSE6 is {pose6}")
@@ -976,21 +1092,21 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     p, q_wxyz = T_to_p_quat_wxyz(T)
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
-    ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
+    # ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
 
-    print("original pose6:", pose6)
-    print("recovered pose6:", ur_pose6_next)
-    print("difference:", ur_pose6_next - pose6)
-    print("z_offset:", hw.z_offset)
-    print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
+    # print("original pose6:", pose6)
+    # print("recovered pose6:", ur_pose6_next)
+    # print("difference:", ur_pose6_next - pose6)
+    # print("z_offset:", hw.z_offset)
+    # print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
     u0 = np.zeros(7, dtype=float)
     hw.send_step(p_now=p_now, u0=u0, dt=0.01)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
     robot_pose6 = hw.get_robot_pose_once()
-    robot_pose6[2] = -0.1
-    # # pose6[2] = -0.1
+    # robot_pose6[2] = -0.1
+    # # # pose6[2] = -0.1
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
@@ -1122,7 +1238,7 @@ def plot_single_tip_comparison_local(
         #             linewidth=2.5,
         #             label="Predicted beam centerline",
         #         )
-    # # external magnet position
+
     # if src_local_m is not None:
     #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
     #     src_mm = 1e3 * src_local_m
@@ -1307,7 +1423,15 @@ def compute_model_jacobian(forward6d, pose6, L_m, dt=0.01,
         n_out=n_out,
     )
     return J, p8, eps_u
-def build_forward_model(pivot_pose6, L0, pivot_hint, use_lumen):
+def build_forward_model(
+    pivot_pose6,
+    L0,
+    pivot_hint,
+    use_lumen,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
+):
     return build_forward_model_no_lumen_effect(
         pivot_pose6=np.asarray(pivot_pose6, dtype=float),
         L0=float(L0),
@@ -1317,6 +1441,9 @@ def build_forward_model(pivot_pose6, L0, pivot_hint, use_lumen):
         green_roi_path="green_roi_box.json",
         pivot_hint=pivot_hint,
         lumen=use_lumen,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
     )
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
@@ -1356,7 +1483,7 @@ if __name__ == "__main__":
     )
     pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
-
+    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
     new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
@@ -1383,7 +1510,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (320, 369)
+    pivot_hint = (325, 371)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -1394,12 +1521,12 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=40.0,
+        known_green_distance_mm=19.00,
         pivot_hint=pivot_hint,
-        results_dir="results_single_pose_forward_validation_test2",
-        save_overlay_path="results_single_pose_forward_validation/comparison_overlay2.png",
-        show_debug_vision=True,
-        show_debug_model=True,
+        results_dir="results_single_pose_forward_validation_back",
+        save_overlay_path="results_single_pose_forward_validation/comparison_back.png",
+        show_debug_vision=False,
+        show_debug_model=False,
     )
 
     evaluate_single_pose(cfg)

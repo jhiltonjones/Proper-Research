@@ -321,21 +321,21 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # draw vessel boundaries
-    for x, y in left_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # # draw vessel boundaries
+    # for x, y in left_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    for x, y in right_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # if red_area is not None:
-    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    # for x, y in right_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # # if red_area is not None:
+    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    if blue_area is not None:
-        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # draw beam centerline
-    beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
-    for i in range(len(beam_int) - 1):
-        cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
+    # if blue_area is not None:
+    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # # draw beam centerline
+    # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
+    # for i in range(len(beam_int) - 1):
+    #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
     if markers is not None:
@@ -367,28 +367,28 @@ def draw_beam_and_vessel_overlay(
             )
 
     # draw closest wall tangent near the tip
-    if tip_wall_angle_info is not None:
-        p_minus = tip_wall_angle_info["left_wall_tangent_points"]["p_minus"]
-        p_plus = tip_wall_angle_info["left_wall_tangent_points"]["p_plus"]
+    # if tip_wall_angle_info is not None:
+    #     p_minus = tip_wall_angle_info["left_wall_tangent_points"]["p_minus"]
+    #     p_plus = tip_wall_angle_info["left_wall_tangent_points"]["p_plus"]
 
-        p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
-        p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
+    #     p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
+    #     p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
 
-        cv2.line(vis, p1, p2, (180, 105, 255), 3)
+    #     cv2.line(vis, p1, p2, (180, 105, 255), 3)
 
-        txt_angle = (
-            f"Beam-wall tangent angle = "
-            f"{tip_wall_angle_info['beam_left_wall_tangent_angle_deg']:.2f} deg"
-        )
+    #     txt_angle = (
+    #         f"Beam-wall tangent angle = "
+    #         f"{tip_wall_angle_info['beam_left_wall_tangent_angle_deg']:.2f} deg"
+    #     )
 
-        cv2.putText(
-            vis, txt_angle, (20, 125),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-        )
-        cv2.putText(
-            vis, txt_angle, (20, 125),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-        )
+    #     cv2.putText(
+    #         vis, txt_angle, (20, 125),
+    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+    #     )
+    #     cv2.putText(
+    #         vis, txt_angle, (20, 125),
+    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+    #     )
 
     # save raw overlay image if requested
     if save_path is not None:
@@ -857,6 +857,9 @@ def reconstruct_beam_within_vessel(
     pivot_hint=None,
     show=True,
     save_overlay_path=None,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
 ):
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
@@ -881,7 +884,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=20.0)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=19.0)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -908,11 +911,19 @@ def reconstruct_beam_within_vessel(
     right_smooth = manual_vessel["right_boundary_px"]
     vessel = {"mode": "manual"}
     print("[INFO] Using manually drawn vessel boundaries.")
-    base_px_ref, ex_ref, ey_ref = make_fixed_local_frame(
-        base_px_ref=markers["base_px"],
-        mag_start_px_ref=markers["mag_start_px"],
-        tangent_start_px_ref=markers["tangent_start_px"],
-    )
+    if base_px_ref is None or ex_ref is None or ey_ref is None:
+        base_px_ref, ex_ref, ey_ref = make_fixed_local_frame(
+            base_px_ref=markers["base_px"],
+            mag_start_px_ref=markers["mag_start_px"],
+            tangent_start_px_ref=markers["tangent_start_px"],
+        )
+    else:
+        base_px_ref = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
+        ex_ref = np.asarray(ex_ref, dtype=np.float32).reshape(2,)
+        ey_ref = np.asarray(ey_ref, dtype=np.float32).reshape(2,)
+
+        ex_ref = ex_ref / (np.linalg.norm(ex_ref) + 1e-12)
+        ey_ref = ey_ref / (np.linalg.norm(ey_ref) + 1e-12)
     tip_xy_fixed = image_to_fixed_local_frame(
         markers["tip_px"],
         base_px_ref,
@@ -931,7 +942,10 @@ def reconstruct_beam_within_vessel(
     )
     print("lumen_C_m first local =", lumen_C_m[0])
     print("lumen_C_m last local  =", lumen_C_m[-1])
-    
+    print("[DBG lumen frame actually used]")
+    print("  base_px_ref =", base_px_ref)
+    print("  ex_ref =", ex_ref)
+    print("  ey_ref =", ey_ref)
         # --- beam reconstruction ---
     beam_points_px, beam_coeffs, beam_degree = fit_beam_centerline_from_markers(markers)
     beam_length_px = compute_beam_length_px(beam_points_px)
@@ -1227,7 +1241,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=40.0):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=19.0):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 

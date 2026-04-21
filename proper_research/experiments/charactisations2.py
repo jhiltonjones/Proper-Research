@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
-from proper_research.experiments.charactisations import compute_mm_per_pixel_from_green
+from proper_research.experiments.charactisations import compute_mm_per_pixel_from_green, rod_section_stiffness, make_Kbt_inv_profile,effective_lengths
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
@@ -34,13 +34,12 @@ from beam_direction_magnetisation.quarternions.quarternions_functions import T_t
 
 from proper_research.simulation.boundary_forward_model import (
     EnergyMinForwardWithLumen,
-    DeterministicForward6D,
+    DeterministicForward6D,WarmForwardP8TipTangent,
     effective_lengths,
 )
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
 from proper_research.vision.measure_length import new_capture
-from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
-from proper_research.parameters import default_magnet_params
+from proper_research.parameters import default_magnet_params, default_beam_params
 
 from proper_research.vision.bounds_beam import (
     detect_2_green_calibration_points,
@@ -48,7 +47,7 @@ from proper_research.vision.bounds_beam import (
 )
 
 mag_params = default_magnet_params()
-
+beam_params = default_beam_params()
 
 # ============================================================
 # Config
@@ -63,7 +62,6 @@ class SweepEvalConfig:
     i_fixed: int = 0
     j_start: int = 0
     j_end: int = 70
-
     image_filename: str = "focused_image.jpg"
     reference_image_filename: str = "focused_image_straight.jpg"
     use_reference_frame: bool = True
@@ -272,41 +270,99 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    L_model, wire_len_model, tip_len_model = effective_lengths(L0)
+    print(
+        f"[INIT] L_ins={L0:.3f} -> "
+        f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
+    )
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+    # tip = rod_section_stiffness(
+    #     r=2e-3,
+    #     E=3e6,
+    #     nu=0.49,
+    # )
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+    EA_wire = wire["EA"]
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
+
+    EA_tip = tip["EA"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
+
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
     if lumen == False:
-        lumen_C, lumen_R = build_dummy_straight_lumen_from_pivot(
-            pivot_pose6=pivot_pose6,
-            length_m=0.16,
-            radius_m=0.05,   # huge radius -> essentially unconstrained
-            n_pts=160,
-        )
-    else:
         lumen_C, lumen_R =  build_initial_lumen_from_vision(
             pivot_point = pivot_pose6,
             image_filename="focused_image.jpg",
-            red_roi_path="red_roi_box.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
             show=False,
         )
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0], dtype=float)
+        print(f"LUMEN FALSE")
+        
 
-    forward_model = EnergyMinForwardWithLumen(
+        forward_model = EnergyMinForwardWithLumen(
+            p0_ur=p0_ur,
+            q0_ur=q0_ur,
+            Kinv_fun=Kinv_fun,
+            u_star=np.zeros(3),
+            m_body=m_body,
+            lumen_C=np.asarray(lumen_C, float),
+            lumen_R=np.asarray(lumen_R, float),
+            N_nodes=50,
+            maxiter=1e7,
+            L0_init=0.01,
+            dL_internal=0.002,
+            use_lumen_jac=False,
+            L_tip_full=tip_len_model,
+            L_tip_min=0.01,
+        )
+    else:
+        lumen_C, lumen_R =  build_initial_lumen_from_vision(
+            pivot_point = pivot_pose6,
+            image_filename="focused_image.jpg",
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path="green_roi_box.json",
+            pivot_hint=pivot_hint,
+            show=False,
+        )
+        forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
-        Kinv_fun=Kbt_inv_profile,
+        Kinv_fun=Kinv_fun,
         u_star=np.zeros(3),
         m_body=m_body,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
-        N_nodes=10,
-        maxiter=70,
+        N_nodes=7,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.004,
         L_tip_full=0.04,
         L_tip_min=0.01,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
     )
+
+
+
 
     return DeterministicForward6D(forward_model)
 def robot_points_to_base_local(points_robot_m, pivot_pose6, beam_base_point_robot_m):
@@ -459,7 +515,8 @@ def measure_tip_from_vision_base_local(
 # ============================================================
 
 def move_robot_to_get_point(hw: LiveHardwareController, i_idx: int, j_idx: int, L0: float) -> np.ndarray:
-    pose6 = np.asarray(get_point(i_idx, j_idx), dtype=float).reshape(6,)
+    
+    pose6 = np.asarray(get_point(i_idx, j_idx,base_point, pivot_point), dtype=float).reshape(6,)
     pose6[2] = -0.1
 
     T = ur_pose6_to_T(pose6)
@@ -567,12 +624,12 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
             red_roi_path="red_roi_box.json",
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
-            pivot_hint = (318.200927734375, 369.6798095703125), lumen = True
+            pivot_hint = (318.200927734375, 369.6798095703125), lumen = False
     )
 
     results = []
 
-    for j_idx in range(cfg.j_start, cfg.j_end - 1, -5):
+    for j_idx in range(cfg.j_start, cfg.j_end - 1, 5):
         print("\n====================================")
         print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
         print("====================================")
@@ -580,7 +637,7 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
         # ------------------------------------------------------------
         # Command + move
         # ------------------------------------------------------------
-        cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx), dtype=float).reshape(6,)
+        cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx, base_point, pivot_point), dtype=float).reshape(6,)
         cmd_pose6[2] = -0.1
 
         act_pose6 = move_robot_to_get_point(hw, cfg.i_fixed, j_idx, cfg.L_m)
@@ -819,29 +876,34 @@ if __name__ == "__main__":
         v=0.10,
         a=0.30,
     )
+    L0 = 0.018
 
     pivot_point = np.array([
-    0.7981328220229531, -0.7112731669220016, 0.16,  np.pi, 0.001,0.001
+    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
-
+    base_point = np.array([
+        pivot_point[0] - (L0 + 0.14),
+        pivot_point[1],
+        -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
     beam_base_point_robot_m = pivot_point[:3].copy()
-    L0 = 0.02
-
+ 
     cfg = SweepEvalConfig(
         pivot_pose6=pivot_point,
         beam_base_point_robot_m=beam_base_point_robot_m,
         L_m=L0,
         i_fixed=0,
         j_start=0,
-        j_end=-85,
+        j_end=90,
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=20.0,
+        known_green_distance_mm=19.0,
         pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_stiff_tip_new2",
+        results_dir="results_sweep_beam_theory_anticlockwise",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

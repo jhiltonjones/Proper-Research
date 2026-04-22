@@ -774,7 +774,7 @@ class mpc_controller_tipxy_LTI:
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.25
+        self.mag_center_standoff_m = 0.18
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1513,7 +1513,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.025))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.014))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2645,7 +2645,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.25),
+        pivot_point[0] - (L0 + 0.18),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2819,7 +2819,7 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log_test_opti_mid_low_25_mag_opti.csv",
+    csv_log_path="control_run_log_test_opti_mid_low_18_mag_opti.csv",
 ):
     history = []
     csv_rows = []
@@ -2837,7 +2837,7 @@ def run_control(
             blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_opti_mid_low_25_mag_opti/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_opti_mid_low_18_mag_opti/reconstruction_overlay_step_{k:04d}.png",
         )
 
         vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
@@ -3293,7 +3293,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_opti_mid_low_25_mag_opti",
+            plot_dir="mpc_debug_plots_opti_mid_low_18_mag_opti",
         )
     finally:
         hw.shutdown()

@@ -246,6 +246,60 @@ def compute_tip_wall_distances_with_radius(
         "closest_wall": closest_wall,
         "closest_distance": float(closest_distance),
     }
+def beam_polyline_from_markers(markers, n_samples_per_segment=40):
+    """
+    Build a piecewise-linear beam centerline through the ordered markers.
+
+    Order:
+      base_px -> mag_start_px -> tangent_start_px -> tip_px
+
+    If mag_start_px is missing, it is skipped.
+
+    Returns
+    -------
+    beam_points_px : list of (x, y)
+        Densely sampled polyline for plotting.
+    ordered_pts : list of np.ndarray shape (2,)
+        The actual marker points used.
+    """
+    ordered_keys = ["base_px", "mag_start_px", "tangent_start_px", "tip_px"]
+
+    ordered_pts = []
+    for key in ordered_keys:
+        p = markers.get(key, None)
+        if p is None:
+            continue
+        ordered_pts.append(np.asarray(p, dtype=float).reshape(2,))
+
+    if len(ordered_pts) < 2:
+        raise ValueError(f"Need at least 2 valid markers, got {len(ordered_pts)}")
+
+    beam_points_px = []
+
+    for i in range(len(ordered_pts) - 1):
+        p0 = ordered_pts[i]
+        p1 = ordered_pts[i + 1]
+
+        ts = np.linspace(0.0, 1.0, n_samples_per_segment, endpoint=False)
+        for t in ts:
+            p = (1.0 - t) * p0 + t * p1
+            beam_points_px.append((float(p[0]), float(p[1])))
+
+    # append final endpoint once
+    beam_points_px.append((float(ordered_pts[-1][0]), float(ordered_pts[-1][1])))
+
+    return beam_points_px, ordered_pts
+def compute_beam_length_from_ordered_pts(ordered_pts):
+    ordered_pts = [np.asarray(p, dtype=float).reshape(2,) for p in ordered_pts]
+
+    if len(ordered_pts) < 2:
+        raise ValueError(f"Need at least 2 points, got {len(ordered_pts)}")
+
+    length_px = 0.0
+    for i in range(len(ordered_pts) - 1):
+        length_px += np.linalg.norm(ordered_pts[i + 1] - ordered_pts[i])
+
+    return float(length_px)
 def fit_beam_centerline_from_markers(markers, y_samples=None):
     """
     Fit beam centerline as x(y) from available ordered markers.
@@ -321,21 +375,21 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # # draw vessel boundaries
-    # for x, y in left_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # draw vessel boundaries
+    for x, y in left_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    # for x, y in right_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # # if red_area is not None:
-    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    for x, y in right_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # if red_area is not None:
+    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    # if blue_area is not None:
-    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # # draw beam centerline
-    # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
-    # for i in range(len(beam_int) - 1):
-    #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
+    if blue_area is not None:
+        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # draw beam centerline
+    beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
+    for i in range(len(beam_int) - 1):
+        cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
     if markers is not None:
@@ -367,28 +421,28 @@ def draw_beam_and_vessel_overlay(
             )
 
     # draw closest wall tangent near the tip
-    # if tip_wall_angle_info is not None:
-    #     p_minus = tip_wall_angle_info["left_wall_tangent_points"]["p_minus"]
-    #     p_plus = tip_wall_angle_info["left_wall_tangent_points"]["p_plus"]
+    if tip_wall_angle_info is not None:
+        p_minus = tip_wall_angle_info["right_wall_tangent_points"]["p_minus"]
+        p_plus = tip_wall_angle_info["right_wall_tangent_points"]["p_plus"]
 
-    #     p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
-    #     p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
+        p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
+        p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
 
-    #     cv2.line(vis, p1, p2, (180, 105, 255), 3)
+        cv2.line(vis, p1, p2, (180, 105, 255), 3)
 
-    #     txt_angle = (
-    #         f"Beam-wall tangent angle = "
-    #         f"{tip_wall_angle_info['beam_left_wall_tangent_angle_deg']:.2f} deg"
-    #     )
+        txt_angle = (
+            f"Beam-wall tangent angle = "
+            f"{tip_wall_angle_info['beam_right_wall_tangent_angle_deg']:.2f} deg"
+        )
 
-    #     cv2.putText(
-    #         vis, txt_angle, (20, 125),
-    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-    #     )
-    #     cv2.putText(
-    #         vis, txt_angle, (20, 125),
-    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-    #     )
+        cv2.putText(
+            vis, txt_angle, (20, 125),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+        )
+        cv2.putText(
+            vis, txt_angle, (20, 125),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+        )
 
     # save raw overlay image if requested
     if save_path is not None:
@@ -836,6 +890,7 @@ def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_
         "closest_wall": closest_wall,
         "closest_distance": float(closest_distance),
     }
+
 def load_calibration_points(path="calibration_points.json"):
     with open(path, "r") as f:
         data = json.load(f)
@@ -947,9 +1002,12 @@ def reconstruct_beam_within_vessel(
     print("  ex_ref =", ex_ref)
     print("  ey_ref =", ey_ref)
         # --- beam reconstruction ---
-    beam_points_px, beam_coeffs, beam_degree = fit_beam_centerline_from_markers(markers)
-    beam_length_px = compute_beam_length_px(beam_points_px)
+    beam_points_px, ordered_pts = beam_polyline_from_markers(markers, n_samples_per_segment=40)
+    beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
     beam_length_mm = beam_length_px * mm_per_pixel
+
+    beam_coeffs = None
+    beam_degree = None
 
     comparison = compare_beam_to_vessel(
         beam_points_px=beam_points_px,

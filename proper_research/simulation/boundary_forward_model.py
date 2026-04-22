@@ -354,6 +354,9 @@ class DeterministicForward6D:
 import copy
 import numpy as np
 
+import copy
+import numpy as np
+
 class WarmForwardP8TipTangent:
     def __init__(self, fwd_model):
         self.fwd = fwd_model
@@ -361,13 +364,35 @@ class WarmForwardP8TipTangent:
         self.last_p_centerline = None
         self.last_tip = None
 
+    def reset_cache(self):
+        self.last_info = None
+        self.last_p_centerline = None
+        self.last_tip = None
+
+        if hasattr(self.fwd, "_last"):
+            self.fwd._last = dict(
+                p=None,
+                L=None,
+                u_init=None,
+                tip=None,
+                p_centerline=None,
+                info=None,
+                hist=None,
+            )
+        for name in ["last_info", "last_p_centerline", "last_tip", "last_hist"]:
+            if hasattr(self.fwd, name):
+                setattr(self.fwd, name, None)
+
+    def clone(self):
+        return WarmForwardP8TipTangent(copy.deepcopy(self.fwd))
+
     def _snapshot(self):
         snap = {
             "wrapper_last_info": copy.deepcopy(self.last_info),
             "wrapper_last_p_centerline": copy.deepcopy(self.last_p_centerline),
             "wrapper_last_tip": copy.deepcopy(self.last_tip),
         }
-        for name in ["last_info", "last_p_centerline", "last_tip", "_last"]:
+        for name in ["last_info", "last_p_centerline", "last_tip", "last_hist", "_last"]:
             if hasattr(self.fwd, name):
                 snap[name] = copy.deepcopy(getattr(self.fwd, name))
         return snap
@@ -388,28 +413,28 @@ class WarmForwardP8TipTangent:
         if commit:
             tip = np.asarray(self.fwd(p7), float).reshape(3,)
             pcl = getattr(self.fwd, "last_p_centerline", None)
+            info_eval = copy.deepcopy(getattr(self.fwd, "last_info", None))
 
-            self.last_info = copy.deepcopy(getattr(self.fwd, "last_info", None))
+            self.last_info = info_eval
             self.last_tip = tip.copy()
             self.last_p_centerline = None if pcl is None else copy.deepcopy(np.asarray(pcl, float))
 
         else:
             snap = self._snapshot()
+            tip = None
+            pcl = None
+            info_eval = None
             try:
                 tip = np.asarray(self.fwd(p7), float).reshape(3,)
                 pcl = getattr(self.fwd, "last_p_centerline", None)
-
-                self.last_info = copy.deepcopy(getattr(self.fwd, "last_info", None))
-                self.last_tip = tip.copy()
-                self.last_p_centerline = None if pcl is None else copy.deepcopy(np.asarray(pcl, float))
+                info_eval = copy.deepcopy(getattr(self.fwd, "last_info", None))
             finally:
                 self._restore(snap)
 
-                # expose the evaluated result on the wrapper, even though
-                # the inner model has been restored
-                self.last_tip = tip.copy()
-                self.last_info = copy.deepcopy(getattr(self.fwd, "last_info", snap.get("wrapper_last_info", None)))
-                self.last_p_centerline = None if pcl is None else copy.deepcopy(np.asarray(pcl, float))
+            # expose evaluated result on wrapper only; inner model remains restored
+            self.last_tip = None if tip is None else tip.copy()
+            self.last_info = info_eval
+            self.last_p_centerline = None if pcl is None else copy.deepcopy(np.asarray(pcl, float))
 
         if self.last_p_centerline is None:
             raise RuntimeError("Tip tangent unavailable")

@@ -34,7 +34,7 @@ Files:
 """
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 import copy
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import effective_lengths,EnergyMinForwardWithLumen,DeterministicForward6D ,WarmForwardP8TipTangent
 import time
 import json
 import os
@@ -51,10 +51,6 @@ from beam_direction_magnetisation.cosserat_6d_pose import ur_pose6_to_T
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
 from proper_research.robot.transformations import get_point
 
-from proper_research.simulation.boundary_forward_model import (
-    EnergyMinForwardWithLumen,
-    DeterministicForward6D
-)
 from proper_research.control.lab_ready_mpc import integrate_pose8_body
 from proper_research.vision.measure_length import new_capture
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, get_saved_2_point_calibration
@@ -258,30 +254,30 @@ def build_initial_lumen_from_vision(
     vision_result["lumen_R_robot_m"] = lumen_R_robot_m
 
     return lumen_C_robot_m, lumen_R_robot_m
-def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
-    """
-    L_ins      : commanded insertion (what MPC tracks)
-    L_tip_full : physical magnetic tip length (4 cm)
-    L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
+# def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
+#     """
+#     L_ins      : commanded insertion (what MPC tracks)
+#     L_tip_full : physical magnetic tip length (4 cm)
+#     L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
 
-    Returns (L_model, wire_len, tip_len)
-    """
-    L_ins = float(L_ins)
+#     Returns (L_model, wire_len, tip_len)
+#     """
+#     L_ins = float(L_ins)
 
-    # Magnetised tip inside grows with insertion until full tip is inside
-    tip_len = min(L_ins, L_tip_full)
+#     # Magnetised tip inside grows with insertion until full tip is inside
+#     tip_len = min(L_ins, L_tip_full)
 
-    # Wire is everything beyond the physical tip length
-    wire_len = max(L_ins - L_tip_full, 0.0)
+#     # Wire is everything beyond the physical tip length
+#     wire_len = max(L_ins - L_tip_full, 0.0)
 
-    # Total model length is the inserted length, but don't go below minimum model length
-    L_model = max(L_ins, L_tip_min)
+#     # Total model length is the inserted length, but don't go below minimum model length
+#     L_model = max(L_ins, L_tip_min)
 
-    # If we are below L_tip_min, we still model a minimum rod,
-    # but magnetisation should NOT exceed what's actually inserted:
-    tip_len = min(tip_len, L_model)
+#     # If we are below L_tip_min, we still model a minimum rod,
+#     # but magnetisation should NOT exceed what's actually inserted:
+#     tip_len = min(tip_len, L_model)
 
-    return L_model, wire_len, tip_len
+#     return L_model, wire_len, tip_len
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
         s = np.asarray(s, float)
@@ -436,16 +432,16 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=50,
+        N_nodes=5,
         maxiter=1e7,
         L0_init=0.01,
-        dL_internal=0.002,
-        use_lumen_jac=False,
+        dL_internal=0.005,
+        use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
 
-    return DeterministicForward6D(forward_model)
+    return WarmForwardP8TipTangent(forward_model)
 
 
 def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
@@ -772,7 +768,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         blue_roi_path="blue_roi_box.json",
         green_roi_path=cfg.green_roi_path,
         pivot_hint=cfg.pivot_hint,
-        lumen=False,
+        lumen=True,
         base_px_ref=ref_frame["base_px_ref"] if ref_frame is not None else None,
         ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
         ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
@@ -1025,7 +1021,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         blue_roi_path="blue_roi_box.json",
         green_roi_path=cfg.green_roi_path,
         pivot_hint=cfg.pivot_hint,
-        lumen=False,
+        lumen=True,
     )
     print(f"[TIME] build with-lumen model: {(time.perf_counter()-t):.2f} s")
 
@@ -1067,7 +1063,7 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.04
+    L0 = 0.035
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1079,7 +1075,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
         np.pi, 0.001, 0.001
     ], float)
 
-    # start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    # start_point = np.asarray(get_point(0, 90, base_point, pivot_point), dtype=float)
     # start_point[2] = -0.1
 
     # pose6=start_point
@@ -1100,14 +1096,14 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # print("z_offset:", hw.z_offset)
     # print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.01)
+    # hw.send_step(p_now=p_now, u0=u0, dt=0.01)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    robot_pose6 = hw.get_robot_pose_once()
+    # robot_pose6 = hw.get_robot_pose_once()
     # robot_pose6[2] = -0.1
     # # # pose6[2] = -0.1
-    start_point = robot_pose6
+    start_point = pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt =0.01

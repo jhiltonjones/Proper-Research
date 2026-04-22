@@ -7,7 +7,7 @@ from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from beam_direction_magnetisation.post_processing.post_processing import quat_wxyz_to_R
 from scipy.spatial.transform import Rotation as Rot
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
@@ -757,7 +757,7 @@ class mpc_controller_tipxy_LTI:
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
         self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
-        # self.w_adv = 1
+        # self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -774,7 +774,7 @@ class mpc_controller_tipxy_LTI:
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.2
+        self.mag_center_standoff_m = 0.25
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1187,7 +1187,7 @@ class mpc_controller_tipxy_LTI:
                 X_aff = (Mx @ xk).reshape(Np * n, 1)
 
             i0 = int(getattr(self, "i_ref_last", 0))
-            look = int(getattr(self, "ref_lookahead_pts", 14))
+            look = int(getattr(self, "ref_lookahead_pts", 8))
             idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
             print(f"REFERENCE {idx_ref}")
 
@@ -1513,7 +1513,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.09))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.025))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2111,6 +2111,7 @@ class mpc_controller_tipxy_LTI:
             x_now=self.x.copy(),
             d=self.d.copy(),
             X_pred=X_pred.copy(),
+            X_nom = X_nom.copy(),
             U_seq=U_seq.copy(),
             N_sqp=int(self.N_sqp),
             p_prev=p_prev.copy(),
@@ -2638,13 +2639,13 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     
-    L0 = 0.018
+    L0 = 0.0165
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.14),
+        pivot_point[0] - (L0 + 0.25),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2658,7 +2659,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # pose6 = np.array([0.6464871989117105, -0.5659848620070453, 0.18000000000000002, 2.822035029384029, -1.334168531318762, -0.06004322067724725], float)
     # pose6[2] = -0.1
     # pose6[0] = 0.3
-    print(f"POSE6 is {pose6}")
+    # print(f"POSE6 is {pose6}")
     T = ur_pose6_to_T(pose6)
     p, q_wxyz = T_to_p_quat_wxyz(T)
 
@@ -2668,10 +2669,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    robot_pose6 = hw.get_robot_pose_once()
-    robot_pose6[2] = -0.1
+    # robot_pose6 = hw.get_robot_pose_once()
+    # robot_pose6[2] = -0.1
 
-    start_point = robot_pose6
+    # start_point = pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt = 0.01
@@ -2714,30 +2715,28 @@ def build_controller(
     ], dtype=float)
 
 
-    forward6d = WarmForwardP8TipTangent(forward_model)
-
-
+    forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
     def J_fn(p8):
+        forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
         Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
             p8,
-            forward6d,
+            forward6d_jac,
             dx=1e-2,
             dy=1e-2,
             dyaw=3e-1,
             dL=1e-3,
-            n_out=6,   # [tip_x, tip_y, tip_z, tx, ty]
+            n_out=6,
         )
         Jred_control = Jred_state.copy()
-        Jred_control[:,0]*= dt
-        Jred_control[:,1]*= dt
-        Jred_control[:,2]*= dt
-        Jred_control[:,3]*= dt
-        Jfull = J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
-        return Jfull
+        Jred_control[:, 0] *= dt
+        Jred_control[:, 1] *= dt
+        Jred_control[:, 2] *= dt
+        Jred_control[:, 3] *= dt
+        return J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
-        forward_tip_fn=forward6d,
+        forward_tip_fn=forward6d_pred,
         dt=dt,
         Np=1,
         n_out=6,
@@ -2770,7 +2769,7 @@ def build_controller(
     mpc.lumen_R = np.asarray(lumen_R, float)
     mpc.set_initial_params(p0)
     print(f"Finished building controller")
-    return mpc, p0, p_min, p_max, u_max, forward6d
+    return mpc, p0, p_min, p_max, u_max, forward6d_pred
 
 def transform_local_points_to_robot(
     points_local_m,
@@ -2820,7 +2819,7 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log_test2.csv",
+    csv_log_path="control_run_log_test_opti_mid_low_25_mag_opti.csv",
 ):
     history = []
     csv_rows = []
@@ -2838,7 +2837,7 @@ def run_control(
             blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path="debug_outputs/reconstruction_overlay.png",
+            save_overlay_path=f"debug_outputs_opti_mid_low_25_mag_opti/reconstruction_overlay_step_{k:04d}.png",
         )
 
         vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
@@ -2848,7 +2847,11 @@ def run_control(
 
         mpc.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
         mpc.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
+        forward_pred = mpc.forward_tip_fn   # or whatever object holds the wrapper
 
+        forward_pred.fwd.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
+        forward_pred.fwd.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
+        forward_pred.reset_cache()
         print("[VISION] lumen first point robot =", mpc.lumen_C[0])
         print("[VISION] lumen last point robot  =", mpc.lumen_C[-1])
         print("[VISION] lumen radius min/max [mm] =",
@@ -2990,11 +2993,18 @@ def run_control(
 
         # use actual predicted tip, not x_now
         X_pred = np.asarray(info["X_pred"], dtype=float)
+        X_nom = np.asarray(info["X_nom"], dtype=float).reshape(-1)
+
         pred_tip = np.asarray(X_pred[0, :3], dtype=float)
+        nom_tip = np.asarray(X_nom[:3], dtype=float)
 
         meas_tip = np.asarray(x_meas[:3], dtype=float)
+
         err_xyz = meas_tip - pred_tip
         err_xy = np.linalg.norm(err_xyz[:2])
+
+        err_nom_xyz = meas_tip - nom_tip
+        err_nom_xy = np.linalg.norm(err_nom_xyz[:2])
 
         row = {
             "step": int(k),
@@ -3012,6 +3022,10 @@ def run_control(
             "meas_z": float(meas_tip[2]),
 
             "err_xy": float(err_xy),
+            "nom_x": float(nom_tip[0]),
+            "nom_y": float(nom_tip[1]),
+            "nom_z": float(nom_tip[2]),
+            "err_nom_xy": float(err_nom_xy),
 
             "i_ref": int(mpc.i_ref_last),
 
@@ -3055,6 +3069,30 @@ def run_control(
 
     print(f"[SAVE] CSV log saved to {csv_log_path}")
     return history
+def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
+    """
+    L_ins      : commanded insertion (what MPC tracks)
+    L_tip_full : physical magnetic tip length (4 cm)
+    L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
+
+    Returns (L_model, wire_len, tip_len)
+    """
+    L_ins = float(L_ins)
+
+    # Magnetised tip inside grows with insertion until full tip is inside
+    tip_len = min(L_ins, L_tip_full)
+
+    # Wire is everything beyond the physical tip length
+    wire_len = max(L_ins - L_tip_full, 0.0)
+
+    # Total model length is the inserted length, but don't go below minimum model length
+    L_model = max(L_ins, L_tip_min)
+
+    # If we are below L_tip_min, we still model a minimum rod,
+    # but magnetisation should NOT exceed what's actually inserted:
+    tip_len = min(tip_len, L_model)
+
+    return L_model, wire_len, tip_len
 def build_initial_lumen_from_vision(
     pivot_point,
     image_filename="focused_image.jpg",
@@ -3091,35 +3129,38 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
-    L_model, wire_len_model, tip_len_model = effective_lengths(L0)
+    L_tip_full_physical = 0.04
+    L_tip_min_physical = 0.01
+
+    L_model, wire_len_model, tip_len_model = effective_lengths(
+        L0,
+        L_tip_full=L_tip_full_physical,
+        L_tip_min=L_tip_min_physical,
+    )
     print(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
 
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+
     wire = rod_section_stiffness(
         r=200e-6,
         E=50e6,
         nu=0.4,
     )
-    # tip = rod_section_stiffness(
-    #     r=2e-3,
-    #     E=3e6,
-    #     nu=0.49,
-    # )
+
     tip = rod_section_stiffness(
         r=beam_params.r,
         E=beam_params.E,
         nu=0.49,
     )
-    EA_wire = wire["EA"]
+
     EI_wire = wire["EI"]
     GJ_wire = wire["GJ"]
-
-    EA_tip = tip["EA"]
     EI_tip = tip["EI"]
     GJ_tip = tip["GJ"]
+
     Kinv_fun = make_Kbt_inv_profile(
         EI_wire=EI_wire,
         EI_tip=EI_tip,
@@ -3128,6 +3169,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         bend_soft=1.0,
         tors_soft=1.0,
     )
+
     forward_model = EnergyMinForwardWithLumen(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
@@ -3136,15 +3178,16 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
-        maxiter=30,
+        N_nodes=10,
+        maxiter=1e7,
         L0_init=0.01,
-        dL_internal=0.005,
+        dL_internal=0.002,
         use_lumen_jac=True,
-        L_tip_full=tip_len_model,
-        L_tip_min=0.01,
+        L_tip_full=L_tip_full_physical,
+        L_tip_min=L_tip_min_physical,
     )
-    print(f"Finished_building_model")
+
+    print("Finished_building_model")
     return p0_ur, q0_ur, forward_model
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
@@ -3250,7 +3293,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_18",
+            plot_dir="mpc_debug_plots_opti_mid_low_25_mag_opti",
         )
     finally:
         hw.shutdown()

@@ -403,16 +403,16 @@ def csv_writer(tip_pos, angle, tip_angle, log_csv_path):
 beam_params = default_beam_params()
 mag_params = default_magnet_params()
 
-L_cmd = 0.018
-N_nodes = 10
+N_nodes = 40
 USE_LUMEN = False
 
+L_cmd = 0.04
 pivot_point = np.array([
-    0.7981328220229531, -0.7112731669220016, -0.1,
-    np.pi, 0.001, 0.001
+0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
 ], float)
+
 base_point = np.array([
-    pivot_point[0] - (L_cmd + 0.13),
+    pivot_point[0] - (L_cmd + 0.14),
     pivot_point[1],
     -0.1,
     np.pi, 0.001, 0.001
@@ -423,7 +423,7 @@ base_point = np.array([
 #     -0.1,
 #     3.041,0.782,0.002
 # ], float)
-for i in range(-60,-65,-5):
+for i in range(20,25,5):
     start_point = np.asarray(get_point(0, i, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)

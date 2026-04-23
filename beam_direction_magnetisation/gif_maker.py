@@ -3,7 +3,7 @@ import re
 import imageio.v2 as imageio
 
 
-INPUT_DIR = Path("/home/jack/Proper-Research/debug_outputs_opti_mid_3step")
+INPUT_DIR = Path("/home/jack/Proper-Research/debug_outputs_opti_mid_nobc")
 OUTPUT_GIF = INPUT_DIR / "reconstruction_overlay.gif"
 
 # seconds per frame

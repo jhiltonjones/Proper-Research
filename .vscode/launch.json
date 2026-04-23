@@ -130,6 +130,14 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "beam results compare",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.beam_mpc_compare",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run mpc with xy",
             "type": "debugpy",
             "request": "launch",
@@ -158,7 +166,7 @@
             "name": "Run mpc w boundary",
             "type": "debugpy",
             "request": "launch",
-            "module": "proper_research.control.mpc_boundary",
+            "module": "proper_research.control.no_path_plan_mpc",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
@@ -191,6 +199,14 @@
             "type": "debugpy",
             "request": "launch",
             "module": "beam_direction_magnetisation.cosserat_w_minimal_energy",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run ana jac",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.ana_jaccobian",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

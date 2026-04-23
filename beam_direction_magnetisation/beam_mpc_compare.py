@@ -31,8 +31,8 @@ BEAM_BASE_POINT_ROBOT_M = np.array([
 # =========================
 # Configuration
 # =========================
-ONE_STEP_FILE = "/Users/jackhilton-jones/Proper-Research/control_run_log_test_opti_mid_3step.csv"
-THREE_STEP_FILE = "/Users/jackhilton-jones/Proper-Research/control_run_log_test_opti_mid_nobc.csv"
+ONE_STEP_FILE = "/home/jack/Proper-Research/control_run_log_test_opti_mid_low_18_mag_opti.csv"
+THREE_STEP_FILE = "/home/jack/Proper-Research/control_run_log_test_opti_3step.csv"
 
 SAVE_FIGURES = False
 FIGURE_DIR = Path("mpc_comparison_figures")
@@ -147,7 +147,7 @@ def summarize(df: pd.DataFrame, label: str) -> pd.Series:
 def print_summary_table(one_df: pd.DataFrame, three_df: pd.DataFrame) -> None:
     summary = pd.DataFrame(
         [
-            summarize(one_df, "1-step MPC"),
+            summarize(one_df, "low field MPC"),
             summarize(three_df, "3-step MPC"),
         ]
     )
@@ -169,7 +169,7 @@ def save_fig(name: str):
 def plot_xy_trajectory(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(8, 6))
     plt.plot(one_df["nom_x"], one_df["nom_y"], label="Nominal path", linewidth=2)
-    plt.plot(one_df["meas_x"], one_df["meas_y"], "o-", markersize=3, label="Measured 1-step")
+    plt.plot(one_df["meas_x"], one_df["meas_y"], "o-", markersize=3, label="Measured low field")
     plt.plot(three_df["meas_x"], three_df["meas_y"], "o-", markersize=3, label="Measured 3-step")
     plt.xlabel("X")
     plt.ylabel("Y")
@@ -181,9 +181,9 @@ def plot_xy_trajectory(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_tracking_error(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["err_nom_xy"], label="1-step reported nominal XY error")
+    plt.plot(one_df["step"], one_df["err_nom_xy"], label="low field reported nominal XY error")
     plt.plot(three_df["step"], three_df["err_nom_xy"], label="3-step reported nominal XY error")
-    plt.plot(one_df["step"], one_df["track_err_xy_calc"], "--", label="1-step calc measured-nominal XY")
+    plt.plot(one_df["step"], one_df["track_err_xy_calc"], "--", label="low field calc measured-nominal XY")
     plt.plot(three_df["step"], three_df["track_err_xy_calc"], "--", label="3-step calc measured-nominal XY")
     plt.xlabel("Step")
     plt.ylabel("Error")
@@ -195,7 +195,7 @@ def plot_tracking_error(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_prediction_error(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["pred_err_xy"], label="1-step prediction error XY")
+    plt.plot(one_df["step"], one_df["pred_err_xy"], label="low field prediction error XY")
     plt.plot(three_df["step"], three_df["pred_err_xy"], label="3-step prediction error XY")
     plt.xlabel("Step")
     plt.ylabel("Prediction error")
@@ -207,7 +207,7 @@ def plot_prediction_error(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_clearance(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["closest_distance_mm"], label="1-step closest distance")
+    plt.plot(one_df["step"], one_df["closest_distance_mm"], label="low field closest distance")
     plt.plot(three_df["step"], three_df["closest_distance_mm"], label="3-step closest distance")
     plt.axhline(3.0, linestyle="--", label="3 mm threshold")
     plt.axhline(2.0, linestyle="--", label="2 mm threshold")
@@ -221,7 +221,7 @@ def plot_clearance(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_wall_balance(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["clearance_balance_mm"], label="1-step left-right clearance balance")
+    plt.plot(one_df["step"], one_df["clearance_balance_mm"], label="low field left-right clearance balance")
     plt.plot(three_df["step"], three_df["clearance_balance_mm"], label="3-step left-right clearance balance")
     plt.axhline(0.0, linestyle="--")
     plt.xlabel("Step")
@@ -234,7 +234,7 @@ def plot_wall_balance(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_control_effort(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["i_ref"], label="1-step i_ref")
+    plt.plot(one_df["step"], one_df["i_ref"], label="low field i_ref")
     plt.plot(three_df["step"], three_df["i_ref"], label="3-step i_ref")
     plt.xlabel("Step")
     plt.ylabel("i_ref")
@@ -247,19 +247,19 @@ def plot_control_effort(one_df: pd.DataFrame, three_df: pd.DataFrame):
 def plot_magnet_commands(one_df: pd.DataFrame, three_df: pd.DataFrame):
     fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
 
-    axes[0].plot(one_df["step"], one_df["mag_x"], label="1-step")
+    axes[0].plot(one_df["step"], one_df["mag_x"], label="low field")
     axes[0].plot(three_df["step"], three_df["mag_x"], label="3-step")
     axes[0].set_ylabel("mag_x")
     axes[0].set_title("Magnet commands")
     axes[0].grid(True, alpha=0.3)
     axes[0].legend()
 
-    axes[1].plot(one_df["step"], one_df["mag_y"], label="1-step")
+    axes[1].plot(one_df["step"], one_df["mag_y"], label="low field")
     axes[1].plot(three_df["step"], three_df["mag_y"], label="3-step")
     axes[1].set_ylabel("mag_y")
     axes[1].grid(True, alpha=0.3)
 
-    axes[2].plot(one_df["step"], one_df["mag_z"], label="1-step")
+    axes[2].plot(one_df["step"], one_df["mag_z"], label="low field")
     axes[2].plot(three_df["step"], three_df["mag_z"], label="3-step")
     axes[2].set_ylabel("mag_z")
     axes[2].set_xlabel("Step")
@@ -271,8 +271,8 @@ def plot_magnet_commands(one_df: pd.DataFrame, three_df: pd.DataFrame):
 
 def plot_heading_angles(one_df: pd.DataFrame, three_df: pd.DataFrame):
     plt.figure(figsize=(10, 5))
-    plt.plot(one_df["step"], one_df["beam_left_wall_angle_deg"], label="1-step left-wall angle")
-    plt.plot(one_df["step"], one_df["beam_right_wall_angle_deg"], label="1-step right-wall angle")
+    plt.plot(one_df["step"], one_df["beam_left_wall_angle_deg"], label="low field left-wall angle")
+    plt.plot(one_df["step"], one_df["beam_right_wall_angle_deg"], label="low field right-wall angle")
     plt.plot(three_df["step"], three_df["beam_left_wall_angle_deg"], "--", label="3-step left-wall angle")
     plt.plot(three_df["step"], three_df["beam_right_wall_angle_deg"], "--", label="3-step right-wall angle")
     plt.xlabel("Step")
@@ -286,7 +286,7 @@ def plot_heading_angles(one_df: pd.DataFrame, three_df: pd.DataFrame):
 def plot_histograms(one_df: pd.DataFrame, three_df: pd.DataFrame):
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
-    axes[0].hist(one_df["err_nom_xy"], bins=12, alpha=0.7, label="1-step")
+    axes[0].hist(one_df["err_nom_xy"], bins=12, alpha=0.7, label="low field")
     axes[0].hist(three_df["err_nom_xy"], bins=12, alpha=0.7, label="3-step")
     axes[0].set_title("Distribution of nominal XY error")
     axes[0].set_xlabel("err_nom_xy")
@@ -294,7 +294,7 @@ def plot_histograms(one_df: pd.DataFrame, three_df: pd.DataFrame):
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    axes[1].hist(one_df["closest_distance_mm"], bins=12, alpha=0.7, label="1-step")
+    axes[1].hist(one_df["closest_distance_mm"], bins=12, alpha=0.7, label="low field")
     axes[1].hist(three_df["closest_distance_mm"], bins=12, alpha=0.7, label="3-step")
     axes[1].set_title("Distribution of closest wall distance")
     axes[1].set_xlabel("closest_distance_mm")
@@ -329,24 +329,24 @@ def print_interpretation(one_df: pd.DataFrame, three_df: pd.DataFrame) -> None:
         print(f"- 3-step MPC has lower nominal XY tracking RMSE by about {pct:.1f}%.")
     else:
         pct = 100.0 * (three_rmse - one_rmse) / three_rmse
-        print(f"- 1-step MPC has lower nominal XY tracking RMSE by about {pct:.1f}%.")
+        print(f"- low field MPC has lower nominal XY tracking RMSE by about {pct:.1f}%.")
 
     if three_clear_min > one_clear_min:
         print("- 3-step MPC maintains a larger worst-case wall clearance.")
     else:
-        print("- 1-step MPC maintains a larger worst-case wall clearance.")
+        print("- low field MPC maintains a larger worst-case wall clearance.")
 
     if three_below_3 < one_below_3:
         print("- 3-step MPC spends fewer steps below the 3 mm safety margin.")
     elif three_below_3 > one_below_3:
-        print("- 1-step MPC spends fewer steps below the 3 mm safety margin.")
+        print("- low field MPC spends fewer steps below the 3 mm safety margin.")
     else:
         print("- Both controllers spend the same number of steps below the 3 mm safety margin.")
 
     if three_i < one_i:
         print("- 3-step MPC uses lower average control effort (mean i_ref).")
     else:
-        print("- 1-step MPC uses lower average control effort (mean i_ref).")
+        print("- low field MPC uses lower average control effort (mean i_ref).")
 
     print("- Check the XY trajectory plot first for path-following shape.")
     print("- Check the tracking error and prediction error plots for model/controller quality.")
@@ -454,6 +454,135 @@ def csv_robot_xy_to_base_local(csv_path, pivot_pose6, beam_base_point_robot_m,
 # =========================
 # Main
 # =========================
+# def main():
+#     one_df = load_csv(ONE_STEP_FILE)
+#     three_df = load_csv(THREE_STEP_FILE)
+
+#     one_df = add_derived_metrics(one_df)
+#     three_df = add_derived_metrics(three_df)
+
+#     print_summary_table(one_df, three_df)
+
+#     print_requested_averages(one_df, "1-step MPC")
+#     print_requested_averages(three_df, "3-step MPC")
+
+#     print_interpretation(one_df, three_df)
+
+#     # plot_xy_trajectory(one_df, three_df)
+#     # plot_tracking_error(one_df, three_df)
+#     # plot_prediction_error(one_df, three_df)
+#     # plot_clearance(one_df, three_df)
+#     # plot_wall_balance(one_df, three_df)
+#     # plot_control_effort(one_df, three_df)
+#     # plot_magnet_commands(one_df, three_df)
+#     # plot_heading_angles(one_df, three_df)
+#     # plot_histograms(one_df, three_df)
+#     pivot_hint = (300, 391)
+#     roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+def plot_two_csv_paths_with_lumen_base_local(
+    lumen_C_base_local_m,
+    lumen_R_m,
+    one_meas_base_local_m,
+    three_meas_base_local_m,
+    one_nom_base_local_m=None,
+    three_nom_base_local_m=None,
+    title="low field vs 3-step trajectories over reconstructed lumen",
+    step_labels=False,
+):
+    lumen = np.asarray(lumen_C_base_local_m, dtype=float)
+    one_meas = np.asarray(one_meas_base_local_m, dtype=float)
+    three_meas = np.asarray(three_meas_base_local_m, dtype=float)
+
+    plt.figure(figsize=(8, 8))
+
+    # lumen centerline
+    plt.plot(
+        1e3 * lumen[:, 0],
+        1e3 * lumen[:, 1],
+        "k-",
+        linewidth=2,
+        label="Lumen centerline",
+    )
+
+    # lumen walls
+    if lumen_R_m is not None and len(lumen_R_m) == len(lumen):
+        lumen_R_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
+
+        tangents = np.zeros_like(lumen)
+        tangents[1:-1] = lumen[2:] - lumen[:-2]
+        tangents[0] = lumen[1] - lumen[0]
+        tangents[-1] = lumen[-1] - lumen[-2]
+
+        normals = np.zeros_like(tangents)
+        for i, t in enumerate(tangents):
+            tx, ty = t[0], t[1]
+            n = np.array([-ty, tx, 0.0], dtype=float)
+            nn = np.linalg.norm(n[:2])
+            if nn > 1e-12:
+                normals[i] = n / nn
+
+        upper = lumen + normals * lumen_R_m[:, None]
+        lower = lumen - normals * lumen_R_m[:, None]
+
+        plt.plot(1e3 * upper[:, 0], 1e3 * upper[:, 1], "k--", alpha=0.5, label="Lumen wall")
+        plt.plot(1e3 * lower[:, 0], 1e3 * lower[:, 1], "k--", alpha=0.5)
+
+    # measured paths
+    plt.plot(
+        1e3 * one_meas[:, 0],
+        1e3 * one_meas[:, 1],
+        "ro-",
+        markersize=4,
+        linewidth=1.8,
+        label="low field measured",
+    )
+
+    plt.plot(
+        1e3 * three_meas[:, 0],
+        1e3 * three_meas[:, 1],
+        "bo-",
+        markersize=4,
+        linewidth=1.8,
+        label="3-step measured",
+    )
+
+    # optional nominal paths
+    # if one_nom_base_local_m is not None:
+    #     one_nom = np.asarray(one_nom_base_local_m, dtype=float)
+    #     plt.plot(
+    #         1e3 * one_nom[:, 0],
+    #         1e3 * one_nom[:, 1],
+    #         "r--",
+    #         linewidth=1.5,
+    #         alpha=0.9,
+    #         label="1-step nominal",
+    #     )
+
+    # if three_nom_base_local_m is not None:
+    #     three_nom = np.asarray(three_nom_base_local_m, dtype=float)
+    #     plt.plot(
+    #         1e3 * three_nom[:, 0],
+    #         1e3 * three_nom[:, 1],
+    #         "b--",
+    #         linewidth=1.5,
+    #         alpha=0.9,
+    #         label="3-step nominal",
+    #     )
+
+    if step_labels:
+        for i, p in enumerate(one_meas):
+            plt.text(1e3 * p[0], 1e3 * p[1], f"1:{i}", fontsize=7, color="red")
+        for i, p in enumerate(three_meas):
+            plt.text(1e3 * p[0], 1e3 * p[1], f"3:{i}", fontsize=7, color="blue")
+
+    plt.xlabel("Base-local x [mm]")
+    plt.ylabel("Base-local y [mm]")
+    plt.title(title)
+    plt.axis("equal")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 def main():
     one_df = load_csv(ONE_STEP_FILE)
     three_df = load_csv(THREE_STEP_FILE)
@@ -463,32 +592,7 @@ def main():
 
     print_summary_table(one_df, three_df)
 
-    print_requested_averages(one_df, "1-step MPC")
-    print_requested_averages(three_df, "3-step MPC")
-
-    print_interpretation(one_df, three_df)
-
-    # plot_xy_trajectory(one_df, three_df)
-    # plot_tracking_error(one_df, three_df)
-    # plot_prediction_error(one_df, three_df)
-    # plot_clearance(one_df, three_df)
-    # plot_wall_balance(one_df, three_df)
-    # plot_control_effort(one_df, three_df)
-    # plot_magnet_commands(one_df, three_df)
-    # plot_heading_angles(one_df, three_df)
-    # plot_histograms(one_df, three_df)
-    pivot_hint = (300, 391)
-    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
-def main():
-    one_df = load_csv(ONE_STEP_FILE)
-    three_df = load_csv(THREE_STEP_FILE)
-
-    one_df = add_derived_metrics(one_df)
-    three_df = add_derived_metrics(three_df)
-
-    print_summary_table(one_df, three_df)
-
-    print_requested_averages(one_df, "1-step MPC")
+    print_requested_averages(one_df, "low field MPC")
     print_requested_averages(three_df, "3-step MPC")
 
     print_interpretation(one_df, three_df)
@@ -512,8 +616,18 @@ def main():
         beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
     )
 
-    # Convert CSV measured trajectory into base-local frame
-    _, csv_meas_base_local_m = csv_robot_xy_to_base_local(
+    # 1-step measured
+    _, one_meas_base_local_m = csv_robot_xy_to_base_local(
+        csv_path=ONE_STEP_FILE,
+        pivot_pose6=PIVOT_POSE6,
+        beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
+        x_col="meas_x",
+        y_col="meas_y",
+        z_value=-0.1,
+    )
+
+    # 3-step measured
+    _, three_meas_base_local_m = csv_robot_xy_to_base_local(
         csv_path=THREE_STEP_FILE,
         pivot_pose6=PIVOT_POSE6,
         beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
@@ -522,8 +636,17 @@ def main():
         z_value=-0.1,
     )
 
-    # Convert nominal trajectory into base-local frame
-    _, csv_nom_base_local_m = csv_robot_xy_to_base_local(
+    # Optional nominal paths
+    _, one_nom_base_local_m = csv_robot_xy_to_base_local(
+        csv_path=ONE_STEP_FILE,
+        pivot_pose6=PIVOT_POSE6,
+        beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
+        x_col="nom_x",
+        y_col="nom_y",
+        z_value=-0.1,
+    )
+
+    _, three_nom_base_local_m = csv_robot_xy_to_base_local(
         csv_path=THREE_STEP_FILE,
         pivot_pose6=PIVOT_POSE6,
         beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
@@ -532,62 +655,17 @@ def main():
         z_value=-0.1,
     )
 
-    # Convert predicted trajectory into base-local frame
-    _, csv_pred_base_local_m = csv_robot_xy_to_base_local(
-        csv_path=THREE_STEP_FILE,
-        pivot_pose6=PIVOT_POSE6,
-        beam_base_point_robot_m=BEAM_BASE_POINT_ROBOT_M,
-        x_col="pred_x",
-        y_col="pred_y",
-        z_value=-0.1,
-    )
-
-    # Plot lumen + measured trajectory
-    plot_csv_trajectory_with_lumen_base_local(
-        csv_base_local_m=csv_meas_base_local_m,
+    # Plot both measured paths on the same lumen
+    plot_two_csv_paths_with_lumen_base_local(
         lumen_C_base_local_m=lumen_C_base_local_m,
         lumen_R_m=lumen_R_m,
-        title="Measured CSV trajectory over reconstructed lumen",
+        one_meas_base_local_m=one_meas_base_local_m,
+        three_meas_base_local_m=three_meas_base_local_m,
+        one_nom_base_local_m=one_nom_base_local_m,
+        three_nom_base_local_m=three_nom_base_local_m,
+        title="low field vs 3-step trajectories over reconstructed lumen",
+        step_labels=False,
     )
-
-    # Optional combined plot
-    plt.figure(figsize=(8, 8))
-    plt.plot(
-        1e3 * lumen_C_base_local_m[:, 0],
-        1e3 * lumen_C_base_local_m[:, 1],
-        "k-",
-        linewidth=2,
-        label="Lumen centerline",
-    )
-    plt.plot(
-        1e3 * csv_meas_base_local_m[:, 0],
-        1e3 * csv_meas_base_local_m[:, 1],
-        "ro-",
-        markersize=4,
-        label="Measured",
-    )
-    plt.plot(
-        1e3 * csv_nom_base_local_m[:, 0],
-        1e3 * csv_nom_base_local_m[:, 1],
-        "b--",
-        linewidth=2,
-        label="Nominal",
-    )
-    plt.plot(
-        1e3 * csv_pred_base_local_m[:, 0],
-        1e3 * csv_pred_base_local_m[:, 1],
-        "g-",
-        linewidth=1.5,
-        label="Predicted",
-    )
-    plt.xlabel("Base-local x [mm]")
-    plt.ylabel("Base-local y [mm]")
-    plt.title("Measured / nominal / predicted trajectory over lumen")
-    plt.axis("equal")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
 
 
 if __name__ == "__main__":

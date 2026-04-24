@@ -69,7 +69,7 @@ class SweepEvalConfig:
     red_roi_path: str = "red_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
 
-    known_green_distance_mm: float = 40.0
+    known_green_distance_mm: float = 15.0
     pivot_hint: Tuple[float, float] | None = None
 
     results_dir: str = "results_sweep_forward_validation"
@@ -327,7 +327,7 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
             m_body=m_body,
             lumen_C=np.asarray(lumen_C, float),
             lumen_R=np.asarray(lumen_R, float),
-            N_nodes=50,
+            N_nodes=5,
             maxiter=1e7,
             L0_init=0.01,
             dL_internal=0.002,
@@ -551,12 +551,12 @@ def save_results_csv(path: str, rows: List[Dict]) -> None:
             "j_idx": r["j_idx"],
             "L_m": r["L_m"],
 
-            "cmd_x": r["cmd_pose6"][0],
-            "cmd_y": r["cmd_pose6"][1],
-            "cmd_z": r["cmd_pose6"][2],
-            "cmd_rx": r["cmd_pose6"][3],
-            "cmd_ry": r["cmd_pose6"][4],
-            "cmd_rz": r["cmd_pose6"][5],
+            # "cmd_x": r["cmd_pose6"][0],
+            # "cmd_y": r["cmd_pose6"][1],
+            # "cmd_z": r["cmd_pose6"][2],
+            # "cmd_rx": r["cmd_pose6"][3],
+            # "cmd_ry": r["cmd_pose6"][4],
+            # "cmd_rz": r["cmd_pose6"][5],
 
             "act_x": r["act_pose6"][0],
             "act_y": r["act_pose6"][1],
@@ -600,6 +600,44 @@ def order_measured_curve_base_to_tip(curve_mm, meas_tip_mm):
         curve_mm = curve_mm[::-1].copy()
 
     return curve_mm
+def sweep_joint_5_relative(
+    hw,
+    delta_start_deg=0.0,
+    delta_end_deg=90.0,
+    step_deg=5.0,
+    settle_s=1.0,
+    out_json="joint5_sweep_results.json",
+):
+    q0 = hw.get_robot_joints_once()
+    if q0 is None:
+        raise RuntimeError("Could not read current joints.")
+
+    q5_start = q0[5]
+    results = []
+
+    deltas_deg = np.arange(delta_start_deg, delta_end_deg + 1e-9, step_deg)
+
+    for ddeg in deltas_deg:
+        q_cmd = q0.copy()
+        q_cmd[5] = q5_start + np.deg2rad(ddeg)
+
+        hw.send_joints(q_cmd, speed=0.3, accel=0.5)
+        time.sleep(settle_s)
+
+        q_act = hw.get_robot_joints_once()
+
+        results.append({
+            "joint5_delta_cmd_deg": float(ddeg),
+            "joint5_cmd_deg": float(np.degrees(q_cmd[5])),
+            "joint5_act_deg": float(np.degrees(q_act[5])),
+            "all_cmd_deg": np.degrees(q_cmd).tolist(),
+            "all_act_deg": np.degrees(q_act).tolist(),
+        })
+
+    with open(out_json, "w") as f:
+        json.dump(results, f, indent=2)
+
+    return results
 def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dict]:
     os.makedirs(cfg.results_dir, exist_ok=True)
 
@@ -628,8 +666,7 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
     )
 
     results = []
-
-    for j_idx in range(cfg.j_start, cfg.j_end - 1, 5):
+    for j_idx in range(cfg.j_start, cfg.j_end +1, 5):
         print("\n====================================")
         print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
         print("====================================")
@@ -637,11 +674,32 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
         # ------------------------------------------------------------
         # Command + move
         # ------------------------------------------------------------
-        cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx, base_point, pivot_point), dtype=float).reshape(6,)
-        cmd_pose6[2] = -0.1
+        q0 = np.array([-0.6708334128009241, -2.5134555302061976, -1.0908429622650146, -1.107914463882782, 1.573858618736267, 2.9142839908599854])
+        q_cmd = q0.copy()
+        q5_start = q0[5]
+        q_cmd[5] = q5_start + np.deg2rad(j_idx)
 
-        act_pose6 = move_robot_to_get_point(hw, cfg.i_fixed, j_idx, cfg.L_m)
+        hw.send_joints(q_cmd, speed=0.3, accel=0.5)
+        time.sleep(1.0)
 
+        q_act = hw.get_robot_joints_once()
+        act_pose6 = hw.get_robot_pose_once()
+
+        print("Commanded joint[5] [deg]:", float(np.degrees(q_cmd[5])))
+        print("Actual    joint[5] [deg]:", float(np.degrees(q_act[5])))
+    # for j_idx in range(cfg.j_start, cfg.j_end - 1, -5):
+    #     print("\n====================================")
+    #     print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
+    #     print("====================================")
+
+        # ------------------------------------------------------------
+        # Command + move
+        # ------------------------------------------------------------
+        # cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx, base_point, pivot_point), dtype=float).reshape(6,)
+        # cmd_pose6[2] = -0.1
+
+        # act_pose6 = move_robot_to_get_point(hw, cfg.i_fixed, j_idx, cfg.L_m)
+        
         if cfg.settle_time_s > 0:
             time.sleep(cfg.settle_time_s)
 
@@ -742,9 +800,9 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
             "j_idx": int(j_idx),
             "L_m": float(cfg.L_m),
 
-            "cmd_pose6": cmd_pose6.tolist(),
-            "act_pose6": act_pose6.tolist(),
-
+            # "cmd_pose6": cmd_pose6.tolist(),
+            # "act_pose6": act_pose6.tolist(),
+            "act_pose6": None if act_pose6 is None else np.asarray(act_pose6, dtype=float).tolist(),
             "pred_tip_robot_m": pred["tip_robot_m"].tolist(),
             "pred_tip_pivot_local_m": pred["tip_local_m"].tolist(),
             "pred_tip_base_local_m": pred_base_local_m.tolist(),
@@ -876,7 +934,7 @@ if __name__ == "__main__":
         v=0.10,
         a=0.30,
     )
-    L0 = 0.018
+    L0 = 0.015
 
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
@@ -895,19 +953,19 @@ if __name__ == "__main__":
         L_m=L0,
         i_fixed=0,
         j_start=0,
-        j_end=90,
+        j_end=180,
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=19.0,
-        pivot_hint=(318.200927734375, 369.6798095703125),
-        results_dir="results_sweep_beam_theory_anticlockwise",
+        known_green_distance_mm=15.0,
+        pivot_hint=(321.200927734375, 331.6798095703125),
+        results_dir="results_oblique_rotation_clock2",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,
-        settle_time_s=0.3,
+        settle_time_s=1,
     )
 
     evaluate_sweep(cfg, hw)

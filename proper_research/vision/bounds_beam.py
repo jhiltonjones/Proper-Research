@@ -420,29 +420,29 @@ def draw_beam_and_vessel_overlay(
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
             )
 
-    # draw closest wall tangent near the tip
-    if tip_wall_angle_info is not None:
-        p_minus = tip_wall_angle_info["right_wall_tangent_points"]["p_minus"]
-        p_plus = tip_wall_angle_info["right_wall_tangent_points"]["p_plus"]
+    # # draw closest wall tangent near the tip
+    # if tip_wall_angle_info is not None:
+    #     p_minus = tip_wall_angle_info["right_wall_tangent_points"]["p_minus"]
+    #     p_plus = tip_wall_angle_info["right_wall_tangent_points"]["p_plus"]
 
-        p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
-        p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
+    #     p1 = (int(round(p_minus[0])), int(round(p_minus[1])))
+    #     p2 = (int(round(p_plus[0])), int(round(p_plus[1])))
 
-        cv2.line(vis, p1, p2, (180, 105, 255), 3)
+    #     cv2.line(vis, p1, p2, (180, 105, 255), 3)
 
-        txt_angle = (
-            f"Beam-wall tangent angle = "
-            f"{tip_wall_angle_info['beam_right_wall_tangent_angle_deg']:.2f} deg"
-        )
+    #     txt_angle = (
+    #         f"Beam-wall tangent angle = "
+    #         f"{tip_wall_angle_info['beam_right_wall_tangent_angle_deg']:.2f} deg"
+    #     )
 
-        cv2.putText(
-            vis, txt_angle, (20, 125),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-        )
-        cv2.putText(
-            vis, txt_angle, (20, 125),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-        )
+    #     cv2.putText(
+    #         vis, txt_angle, (20, 125),
+    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+    #     )
+    #     cv2.putText(
+    #         vis, txt_angle, (20, 125),
+    #         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+    #     )
 
     # save raw overlay image if requested
     if save_path is not None:
@@ -939,7 +939,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=19.0)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=15.0)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -1299,7 +1299,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=19.0):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=15.0):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 

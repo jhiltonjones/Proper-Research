@@ -1067,19 +1067,19 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
-
     base_point = np.array([
         pivot_point[0] - (L0 + 0.14),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
+    beam_base_point_robot_m = pivot_point[:3].copy()
 
-    # start_point = np.asarray(get_point(0, 90, base_point, pivot_point), dtype=float)
-    # start_point[2] = -0.1
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    start_point[2] = -0.1
 
-    # pose6=start_point
-    pose6 = hw.get_robot_pose_once()
+    pose6=start_point
+    # pose6 = hw.get_robot_pose_once()
     # pose6 = np.asarray(get_point(0, 20), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
@@ -1517,7 +1517,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=19.00,
+        known_green_distance_mm=15.00,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

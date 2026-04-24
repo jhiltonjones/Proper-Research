@@ -187,7 +187,71 @@ class LiveHardwareController:
 
             # Small extra pause before issuing motion
             time.sleep(0.10)
+    def get_robot_joints_once(self):
+        if self.dry_run:
+            return None
+        self.open_robot()
+        try:
+            # If your wrapper uses a different name, change this line.
+            return np.asarray(self.robo.get_joints(), dtype=float)
+        finally:
+            self.close_robot()
 
+    def send_joints(self, joints_rad, speed=None, accel=None):
+        """
+        Send a joint target in radians using moveJ.
+
+        joints_rad: iterable of length 6
+        speed, accel: optional joint-space motion parameters
+        """
+        joints_rad = np.asarray(joints_rad, dtype=float).reshape(6,)
+
+        v = self.v if speed is None else float(speed)
+        a = self.a if accel is None else float(accel)
+
+        print("[LIVE JOINT CMD rad]", joints_rad.tolist())
+        print("[LIVE JOINT CMD deg]", np.degrees(joints_rad).tolist())
+
+        if self.dry_run:
+            return
+
+        try:
+            self.open_robot(warmup=True)
+
+            # If your wrapper uses different keywords, adapt here.
+            if self.use_moveL_params:
+                out = self.robo.moveJ(joints_rad.tolist(), speed=v, accel=a)
+            else:
+                out = self.robo.moveJ(joints_rad.tolist())
+
+            print("[DBG] after moveJ, return =", out)
+
+            if out is False:
+                print("[DBG] moveJ returned False, rebuilding RTDE once and retrying...")
+                self.close_robot()
+                time.sleep(0.25)
+
+                self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+                time.sleep(0.25)
+
+                _ = self.robo.get_pose()
+                time.sleep(0.10)
+
+                if self.use_moveL_params:
+                    out = self.robo.moveJ(joints_rad.tolist(), speed=v, accel=a)
+                else:
+                    out = self.robo.moveJ(joints_rad.tolist())
+
+                print("[DBG] retry moveJ return =", out)
+
+                if out is False:
+                    raise RuntimeError(f"URRtde.moveJ returned False for joints {joints_rad.tolist()}")
+
+        except Exception as e:
+            print("[DBG] moveJ exception:", repr(e))
+            raise
+        finally:
+            self.close_robot()
     def close_robot(self):
         if self.dry_run:
             return

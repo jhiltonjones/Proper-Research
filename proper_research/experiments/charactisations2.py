@@ -666,39 +666,39 @@ def evaluate_sweep(cfg: SweepEvalConfig, hw: LiveHardwareController) -> List[Dic
     )
 
     results = []
-    for j_idx in range(cfg.j_start, cfg.j_end +1, 5):
+    # for j_idx in range(cfg.j_start, cfg.j_end +1, 5):
+    #     print("\n====================================")
+    #     print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
+    #     print("====================================")
+
+    #     # ------------------------------------------------------------
+    #     # Command + move
+    #     # ------------------------------------------------------------
+    #     q0 = np.array([-0.6708334128009241, -2.5134555302061976, -1.0908429622650146, -1.107914463882782, 1.573858618736267, 2.9142839908599854])
+    #     q_cmd = q0.copy()
+    #     q5_start = q0[5]
+    #     q_cmd[5] = q5_start + np.deg2rad(j_idx)
+
+    #     hw.send_joints(q_cmd, speed=0.3, accel=0.5)
+    #     time.sleep(1.0)
+
+    #     q_act = hw.get_robot_joints_once()
+    #     act_pose6 = hw.get_robot_pose_once()
+
+    #     print("Commanded joint[5] [deg]:", float(np.degrees(q_cmd[5])))
+    #     print("Actual    joint[5] [deg]:", float(np.degrees(q_act[5])))
+    for j_idx in range(cfg.j_start, cfg.j_end - 1, -5):
         print("\n====================================")
         print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
         print("====================================")
 
         # ------------------------------------------------------------
-        # Command + move
+        # # Command + move
         # ------------------------------------------------------------
-        q0 = np.array([-0.6708334128009241, -2.5134555302061976, -1.0908429622650146, -1.107914463882782, 1.573858618736267, 2.9142839908599854])
-        q_cmd = q0.copy()
-        q5_start = q0[5]
-        q_cmd[5] = q5_start + np.deg2rad(j_idx)
+        cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx, base_point, pivot_point), dtype=float).reshape(6,)
+        cmd_pose6[2] = -0.1
 
-        hw.send_joints(q_cmd, speed=0.3, accel=0.5)
-        time.sleep(1.0)
-
-        q_act = hw.get_robot_joints_once()
-        act_pose6 = hw.get_robot_pose_once()
-
-        print("Commanded joint[5] [deg]:", float(np.degrees(q_cmd[5])))
-        print("Actual    joint[5] [deg]:", float(np.degrees(q_act[5])))
-    # for j_idx in range(cfg.j_start, cfg.j_end - 1, -5):
-    #     print("\n====================================")
-    #     print(f"SWEEP STEP i={cfg.i_fixed}, j={j_idx}")
-    #     print("====================================")
-
-        # ------------------------------------------------------------
-        # Command + move
-        # ------------------------------------------------------------
-        # cmd_pose6 = np.asarray(get_point(cfg.i_fixed, j_idx, base_point, pivot_point), dtype=float).reshape(6,)
-        # cmd_pose6[2] = -0.1
-
-        # act_pose6 = move_robot_to_get_point(hw, cfg.i_fixed, j_idx, cfg.L_m)
+        act_pose6 = move_robot_to_get_point(hw, cfg.i_fixed, j_idx, cfg.L_m)
         
         if cfg.settle_time_s > 0:
             time.sleep(cfg.settle_time_s)
@@ -953,15 +953,15 @@ if __name__ == "__main__":
         L_m=L0,
         i_fixed=0,
         j_start=0,
-        j_end=180,
+        j_end=-90,
         image_filename="focused_image.jpg",
         reference_image_filename="focused_image_straight.jpg",
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=15.0,
+        known_green_distance_mm=24.0,
         pivot_hint=(321.200927734375, 331.6798095703125),
-        results_dir="results_oblique_rotation_clock2",
+        results_dir="results_within_lumen",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

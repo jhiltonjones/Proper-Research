@@ -223,7 +223,7 @@ def build_initial_lumen_from_vision(
     ex_ref=None,
     ey_ref=None,
 ):
-    new_capture()
+    # new_capture()
 
     roi_polygon = load_polygon(roi_polygon_path)
     print("[DBG lumen frame actually passed through]")
@@ -432,7 +432,7 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
+        N_nodes=10,
         maxiter=1e7,
         L0_init=0.01,
         dL_internal=0.005,
@@ -1062,8 +1062,8 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # Main
 # ============================================================
 
-def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.035
+def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, float]:
+    L0 = 0.0349
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1075,7 +1075,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     ], float)
     beam_base_point_robot_m = pivot_point[:3].copy()
 
-    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, -40, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
 
     pose6=start_point
@@ -1460,27 +1460,27 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
 if __name__ == "__main__":
 
 
-    hw = LiveHardwareController(
-        robot_ip="192.168.56.101",
-        dry_run=False,                 # True first
-        use_advancer=True,
-        advancer_port="/dev/ttyACM0",
-        advancer_baud=115200,
-        advancer_delay_us=20,
-        advancer_min_cmd_mm=0.166,
-        xyz_min=(0.20, -1.50, -0.30),
-        xyz_max=(1.20, +1.50, +1.50),
-        max_trans_m=0.01,
-        max_rot_rad=0.2,
-        z_offset=0.27,
-        use_moveL_params=False,
-        v=0.10,
-        a=0.30,
-    )
-    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
+    # hw = LiveHardwareController(
+    #     robot_ip="192.168.56.101",
+    #     dry_run=False,                 # True first
+    #     use_advancer=True,
+    #     advancer_port="/dev/ttyACM0",
+    #     advancer_baud=115200,
+    #     advancer_delay_us=20,
+    #     advancer_min_cmd_mm=0.166,
+    #     xyz_min=(0.20, -1.50, -0.30),
+    #     xyz_max=(1.20, +1.50, +1.50),
+    #     max_trans_m=0.01,
+    #     max_rot_rad=0.2,
+    #     z_offset=0.27,
+    #     use_moveL_params=False,
+    #     v=0.10,
+    #     a=0.30,
+    # )
+    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
-    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
-    new_capture()
+    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
+    # new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
     # src_robot = pivot_local_point_to_robot(src_local, pivot_point2)
@@ -1506,7 +1506,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (325, 371)
+    pivot_hint = (321.200927734375, 331.6798095703125)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -1517,7 +1517,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=15.00,
+        known_green_distance_mm=23.00,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

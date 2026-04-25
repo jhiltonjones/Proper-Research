@@ -803,7 +803,7 @@ class mpc_controller_tipxy_LTI:
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.14
+        self.mag_center_standoff_m = 0.16
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1573,7 +1573,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.01))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.14))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2697,14 +2697,12 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-
-    
-    L0 = 0.02
+    L0 = 0.015
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.14),
+        pivot_point[0] - (L0 + 0.15),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2736,6 +2734,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # L0 = 0.065
     dt = 0.01
     return pivot_point, start_point, L0, dt
+
+
+
+
 
 
 
@@ -2829,6 +2831,8 @@ def build_controller(
     mpc.set_initial_params(p0)
     print(f"Finished building controller")
     return mpc, p0, p_min, p_max, u_max, forward6d_pred
+
+
 
 def transform_local_points_to_robot(
     points_local_m,
@@ -3286,9 +3290,13 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
+
 if __name__ == "__main__":
+
+
     pivot_hint = (325, 371)
-        # 4. dry-run control loop
+
+
     hw = LiveHardwareController(
         robot_ip="192.168.56.101",
         dry_run=False,                 # True first
@@ -3306,6 +3314,7 @@ if __name__ == "__main__":
         v=0.10,
         a=0.30,
     )
+
     pivot_point, start_point, L0, dt = make_initial_poses_single_use(hw)
 
     # 1. build lumen once from vision
@@ -3319,6 +3328,7 @@ if __name__ == "__main__":
         show=False,
     )
 
+
     # 2. build forward model from that same lumen
     p0_ur, q0_ur, forward_model = build_forward_models_from_lumen(
         pivot_point=pivot_point,
@@ -3326,6 +3336,7 @@ if __name__ == "__main__":
         lumen_C=lumen_C_robot_m,
         lumen_R=lumen_R_robot_m,
     )
+
 
     # 3. build controller from same lumen + same forward model
     mpc, p0, p_min, p_max, u_max, forward6d = build_controller(
@@ -3336,7 +3347,6 @@ if __name__ == "__main__":
         lumen_C=lumen_C_robot_m,
         lumen_R=lumen_R_robot_m,
     )
-
 
 
     try:
@@ -3355,5 +3365,6 @@ if __name__ == "__main__":
             save_plots=True,
             plot_dir="mpc_run_opti_14_mid",
         )
+
     finally:
         hw.shutdown()

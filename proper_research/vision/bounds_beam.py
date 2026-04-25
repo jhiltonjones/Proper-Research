@@ -375,50 +375,50 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # draw vessel boundaries
-    for x, y in left_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # # draw vessel boundaries
+    # for x, y in left_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    for x, y in right_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # if red_area is not None:
-    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    # for x, y in right_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # # if red_area is not None:
+    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    if blue_area is not None:
-        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # draw beam centerline
-    beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
-    for i in range(len(beam_int) - 1):
-        cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
+    # if blue_area is not None:
+    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # # draw beam centerline
+    # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
+    # for i in range(len(beam_int) - 1):
+    #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
-    if markers is not None:
-        color_map = {
-            "base_px": (255, 0, 0),
-            "mag_start_px": (0, 255, 255),
-            "tangent_start_px": (255, 0, 255),
-            "tip_px": (0, 0, 255),
-        }
-        for key, p in markers.items():
-            if p is None:
-                continue
-            if key not in color_map:
-                continue
+    # if markers is not None:
+    #     color_map = {
+    #         "base_px": (255, 0, 0),
+    #         "mag_start_px": (0, 255, 255),
+    #         "tangent_start_px": (255, 0, 255),
+    #         "tip_px": (0, 0, 255),
+    #     }
+    #     for key, p in markers.items():
+    #         if p is None:
+    #             continue
+    #         if key not in color_map:
+    #             continue
 
-            x = int(round(p[0]))
-            y = int(round(p[1]))
+    #         x = int(round(p[0]))
+    #         y = int(round(p[1]))
 
-            cv2.circle(vis, (x, y), 6, color_map[key], -1)
-            cv2.putText(
-                vis, key.replace("_px", ""),
-                (x + 5, y - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-            )
-            cv2.putText(
-                vis, key.replace("_px", ""),
-                (x + 5, y - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-            )
+    #         cv2.circle(vis, (x, y), 6, color_map[key], -1)
+    #         cv2.putText(
+    #             vis, key.replace("_px", ""),
+    #             (x + 5, y - 5),
+    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+    #         )
+    #         cv2.putText(
+    #             vis, key.replace("_px", ""),
+    #             (x + 5, y - 5),
+    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+    #         )
 
     # # draw closest wall tangent near the tip
     # if tip_wall_angle_info is not None:
@@ -939,7 +939,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=23.0)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=27.5)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -1299,7 +1299,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=23.0):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=27.5):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 

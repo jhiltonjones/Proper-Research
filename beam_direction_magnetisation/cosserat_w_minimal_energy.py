@@ -1652,20 +1652,19 @@ def validate_cosserat_against_csv(
     return results_df
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.014
+    L_cmd = 0.028
 
     mag_len = beam_params.length_of_mag
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
-    pivot_point = np.array([
-    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
-    ], float)
+    pivot_point = np.array([0.8281328220229531, -0.6812560048066458, -0.1, 3.1374639959012303, 0.13796054585074355, 0.0009377017734513666]
+    , float)
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.14),
+        pivot_point[0] - (L_cmd + 0.17),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
-    start_point = np.asarray(get_point(0, 60, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(
@@ -1720,183 +1719,183 @@ if __name__ == "__main__":
         m_moment=0.0,
         wire_len=wire_len,
     )
-    # results_df = validate_cosserat_against_csv(
-    #     csv_path="/home/jack/Proper-Research/results_alpha_rotation_clock/sweep_results.csv",
-    #     model=model,
-    #     base_point=base_point,
-    #     pivot_point=pivot_point,
-    #     L_cmd=L_cmd,
-    #     wire_len=wire_len,
-    #     m_body=m_body,
-    #     i_idx=0,
-    #     j_values=range(0, -91, -5),
-    #     error_threshold_mm=1.0,
-    # )
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
-    if hasattr(model, "_last_energy_choice"):
-        print(model._last_energy_choice)
-    print("tip in UR:", out["p_tip"])
-    print("tip bending y:", np.rad2deg(out["theta_y"]))
-    print("tip bending z:", np.rad2deg(out["theta_z"]))
-    print("Magnet position:", T_ur_mag)
-    print("Magnetic field", (out["B_tip"]))
-    print("Magnetic force this is the gradient force", (out["F_net"]))
-    print("Magnetic torque is the cross product", (out["T_net"]))
-
-
-    # base tangent direction
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-    global INSERTION_DIR_WORLD
-    INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
-    # lumen centerline starts at pivot base and bends
-    # s_straight = 0.01
-    Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
-    t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
-
-    lumen_C = make_lumen_centerline_turning(
-        p_start=p0_ur,
-        t0=t0,
-        length=0.03,
-        n_pts=130,
-        bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(90.0),
-        bend_start=0.005,
-        bend_end=0.03,
+    results_df = validate_cosserat_against_csv(
+        csv_path="/home/jack/Proper-Research/results_wo_lumen_no_drawing/sweep_results.csv",
+        model=model,
+        base_point=base_point,
+        pivot_point=pivot_point,
+        L_cmd=L_cmd,
+        wire_len=wire_len,
+        m_body=m_body,
+        i_idx=0,
+        j_values=range(0, -91, -5),
+        error_threshold_mm=1.0,
     )
-    lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.004)
-    # # lumen_C = make_lumen_centerline_turning(
+    # out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
+    # if hasattr(model, "_last_energy_choice"):
+    #     print(model._last_energy_choice)
+    # print("tip in UR:", out["p_tip"])
+    # print("tip bending y:", np.rad2deg(out["theta_y"]))
+    # print("tip bending z:", np.rad2deg(out["theta_z"]))
+    # print("Magnet position:", T_ur_mag)
+    # print("Magnetic field", (out["B_tip"]))
+    # print("Magnetic force this is the gradient force", (out["F_net"]))
+    # print("Magnetic torque is the cross product", (out["T_net"]))
+
+
+    # # base tangent direction
+    # q = q0_ur
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
+    # global INSERTION_DIR_WORLD
+    # INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
+    # # lumen centerline starts at pivot base and bends
+    # # s_straight = 0.01
+    # Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
+    # t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
+
+    # lumen_C = make_lumen_centerline_turning(
     #     p_start=p0_ur,
     #     t0=t0,
-    #     length=0.08 + s_straight,     
-    #     n_pts=130,                      
+    #     length=0.03,
+    #     n_pts=130,
     #     bend_axis=np.array([0.0, 0.0, 1.0]),
-    #     bend_angle=np.deg2rad(-40.0),
-    #     bend_start=0.01 + s_straight,    
-    #     bend_end=0.08 + s_straight       
+    #     bend_angle=np.deg2rad(90.0),
+    #     bend_start=0.005,
+    #     bend_end=0.03,
     # )
+    # lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
+    # lumen_R = np.full(len(lumen_C), 0.004)
+    # # # lumen_C = make_lumen_centerline_turning(
+    # #     p_start=p0_ur,
+    # #     t0=t0,
+    # #     length=0.08 + s_straight,     
+    # #     n_pts=130,                      
+    # #     bend_axis=np.array([0.0, 0.0, 1.0]),
+    # #     bend_angle=np.deg2rad(-40.0),
+    # #     bend_start=0.01 + s_straight,    
+    # #     bend_end=0.08 + s_straight       
+    # # )
 
-    # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
-    print("Base tangent direction (UR) =", t0)
-    p_tip_pred = p0_ur + L_cmd * t0
-    print("Pred straight tip:", p_tip_pred)
-    print("Solved tip:", out["p_tip"])
-    print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
+    # # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
+    # print("Base tangent direction (UR) =", t0)
+    # p_tip_pred = p0_ur + L_cmd * t0
+    # print("Pred straight tip:", p_tip_pred)
+    # print("Solved tip:", out["p_tip"])
+    # print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len, m_body=m_body)
-    print("tip in UR:", out["p_tip"])
-    print("tip bending y:", np.rad2deg(out["theta_y"]))
-    print("tip bending z:", np.rad2deg(out["theta_z"]))
-    print("Magnet position:", T_ur_mag)
-    print("Magnetic field", (out["B_tip"]))
-    print("Magnetic force this is the gradient force", (out["F_net"]))
-    print("Magnetic torque is the cross product", (out["T_net"]))
+    # out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len, m_body=m_body)
+    # print("tip in UR:", out["p_tip"])
+    # print("tip bending y:", np.rad2deg(out["theta_y"]))
+    # print("tip bending z:", np.rad2deg(out["theta_z"]))
+    # print("Magnet position:", T_ur_mag)
+    # print("Magnetic field", (out["B_tip"]))
+    # print("Magnetic force this is the gradient force", (out["F_net"]))
+    # print("Magnetic torque is the cross product", (out["T_net"]))
 
 
-    q = q0_ur  
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
-    print("Base tangent direction (UR) =", t0)
-    p_tip_pred = p0_ur + L_cmd * t0
-    print("Pred straight tip:", p_tip_pred)
-    print("Solved tip:", out["p_tip"])
-    print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
+    # q = q0_ur  
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])
+    # print("Base tangent direction (UR) =", t0)
+    # p_tip_pred = p0_ur + L_cmd * t0
+    # print("Pred straight tip:", p_tip_pred)
+    # print("Solved tip:", out["p_tip"])
+    # print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
-    m_src = dipole_from_pose(q_src_ur, m_body)
-    sol_bvp = model.solve(L=L_cmd, r_src=r_src_ur, m_src=m_src, wire_len=wire_len)
+    # m_src = dipole_from_pose(q_src_ur, m_body)
+    # sol_bvp = model.solve(L=L_cmd, r_src=r_src_ur, m_src=m_src, wire_len=wire_len)
 
-    u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kinv_fun, N=60)
-    # pE, qE, uE, info = solve_energy_with_wall_continuation(
-    #     p0=p0_ur, q0=q0_ur, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile,
-    #     u_star=np.zeros(3), r_src=r_src_ur, m_src=m_src,
-    #     m_local_fun=model.m_local_fun, m_moment=0.0,
+    # u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kinv_fun, N=60)
+    # # pE, qE, uE, info = solve_energy_with_wall_continuation(
+    # #     p0=p0_ur, q0=q0_ur, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile,
+    # #     u_star=np.zeros(3), r_src=r_src_ur, m_src=m_src,
+    # #     m_local_fun=model.m_local_fun, m_moment=0.0,
+    # #     lumen_C=lumen_C, lumen_R=lumen_R,
+    # #     N=60, u0_flat=u0, maxiter=200
+    # # )
+    # L_model, wire_len, tip_len = effective_lengths(
+    # L_cmd,
+    # L_tip_full=0.04,
+    # L_tip_min=0.01,
+    # )
+    # m_local_fun = make_m_local_fun_wire_tip(
+    #     wire_len,
+    #     len_tip=tip_len,
+    #     mode="axial",
+    #     alpha_end=0.0,
+    #     eps=1e-3
+    # )
+    # u_init = None
+    # n_values = np.linspace(4,200, 5 )
+    # # for n in n_values:
+    # hist = solve_quasistatic_insertion(
+    #     p0=p0_ur, q0=q0_ur,
+    #     L0=0.002, Lf=L_cmd, dL=0.002,
+    #     wire_len_fun=wire_len_fun,
+    #     tip_len_fun=tip_len_fun,
+    #     Kinv_fun=Kinv_fun, u_star=np.zeros(3),
+    #     r_src=r_src_ur, m_src=m_src,
+    #     m_local_fun=m_local_fun, m_moment=0.0,
     #     lumen_C=lumen_C, lumen_R=lumen_R,
-    #     N=60, u0_flat=u0, maxiter=200
+    #     N=35, maxiter=30,
+    #     use_lumen=False,
+    #     u_init=u_init,
+    #     debug=True
     # )
-    L_model, wire_len, tip_len = effective_lengths(
-    L_cmd,
-    L_tip_full=0.04,
-    L_tip_min=0.01,
-    )
-    m_local_fun = make_m_local_fun_wire_tip(
-        wire_len,
-        len_tip=tip_len,
-        mode="axial",
-        alpha_end=0.0,
-        eps=1e-3
-    )
-    u_init = None
-    n_values = np.linspace(4,200, 5 )
-    # for n in n_values:
-    hist = solve_quasistatic_insertion(
-        p0=p0_ur, q0=q0_ur,
-        L0=0.002, Lf=L_cmd, dL=0.002,
-        wire_len_fun=wire_len_fun,
-        tip_len_fun=tip_len_fun,
-        Kinv_fun=Kinv_fun, u_star=np.zeros(3),
-        r_src=r_src_ur, m_src=m_src,
-        m_local_fun=m_local_fun, m_moment=0.0,
-        lumen_C=lumen_C, lumen_R=lumen_R,
-        N=35, maxiter=30,
-        use_lumen=False,
-        u_init=u_init,
-        debug=True
-    )
-    # take final
-    pE = hist[-1]["p"]
-    qE = hist[-1]["q"]
-    info = hist[-1]["info"]
-    viol = lumen_violation_profile(pE, lumen_C, lumen_R)
-    print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
-    print("mean positive violation [m] =", np.maximum(viol,0).mean())
-    print(info["parts"])
-    print("energy-min tip:", pE[:, -1])
-    # choose a common comparison grid
-    s_cmp = info["s"]                      # energy-min grid
-    p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
-    p_energy = pE
+    # # take final
+    # pE = hist[-1]["p"]
+    # qE = hist[-1]["q"]
+    # info = hist[-1]["info"]
+    # viol = lumen_violation_profile(pE, lumen_C, lumen_R)
+    # print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
+    # print("mean positive violation [m] =", np.maximum(viol,0).mean())
+    # print(info["parts"])
+    # print("energy-min tip:", pE[:, -1])
+    # # choose a common comparison grid
+    # s_cmp = info["s"]                      # energy-min grid
+    # p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+    # p_energy = pE
 
-    # optional straight baseline (same convention as your earlier straight tip)
-    # build straight line from base tangent
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-    p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
+    # # optional straight baseline (same convention as your earlier straight tip)
+    # # build straight line from base tangent
+    # q = q0_ur
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
+    # p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
 
-    plot_centerlines_with_lumen_3d(
-        p_bvp, p_energy,
-        lumen_C=lumen_C, lumen_R=lumen_R,
-        p0=p0_ur, p_straight=p_straight,
-        title="Cosserat vs Energy-min + Lumen constraint"
-    )
+    # plot_centerlines_with_lumen_3d(
+    #     p_bvp, p_energy,
+    #     lumen_C=lumen_C, lumen_R=lumen_R,
+    #     p0=p0_ur, p_straight=p_straight,
+    #     title="Cosserat vs Energy-min + Lumen constraint"
+    # )
 
-    plot_error_vs_s(s_cmp, p_bvp, p_energy)
-    s_cmp = info["s"]                 # energy-min node grid
-    p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+    # plot_error_vs_s(s_cmp, p_bvp, p_energy)
+    # s_cmp = info["s"]                 # energy-min node grid
+    # p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
 
-    Y_bvp = sol_bvp.sol(s_cmp)
-    q_bvp = quat_normalize(Y_bvp[3:7, :])
+    # Y_bvp = sol_bvp.sol(s_cmp)
+    # q_bvp = quat_normalize(Y_bvp[3:7, :])
 
-    p_energy = pE
-    q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
-    metrics = compare_common_metrics(
-    s_cmp,
-    p_bvp, q_bvp,
-    p_energy, q_energy,
-    m_src=m_src,
-    r_src=r_src_ur,
-    m_local_fun=m_local_fun,
-    m_moment=0.0,
-    )
-    print_comparison_setup(
-        L_model=L_model,
-        wire_len=wire_len,
-        tip_len=tip_len,
-        p0=p0_ur,
-        q0=q0_ur,
-        r_src=r_src_ur,
-        q_src=q_src_ur,
-        m_src=m_src,
-    )
+    # p_energy = pE
+    # q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
+    # metrics = compare_common_metrics(
+    # s_cmp,
+    # p_bvp, q_bvp,
+    # p_energy, q_energy,
+    # m_src=m_src,
+    # r_src=r_src_ur,
+    # m_local_fun=m_local_fun,
+    # m_moment=0.0,
+    # )
+    # print_comparison_setup(
+    #     L_model=L_model,
+    #     wire_len=wire_len,
+    #     tip_len=tip_len,
+    #     p0=p0_ur,
+    #     q0=q0_ur,
+    #     r_src=r_src_ur,
+    #     q_src=q_src_ur,
+    #     m_src=m_src,
+    # )

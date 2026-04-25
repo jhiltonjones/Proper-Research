@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel
-from proper_research.experiments.charactisations import compute_mm_per_pixel_from_green, rod_section_stiffness, make_Kbt_inv_profile,effective_lengths
+from proper_research.experiments.charactisations import rotate_body_xy ,compute_mm_per_pixel_from_green, rod_section_stiffness, make_Kbt_inv_profile,effective_lengths
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
@@ -270,7 +270,16 @@ def build_forward_model_no_lumen_effect(pivot_pose6: np.ndarray, L0: float, imag
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    MAG_YAW_CAL_DEG = -5.0  # try -5 first because physically subtracting joint 5 fixed it
+
+    m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
+
+    print("[MAG CAL]")
+    print("m_body_nominal =", m_body_nominal)
+    print("m_body_calibrated =", m_body)
+    print("mag yaw calibration deg =", MAG_YAW_CAL_DEG)
+    # m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     L_model, wire_len_model, tip_len_model = effective_lengths(L0)
     print(
         f"[INIT] L_ins={L0:.3f} -> "
@@ -934,17 +943,17 @@ if __name__ == "__main__":
         v=0.10,
         a=0.30,
     )
-    L0 = 0.015
+    L0 = 0.035
 
-    pivot_point = np.array([
-    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
-    ], float)
+    pivot_point = np.array([0.8281328220229531, -0.6812560048066458, -0.1, 3.1374639959012303, 0.13796054585074355, 0.0009377017734513666]
+    , float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.14),
+        pivot_point[0] - (L0 + 0.17),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
+
     beam_base_point_robot_m = pivot_point[:3].copy()
  
     cfg = SweepEvalConfig(
@@ -959,9 +968,9 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=24.0,
+        known_green_distance_mm=28.7,
         pivot_hint=(321.200927734375, 331.6798095703125),
-        results_dir="results_within_lumen",
+        results_dir="results_with_lumen_no_drawing_29",
         show_debug_vision=False,
         show_debug_model=False,
         capture_each_step=True,

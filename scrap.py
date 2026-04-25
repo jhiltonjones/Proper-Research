@@ -31,9 +31,10 @@ if __name__ == "__main__":
         # robo.moveJ(q0)
         # q0[5]-=np.deg2rad(90)
         # robo.moveJ(q0)
-        robo_joints = robo.get_joints()
-        
-        print(robo_joints)
+        # robo_joints = robo.get_joints()
+        # robo_joints[5] -=np.deg2rad(5)
+        # robo.moveJ(robo_joints)
+        # # print(robo_joints)
         # robo_joints[5]+= np.deg2rad(10)
         # robo.moveJ(robo_joints)
         # new_pose = get_point(0,60) 
@@ -49,8 +50,8 @@ if __name__ == "__main__":
         # TCP_TARGET[2] +=.25
         # robo.moveL(TCP_TARGET)
         pose = robo.get_pose()
-        pose[0] = 0.2
-        robo.moveL(pose)
+        # pose[0] = 0.2
+        # robo.moveL(pose)
         print(pose)
 
         print("Finished")

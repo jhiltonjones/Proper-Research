@@ -367,8 +367,16 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
+    MAG_YAW_CAL_DEG = -3.0  # try -5 first because physically subtracting joint 5 fixed it
 
-    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
+
+    print("[MAG CAL]")
+    print("m_body_nominal =", m_body_nominal)
+    print("m_body_calibrated =", m_body)
+    print("mag yaw calibration deg =", MAG_YAW_CAL_DEG)
+    # m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
 
     wire = rod_section_stiffness(
         r=200e-6,
@@ -435,7 +443,7 @@ def build_forward_model_no_lumen_effect(
         N_nodes=5,
         maxiter=1e7,
         L0_init=0.01,
-        dL_internal=0.005,
+        dL_internal=0.002,
         use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
@@ -1061,25 +1069,68 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 # Main
 # ============================================================
+def smooth_lumen_local(lumen_C_m, lumen_R_m, n=300, smooth=1e-7):
+    from scipy.interpolate import splprep, splev
 
+    C = np.asarray(lumen_C_m, float)
+    R = np.asarray(lumen_R_m, float).reshape(-1)
+
+    keep = np.r_[True, np.linalg.norm(np.diff(C[:, :2], axis=0), axis=1) > 1e-9]
+    C = C[keep]
+    R = R[keep]
+
+    if len(C) < 4:
+        return C, R
+
+    ds = np.linalg.norm(np.diff(C[:, :2], axis=0), axis=1)
+    s_old = np.r_[0.0, np.cumsum(ds)]
+    s_old /= s_old[-1]
+
+    tck, _ = splprep([C[:, 0], C[:, 1]], u=s_old, s=smooth, k=min(3, len(C) - 1))
+
+    s_new = np.linspace(0.0, 1.0, n)
+    x_new, y_new = splev(s_new, tck)
+
+    z_new = np.interp(s_new, s_old, C[:, 2])
+    R_new = np.interp(s_new, s_old, R)
+
+    return np.column_stack([x_new, y_new, z_new]), R_new
+
+
+def offset_walls_from_centerline(C_m, R_m):
+    C = np.asarray(C_m, float)
+    R = np.asarray(R_m, float).reshape(-1)
+
+    dC = np.gradient(C[:, :2], axis=0)
+    tangent = dC / (np.linalg.norm(dC, axis=1, keepdims=True) + 1e-12)
+
+    normal = np.column_stack([-tangent[:, 1], tangent[:, 0]])
+
+    upper = C.copy()
+    lower = C.copy()
+
+    upper[:, :2] = C[:, :2] + normal * R[:, None]
+    lower[:, :2] = C[:, :2] - normal * R[:, None]
+
+    return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.035
+    L0 = 0.028
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
-
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.14),
+        pivot_point[0] - (L0 + 0.18),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
+    beam_base_point_robot_m = pivot_point[:3].copy()
 
-    # start_point = np.asarray(get_point(0, 90, base_point, pivot_point), dtype=float)
-    # start_point[2] = -0.1
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    start_point[2] = -0.1
 
-    # pose6=start_point
-    pose6 = hw.get_robot_pose_once()
+    pose6=start_point
+    # pose6 = hw.get_robot_pose_once()
     # pose6 = np.asarray(get_point(0, 20), dtype=float)
     pose6[2] = -0.1
     # pose6[0] = 0.3
@@ -1096,7 +1147,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # print("z_offset:", hw.z_offset)
     # print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
     u0 = np.zeros(7, dtype=float)
-    # hw.send_step(p_now=p_now, u0=u0, dt=0.01)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.01)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
@@ -1110,6 +1161,8 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
     return pivot_point, start_point, L0, dt
+
+
 def compute_tip_angle_from_base_local_deg(p_base_local_m: np.ndarray) -> float:
     """
     Angle of base->tip chord relative to straight local -x axis.
@@ -1176,27 +1229,31 @@ def plot_single_tip_comparison_local(
     # lumen centerline
     if lumen_C_local_m is not None:
         lumen_C_local_m = np.asarray(lumen_C_local_m, dtype=float)
+        lumen_R_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
+
         if lumen_C_local_m.ndim == 1:
             lumen_C_local_m = lumen_C_local_m.reshape(1, 3)
 
-        lumen_mm = 1e3 * lumen_C_local_m
-        plt.plot(
-            lumen_mm[:, 0],
-            lumen_mm[:, 1],
-            "-",
-            linewidth=2.0,
-            label="Lumen centerline",
+        lumen_C_plot_m, lumen_R_plot_m = smooth_lumen_local(
+            lumen_C_local_m,
+            lumen_R_m,
+            n=500,
+            smooth=1e-5,
         )
 
-        # Optional: show start/end markers
-        plt.plot(
-            lumen_mm[0, 0], lumen_mm[0, 1],
-            "o", markersize=6, label="Lumen start"
-        )
-        plt.plot(
-            lumen_mm[-1, 0], lumen_mm[-1, 1],
-            "x", markersize=8, label="Lumen end"
-        )
+        lumen_mm = 1e3 * lumen_C_plot_m
+        plt.plot(lumen_mm[:, 0], lumen_mm[:, 1], "-", linewidth=2.0, label="Lumen centerline")
+
+        upper, lower = offset_walls_from_centerline(lumen_C_plot_m, lumen_R_plot_m)
+
+        upper_mm = 1e3 * upper
+        lower_mm = 1e3 * lower
+
+        plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
+        plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
+
+        plt.plot(lumen_mm[0, 0], lumen_mm[0, 1], "o", markersize=6, label="Lumen start")
+        plt.plot(lumen_mm[-1, 0], lumen_mm[-1, 1], "x", markersize=8, label="Lumen end")
         if lumen_R_m is not None and len(lumen_R_m) == len(lumen_C_local_m):
             lumen_R_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
 
@@ -1220,8 +1277,8 @@ def plot_single_tip_comparison_local(
             upper_mm = 1e3 * upper
             lower_mm = 1e3 * lower
 
-            plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
-            plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
+            # plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
+            # plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
         # # predicted beam centerline
         # if beam_centerline_local_m is not None:
         #     beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
@@ -1441,13 +1498,36 @@ def build_forward_model(
         ex_ref=ex_ref,
         ey_ref=ey_ref,
     )
+MAG_YAW_CAL_DEG = -5.0
+
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
+
     m_body_dir = np.array([1.0, 0.0, 0.0], float)
+    m_body_dir = rotate_body_xy(m_body_dir, MAG_YAW_CAL_DEG)
+
     m_robot = R @ m_body_dir
     return m_robot / (np.linalg.norm(m_robot) + 1e-12)
 
+# def source_dipole_in_robot(pose6_robot):
+#     rvec = np.asarray(pose6_robot[3:6], float)
+#     R = Rot.from_rotvec(rvec).as_matrix()
+#     m_body_dir = np.array([1.0, 0.0, 0.0], float)
+#     m_robot = R @ m_body_dir
+#     return m_robot / (np.linalg.norm(m_robot) + 1e-12)
+def rotate_body_xy(v, yaw_deg):
+    """
+    Rotate a body-frame vector about the local body z-axis.
+    Positive yaw uses right-hand rule.
+    """
+    a = np.deg2rad(yaw_deg)
+    Rz = np.array([
+        [np.cos(a), -np.sin(a), 0.0],
+        [np.sin(a),  np.cos(a), 0.0],
+        [0.0,        0.0,       1.0],
+    ], dtype=float)
+    return Rz @ np.asarray(v, dtype=float).reshape(3,)
 def beam_tangent_in_robot_from_pose(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
@@ -1506,7 +1586,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (325, 371)
+    pivot_hint = (321.200927734375, 331.6798095703125)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -1517,7 +1597,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=19.00,
+        known_green_distance_mm=28.70,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

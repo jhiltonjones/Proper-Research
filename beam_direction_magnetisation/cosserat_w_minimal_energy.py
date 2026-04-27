@@ -12,7 +12,6 @@ from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.post_processing.post_processing import (plot_centerlines_with_lumen_3d, make_lumen_centerline_turning, 
                                                                           plot_error_vs_s, closest_point_on_segment, point_to_polyline_distance)
 from proper_research.robot.transformations import get_point
-from scipy.optimize import minimize
 L_tip_full=0.04
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
@@ -51,7 +50,34 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
+def predicted_centerline_robot_to_base_local_mm(
+    centerline_robot_m,
+    beam_base_point_robot_m,
+    pivot_pose6,
+):
+    pts = np.asarray(centerline_robot_m, dtype=float).reshape(-1, 3)
+    base_local = robot_point_to_pivot_local(
+        np.asarray(beam_base_point_robot_m, dtype=float),
+        np.asarray(pivot_pose6, dtype=float),
+    )
 
+    out = []
+    for p_robot in pts:
+        p_local = robot_point_to_pivot_local(p_robot, pivot_pose6)
+        p_base_local = p_local - base_local
+        out.append(1e3 * p_base_local)
+
+    return np.asarray(out, dtype=float)
+def pivot_rotation_matrix(pivot_pose6: np.ndarray) -> np.ndarray:
+    T = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
+    return T[:3, :3]
+
+
+def robot_point_to_pivot_local(p_robot, pivot_pose6):
+    p_robot = np.asarray(p_robot, dtype=float).reshape(3,)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return R_pivot.T @ (p_robot - p_pivot)
 def smoothstep01(x):
     x = np.clip(x, 0.0, 1.0)
     return x*x*(3 - 2*x)
@@ -81,65 +107,140 @@ class LumenQuery:
         Rloc = (1-t)*self.R[i] + t*self.R[i+1]
         return dmin, Rloc, q
 
+# def contact_barrier_energy_and_force_fast(
+#     p, lumen_query: LumenQuery, *,
+#     Kc=5e3,
+#     d_tilde=5e-4,
+#     eps=1e-9,
+#     penalize_outside=True,
+#     k_out=2e3,
+#     pen_switch=5e-4,
+#     k_hard=2e5,
+#     window=3
+# ):
+#     p = np.asarray(p, float)
+#     N = p.shape[1]
+#     C = np.zeros(N, float)
+#     F = np.zeros((3, N), float)
+#     d_arr = np.zeros(N, float)
+
+#     for j in range(N):
+#         x = p[:, j]
+#         delta, Rloc, q_closest = lumen_query.closest(x, window=window)
+#         d = Rloc - delta
+#         d_arr[j] = d
+
+#         if delta > eps:
+#             n = (x - q_closest) / delta
+#         else:
+#             n = np.array([1.0, 0.0, 0.0])
+
+#         if (d > 0.0) and (d < d_tilde):
+#             log_term = np.log(max(d, eps) / d_tilde)
+#             Cj = -Kc * (d - d_tilde)**2 * log_term
+#             C[j] = Cj
+
+#             dC_dd = -Kc * (
+#                 2.0 * (d - d_tilde) * log_term
+#                 + (d - d_tilde)**2 / max(d, eps)
+#             )
+#             F[:, j] = dC_dd * n
+
+#         elif d >= d_tilde:
+#             pass
+
+#         else:
+#             if penalize_outside:
+#                 pen = -d
+
+#                 if pen <= pen_switch:
+#                     C[j] = 0.5 * k_out * pen**2
+#                     F[:, j] = -(k_out * pen) * n
+#                 else:
+#                     dp = pen - pen_switch
+#                     C0 = 0.5 * k_out * pen_switch**2
+#                     F0 = k_out * pen_switch
+
+#                     C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
+#                     F[:, j] = -(F0 + k_hard * dp) * n
+
+#     return C, F, d_arr
 def contact_barrier_energy_and_force_fast(
     p, lumen_query: LumenQuery, *,
-    Kc=5e3,
-    d_tilde=5e-4,
-    eps=1e-9,
-    penalize_outside=True,
-    k_out=2e3,
+    r_beam=0.0,
+    k_contact=1e5,
     pen_switch=5e-4,
-    k_hard=2e5,
-    window=3
+    k_hard=3e5,
+    eps=1e-12,
+    window=3,
+    smooth=False,
+    smooth_eps=1e-7,
 ):
+    """
+    Pure unilateral lumen contact.
+
+    phi = delta + r_beam - Rloc
+
+    phi <= 0 : no contact
+    phi >  0 : penetration penalty
+
+    Returns:
+      C      : nodal contact energy density-like values
+      F      : inward nodal contact force directions/magnitudes
+      gap    : physical surface clearance = Rloc - delta - r_beam
+               gap > 0 free
+               gap = 0 contact
+               gap < 0 penetration
+    """
     p = np.asarray(p, float)
     N = p.shape[1]
+
     C = np.zeros(N, float)
     F = np.zeros((3, N), float)
-    d_arr = np.zeros(N, float)
+    gap_arr = np.zeros(N, float)
 
     for j in range(N):
         x = p[:, j]
+
         delta, Rloc, q_closest = lumen_query.closest(x, window=window)
-        d = Rloc - delta
-        d_arr[j] = d
 
         if delta > eps:
-            n = (x - q_closest) / delta
+            n = (x - q_closest) / delta   # outward normal
         else:
             n = np.array([1.0, 0.0, 0.0])
 
-        if (d > 0.0) and (d < d_tilde):
-            log_term = np.log(max(d, eps) / d_tilde)
-            Cj = -Kc * (d - d_tilde)**2 * log_term
-            C[j] = Cj
+        gap = Rloc - delta - r_beam
+        phi = -gap   # positive means penetration
 
-            dC_dd = -Kc * (
-                2.0 * (d - d_tilde) * log_term
-                + (d - d_tilde)**2 / max(d, eps)
-            )
-            F[:, j] = dC_dd * n
+        gap_arr[j] = gap
 
-        elif d >= d_tilde:
-            pass
+        if smooth:
+            # smooth positive part of phi
+            phi_pos = 0.5 * (phi + np.sqrt(phi * phi + smooth_eps * smooth_eps))
+            dphi_pos_dphi = 0.5 * (1.0 + phi / np.sqrt(phi * phi + smooth_eps * smooth_eps))
+
+            C[j] = 0.5 * k_contact * phi_pos**2
+
+            # Force is inward, opposite outward normal
+            F[:, j] = -(k_contact * phi_pos * dphi_pos_dphi) * n
 
         else:
-            if penalize_outside:
-                pen = -d
+            if phi <= 0.0:
+                continue
 
-                if pen <= pen_switch:
-                    C[j] = 0.5 * k_out * pen**2
-                    F[:, j] = -(k_out * pen) * n
-                else:
-                    dp = pen - pen_switch
-                    C0 = 0.5 * k_out * pen_switch**2
-                    F0 = k_out * pen_switch
+            if phi <= pen_switch:
+                C[j] = 0.5 * k_contact * phi**2
+                F[:, j] = -(k_contact * phi) * n
 
-                    C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
-                    F[:, j] = -(F0 + k_hard * dp) * n
+            else:
+                dp = phi - pen_switch
+                C0 = 0.5 * k_contact * pen_switch**2
+                F0 = k_contact * pen_switch
 
-    return C, F, d_arr
+                C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
+                F[:, j] = -(F0 + k_hard * dp) * n
 
+    return C, F, gap_arr
 
 
 
@@ -1062,23 +1163,48 @@ def energy_from_u(
     # -------------------------
     # Contact / lumen
     # -------------------------
+    # W_cf = 0.0
+    # min_d = np.nan
+    # if use_lumen and (lumen_query is not None):
+    #     C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
+    #         p, lumen_query,
+    #         Kc=5,
+    #         d_tilde=5e-4,
+    #         eps=1e-9,
+    #         penalize_outside=True,
+    #         k_out=1e5,
+    #         pen_switch=5e-4,
+    #         k_hard=3e5,
+    #         window=3,
+    #     )
+    #     W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
+    #     min_d = float(np.min(d_nodes))
+    # -------------------------
+    # Contact / lumen
+    # -------------------------
     W_cf = 0.0
-    min_d = np.nan
-    if use_lumen and (lumen_query is not None):
-        C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
-            p, lumen_query,
-            Kc=5,
-            d_tilde=5e-4,
-            eps=1e-9,
-            penalize_outside=True,
-            k_out=1e5,
-            pen_switch=5e-4,
-            k_hard=3e5,
-            window=3,
-        )
-        W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
-        min_d = float(np.min(d_nodes))
+    min_gap = np.nan
+    n_active_contact = 0
 
+    if use_lumen and (lumen_query is not None):
+        C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
+            p,
+            lumen_query,
+            r_beam=beam_params.r,      # or whatever your beam radius variable is
+            k_contact=1e5,
+            pen_switch=5e-5,
+            k_hard=1e10,
+            eps=1e-12,
+            window=3,
+            smooth=True,              # start with nonsmooth pure contact
+            smooth_eps=1e-7,
+        )
+
+        # Better than assuming uniform spacing
+        W_cf = np.trapezoid(C_nodes, s)
+
+        min_gap = float(np.min(gap_nodes))
+        n_active_contact = int(np.sum(gap_nodes < 0.0))
     W_total = W_el + W_m + W_g + W_cf
     # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")
     if debug_mag:
@@ -1097,7 +1223,9 @@ def energy_from_u(
         print(f"max |m x B|={np.max(tau_norm):.6e}")
         print(f"max angle(m,B) [deg]={np.max(th_deg):.3f}")
         if use_lumen and (lumen_query is not None):
-            print(f"min clearance d={min_d:.6e}")
+            # print(f"min clearance d={min_d:.6e}")
+            print(f"min surface gap={min_gap:.6e}")
+            print(f"active contact nodes={n_active_contact}")
 
     parts = dict(
         W_el=float(W_el),
@@ -1117,7 +1245,8 @@ def energy_from_u(
         angle_deg=np.asarray(th_deg, float).copy(),
         tau_norm=np.asarray(tau_norm, float).copy(),
         s_mid=np.asarray(s_mid, float).copy(),
-
+        gap_nodes=np.asarray(gap_nodes, float).copy() if use_lumen and lumen_query is not None else None,
+        contact_active_nodes=n_active_contact,
         W_el_seg=np.asarray(W_el_seg, float),
         W_b_seg=np.asarray(W_b_seg, float),
         W_t_seg=np.asarray(W_t_seg, float),
@@ -1404,26 +1533,142 @@ def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
     tip_len = min(tip_len, L_model)
 
     return L_model, wire_len, tip_len
+import pandas as pd
+import numpy as np
+
+
+def validate_cosserat_against_csv(
+    csv_path,
+    model,
+    base_point,
+    pivot_point,
+    L_cmd,
+    wire_len,
+    m_body,
+    i_idx=0,
+    j_values=range(0, 91, 5),
+    error_threshold_mm=1.0,
+):
+    df = pd.read_csv(csv_path)
+
+    results = []
+
+    beam_base_robot_m = np.asarray(model.p0, dtype=float).reshape(3)
+
+    for j in j_values:
+        row_match = df[(df["i_idx"] == i_idx) & (df["j_idx"] == j)]
+
+        if len(row_match) == 0:
+            print(f"[SKIP] No CSV row for i_idx={i_idx}, j_idx={j}")
+            continue
+
+        row = row_match.iloc[0]
+
+        start_point = np.asarray(
+            get_point(i_idx, j, base_point, pivot_point),
+            dtype=float
+        )
+        start_point[2] = -0.1
+
+        T_ur_mag = ur_pose6_to_T(start_point)
+        r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+
+        out = model.forward(
+            L=L_cmd,
+            r_src=r_src_ur,
+            q_src=q_src_ur,
+            wire_len=wire_len,
+            m_body=m_body,
+        )
+
+        pred_tip_robot_m = np.asarray(out["p_tip"], dtype=float).reshape(3)
+
+        pred_tip_local_mm = predicted_centerline_robot_to_base_local_mm(
+            pred_tip_robot_m.reshape(1, 3),
+            beam_base_robot_m,
+            pivot_point,
+        )[0]
+        meas_tip_local_mm = np.array([
+            row["meas_base_x_mm"],
+            row["meas_base_y_mm"],
+            row["meas_base_z_mm"],
+        ], dtype=float)
+
+        err_vec_mm = (pred_tip_local_mm - meas_tip_local_mm)
+        err_xy_mm = float(np.linalg.norm(err_vec_mm[:2]))
+        err_xyz_mm = float(np.linalg.norm(err_vec_mm))
+
+        failed = err_xyz_mm > error_threshold_mm
+
+        results.append({
+            "i_idx": i_idx,
+            "j_idx": j,
+
+            "pred_x_mm": pred_tip_local_mm[0],
+            "pred_y_mm": pred_tip_local_mm[1],
+            "pred_z_mm": pred_tip_local_mm[2],
+
+            "meas_x_mm": meas_tip_local_mm[0],
+            "meas_y_mm": meas_tip_local_mm[1],
+            "meas_z_mm": meas_tip_local_mm[2],
+
+            "err_x_mm": err_vec_mm[0],
+            "err_y_mm": err_vec_mm[1],
+            "err_z_mm": err_vec_mm[2],
+            "err_xy_mm": err_xy_mm,
+            "err_xyz_mm": err_xyz_mm,
+
+            "failed": failed,
+        })
+
+        status = "FAIL" if failed else "OK"
+        print(
+            f"[{status}] j={j:3d} | "
+            f"err_xyz={err_xyz_mm:.3f} mm | "
+            f"err_xy={err_xy_mm:.3f} mm | "
+            f"pred_local=({pred_tip_local_mm[0]:.3f}, "
+            f"{pred_tip_local_mm[1]:.3f}, "
+            f"{pred_tip_local_mm[2]:.3f}) mm | "
+            f"meas=({meas_tip_local_mm[0]:.3f}, "
+            f"{meas_tip_local_mm[1]:.3f}, "
+            f"{meas_tip_local_mm[2]:.3f}) mm"
+        )
+
+    results_df = pd.DataFrame(results)
+
+    failed_df = results_df[results_df["failed"]]
+
+    if len(failed_df) > 0:
+        print("\nCosserat model validation failed.")
+        print(failed_df[[
+            "i_idx", "j_idx",
+            "err_x_mm", "err_y_mm", "err_z_mm",
+            "err_xy_mm", "err_xyz_mm"
+        ]])
+    else:
+        print("\nCosserat model validation passed.")
+
+    return results_df
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.015
+    L_cmd = 0.02
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
     mag_len = beam_params.length_of_mag
-    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
+    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
         0.7981328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.1),
+        pivot_point[0] - (L_cmd + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 70, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, -70, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(
@@ -1478,29 +1723,40 @@ if __name__ == "__main__":
         m_moment=0.0,
         wire_len=wire_len,
     )
+    results_df = validate_cosserat_against_csv(
+        csv_path="/home/jack/Proper-Research/results_wo_lumen_no_drawing/sweep_results.csv",
+        model=model,
+        base_point=base_point,
+        pivot_point=pivot_point,
+        L_cmd=L_cmd,
+        wire_len=wire_len,
+        m_body=m_body,
+        i_idx=0,
+        j_values=range(0, -91, -5),
+        error_threshold_mm=1.0,
+    )
+    # out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
+    # if hasattr(model, "_last_energy_choice"):
+    #     print(model._last_energy_choice)
+    # print("tip in UR:", out["p_tip"])
+    # print("tip bending y:", np.rad2deg(out["theta_y"]))
+    # print("tip bending z:", np.rad2deg(out["theta_z"]))
+    # print("Magnet position:", T_ur_mag)
+    # print("Magnetic field", (out["B_tip"]))
+    # print("Magnetic force this is the gradient force", (out["F_net"]))
+    # print("Magnetic torque is the cross product", (out["T_net"]))
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
-    if hasattr(model, "_last_energy_choice"):
-        print(model._last_energy_choice)
-    print("tip in UR:", out["p_tip"])
-    print("tip bending y:", np.rad2deg(out["theta_y"]))
-    print("tip bending z:", np.rad2deg(out["theta_z"]))
-    print("Magnet position:", T_ur_mag)
-    print("Magnetic field", (out["B_tip"]))
-    print("Magnetic force this is the gradient force", (out["F_net"]))
-    print("Magnetic torque is the cross product", (out["T_net"]))
 
-
-    # base tangent direction
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-    global INSERTION_DIR_WORLD
-    INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
-    # lumen centerline starts at pivot base and bends
-    # s_straight = 0.01
-    Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
-    t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
+    # # base tangent direction
+    # q = q0_ur
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
+    # global INSERTION_DIR_WORLD
+    # INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
+    # # lumen centerline starts at pivot base and bends
+    # # s_straight = 0.01
+    # Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
+    # t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
@@ -1513,52 +1769,90 @@ if __name__ == "__main__":
         bend_end=0.03,
     )
     lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.002)
+    lumen_R = np.full(len(lumen_C), 0.004)
     # # lumen_C = make_lumen_centerline_turning(
     #     p_start=p0_ur,
     #     t0=t0,
-    #     length=0.08 + s_straight,     
-    #     n_pts=130,                      
+    #     length=0.03,
+    #     n_pts=130,
     #     bend_axis=np.array([0.0, 0.0, 1.0]),
-    #     bend_angle=np.deg2rad(-40.0),
-    #     bend_start=0.01 + s_straight,    
-    #     bend_end=0.08 + s_straight       
+    #     bend_angle=np.deg2rad(90.0),
+    #     bend_start=0.005,
+    #     bend_end=0.03,
     # )
+    # lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
+    # lumen_R = np.full(len(lumen_C), 0.004)
+    # # # lumen_C = make_lumen_centerline_turning(
+    # #     p_start=p0_ur,
+    # #     t0=t0,
+    # #     length=0.08 + s_straight,     
+    # #     n_pts=130,                      
+    # #     bend_axis=np.array([0.0, 0.0, 1.0]),
+    # #     bend_angle=np.deg2rad(-40.0),
+    # #     bend_start=0.01 + s_straight,    
+    # #     bend_end=0.08 + s_straight       
+    # # )
 
-    # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
-    print("Base tangent direction (UR) =", t0)
-    p_tip_pred = p0_ur + L_cmd * t0
-    print("Pred straight tip:", p_tip_pred)
-    print("Solved tip:", out["p_tip"])
-    print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
+    # # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
+    # print("Base tangent direction (UR) =", t0)
+    # p_tip_pred = p0_ur + L_cmd * t0
+    # print("Pred straight tip:", p_tip_pred)
+    # print("Solved tip:", out["p_tip"])
+    # print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len, m_body=m_body)
-    print("tip in UR:", out["p_tip"])
-    print("tip bending y:", np.rad2deg(out["theta_y"]))
-    print("tip bending z:", np.rad2deg(out["theta_z"]))
-    print("Magnet position:", T_ur_mag)
-    print("Magnetic field", (out["B_tip"]))
-    print("Magnetic force this is the gradient force", (out["F_net"]))
-    print("Magnetic torque is the cross product", (out["T_net"]))
+    # out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len, m_body=m_body)
+    # print("tip in UR:", out["p_tip"])
+    # print("tip bending y:", np.rad2deg(out["theta_y"]))
+    # print("tip bending z:", np.rad2deg(out["theta_z"]))
+    # print("Magnet position:", T_ur_mag)
+    # print("Magnetic field", (out["B_tip"]))
+    # print("Magnetic force this is the gradient force", (out["F_net"]))
+    # print("Magnetic torque is the cross product", (out["T_net"]))
 
 
-    q = q0_ur  
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])
-    print("Base tangent direction (UR) =", t0)
-    p_tip_pred = p0_ur + L_cmd * t0
-    print("Pred straight tip:", p_tip_pred)
-    print("Solved tip:", out["p_tip"])
-    print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
+    # q = q0_ur  
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])
+    # print("Base tangent direction (UR) =", t0)
+    # p_tip_pred = p0_ur + L_cmd * t0
+    # print("Pred straight tip:", p_tip_pred)
+    # print("Solved tip:", out["p_tip"])
+    # print("Diff:", out["p_tip"] - p_tip_pred, "norm:", np.linalg.norm(out["p_tip"] - p_tip_pred))
 
-    m_src = dipole_from_pose(q_src_ur, m_body)
-    sol_bvp = model.solve(L=L_cmd, r_src=r_src_ur, m_src=m_src, wire_len=wire_len)
+    # m_src = dipole_from_pose(q_src_ur, m_body)
+    # sol_bvp = model.solve(L=L_cmd, r_src=r_src_ur, m_src=m_src, wire_len=wire_len)
 
-    u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kinv_fun, N=60)
-    # pE, qE, uE, info = solve_energy_with_wall_continuation(
-    #     p0=p0_ur, q0=q0_ur, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile,
-    #     u_star=np.zeros(3), r_src=r_src_ur, m_src=m_src,
-    #     m_local_fun=model.m_local_fun, m_moment=0.0,
+    # u0 = u0_from_bvp(sol_bvp, L=L_cmd, wire_len=wire_len, Kinv_fun=Kinv_fun, N=60)
+    # # pE, qE, uE, info = solve_energy_with_wall_continuation(
+    # #     p0=p0_ur, q0=q0_ur, L=L_cmd, wire_len=wire_len, Kinv_fun=Kbt_inv_profile,
+    # #     u_star=np.zeros(3), r_src=r_src_ur, m_src=m_src,
+    # #     m_local_fun=model.m_local_fun, m_moment=0.0,
+    # #     lumen_C=lumen_C, lumen_R=lumen_R,
+    # #     N=60, u0_flat=u0, maxiter=200
+    # # )
+    # L_model, wire_len, tip_len = effective_lengths(
+    # L_cmd,
+    # L_tip_full=0.04,
+    # L_tip_min=0.01,
+    # )
+    # m_local_fun = make_m_local_fun_wire_tip(
+    #     wire_len,
+    #     len_tip=tip_len,
+    #     mode="axial",
+    #     alpha_end=0.0,
+    #     eps=1e-3
+    # )
+    # u_init = None
+    # n_values = np.linspace(4,200, 5 )
+    # # for n in n_values:
+    # hist = solve_quasistatic_insertion(
+    #     p0=p0_ur, q0=q0_ur,
+    #     L0=0.002, Lf=L_cmd, dL=0.002,
+    #     wire_len_fun=wire_len_fun,
+    #     tip_len_fun=tip_len_fun,
+    #     Kinv_fun=Kinv_fun, u_star=np.zeros(3),
+    #     r_src=r_src_ur, m_src=m_src,
+    #     m_local_fun=m_local_fun, m_moment=0.0,
     #     lumen_C=lumen_C, lumen_R=lumen_R,
     #     N=60, u0_flat=u0, maxiter=200
     # )
@@ -1587,7 +1881,7 @@ if __name__ == "__main__":
             m_local_fun=m_local_fun, m_moment=0.0,
             lumen_C=lumen_C, lumen_R=lumen_R,
             N=12, maxiter=30,
-            use_lumen=True,
+            use_lumen=False,
             u_init=u_init,
             debug=True
         )
@@ -1605,45 +1899,45 @@ if __name__ == "__main__":
         p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
         p_energy = pE
 
-        # optional straight baseline (same convention as your earlier straight tip)
-        # build straight line from base tangent
-        q = q0_ur
-        R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-        t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-        p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
+    # # optional straight baseline (same convention as your earlier straight tip)
+    # # build straight line from base tangent
+    # q = q0_ur
+    # R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
+    # t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
+    # p_straight = p0_ur.reshape(3,1) + t0.reshape(3,1) * s_cmp.reshape(1,-1)
 
-        plot_centerlines_with_lumen_3d(
-            p_bvp, p_energy,
-            lumen_C=lumen_C, lumen_R=lumen_R,
-            p0=p0_ur, p_straight=p_straight,
-            title="Cosserat vs Energy-min + Lumen constraint"
-        )
+    # plot_centerlines_with_lumen_3d(
+    #     p_bvp, p_energy,
+    #     lumen_C=lumen_C, lumen_R=lumen_R,
+    #     p0=p0_ur, p_straight=p_straight,
+    #     title="Cosserat vs Energy-min + Lumen constraint"
+    # )
 
-        plot_error_vs_s(s_cmp, p_bvp, p_energy)
-        s_cmp = info["s"]                 # energy-min node grid
-        p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+    # plot_error_vs_s(s_cmp, p_bvp, p_energy)
+    # s_cmp = info["s"]                 # energy-min node grid
+    # p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
 
-        Y_bvp = sol_bvp.sol(s_cmp)
-        q_bvp = quat_normalize(Y_bvp[3:7, :])
+    # Y_bvp = sol_bvp.sol(s_cmp)
+    # q_bvp = quat_normalize(Y_bvp[3:7, :])
 
-        p_energy = pE
-        q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
-        metrics = compare_common_metrics(
-        s_cmp,
-        p_bvp, q_bvp,
-        p_energy, q_energy,
-        m_src=m_src,
-        r_src=r_src_ur,
-        m_local_fun=m_local_fun,
-        m_moment=0.0,
-        )
-        print_comparison_setup(
-            L_model=L_model,
-            wire_len=wire_len,
-            tip_len=tip_len,
-            p0=p0_ur,
-            q0=q0_ur,
-            r_src=r_src_ur,
-            q_src=q_src_ur,
-            m_src=m_src,
-        )
+    # p_energy = pE
+    # q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
+    # metrics = compare_common_metrics(
+    # s_cmp,
+    # p_bvp, q_bvp,
+    # p_energy, q_energy,
+    # m_src=m_src,
+    # r_src=r_src_ur,
+    # m_local_fun=m_local_fun,
+    # m_moment=0.0,
+    # )
+    # print_comparison_setup(
+    #     L_model=L_model,
+    #     wire_len=wire_len,
+    #     tip_len=tip_len,
+    #     p0=p0_ur,
+    #     q0=q0_ur,
+    #     r_src=r_src_ur,
+    #     q_src=q_src_ur,
+    #     m_src=m_src,
+    # )

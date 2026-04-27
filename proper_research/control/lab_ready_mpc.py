@@ -339,7 +339,34 @@ def integrate_pose8_body(p8, u7, dt):
 
     return p8
 
+def update_i_ref_only_when_close(
+    i_ref,
+    tip_xyz,
+    lumen_C,
+    *,
+    reach_tol_m=1.0e-3,
+    max_advance=1,
+):
+    C = np.asarray(lumen_C, float)
+    tip_xyz = np.asarray(tip_xyz, float).reshape(3)
 
+    M = C.shape[0]
+    i_ref = int(np.clip(i_ref, 0, M - 1))
+
+    d_now = np.linalg.norm(tip_xyz - C[i_ref, :3])
+
+    # Do not move reference forward until current point is reached
+    if d_now > reach_tol_m:
+        return i_ref, d_now, False
+
+    # Once close enough, allow limited forward progress only
+    search_end = min(i_ref + max_advance + 1, M)
+    d_local = np.linalg.norm(C[i_ref:search_end, :3] - tip_xyz.reshape(1, 3), axis=1)
+
+    i_new = i_ref + int(np.argmin(d_local))
+    i_new = max(i_new, i_ref)
+
+    return i_new, d_now, i_new > i_ref
 
 def seq_mat_ltv(A, B_list):
     """
@@ -688,7 +715,9 @@ class mpc_controller_tipxy_LTI:
         self.x_pred_prev_1 = None
         self.dt = float(dt)
         self.Np = int(Np)
-
+        self.ref_reach_tol_m = 1.8e-3        # 1 mm
+        self.max_ref_advance_per_step = 15    # prevents jumping many points
+        self.ref_lookahead_pts = 2         # reduce from 8 if it still cuts corners
         self.A = np.eye(self.n)
 
 
@@ -756,8 +785,8 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        self.w_adv = 3    # start tiny (1e-5 .. 1e-3)
-        # self.w_adv = 0
+        # self.w_adv = 1    # start tiny (1e-5 .. 1e-3)
+        self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -769,12 +798,12 @@ class mpc_controller_tipxy_LTI:
         self.s_des = 5e-4  
 
         self.enable_dipole_align = True
-        self.w_dipole_align = 0.1        # start small: 0.1..10
+        self.w_dipole_align = 0.05     # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
 
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.18
+        self.mag_center_standoff_m = 0.16
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1185,7 +1214,38 @@ class mpc_controller_tipxy_LTI:
                 X_aff = X_nom - Mc @ U_guess_vec
             else:
                 X_aff = (Mx @ xk).reshape(Np * n, 1)
+            # -------------------------------------------------
+            # Reference index update with reach gate
+            # -------------------------------------------------
+            # i_ref_old = int(getattr(self, "i_ref_last", 0))
 
+            # reach_tol_m = float(getattr(self, "ref_reach_tol_m", 1.0e-3))
+            # max_ref_advance = int(getattr(self, "max_ref_advance_per_step", 5))
+
+            # tip_meas = np.asarray(x_meas[:3], float).reshape(3)
+
+            # i_ref_new, ref_dist_m, ref_advanced = update_i_ref_only_when_close(
+            #     i_ref_old,
+            #     tip_meas,
+            #     Cc,
+            #     reach_tol_m=reach_tol_m,
+            #     max_advance=max_ref_advance,
+            # )
+
+            # self.i_ref_last = int(i_ref_new)
+
+            # i0 = int(self.i_ref_last)
+
+            # look = int(getattr(self, "ref_lookahead_pts", 2))
+            # idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
+
+            # print(
+            #     f"[REF] old={i_ref_old} new={i_ref_new} "
+            #     f"advanced={ref_advanced} "
+            #     f"dist_to_ref={1e3 * ref_dist_m:.3f} mm "
+            #     f"tol={1e3 * reach_tol_m:.3f} mm"
+            # )
+            # print(f"REFERENCE {idx_ref}")
             i0 = int(getattr(self, "i_ref_last", 0))
             look = int(getattr(self, "ref_lookahead_pts", 8))
             idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
@@ -1513,7 +1573,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.014))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.14))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -1585,7 +1645,7 @@ class mpc_controller_tipxy_LTI:
                 w_slack_standoff = 0.0
 
             if ns_inline > 0:
-                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 0.1)))
+                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 5)))
                 i0i = off_inline
                 H_z[i0i:i0i + ns_inline, i0i:i0i + ns_inline] = 2.0 * w_slack_inline * np.eye(ns_inline)
             else:
@@ -2637,15 +2697,12 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-
-    
-    L0 = 0.0165
+    L0 = 0.015
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
-
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.18),
+        pivot_point[0] - (L0 + 0.15),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2680,6 +2737,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
 
+
+
+
+
 def build_controller(
     start_point,
     L0,
@@ -2696,13 +2757,13 @@ def build_controller(
 
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)
 
-    p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, 0.01])
-    p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.12])
+    p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, -0.03])
+    p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.05])
 
     w_u = np.array([1e-5, 1e-5, 1e-4, 5e-1, 5e-1, 1e-6, 1e-4], dtype=float)
     w_du = np.array([1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8], dtype=float)
 
-    u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.1], dtype=float)
+    u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.03], dtype=float)
 
     dr = 5e-3
     dtheta = np.deg2rad(50.0)
@@ -2742,7 +2803,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(5.0, 5.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(15.0, 15.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2770,6 +2831,8 @@ def build_controller(
     mpc.set_initial_params(p0)
     print(f"Finished building controller")
     return mpc, p0, p_min, p_max, u_max, forward6d_pred
+
+
 
 def transform_local_points_to_robot(
     points_local_m,
@@ -2819,7 +2882,7 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log_test_opti_mid_low_18_mag_opti.csv",
+    csv_log_path="control_run_log_test_run_opti_14_mid.csv",
 ):
     history = []
     csv_rows = []
@@ -2837,7 +2900,7 @@ def run_control(
             blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_opti_mid_low_18_mag_opti/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_opti_14_mid/reconstruction_overlay_step_{k:04d}.png",
         )
 
         vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
@@ -2905,6 +2968,7 @@ def run_control(
         i_ref_global = int(np.argmin(d2_all))
         print("[DBG] global closest index =", i_ref_global)
         print("[DBG] global closest dist [mm] =", 1000*np.sqrt(d2_all[i_ref_global]))
+        # if k == 0:
 
         mpc.i_ref_last = int(i_ref)
         print("[VISION] i_ref =", i_ref)
@@ -3178,7 +3242,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=7,
         maxiter=1e7,
         L0_init=0.01,
         dL_internal=0.002,
@@ -3226,9 +3290,13 @@ def rod_section_stiffness(r, E, nu):
         "EI": EI,
         "GJ": GJ,
     }
+
 if __name__ == "__main__":
+
+
     pivot_hint = (325, 371)
-        # 4. dry-run control loop
+
+
     hw = LiveHardwareController(
         robot_ip="192.168.56.101",
         dry_run=False,                 # True first
@@ -3246,6 +3314,7 @@ if __name__ == "__main__":
         v=0.10,
         a=0.30,
     )
+
     pivot_point, start_point, L0, dt = make_initial_poses_single_use(hw)
 
     # 1. build lumen once from vision
@@ -3259,6 +3328,7 @@ if __name__ == "__main__":
         show=False,
     )
 
+
     # 2. build forward model from that same lumen
     p0_ur, q0_ur, forward_model = build_forward_models_from_lumen(
         pivot_point=pivot_point,
@@ -3266,6 +3336,7 @@ if __name__ == "__main__":
         lumen_C=lumen_C_robot_m,
         lumen_R=lumen_R_robot_m,
     )
+
 
     # 3. build controller from same lumen + same forward model
     mpc, p0, p_min, p_max, u_max, forward6d = build_controller(
@@ -3276,7 +3347,6 @@ if __name__ == "__main__":
         lumen_C=lumen_C_robot_m,
         lumen_R=lumen_R_robot_m,
     )
-
 
 
     try:
@@ -3293,7 +3363,8 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_debug_plots_opti_mid_low_18_mag_opti",
+            plot_dir="mpc_run_opti_14_mid",
         )
+
     finally:
         hw.shutdown()

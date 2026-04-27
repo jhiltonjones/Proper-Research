@@ -55,13 +55,10 @@ class AlphaControllerParams:
     tol_deg: float
     alpha_min: float
     alpha_max: float
-
-
-
 def default_beam_params():
-    mag = 115e3
-    r = 0.0018
-    E = 6e6
+    mag = 128e3
+    r = 0.001835
+    E = 3e5
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4
     phi_intit = np.deg2rad(10)
@@ -88,7 +85,7 @@ def default_beam_params():
 
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
-    B_r = 1.25
+    B_r = 1.3
     r_epm = 0.03
     p_epm = 0.09
     m_hat = (1.0, 0.0, 0.0)
@@ -103,6 +100,98 @@ def default_magnet_params():
         x_init=x_init,
         mag_epm = mag_epm,
     )
+
+# def default_beam_params():
+#     mag = 128e3
+#     r = 0.001835
+#     E = 1578e2
+#     A_cs = np.pi * r**2
+#     I = np.pi * r**4 / 4
+#     phi_intit = np.deg2rad(10)
+#     nu = 0.49
+#     J = 0.5*np.pi*r**4
+#     G = E / (2*(1+nu))
+#     length_of_mag = 0.04
+#     w = 1200 * A_cs * 9.8
+#     f_g = np.array([0.0, 0.0, -w])
+#     return BeamParams(
+#         mag=mag,
+#         r=r,
+#         E=E,
+#         A_cs=A_cs,
+#         I=I,
+#         L_init=0.05,
+#         B_init=0.025,
+#         phi_init=phi_intit,
+#         G = G,
+#         J=J,
+#         length_of_mag = length_of_mag,
+#         f_g = f_g
+#     )
+
+# def default_magnet_params():
+#     mu_0 = 4e-7 * np.pi
+#     B_r = 1.3
+#     r_epm = 0.03
+#     p_epm = 0.09
+#     m_hat = (1.0, 0.0, 0.0)
+#     x_init = 0.09
+#     mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm)
+#     return MagnetParams(
+#         mu_0=mu_0,
+#         B_r=B_r,
+#         r_epm=r_epm,
+#         p_epm=p_epm,
+#         m_hat=m_hat,
+#         x_init=x_init,
+#         mag_epm = mag_epm,
+#     )
+
+# def default_beam_params():
+#     mag = 128e3
+#     r = 0.001754
+#     E = 130e3
+#     A_cs = np.pi * r**2
+#     I = np.pi * r**4 / 4
+#     phi_intit = np.deg2rad(10)
+#     nu = 0.49
+#     J = 0.5*np.pi*r**4
+#     G = E / (2*(1+nu))
+#     length_of_mag = 0.04
+#     w = 1200 * A_cs * 9.8
+#     f_g = np.array([0.0, 0.0, -w])
+#     return BeamParams(
+#         mag=mag,
+#         r=r,
+#         E=E,
+#         A_cs=A_cs,
+#         I=I,
+#         L_init=0.05,
+#         B_init=0.025,
+#         phi_init=phi_intit,
+#         G = G,
+#         J=J,
+#         length_of_mag = length_of_mag,
+#         f_g = f_g
+#     )
+
+# def default_magnet_params():
+#     mu_0 = 4e-7 * np.pi
+#     B_r = 1.25
+#     r_epm = 0.03
+#     p_epm = 0.09
+#     m_hat = (1.0, 0.0, 0.0)
+#     x_init = 0.09
+#     mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm)
+#     return MagnetParams(
+#         mu_0=mu_0,
+#         B_r=B_r,
+#         r_epm=r_epm,
+#         p_epm=p_epm,
+#         m_hat=m_hat,
+#         x_init=x_init,
+#         mag_epm = mag_epm,
+#     )
 
 def default_visual_pid_params():
     return VisualPIDParams(

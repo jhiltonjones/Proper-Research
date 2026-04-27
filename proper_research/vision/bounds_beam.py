@@ -360,6 +360,69 @@ def boundary_to_xy_arrays(boundary_points):
     ys = pts[:, 1]
     order = np.argsort(ys)
     return xs[order], ys[order]
+import cv2
+import numpy as np
+from skimage.morphology import skeletonize
+from skimage.graph import route_through_array
+
+
+def compute_black_beam_length_px(image_gray, base_px, tip_px, threshold=100):
+    """
+    Estimate curved beam length from a black beam on white background.
+
+    Parameters
+    ----------
+    image_gray : 2D ndarray
+        Grayscale image.
+    base_px, tip_px : (x, y)
+        Approximate beam endpoints.
+    threshold : int
+        Pixels darker than this are treated as beam.
+
+    Returns
+    -------
+    length_px : float
+        Curved centerline length in pixels.
+    skeleton : 2D bool ndarray
+        Skeletonized beam mask.
+    path_xy : ndarray shape (N, 2)
+        Ordered centerline coordinates as (x, y).
+    """
+
+    # 1. Segment black beam
+    beam_mask = image_gray < threshold
+
+    # 2. Clean mask a little
+    beam_mask = beam_mask.astype(np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
+    beam_mask = cv2.morphologyEx(beam_mask, cv2.MORPH_CLOSE, kernel)
+    beam_mask = beam_mask.astype(bool)
+
+    # 3. Skeletonize to get one-pixel-wide centerline
+    skeleton = skeletonize(beam_mask)
+
+    # 4. Route along skeleton from base to tip
+    # Cost is low on skeleton, high elsewhere
+    cost = np.where(skeleton, 1.0, 1e6)
+
+    start_rc = (int(round(base_px[1])), int(round(base_px[0])))  # row, col
+    end_rc = (int(round(tip_px[1])), int(round(tip_px[0])))
+
+    path_rc, _ = route_through_array(
+        cost,
+        start_rc,
+        end_rc,
+        fully_connected=True
+    )
+
+    path_rc = np.asarray(path_rc)
+    path_xy = np.column_stack([path_rc[:, 1], path_rc[:, 0]])
+
+    # 5. Arc length of ordered path
+    diffs = np.diff(path_xy.astype(float), axis=0)
+    length_px = np.sum(np.linalg.norm(diffs, axis=1))
+
+    return float(length_px), skeleton, path_xy
 def draw_beam_and_vessel_overlay(
     image_bgr,
     beam_points_px,
@@ -392,33 +455,33 @@ def draw_beam_and_vessel_overlay(
     #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
-    # if markers is not None:
-    #     color_map = {
-    #         "base_px": (255, 0, 0),
-    #         "mag_start_px": (0, 255, 255),
-    #         "tangent_start_px": (255, 0, 255),
-    #         "tip_px": (0, 0, 255),
-    #     }
-    #     for key, p in markers.items():
-    #         if p is None:
-    #             continue
-    #         if key not in color_map:
-    #             continue
+    if markers is not None:
+        color_map = {
+            "base_px": (255, 0, 0),
+            "mag_start_px": (0, 255, 255),
+            "tangent_start_px": (255, 0, 255),
+            "tip_px": (0, 0, 255),
+        }
+        for key, p in markers.items():
+            if p is None:
+                continue
+            if key not in color_map:
+                continue
 
-    #         x = int(round(p[0]))
-    #         y = int(round(p[1]))
+            x = int(round(p[0]))
+            y = int(round(p[1]))
 
-    #         cv2.circle(vis, (x, y), 6, color_map[key], -1)
-    #         cv2.putText(
-    #             vis, key.replace("_px", ""),
-    #             (x + 5, y - 5),
-    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-    #         )
-    #         cv2.putText(
-    #             vis, key.replace("_px", ""),
-    #             (x + 5, y - 5),
-    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-    #         )
+            cv2.circle(vis, (x, y), 6, color_map[key], -1)
+            cv2.putText(
+                vis, key.replace("_px", ""),
+                (x + 5, y - 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+            )
+            cv2.putText(
+                vis, key.replace("_px", ""),
+                (x + 5, y - 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+            )
 
     # # draw closest wall tangent near the tip
     # if tip_wall_angle_info is not None:
@@ -1001,11 +1064,23 @@ def reconstruct_beam_within_vessel(
     print("  base_px_ref =", base_px_ref)
     print("  ex_ref =", ex_ref)
     print("  ey_ref =", ey_ref)
+    image_bgr = cv2.imread(image_filename)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image at {image_filename}")
+
+    image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         # --- beam reconstruction ---
     beam_points_px, ordered_pts = beam_polyline_from_markers(markers, n_samples_per_segment=40)
-    beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
-    beam_length_mm = beam_length_px * mm_per_pixel
+    # beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
+    # beam_length_mm = beam_length_px * mm_per_pixel
+    beam_length_px, skeleton, beam_path_px = compute_black_beam_length_px(
+        image_gray,
+        markers["base_px"],
+        markers["tip_px"],
+        threshold=100
+    )
 
+    beam_length_mm = beam_length_px * mm_per_pixel
     beam_coeffs = None
     beam_degree = None
 

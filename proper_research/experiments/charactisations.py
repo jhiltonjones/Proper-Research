@@ -34,7 +34,7 @@ Files:
 """
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 import copy
-from proper_research.simulation.boundary_forward_model import effective_lengths,EnergyMinForwardWithLumen,DeterministicForward6D ,WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithAnalyticJac ,effective_lengths,EnergyMinForwardWithLumen,DeterministicForward6D ,WarmForwardP8TipTangent
 import time
 import json
 import os
@@ -367,7 +367,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = -3.0  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 12.7  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -432,7 +432,23 @@ def build_forward_model_no_lumen_effect(
         print("[DBG] lumen=False branch still using vision lumen")
         # later you can replace this with build_dummy_straight_lumen_from_pivot(...)
 
-    forward_model = EnergyMinForwardWithLumen(
+    # forward_model = EnergyMinForwardWithLumen(
+    #     p0_ur=p0_ur,
+    #     q0_ur=q0_ur,
+    #     Kinv_fun=Kinv_fun,
+    #     u_star=np.zeros(3),
+    #     m_body=m_body,
+    #     lumen_C=np.asarray(lumen_C, float),
+    #     lumen_R=np.asarray(lumen_R, float),
+    #     N_nodes=5,
+    #     maxiter=1e7,
+    #     L0_init=0.01,
+    #     dL_internal=0.002,
+    #     use_lumen_jac=True,
+    #     L_tip_full=tip_len_model,
+    #     L_tip_min=0.01,
+    # )
+    forward_model = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
         Kinv_fun=Kinv_fun,
@@ -440,15 +456,14 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
-        maxiter=1e7,
+        N_nodes=10,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.001,
         use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
-
     return WarmForwardP8TipTangent(forward_model)
 
 
@@ -1004,6 +1019,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         lumen_C_local_m=lumen_C_base_local_m,
         lumen_R_m=lumen_R_robot_m,
         beam_centerline_local_m=pred_centerline_base_local_m,
+        beam_radius_m= beam_params.r
     )
     print(f"[TIME] tip plot: {(time.perf_counter()-t):.2f} s")
 
@@ -1114,7 +1130,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.028
+    L0 = 0.017
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1188,6 +1204,7 @@ def plot_single_tip_comparison_local(
     lumen_C_local_m: np.ndarray | None = None,
     lumen_R_m: np.ndarray | None = None,
     beam_centerline_local_m: np.ndarray | None = None,
+    beam_radius_m: float = 1e-3,   # 2 mm diameter beam
 ):
     pred_local_m = np.asarray(pred_local_m, dtype=float).reshape(3,)
     meas_local_m = np.asarray(meas_local_m, dtype=float).reshape(3,)
@@ -1279,6 +1296,97 @@ def plot_single_tip_comparison_local(
 
             # plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
             # plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
+        # predicted beam centerline
+    # predicted beam centerline + physical beam envelope
+        if beam_centerline_local_m is not None:
+            beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
+
+            if beam_centerline_local_m.ndim != 2:
+                raise ValueError("beam_centerline_local_m must be 2D")
+
+            if beam_centerline_local_m.shape[1] == 3:
+                beam_xyz_m = beam_centerline_local_m
+            elif beam_centerline_local_m.shape[0] == 3:
+                beam_xyz_m = beam_centerline_local_m.T
+            else:
+                raise ValueError(
+                    f"Expected beam_centerline_local_m shape (N,3) or (3,N), "
+                    f"got {beam_centerline_local_m.shape}"
+                )
+
+            # Build normals in local x-y plot plane
+            tangents = np.zeros_like(beam_xyz_m)
+            tangents[1:-1] = beam_xyz_m[2:] - beam_xyz_m[:-2]
+            tangents[0] = beam_xyz_m[1] - beam_xyz_m[0]
+            tangents[-1] = beam_xyz_m[-1] - beam_xyz_m[-2]
+
+            normals = np.zeros_like(beam_xyz_m)
+            for i, tvec in enumerate(tangents):
+                tx, ty = tvec[0], tvec[1]
+                n = np.array([-ty, tx, 0.0], dtype=float)
+                nn = np.linalg.norm(n[:2])
+                if nn > 1e-12:
+                    normals[i] = n / nn
+
+            beam_upper_m = beam_xyz_m + beam_radius_m * normals
+            beam_lower_m = beam_xyz_m - beam_radius_m * normals
+
+            beam_mm = 1e3 * beam_xyz_m
+            beam_upper_mm = 1e3 * beam_upper_m
+            beam_lower_mm = 1e3 * beam_lower_m
+
+            # Filled 2D beam body
+            beam_poly_x = np.r_[beam_upper_mm[:, 0], beam_lower_mm[::-1, 0]]
+            beam_poly_y = np.r_[beam_upper_mm[:, 1], beam_lower_mm[::-1, 1]]
+
+            plt.fill(
+                beam_poly_x,
+                beam_poly_y,
+                alpha=0.25,
+                label=f"Predicted beam body, diameter={2e3 * beam_radius_m:.1f} mm",
+            )
+
+            # Beam edges
+            plt.plot(
+                beam_upper_mm[:, 0],
+                beam_upper_mm[:, 1],
+                "-b",
+                linewidth=1.0,
+                alpha=0.8,
+                label="Predicted beam edge",
+            )
+            plt.plot(
+                beam_lower_mm[:, 0],
+                beam_lower_mm[:, 1],
+                "-b",
+                linewidth=1.0,
+                alpha=0.8,
+            )
+
+            # Centerline
+            plt.plot(
+                beam_mm[:, 0],
+                beam_mm[:, 1],
+                "-b",
+                linewidth=2.0,
+                label="Predicted beam centerline",
+            )
+
+            plt.plot(
+                beam_mm[0, 0],
+                beam_mm[0, 1],
+                "bo",
+                markersize=4,
+                label="Predicted beam base",
+            )
+
+            plt.plot(
+                beam_mm[-1, 0],
+                beam_mm[-1, 1],
+                "bs",
+                markersize=5,
+                label="Predicted beam tip",
+            )
         # # predicted beam centerline
         # if beam_centerline_local_m is not None:
         #     beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
@@ -1336,6 +1444,7 @@ def plot_single_tip_comparison_local(
     plt.close()
 
     print(f"Saved local tip plot to: {out_path}")
+
 
 def snapshot_forward_cache(fwd_model):
     snap = {}
@@ -1498,7 +1607,7 @@ def build_forward_model(
         ex_ref=ex_ref,
         ey_ref=ey_ref,
     )
-MAG_YAW_CAL_DEG = -5.0
+MAG_YAW_CAL_DEG = 12.7
 
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)

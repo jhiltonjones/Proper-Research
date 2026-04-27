@@ -7,8 +7,7 @@ from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from beam_direction_magnetisation.post_processing.post_processing import quat_wxyz_to_R
 from scipy.spatial.transform import Rotation as Rot
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
-from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithAnalyticJac ,EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
 from proper_research.vision.measure_length import new_capture
@@ -22,7 +21,18 @@ beam_params = default_beam_params()
 L_MAG = 0.04
 
 from dataclasses import dataclass
-
+def rotate_body_xy(v, yaw_deg):
+    """
+    Rotate a body-frame vector about the local body z-axis.
+    Positive yaw uses right-hand rule.
+    """
+    a = np.deg2rad(yaw_deg)
+    Rz = np.array([
+        [np.cos(a), -np.sin(a), 0.0],
+        [np.sin(a),  np.cos(a), 0.0],
+        [0.0,        0.0,       1.0],
+    ], dtype=float)
+    return Rz @ np.asarray(v, dtype=float).reshape(3,)
 def build_Pomega_world(p_seq, dt, Np, m=7):
     """
     Map stacked U -> stacked delta-theta in WORLD, using p_seq[j] orientation.
@@ -650,8 +660,8 @@ def plot_reference_debug(
                     length_includes_head=True,
                     color="c",
                 )
-    print("tip norm:", np.linalg.norm(x_meas[:3]))
-    print("lumen norm:", np.linalg.norm(mpc.lumen_C[0]))
+    # print("tip norm:", np.linalg.norm(x_meas[:3]))
+    # print("lumen norm:", np.linalg.norm(mpc.lumen_C[0]))
     ax.axis("equal")
     ax.grid(True)
     ax.legend()
@@ -717,7 +727,7 @@ class mpc_controller_tipxy_LTI:
         self.Np = int(Np)
         self.ref_reach_tol_m = 1.8e-3        # 1 mm
         self.max_ref_advance_per_step = 15    # prevents jumping many points
-        self.ref_lookahead_pts = 2         # reduce from 8 if it still cuts corners
+        self.ref_lookahead_pts = 5         # reduce from 8 if it still cuts corners
         self.A = np.eye(self.n)
 
 
@@ -786,7 +796,7 @@ class mpc_controller_tipxy_LTI:
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
         # self.w_adv = 1    # start tiny (1e-5 .. 1e-3)
-        self.w_adv = 0
+        self.w_adv = 0.5
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -868,28 +878,28 @@ class mpc_controller_tipxy_LTI:
         n, m, Np = self.n, self.m, self.Np
 
         if self.model_mode == "lti":
-            tJ0 = time.perf_counter()
+            # tJ0 = time.perf_counter()
             J0 = np.asarray(self.Jxy_fn(p0), float)
-            tJ1 = time.perf_counter()
+            # tJ1 = time.perf_counter()
 
             B0 = J0
 
-            tM0 = time.perf_counter()
+            # tM0 = time.perf_counter()
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
-            tM1 = time.perf_counter()
+            # tM1 = time.perf_counter()
 
             if U_guess is None:
                 U_guess = np.zeros((Np, m))
 
-            tp0 = time.perf_counter()
+            # tp0 = time.perf_counter()
             p_seq = self._p_seq_from_U(p0, U_guess)
-            tp1 = time.perf_counter()
+            # tp1 = time.perf_counter()
 
-            t1 = time.perf_counter()
-            print(f"[TIME] Jxy_fn: {(tJ1-tJ0)*1e3:.2f} ms")
-            print(f"[TIME] seq_mat_lti: {(tM1-tM0)*1e3:.2f} ms")
-            print(f"[TIME] _p_seq_from_U: {(tp1-tp0)*1e3:.2f} ms")
-            print(f"[TIME] total build_prediction_mats: {(t1-t0)*1e3:.2f} ms")
+            # t1 = time.perf_counter()
+            # print(f"[TIME] Jxy_fn: {(tJ1-tJ0)*1e3:.2f} ms")
+            # print(f"[TIME] seq_mat_lti: {(tM1-tM0)*1e3:.2f} ms")
+            # print(f"[TIME] _p_seq_from_U: {(tp1-tp0)*1e3:.2f} ms")
+            # print(f"[TIME] total build_prediction_mats: {(t1-t0)*1e3:.2f} ms")
 
             return p_seq, Mx, Mc, B0
 
@@ -1001,9 +1011,9 @@ class mpc_controller_tipxy_LTI:
 
         for it in range(int(self.N_sqp)):
             p0 = self.p.copy()
-            print(f"P0 is {p0}")
-            print("[DBG] Jxy_fn(p0) shape =", np.asarray(self.Jxy_fn(p0)).shape)
-            print("[DBG] expected shape =", (self.n, self.m))
+            # print(f"P0 is {p0}")
+            # print("[DBG] Jxy_fn(p0) shape =", np.asarray(self.Jxy_fn(p0)).shape)
+            # print("[DBG] expected shape =", (self.n, self.m))
 
             # Evaluate wrapped forward model once at p0
             y0 = np.asarray(self.forward_tip_fn(p0, commit=False), float).reshape(-1)
@@ -1273,8 +1283,8 @@ class mpc_controller_tipxy_LTI:
             f_track = 2.0 * (Mc.T @ Qtil @ (X_aff_fixed - X_ref))
             H = H_track.copy()
             f += f_track
-            print(f"x_aff is: {X_aff_fixed}")
-            print(f"x_ref is: {X_ref}")
+            # print(f"x_aff is: {X_aff_fixed}")
+            # print(f"x_ref is: {X_ref}")
             if dbg_terms is not None:
                 dbg_terms["track"] = (H_track.copy(), f_track.copy())
                 dbg_terms["track_model"] = dict(
@@ -1339,7 +1349,6 @@ class mpc_controller_tipxy_LTI:
             enable_tangent_pen = bool(getattr(self, "enable_tangent_penalty", False)) and (t_vessel is not None)
 
             if enable_tangent_pen and (self.lumen_R is not None):
-                print("Here")
                 clearance_m_obj = np.full(Np, np.inf, float)
                 Cc_tmp = np.asarray(self.lumen_C, float)
                 Rr_tmp = np.asarray(self.lumen_R, float).reshape(-1,)
@@ -2611,89 +2620,122 @@ def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):
     J_full[:, 5] = J_red[:, 2]   # yaw about z
     J_full[:, 6] = J_red[:, 3]   # insertion
     return J_full
-def numerical_J_robot_xy_yaw_dL_warm_branch(
+def analytic_J_robot_xy_yaw_dL(
     p8,
-    forward_model,   # the actual warm wrapper object, not just a plain fn
-    dx=5e-3,
-    dy=5e-3,
-    dyaw=np.deg2rad(5.0),
-    dL=1e-3,
-    n_out=5,         # e.g. [tip_x, tip_y, tip_z, tx, ty]
+    forward_model,
+    n_out=6,
 ):
-    t0 = time.perf_counter()
+    p8 = np.asarray(p8, float).reshape(8,)
 
-    p8 = np.asarray(p8, float).ravel().copy()
-    J = np.zeros((n_out, 4), float)
+    if hasattr(forward_model, "fwd"):
+        wrapper = forward_model
+        fm = forward_model.fwd
+    else:
+        wrapper = None
+        fm = forward_model
 
-    def eval_y_from_p8(p):
-        y = np.asarray(forward_model(p), float).reshape(-1)
-        return y[:n_out]
+    p7 = pose8_quat_to_pose7_rotvec(p8)
 
-    # First solve nominal point ONCE to establish current branch
-    y0 = eval_y_from_p8(p8)
+    # One nominal solve only
+    if wrapper is not None:
+        _ = wrapper(p8, commit=True)
+    else:
+        _ = fm(p7)
 
-    # Snapshot warm branch state at nominal point
-    snap0 = snapshot_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model)
+    # No second solve here
+    J_tip_7 = fm.jacobian_tip_pose7_from_cache(p7)
 
-    # 1) x
-    p_plus = p8.copy();  p_plus[0] += dx
-    p_minus = p8.copy(); p_minus[0] -= dx
+    J = np.zeros((n_out, 4), dtype=float)
 
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_plus = eval_y_from_p8(p_plus)
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_minus = eval_y_from_p8(p_minus)
-
-    J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
-
-    # 2) y
-    p_plus = p8.copy();  p_plus[1] += dy
-    p_minus = p8.copy(); p_minus[1] -= dy
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_plus = eval_y_from_p8(p_plus)
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_minus = eval_y_from_p8(p_minus)
-
-    J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
-
-    # 3) yaw
-    p_plus = p8.copy()
-    p_minus = p8.copy()
-
-    q = quat_wxyz_normalize(p8[3:7])
-    dqz_plus = quat_from_yaw_wxyz(+dyaw)
-    dqz_minus = quat_from_yaw_wxyz(-dyaw)
-
-    p_plus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_plus, q))
-    p_minus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_minus, q))
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_plus = eval_y_from_p8(p_plus)
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_minus = eval_y_from_p8(p_minus)
-
-    J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw)
-
-    # 4) L
-    p_plus = p8.copy();  p_plus[7] += dL
-    p_minus = p8.copy(); p_minus[7] -= dL
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_plus = eval_y_from_p8(p_plus)
-
-    restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_minus = eval_y_from_p8(p_minus)
-
-    J[:, 3] = (y_plus - y_minus) / (2.0 * dL)
-
-    t1 = time.perf_counter()
-    print(f"[TIME] numerical_J_robot_warm_branch total: {(t1-t0)*1e3:.2f} ms")
+    J[0:3, 0] = J_tip_7[:, 0]   # robot x
+    J[0:3, 1] = J_tip_7[:, 1]   # robot y
+    J[0:3, 2] = J_tip_7[:, 5]   # yaw ≈ world delta_phi_z
+    J[0:3, 3] = J_tip_7[:, 6]   # length
 
     return J
+# def numerical_J_robot_xy_yaw_dL_warm_branch(
+#     p8,
+#     forward_model,   # the actual warm wrapper object, not just a plain fn
+#     dx=5e-3,
+#     dy=5e-3,
+#     dyaw=np.deg2rad(5.0),
+#     dL=1e-3,
+#     n_out=5,         # e.g. [tip_x, tip_y, tip_z, tx, ty]
+# ):
+#     t0 = time.perf_counter()
+
+#     p8 = np.asarray(p8, float).ravel().copy()
+#     J = np.zeros((n_out, 4), float)
+
+#     def eval_y_from_p8(p):
+#         y = np.asarray(forward_model(p), float).reshape(-1)
+#         return y[:n_out]
+
+#     # First solve nominal point ONCE to establish current branch
+#     y0 = eval_y_from_p8(p8)
+
+#     # Snapshot warm branch state at nominal point
+#     snap0 = snapshot_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model)
+
+#     # 1) x
+#     p_plus = p8.copy();  p_plus[0] += dx
+#     p_minus = p8.copy(); p_minus[0] -= dx
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_plus = eval_y_from_p8(p_plus)
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_minus = eval_y_from_p8(p_minus)
+
+#     J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
+
+#     # 2) y
+#     p_plus = p8.copy();  p_plus[1] += dy
+#     p_minus = p8.copy(); p_minus[1] -= dy
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_plus = eval_y_from_p8(p_plus)
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_minus = eval_y_from_p8(p_minus)
+
+#     J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
+
+#     # 3) yaw
+#     p_plus = p8.copy()
+#     p_minus = p8.copy()
+
+#     q = quat_wxyz_normalize(p8[3:7])
+#     dqz_plus = quat_from_yaw_wxyz(+dyaw)
+#     dqz_minus = quat_from_yaw_wxyz(-dyaw)
+
+#     p_plus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_plus, q))
+#     p_minus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz_minus, q))
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_plus = eval_y_from_p8(p_plus)
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_minus = eval_y_from_p8(p_minus)
+
+#     J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw)
+
+#     # 4) L
+#     p_plus = p8.copy();  p_plus[7] += dL
+#     p_minus = p8.copy(); p_minus[7] -= dL
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_plus = eval_y_from_p8(p_plus)
+
+#     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
+#     y_minus = eval_y_from_p8(p_minus)
+
+#     J[:, 3] = (y_plus - y_minus) / (2.0 * dL)
+
+#     t1 = time.perf_counter()
+#     print(f"[TIME] numerical_J_robot_warm_branch total: {(t1-t0)*1e3:.2f} ms")
+
+#     return J
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
@@ -2757,7 +2799,7 @@ def build_controller(
 
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)
 
-    p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, -0.03])
+    p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, 0.01])
     p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.05])
 
     w_u = np.array([1e-5, 1e-5, 1e-4, 5e-1, 5e-1, 1e-6, 1e-4], dtype=float)
@@ -2775,26 +2817,46 @@ def build_controller(
         dL / dt
     ], dtype=float)
 
-
     forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
     def J_fn(p8):
         forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
-        Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
+
+        Jred_state = analytic_J_robot_xy_yaw_dL(
             p8,
             forward6d_jac,
-            dx=1e-2,
-            dy=1e-2,
-            dyaw=3e-1,
-            dL=1e-3,
             n_out=6,
         )
+
         Jred_control = Jred_state.copy()
         Jred_control[:, 0] *= dt
         Jred_control[:, 1] *= dt
         Jred_control[:, 2] *= dt
         Jred_control[:, 3] *= dt
-        return J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
+
+        return J_full_from_robot_reduced_tip_tangent(
+            Jred_control,
+            n_out_full=6,
+        )
+    # forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+
+    # def J_fn(p8):
+    #     forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+    #     Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
+    #         p8,
+    #         forward6d_jac,
+    #         dx=1e-2,
+    #         dy=1e-2,
+    #         dyaw=3e-1,
+    #         dL=1e-3,
+    #         n_out=6,
+    #     )
+    #     Jred_control = Jred_state.copy()
+    #     Jred_control[:, 0] *= dt
+    #     Jred_control[:, 1] *= dt
+    #     Jred_control[:, 2] *= dt
+    #     Jred_control[:, 3] *= dt
+    #     return J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
@@ -2882,7 +2944,7 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log_test_run_opti_14_mid.csv",
+    csv_log_path="control_run_log_test_run_opti_1dt.csv",
 ):
     history = []
     csv_rows = []
@@ -2900,7 +2962,7 @@ def run_control(
             blue_roi_path="blue_roi_box.json",
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_opti_14_mid/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_opti_1dt/reconstruction_overlay_step_{k:04d}.png",
         )
 
         vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
@@ -2915,11 +2977,11 @@ def run_control(
         forward_pred.fwd.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
         forward_pred.fwd.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
         forward_pred.reset_cache()
-        print("[VISION] lumen first point robot =", mpc.lumen_C[0])
-        print("[VISION] lumen last point robot  =", mpc.lumen_C[-1])
-        print("[VISION] lumen radius min/max [mm] =",
-            1000.0 * np.min(mpc.lumen_R),
-            1000.0 * np.max(mpc.lumen_R))
+        # print("[VISION] lumen first point robot =", mpc.lumen_C[0])
+        # print("[VISION] lumen last point robot  =", mpc.lumen_C[-1])
+        # print("[VISION] lumen radius min/max [mm] =",
+        #     1000.0 * np.min(mpc.lumen_R),
+        #     1000.0 * np.max(mpc.lumen_R))
 
         x_meas = vision_result_to_x_meas_robot(
             vision_result,
@@ -2944,17 +3006,17 @@ def run_control(
         print("distance from pivot [m]:", np.linalg.norm(x_meas[:3] - pivot_point[:3]))
         print("measured tangent robot:", x_meas[3:6])
 
-        print("[VISION] x_meas =", x_meas)
-        print("[VISION] tip position norm [m] =", np.linalg.norm(x_meas[:3]))
-        print("[VISION] tangent norm =", np.linalg.norm(x_meas[3:6]))
-        print("[VISION] lumen_C shape =", mpc.lumen_C.shape)
-        print("[VISION] lumen_R shape =", mpc.lumen_R.shape)
-        print("[VISION] closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
-        print("[VISION] left beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"])
-        print("[VISION] right beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"])
-        print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
-        print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
-        print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
+        # print("[VISION] x_meas =", x_meas)
+        # print("[VISION] tip position norm [m] =", np.linalg.norm(x_meas[:3]))
+        # print("[VISION] tangent norm =", np.linalg.norm(x_meas[3:6]))
+        # print("[VISION] lumen_C shape =", mpc.lumen_C.shape)
+        # print("[VISION] lumen_R shape =", mpc.lumen_R.shape)
+        # print("[VISION] closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
+        # print("[VISION] left beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"])
+        # print("[VISION] right beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"])
+        # print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
+        # print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
+        # print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
 
         tip_xyz = x_meas[:3]
         i_ref = closest_index_in_window_monotone(
@@ -2971,10 +3033,10 @@ def run_control(
         # if k == 0:
 
         mpc.i_ref_last = int(i_ref)
-        print("[VISION] i_ref =", i_ref)
-        print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
-        print("[VISION] tip-to-reference distance [mm] =",
-            1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
+        # print("[VISION] i_ref =", i_ref)
+        # print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
+        # print("[VISION] tip-to-reference distance [mm] =",
+        #     1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
 
         mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
         mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
@@ -2982,6 +3044,7 @@ def run_control(
 
         if hw is not None:
             L_meas = float(vision_result["beam_length_mm"]) / 1000.0
+            # L_meas += 0.00
             robot_pose6 = hw.get_robot_pose_once()
             p_meas8 = build_measured_p8_from_pose6_and_length(
                 robot_pose6,
@@ -3205,8 +3268,11 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
+    MAG_YAW_CAL_DEG = 12.7  # try -5 first because physically subtracting joint 5 fixed it
 
-    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
+    # m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
 
     wire = rod_section_stiffness(
         r=200e-6,
@@ -3233,8 +3299,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         bend_soft=1.0,
         tors_soft=1.0,
     )
-
-    forward_model = EnergyMinForwardWithLumen(
+    forward_model = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
         Kinv_fun=Kinv_fun,
@@ -3242,14 +3307,30 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=7,
-        maxiter=1e7,
+        N_nodes=10,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.002,
+        dL_internal=0.001,
         use_lumen_jac=True,
         L_tip_full=L_tip_full_physical,
-        L_tip_min=L_tip_min_physical,
+        L_tip_min=0.01,
     )
+    # forward_model = EnergyMinForwardWithLumen(
+    #     p0_ur=p0_ur,
+    #     q0_ur=q0_ur,
+    #     Kinv_fun=Kinv_fun,
+    #     u_star=np.zeros(3),
+    #     m_body=m_body,
+    #     lumen_C=np.asarray(lumen_C, float),
+    #     lumen_R=np.asarray(lumen_R, float),
+    #     N_nodes=7,
+    #     maxiter=1e7,
+    #     L0_init=0.01,
+    #     dL_internal=0.002,
+    #     use_lumen_jac=True,
+    #     L_tip_full=L_tip_full_physical,
+    #     L_tip_min=L_tip_min_physical,
+    # )
 
     print("Finished_building_model")
     return p0_ur, q0_ur, forward_model
@@ -3363,7 +3444,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_opti_14_mid",
+            plot_dir="mpc_run_opti_1dt",
         )
 
     finally:

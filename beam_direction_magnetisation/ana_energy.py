@@ -288,17 +288,17 @@ def contact_energy_gradient_u(
     p, q, _ = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)
 
     # contact forces at nodes
-    C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
+    C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
         p,
         lumen_query,
-        Kc=5,
-        d_tilde=5e-4,
-        eps=1e-9,
-        penalize_outside=True,
-        k_out=1e5,
-        pen_switch=5e-4,
-        k_hard=3e5,
+        r_beam=beam_params.r,      # or whatever your beam radius variable is
+        k_contact=1e5,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        eps=1e-12,
         window=3,
+        smooth=True,              # start with nonsmooth pure contact
+        smooth_eps=1e-7,
     )
 
     grad = np.zeros_like(u_flat)
@@ -369,6 +369,64 @@ def energy_gradient_u(
             s=s,
             lumen_query=lumen_query,
         )
+
+    return grad
+def contact_energy_gradient_u_faster_fdkin(
+    u_flat,
+    *,
+    p0,
+    q0,
+    s,
+    lumen_query,
+    eps_kin=1e-7,
+):
+    u_flat = np.asarray(u_flat, float).reshape(-1)
+    s = np.asarray(s, float).ravel()
+    N = s.size
+    n_seg = N - 1
+    h = float(s[1] - s[0])
+
+    p, q, _ = integrate_pq_from_u(u_flat, p0=p0, q0=q0, s=s)
+
+    C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
+        p,
+        lumen_query,
+        r_beam=beam_params.r,
+        k_contact=1e5,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        eps=1e-12,
+        window=3,
+        smooth=True,
+        smooth_eps=1e-7,
+    )
+
+    W_p = -h * F_nodes
+    active_nodes = np.where(np.linalg.norm(W_p, axis=0) > 0.0)[0]
+
+    if active_nodes.size == 0:
+        return np.zeros_like(u_flat)
+
+    grad = np.zeros_like(u_flat)
+
+    for k in range(u_flat.size):
+        seg_i = k // 3
+
+        # p_j is affected only if j > seg_i
+        active = active_nodes[active_nodes > seg_i]
+        if active.size == 0:
+            continue
+
+        up = u_flat.copy()
+        um = u_flat.copy()
+        up[k] += eps_kin
+        um[k] -= eps_kin
+
+        pp, _, _ = integrate_pq_from_u(up, p0=p0, q0=q0, s=s)
+        pm, _, _ = integrate_pq_from_u(um, p0=p0, q0=q0, s=s)
+
+        dp_du_k = (pp[:, active] - pm[:, active]) / (2.0 * eps_kin)
+        grad[k] = np.sum(W_p[:, active] * dp_du_k)
 
     return grad
 def solve_energy_min_3d(
@@ -451,9 +509,9 @@ def solve_energy_min_3d(
         method="L-BFGS-B",
         options=dict(
             maxiter=maxiter,
-            ftol=1e-16,
-            gtol=1e-14,
-            maxls=200,
+            ftol=1e-8,
+            gtol=1e-6,
+            maxls=50,
         ),
     )
 
@@ -635,19 +693,18 @@ def energy_from_u(
     W_cf = 0.0
     min_d = np.nan
     if use_lumen and (lumen_query is not None):
-        C_nodes, F_nodes, d_nodes = contact_barrier_energy_and_force_fast(
-            p, lumen_query,
-            Kc=5,
-            d_tilde=5e-4,
-            eps=1e-9,
-            penalize_outside=True,
-            k_out=1e5,
-            pen_switch=5e-4,
-            k_hard=3e5,
+        C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
+            p,
+            lumen_query,
+            r_beam=beam_params.r,      # or whatever your beam radius variable is
+            k_contact=1e5,
+            pen_switch=5e-5,
+            k_hard=1e10,
+            eps=1e-12,
             window=3,
+            smooth=True,              # start with nonsmooth pure contact
+            smooth_eps=1e-7,
         )
-        W_cf = (s[1] - s[0]) * float(np.sum(C_nodes))
-        min_d = float(np.min(d_nodes))
 
     W_total = W_el + W_m + W_g + W_cf
     # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")

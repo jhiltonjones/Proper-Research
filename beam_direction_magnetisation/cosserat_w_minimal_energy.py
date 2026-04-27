@@ -12,6 +12,7 @@ from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.post_processing.post_processing import (plot_centerlines_with_lumen_3d, make_lumen_centerline_turning, 
                                                                           plot_error_vs_s, closest_point_on_segment, point_to_polyline_distance)
 from proper_research.robot.transformations import get_point
+from scipy.optimize import minimize
 L_tip_full=0.04
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
@@ -303,6 +304,7 @@ class CosseratForwardModel:
                 max_nodes=self.max_nodes
             )
             self._sol_prev = sol
+            print("final nodes:", len(sol.x))
             return sol
 
         guesses = []
@@ -842,7 +844,7 @@ def make_initial_guess(L, n_nodes, *, bend_axis="y", bend_sign=0, m_seed=5e-4):
             raise ValueError("bend_axis must be 'y' or 'z'")
 
     return s, Y
-from scipy.optimize import minimize
+
 
 def quat_exp_body(u, ds):
     """Quaternion exponential for body strain u over step ds."""
@@ -1404,24 +1406,24 @@ def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
     return L_model, wire_len, tip_len
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.02
+    L_cmd = 0.015
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
     mag_len = beam_params.length_of_mag
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
     pivot_point = np.array([
         0.7981328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.13),
+        pivot_point[0] - (L_cmd + 0.1),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, -70, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 70, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(
@@ -1449,7 +1451,7 @@ if __name__ == "__main__":
     )
     tip = rod_section_stiffness(
         r=beam_params.r,
-        E=beam_params.E,
+        E=3e6,
         nu=0.49,
     )
     EA_wire = wire["EA"]
@@ -1511,7 +1513,7 @@ if __name__ == "__main__":
         bend_end=0.03,
     )
     lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
-    lumen_R = np.full(len(lumen_C), 0.004)
+    lumen_R = np.full(len(lumen_C), 0.002)
     # # lumen_C = make_lumen_centerline_turning(
     #     p_start=p0_ur,
     #     t0=t0,
@@ -1585,7 +1587,7 @@ if __name__ == "__main__":
             m_local_fun=m_local_fun, m_moment=0.0,
             lumen_C=lumen_C, lumen_R=lumen_R,
             N=12, maxiter=30,
-            use_lumen=False,
+            use_lumen=True,
             u_init=u_init,
             debug=True
         )

@@ -13,6 +13,795 @@ from beam_direction_magnetisation.post_processing.post_processing import (plot_c
                                                                           plot_error_vs_s, closest_point_on_segment, point_to_polyline_distance)
 from proper_research.robot.transformations import get_point
 L_tip_full=0.04
+from scipy.integrate import solve_ivp
+import numpy as np
+def params_from_L(L):
+    L_model, wire_len, tip_len = effective_lengths(
+        L,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
+    m_local_fun_L = make_m_local_fun_wire_tip(
+        wire_len,
+        len_tip=tip_len,
+        mode="axial",
+        alpha_end=0.0,
+        eps=1e-3,
+    )
+    return L_model, wire_len, tip_len, m_local_fun_L
+def normalized_rhs_single(
+    xi,
+    y,
+    *,
+    L,
+    r_src,
+    m_src,
+    Kinv_fun,
+    m_local_fun,
+    m_moment,
+    wire_len,
+    u_star=None,
+):
+    s = float(L) * float(xi)
+    f, _ = cosserat_rhs_single(
+        s,
+        y,
+        m_src=m_src,
+        r_src=r_src,
+        Kinv_fun=Kinv_fun,
+        m_local_fun=m_local_fun,
+        m_moment=m_moment,
+        wire_len=wire_len,
+        u_star=u_star,
+    )
+    return float(L) * f
+
+
+def normalized_length_column_fd(
+    xi,
+    y,
+    *,
+    L,
+    r_src,
+    m_src,
+    Kinv_fun,
+    m_moment,
+    u_star=None,
+    eps_L=1e-5,
+):
+    """
+    Computes d/dL of normalized RHS:
+
+        y_xi = L * f(s=L*xi, y, params(L))
+
+    at fixed xi and fixed y.
+    """
+
+    Lp = float(L) + eps_L
+    Lm = max(float(L) - eps_L, 1e-8)
+
+    _, wire_p, _, m_local_p = params_from_L(Lp)
+    _, wire_m, _, m_local_m = params_from_L(Lm)
+
+    gp = normalized_rhs_single(
+        xi,
+        y,
+        L=Lp,
+        r_src=r_src,
+        m_src=m_src,
+        Kinv_fun=Kinv_fun,
+        m_local_fun=m_local_p,
+        m_moment=m_moment,
+        wire_len=wire_p,
+        u_star=u_star,
+    )
+
+    gm = normalized_rhs_single(
+        xi,
+        y,
+        L=Lm,
+        r_src=r_src,
+        m_src=m_src,
+        Kinv_fun=Kinv_fun,
+        m_local_fun=m_local_m,
+        m_moment=m_moment,
+        wire_len=wire_m,
+        u_star=u_star,
+    )
+
+    return (gp - gm) / (Lp - Lm)
+def solve_tip_sensitivity_source_pose_length_shooting(
+    sol_nom,
+    *,
+    L,
+    r_src,
+    q_src,
+    m_body,
+    Kinv_fun,
+    m_moment,
+    u_star=None,
+    n_eval=200,
+    rtol=1e-6,
+    atol=1e-8,
+    method="DOP853",
+    rotation_convention="world",
+    eps_L=1e-5,
+):
+    """
+    Fast shooting sensitivity for:
+
+        J = d p_tip / d [r_src, delta_phi, L]
+
+    Shape:
+        J : (3, 7)
+
+    Columns:
+        0:3 -> source translation
+        3:6 -> source rotation-vector perturbation
+        6   -> model length L
+    """
+
+    L = float(L)
+    r_src = np.asarray(r_src, float).reshape(3,)
+    q_src = quat_normalize(np.asarray(q_src, float).reshape(4,))
+    m_body = np.asarray(m_body, float).reshape(3,)
+
+    _, wire_len, _, m_local_fun = params_from_L(L)
+
+    m_src = dipole_from_pose(q_src, m_body)
+
+    dm_src_dphi = source_dipole_rotation_jacobian(
+        q_src,
+        m_body,
+        convention=rotation_convention,
+    )
+
+    n_state = 13
+    n_ctrl = 7
+    n_eta = 6
+
+    P0 = np.zeros((n_state, n_ctrl), dtype=float)
+
+    U0 = np.zeros((n_state, n_eta), dtype=float)
+    U0[7:13, :] = np.eye(6)
+
+    W0 = np.concatenate([
+        P0.reshape(-1),
+        U0.reshape(-1),
+    ])
+
+    def ode_shoot(xi, W_flat):
+        W_flat = np.asarray(W_flat, float)
+
+        P = W_flat[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+        U = W_flat[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+        s = L * float(xi)
+        y_nom = sol_nom.sol(np.array([s], dtype=float))[:, 0]
+
+        A_s = rhs_state_jacobian_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )
+
+        B_pose_s = rhs_control_jacobian_source_pose_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            dm_src_dphi=dm_src_dphi,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )  # (13,6)
+
+        A_xi = L * A_s
+
+        B_xi = np.zeros((13, 7), dtype=float)
+        B_xi[:, 0:6] = L * B_pose_s
+
+        B_xi[:, 6] = normalized_length_column_fd(
+            xi,
+            y_nom,
+            L=L,
+            r_src=r_src,
+            m_src=m_src,
+            Kinv_fun=Kinv_fun,
+            m_moment=m_moment,
+            u_star=u_star,
+            eps_L=eps_L,
+        )
+
+        dP = A_xi @ P + B_xi
+        dU = A_xi @ U
+
+        return np.concatenate([
+            dP.reshape(-1),
+            dU.reshape(-1),
+        ])
+
+    sol_ivp = solve_ivp(
+        ode_shoot,
+        t_span=(0.0, 1.0),
+        y0=W0,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        dense_output=True,
+        t_eval=np.linspace(0.0, 1.0, int(n_eval)),
+    )
+
+    if not sol_ivp.success:
+        raise RuntimeError(f"Pose+length shooting sensitivity failed: {sol_ivp.message}")
+
+    W_1 = sol_ivp.y[:, -1]
+
+    P_1 = W_1[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+    U_1 = W_1[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+    C_P = P_1[7:13, :]   # (6,7)
+    C_U = U_1[7:13, :]   # (6,6)
+
+    eta = np.linalg.solve(C_U, -C_P)
+
+    Z_1 = P_1 + U_1 @ eta
+
+    J_tip_pose_length = Z_1[0:3, :]  # (3,7)
+
+    diagnostics = {
+        "sol_ivp": sol_ivp,
+        "P_1": P_1,
+        "U_1": U_1,
+        "eta": eta,
+        "tip_residual_nm": Z_1[7:13, :],
+        "terminal_matrix_cond": np.linalg.cond(C_U),
+    }
+
+    return J_tip_pose_length, diagnostics
+
+def solve_tip_sensitivity_source_pose_shooting(
+    sol_nom,
+    *,
+    L,
+    r_src,
+    q_src,
+    m_body,
+    Kinv_fun,
+    m_local_fun,
+    m_moment,
+    wire_len,
+    u_star=None,
+    n_eval=200,
+    rtol=1e-6,
+    atol=1e-8,
+    method="DOP853",
+    rotation_convention="world",
+):
+    """
+    Fast shooting sensitivity for:
+
+        J = d p_tip / d [r_src, delta_phi]
+
+    Shape:
+        J : (3, 6)
+
+    Columns:
+        0:3 -> source translation perturbations
+        3:6 -> source rotation-vector perturbations
+
+    This replaces the 78-state solve_bvp sensitivity solve.
+    """
+
+    r_src = np.asarray(r_src, float).reshape(3,)
+    q_src = quat_normalize(np.asarray(q_src, float).reshape(4,))
+    m_body = np.asarray(m_body, float).reshape(3,)
+
+    m_src = dipole_from_pose(q_src, m_body)
+
+    dm_src_dphi = source_dipole_rotation_jacobian(
+        q_src,
+        m_body,
+        convention=rotation_convention,
+    )  # (3,3)
+
+    n_state = 13
+    n_ctrl = 6
+    n_eta = 6
+
+    # P: particular sensitivity wrt source pose, shape (13,6)
+    # U: homogeneous sensitivity wrt unknown initial [n0, m0], shape (13,6)
+    #
+    # Flatten [P, U] into one IVP vector.
+    P0 = np.zeros((n_state, n_ctrl), dtype=float)
+
+    U0 = np.zeros((n_state, n_eta), dtype=float)
+    U0[7:13, :] = np.eye(6)  # unknown initial delta n(0), delta m(0)
+
+    W0 = np.concatenate([P0.reshape(-1), U0.reshape(-1)])
+
+    def ode_shoot(s, W_flat):
+        W_flat = np.asarray(W_flat, float)
+
+        P = W_flat[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+        U = W_flat[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+        y_nom = sol_nom.sol(np.array([s], dtype=float))[:, 0]
+
+        A = rhs_state_jacobian_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )
+
+        B = rhs_control_jacobian_source_pose_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            dm_src_dphi=dm_src_dphi,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )  # (13,6)
+
+        dP = A @ P + B
+        dU = A @ U
+
+        return np.concatenate([dP.reshape(-1), dU.reshape(-1)])
+
+    sol_ivp = solve_ivp(
+        ode_shoot,
+        t_span=(0.0, float(L)),
+        y0=W0,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        dense_output=True,
+        t_eval=np.linspace(0.0, float(L), int(n_eval)),
+    )
+
+    if not sol_ivp.success:
+        raise RuntimeError(f"Shooting sensitivity IVP failed: {sol_ivp.message}")
+
+    W_L = sol_ivp.y[:, -1]
+
+    P_L = W_L[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+    U_L = W_L[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+    # Tip free-end condition: delta n(L)=0, delta m(L)=0
+    C_P = P_L[7:13, :]      # (6,6)
+    C_U = U_L[7:13, :]      # (6,6)
+
+    # Solve C_U @ eta = -C_P
+    eta = np.linalg.solve(C_U, -C_P)       # (6,6)
+
+    Z_L = P_L + U_L @ eta                  # (13,6)
+
+    J_tip_pose = Z_L[0:3, :]               # (3,6)
+
+    diagnostics = {
+        "sol_ivp": sol_ivp,
+        "P_L": P_L,
+        "U_L": U_L,
+        "eta": eta,
+        "tip_residual_nm": Z_L[7:13, :],
+        "terminal_matrix_cond": np.linalg.cond(C_U),
+    }
+
+    return J_tip_pose, diagnostics
+def tip_jacobian_source_pose_length_fd_full(
+    *,
+    model_factory_from_length,
+    L,
+    r_src,
+    q_src,
+    m_body,
+    eps_pos=1e-5,
+    eps_rot=1e-5,
+    eps_L=1e-5,
+    rotation_convention="world",
+):
+    model0, wire_len0 = model_factory_from_length(L)
+
+    out0 = model0.forward(
+        L=L,
+        r_src=r_src,
+        q_src=q_src,
+        m_body=m_body,
+        wire_len=wire_len0,
+    )
+    p0 = out0["p_tip"]
+
+    J = np.zeros((3, 7), dtype=float)
+
+    # translation columns
+    for j in range(3):
+        rp = np.asarray(r_src, float).copy()
+        rp[j] += eps_pos
+
+        modelp, wire_lenp = model_factory_from_length(L)
+
+        outp = modelp.forward(
+            L=L,
+            r_src=rp,
+            q_src=q_src,
+            m_body=m_body,
+            wire_len=wire_lenp,
+        )
+
+        J[:, j] = (outp["p_tip"] - p0) / eps_pos
+
+    # rotation-vector columns
+    for j in range(3):
+        dphi = np.zeros(3)
+        dphi[j] = eps_rot
+
+        qp = perturb_q_src(q_src, dphi, convention=rotation_convention)
+
+        modelp, wire_lenp = model_factory_from_length(L)
+
+        outp = modelp.forward(
+            L=L,
+            r_src=r_src,
+            q_src=qp,
+            m_body=m_body,
+            wire_len=wire_lenp,
+        )
+
+        J[:, 3 + j] = (outp["p_tip"] - p0) / eps_rot
+
+    # length column
+    Lp = float(L) + eps_L
+    modelp, wire_lenp = model_factory_from_length(Lp)
+
+    outp = modelp.forward(
+        L=Lp,
+        r_src=r_src,
+        q_src=q_src,
+        m_body=m_body,
+        wire_len=wire_lenp,
+    )
+
+    J[:, 6] = (outp["p_tip"] - p0) / eps_L
+
+    return J
+def model_factory_from_length(L_here):
+    L_model, wire_len_here, tip_len_here = effective_lengths(
+        L_here,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
+
+    model_here = CosseratForwardModel(
+        p0=p0_ur,
+        q0=q0_ur,
+        Kinv_fun=Kinv_fun,
+        m_local_fun=make_m_local_fun_wire_tip(
+            wire_len_here,
+            len_tip=tip_len_here,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        ),
+        m_moment=0.0,
+        wire_len=wire_len_here,
+        n_nodes=nodes,
+        tol=1e-5,
+        max_nodes=20000,
+    )
+
+    return model_here, wire_len_here
+def tip_jacobian_source_pose_fd_full(
+    *,
+    model_factory,
+    L,
+    r_src,
+    q_src,
+    m_body,
+    wire_len,
+    eps_pos=1e-5,
+    eps_rot=1e-5,
+    rotation_convention="world",
+):
+    model0 = model_factory()
+    out0 = model0.forward(
+        L=L,
+        r_src=r_src,
+        q_src=q_src,
+        m_body=m_body,
+        wire_len=wire_len,
+    )
+    p0 = out0["p_tip"]
+
+    J = np.zeros((3, 6), dtype=float)
+
+    for j in range(3):
+        rp = np.asarray(r_src, float).copy()
+        rp[j] += eps_pos
+
+        modelp = model_factory()
+        outp = modelp.forward(
+            L=L,
+            r_src=rp,
+            q_src=q_src,
+            m_body=m_body,
+            wire_len=wire_len,
+        )
+
+        J[:, j] = (outp["p_tip"] - p0) / eps_pos
+
+    for j in range(3):
+        dphi = np.zeros(3)
+        dphi[j] = eps_rot
+
+        qp = perturb_q_src(q_src, dphi, convention=rotation_convention)
+
+        modelp = model_factory()
+        outp = modelp.forward(
+            L=L,
+            r_src=r_src,
+            q_src=qp,
+            m_body=m_body,
+            wire_len=wire_len,
+        )
+
+        J[:, 3 + j] = (outp["p_tip"] - p0) / eps_rot
+
+    return J
+def quat_from_small_rot(delta_phi):
+    delta_phi = np.asarray(delta_phi, float).reshape(3,)
+    a = np.linalg.norm(delta_phi)
+
+    if a < 1e-14:
+        return np.array([1.0, 0.5*delta_phi[0], 0.5*delta_phi[1], 0.5*delta_phi[2]])
+
+    axis = delta_phi / a
+    h = 0.5 * a
+    return np.array([np.cos(h), *(np.sin(h) * axis)], dtype=float)
+
+
+def perturb_q_src(q_src, delta_phi, convention="world"):
+    dq = quat_from_small_rot(delta_phi)
+    q_src = quat_normalize(q_src)
+
+    if convention == "world":
+        return quat_normalize(quat_mul(dq, q_src))
+
+    if convention == "body":
+        return quat_normalize(quat_mul(q_src, dq))
+
+    raise ValueError("convention must be 'world' or 'body'")
+def solve_tip_sensitivity_source_pose(
+    sol_nom,
+    *,
+    L,
+    r_src,
+    q_src,
+    m_body,
+    Kinv_fun,
+    m_local_fun,
+    m_moment,
+    wire_len,
+    u_star=None,
+    n_nodes=120,
+    tol=1e-5,
+    max_nodes=20000,
+    rotation_convention="world",
+):
+    r_src = np.asarray(r_src, float).reshape(3,)
+    q_src = quat_normalize(np.asarray(q_src, float).reshape(4,))
+    m_body = np.asarray(m_body, float).reshape(3,)
+
+    m_src = dipole_from_pose(q_src, m_body)
+    dm_src_dphi = source_dipole_rotation_jacobian(
+        q_src,
+        m_body,
+        convention=rotation_convention,
+    )
+
+    s_mesh = np.linspace(0.0, float(L), int(n_nodes))
+
+    def sens_ode(s, Z_flat):
+        s = np.asarray(s, float).ravel()
+        Z_flat = np.asarray(Z_flat, float)
+
+        ns = s.size
+        Z = Z_flat.reshape(13, 6, ns)
+        dZ = np.zeros_like(Z)
+
+        Y_nom = sol_nom.sol(s)
+
+        for i in range(ns):
+            y_nom = Y_nom[:, i]
+
+            A = rhs_state_jacobian_analytic(
+                s[i], y_nom,
+                m_src=m_src,
+                r_src=r_src,
+                Kinv_fun=Kinv_fun,
+                m_local_fun=m_local_fun,
+                m_moment=m_moment,
+                wire_len=wire_len,
+                u_star=u_star,
+            )
+
+            B = rhs_control_jacobian_source_pose_analytic(
+                s[i], y_nom,
+                m_src=m_src,
+                r_src=r_src,
+                dm_src_dphi=dm_src_dphi,
+                Kinv_fun=Kinv_fun,
+                m_local_fun=m_local_fun,
+                m_moment=m_moment,
+                wire_len=wire_len,
+                u_star=u_star,
+            )
+
+            dZ[:, :, i] = A @ Z[:, :, i] + B
+
+        return dZ.reshape(78, ns)
+
+    Z_guess = np.zeros((78, s_mesh.size), dtype=float)
+
+    sol_sens = solve_bvp(
+        sens_ode,
+        bc_sensitivity_pose_columns,
+        s_mesh,
+        Z_guess,
+        tol=tol,
+        max_nodes=max_nodes,
+    )
+
+    if not sol_sens.success:
+        raise RuntimeError(f"Source-pose sensitivity failed: {sol_sens.message}")
+
+    Z_tip = sol_sens.sol(np.array([L], dtype=float))[:, 0].reshape(13, 6)
+
+    J_tip_pose = Z_tip[0:3, :]
+
+    return J_tip_pose, sol_sens
+def bc_sensitivity_pose_columns(Za, Zb):
+    Za = np.asarray(Za, float).reshape(13, 6)
+    Zb = np.asarray(Zb, float).reshape(13, 6)
+
+    bc = np.zeros((13, 6), dtype=float)
+    bc[0:3, :] = Za[0:3, :]
+    bc[3:7, :] = Za[3:7, :]
+    bc[7:10, :] = Zb[7:10, :]
+    bc[10:13, :] = Zb[10:13, :]
+
+    return bc.reshape(-1)
+def rhs_control_jacobian_source_pose_analytic(
+    s, y, *,
+    m_src,
+    r_src,
+    dm_src_dphi,
+    Kinv_fun,
+    m_local_fun,
+    m_moment,
+    wire_len,
+    u_star=None,
+):
+    """
+    B_pose = d RHS / d [r_src, delta_phi], shape (13,6)
+
+    Columns:
+      0:3 -> source translation perturbation
+      3:6 -> source rotation perturbation
+    """
+    y = np.asarray(y, float).reshape(13,)
+    p = y[0:3]
+    q = quat_normalize(y[3:7])
+
+    R = quat_to_R(q)
+    m_local = m_local_fun(np.array([s]), m_moment)[:, 0]
+    m_world = R @ m_local
+
+    # -------------------------
+    # Translation part
+    # -------------------------
+    dB_drsrc = dipole_field_jacobian_wrt_rsrc(p, r_src, m_src)
+    df_drsrc = force_jacobian_rsrc(p, r_src, m_src, m_world)
+    dtau_drsrc = torque_jacobian_rsrc(m_world, dB_drsrc)
+
+    B_r = np.zeros((13, 3), dtype=float)
+    B_r[7:10, :] = -df_drsrc
+    B_r[10:13, :] = -dtau_drsrc
+
+    # -------------------------
+    # Rotation part
+    # -------------------------
+    dB_dmsrc = dipole_field_jacobian_wrt_msrc(p, r_src)
+    df_dmsrc = force_jacobian_msrc(p, r_src, m_src, m_world)
+    dtau_dmsrc = torque_jacobian_msrc(m_world, dB_dmsrc)
+
+    B_m = np.zeros((13, 3), dtype=float)
+    B_m[7:10, :] = -df_dmsrc
+    B_m[10:13, :] = -dtau_dmsrc
+
+    B_phi = B_m @ dm_src_dphi
+
+    return np.hstack([B_r, B_phi])
+def dipole_field_jacobian_wrt_msrc(p, r_src, mu0=4*np.pi*1e-7):
+    c = mu0 / (4*np.pi)
+    R = np.asarray(p, float).reshape(3,) - np.asarray(r_src, float).reshape(3,)
+
+    r2 = np.dot(R, R) + 1e-24
+    r = np.sqrt(r2)
+    r3 = r2 * r
+    r5 = r3 * r2
+
+    return c * (3.0 * np.outer(R, R) / r5 - np.eye(3) / r3)
+
+
+def force_jacobian_msrc(p, r_src, m_src, m_world, mu0=4*np.pi*1e-7):
+    """
+    df_ext / d m_src, shape (3,3)
+    """
+    c = mu0 / (4*np.pi)
+
+    R = np.asarray(p, float).reshape(3,) - np.asarray(r_src, float).reshape(3,)
+    m = np.asarray(m_world, float).reshape(3,)
+
+    r2 = np.dot(R, R) + 1e-24
+    r = np.sqrt(r2)
+    r5 = r2 * r2 * r
+
+    a = np.dot(m, R)  # m_world dot R
+
+    return 3.0 * c / r5 * (
+        a * np.eye(3)
+        + np.outer(m, R)
+        + np.outer(R, m)
+        - 5.0 * a / r2 * np.outer(R, R)
+    )
+
+
+def torque_jacobian_msrc(m_world, dB_dmsrc):
+    """
+    d tau_ext / d m_src, where tau = m_world x B.
+    """
+    return skew(m_world) @ dB_dmsrc
+def source_dipole_rotation_jacobian(q_src, m_body, convention="world"):
+    """
+    Returns dm_src / d(delta_phi), shape (3,3).
+
+    convention="world":
+        q_new = delta_q ⊗ q_src
+        delta m_src = delta_phi_world x m_src
+
+    convention="body":
+        q_new = q_src ⊗ delta_q
+        delta m_src = R_src @ (delta_phi_body x m_body)
+    """
+    R_src = quat_to_R(quat_normalize(q_src))
+    m_body = np.asarray(m_body, float).reshape(3,)
+    m_src = R_src @ m_body
+
+    if convention == "world":
+        return -skew(m_src)
+
+    if convention == "body":
+        return -R_src @ skew(m_body)
+
+    raise ValueError("convention must be 'world' or 'body'")
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
         s = np.asarray(s, float)
@@ -1830,15 +2619,21 @@ if __name__ == "__main__":
     out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body, wire_len=wire_len)
     print("tip in UR:", out["p_tip"])
 
+    # ------------------------------------------------------------
+    # Nominal source dipole and nominal solve
+    # ------------------------------------------------------------
     m_src = dipole_from_pose(q_src_ur, m_body)
 
-    # nominal BVP solution
     sol_nom = model.solve(
         L=L_cmd,
         r_src=r_src_ur,
         m_src=m_src,
         wire_len=wire_len,
     )
+
+    # ------------------------------------------------------------
+    # Local B check: translation block only
+    # ------------------------------------------------------------
     s_test = 0.5 * L_cmd
     y_test = sol_nom.sol(np.array([s_test]))[:, 0]
 
@@ -1864,34 +2659,13 @@ if __name__ == "__main__":
         u_star=np.zeros(3),
     )
 
-    print("Local B_fd:\n", B_fd)
-    print("Local B_an:\n", B_an)
-    print("Local B diff:\n", B_an - B_fd)
+    print("\nLocal B translation check")
     print("Relative local B error:",
         np.linalg.norm(B_an - B_fd) / max(np.linalg.norm(B_fd), 1e-12))
-    # sensitivity Jacobian
-    J_sens, sens_solutions,_ = solve_tip_sensitivity_rsrc_cached(
-        sol_nom,
-        L=L_cmd,
-        r_src=r_src_ur,
-        m_src=m_src,
-        Kinv_fun=Kinv_fun,
-        m_local_fun=model.m_local_fun,
-        m_moment=model.m_moment,
-        wire_len=wire_len,
-        u_star=np.zeros(3),
-        n_nodes=model.n_nodes,
-        tol=model.tol,
-        max_nodes=model.max_nodes,
-    )
 
-    print("\nSensitivity Jacobian d p_tip / d r_src:")
-    print(J_sens)
-    s_test = 0.5 * L_cmd
-    y_test = sol_nom.sol(np.array([s_test]))[:, 0]
-
-
-    # fresh-model factory for clean FD comparison
+    # ------------------------------------------------------------
+    # Model factory for FD checks
+    # ------------------------------------------------------------
     def model_factory():
         return CosseratForwardModel(
             p0=p0_ur,
@@ -1911,153 +2685,152 @@ if __name__ == "__main__":
             max_nodes=20000,
         )
 
-    J_fd = tip_jacobian_rsrc_fd_full(
-        model_factory=model_factory,
+    # ------------------------------------------------------------
+    # Analytic 6-column source-pose sensitivity
+    # columns 0:3 = translation
+    # columns 3:6 = small source rotation delta_phi
+    # ------------------------------------------------------------
+    # J_pose, sol_pose_sens = solve_tip_sensitivity_source_pose(
+    #     sol_nom,
+    #     L=L_cmd,
+    #     r_src=r_src_ur,
+    #     q_src=q_src_ur,
+    #     m_body=m_body,
+    #     Kinv_fun=Kinv_fun,
+    #     m_local_fun=model.m_local_fun,
+    #     m_moment=model.m_moment,
+    #     wire_len=wire_len,
+    #     u_star=np.zeros(3),
+    #     n_nodes=model.n_nodes,
+    #     tol=model.tol,
+    #     max_nodes=model.max_nodes,
+    #     rotation_convention="world",
+    # )
+    J_pose_L, diag = solve_tip_sensitivity_source_pose_length_shooting(
+        sol_nom,
         L=L_cmd,
         r_src=r_src_ur,
         q_src=q_src_ur,
         m_body=m_body,
-        wire_len=wire_len,
-        eps=1e-5,
-    )
-
-    print("\nFull nonlinear FD Jacobian d p_tip / d r_src:")
-    print(J_fd)
-
-    print("\nDifference J_sens - J_fd:")
-    print(J_sens - J_fd)
-
-    print("\nRelative error norm:")
-    denom = max(np.linalg.norm(J_fd), 1e-12)
-    print(np.linalg.norm(J_sens - J_fd) / denom)
-
-
-    model_factory = make_model_factory(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
         Kinv_fun=Kinv_fun,
-        wire_len=wire_len,
-        tip_len=tip_len,
-        n_nodes=nodes,
-        tol=1e-5,
-        max_nodes=20000,
-        )
-
-    m_src = dipole_from_pose(q_src_ur, m_body)
-
-    def run_nominal_solve():
-        model = model_factory()
-        sol = model.solve(
-            L=L_cmd,
-            r_src=r_src_ur,
-            m_src=m_src,
-            wire_len=wire_len,
-        )
-        return sol
-
-    bench_nom = benchmark_function(
-        run_nominal_solve,
-        repeats=5,
-        warmup=1,
-        label="Nominal nonlinear BVP solve",
+        m_moment=model.m_moment,
+        u_star=np.zeros(3),
+        n_eval=200,
+        rtol=1e-6,
+        atol=1e-8,
+        rotation_convention="world",
     )
-    print_benchmark_result(bench_nom)
-    def run_fd_total():
-        J_fd = tip_jacobian_rsrc_fd_full(
-            model_factory=model_factory,
-            L=L_cmd,
-            r_src=r_src_ur,
-            q_src=q_src_ur,
-            m_body=m_body,
-            wire_len=wire_len,
-            eps=1e-5,
-        )
-        return J_fd
 
-    bench_fd_total = benchmark_function(
-        run_fd_total,
-        repeats=5,
-        warmup=1,
-        label="Full nonlinear FD Jacobian build",
-    )
-    print_benchmark_result(bench_fd_total)
-    # build one nominal solution up front
-    model_for_postsolve = model_factory()
-    sol_nom_fixed = model_for_postsolve.solve(
+    print("\nJ_tip wrt [r_src, delta_phi, L]:")
+    print(J_pose_L)
+
+    print("\ntranslation block:")
+    print(J_pose_L[:, 0:3])
+
+    print("\nrotation block:")
+    print(J_pose_L[:, 3:6])
+
+    print("\nlength column:")
+    print(J_pose_L[:, 6])
+
+    print("\nfree-tip residual:")
+    print(np.linalg.norm(diag["tip_residual_nm"]))
+
+
+
+    # ------------------------------------------------------------
+    # Full nonlinear FD check for all 6 source-pose columns
+    # ------------------------------------------------------------
+    J_fd_pose_L = tip_jacobian_source_pose_length_fd_full(
+        model_factory_from_length=model_factory_from_length,
         L=L_cmd,
         r_src=r_src_ur,
-        m_src=m_src,
-        wire_len=wire_len,
+        q_src=q_src_ur,
+        m_body=m_body,
+        eps_pos=1e-5,
+        eps_rot=1e-5,
+        eps_L=1e-5,
+        rotation_convention="world",
     )
 
-    def run_sensitivity_postsolve():
-        J_sens, _,_ = solve_tip_sensitivity_rsrc_cached(
-            sol_nom_fixed,
-            L=L_cmd,
-            r_src=r_src_ur,
-            m_src=m_src,
-            Kinv_fun=Kinv_fun,
-            m_local_fun=model_for_postsolve.m_local_fun,
-            m_moment=model_for_postsolve.m_moment,
-            wire_len=wire_len,
-            u_star=np.zeros(3),
-            n_nodes=model_for_postsolve.n_nodes,
-            tol=model_for_postsolve.tol,
-            max_nodes=model_for_postsolve.max_nodes,
-        )
-        return J_sens
+    print("FD J_tip wrt [r_src, delta_phi, L]:")
+    print(J_fd_pose_L)
 
-    bench_sens_postsolve = benchmark_function(
-        run_sensitivity_postsolve,
-        repeats=5,
-        warmup=1,
-        label="Sensitivity Jacobian only (nominal solve fixed)",
+    print("\nFD J_tip_source_pose:")
+    print(J_fd_pose_L)
+
+    print("\nDifference analytic - FD:")
+    print(J_pose_L - J_fd_pose_L)
+
+    print("\nRelative pose Jacobian error:")
+    print(np.linalg.norm(J_pose_L - J_fd_pose_L) / max(np.linalg.norm(J_fd_pose_L), 1e-12))
+
+    # ------------------------------------------------------------
+    # Optional separate block errors
+    # ------------------------------------------------------------
+    print("\nRelative translation block error:")
+    print(
+        np.linalg.norm(J_pose_L[:, 0:3] - J_fd_pose_L[:, 0:3])
+        / max(np.linalg.norm(J_fd_pose_L[:, 0:3]), 1e-12)
     )
-    print_benchmark_result(bench_sens_postsolve)
-    def tip_jacobian_rsrc_fd_full_postsolve(
-        *,
-        p_tip_base,
-        model_factory,
-        L,
-        r_src,
-        q_src,
-        m_body,
-        wire_len,
-        eps=1e-5,
-    ):
-        J = np.zeros((3, 3), dtype=float)
-        for j in range(3):
-            rp = np.asarray(r_src, float).copy()
-            rp[j] += eps
 
-            modelp = model_factory()
-            outp = modelp.forward(L=L, r_src=rp, q_src=q_src, m_body=m_body, wire_len=wire_len)
-            J[:, j] = (outp["p_tip"] - p_tip_base) / eps
-        return J
+    print("\nRelative rotation block error:")
+    print(
+        np.linalg.norm(J_pose_L[:, 3:6] - J_fd_pose_L[:, 3:6])
+        / max(np.linalg.norm(J_fd_pose_L[:, 3:6]), 1e-12)
+    )
 
-
-    base_model = model_factory()
-    base_out = base_model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body, wire_len=wire_len)
-    p_tip_base = base_out["p_tip"].copy()
-
-    def run_fd_postsolve():
-        return tip_jacobian_rsrc_fd_full_postsolve(
-            p_tip_base=p_tip_base,
-            model_factory=model_factory,
+    # ------------------------------------------------------------
+    # Benchmarks
+    # ------------------------------------------------------------
+    def run_fd_pose_total():
+        return tip_jacobian_source_pose_length_fd_full(
+            model_factory_from_length=model_factory_from_length,
             L=L_cmd,
             r_src=r_src_ur,
             q_src=q_src_ur,
             m_body=m_body,
-            wire_len=wire_len,
-            eps=1e-5,
+            eps_pos=1e-5,
+            eps_rot=1e-5,
+            eps_L=1e-5,
+            rotation_convention="world",
         )
 
-    bench_fd_postsolve = benchmark_function(
-        run_fd_postsolve,
+    def run_shooting_pose_sensitivity():
+        J_pose, _ = solve_tip_sensitivity_source_pose_shooting(
+            sol_nom,
+            L=L_cmd,
+            r_src=r_src_ur,
+            q_src=q_src_ur,
+            m_body=m_body,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=model.m_local_fun,
+            m_moment=model.m_moment,
+            wire_len=wire_len,
+            u_star=np.zeros(3),
+            n_eval=200,
+            rtol=1e-6,
+            atol=1e-8,
+            rotation_convention="world",
+        )
+        return J_pose
+
+
+
+    bench_fd_pose = benchmark_function(
+        run_fd_pose_total,
         repeats=5,
         warmup=1,
-        label="Full nonlinear FD Jacobian only (baseline fixed)",
+        label="Full nonlinear FD source-pose Jacobian build",
     )
-    print_benchmark_result(bench_fd_postsolve)
+    print_benchmark_result(bench_fd_pose)
+
+    bench_shoot = benchmark_function(
+        run_shooting_pose_sensitivity,
+        repeats=5,
+        warmup=1,
+        label="Shooting analytic source-pose sensitivity",
+    )
+    print_benchmark_result(bench_shoot)
 
     

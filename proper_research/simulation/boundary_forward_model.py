@@ -459,3 +459,135 @@ class WarmForwardP8TipTangent:
         t_tip = t_tip / nt
 
         return np.hstack([tip, t_tip])
+class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
+    def jacobian_tip_pose7(self, p7, *, eps_theta=1e-6, eps_hess=1e-6):
+        """
+        Returns analytic/semi-analytic J_tip wrt:
+            p7 = [r_src_x, r_src_y, r_src_z, rx, ry, rz, L_ins]
+
+        Shape:
+            J_tip: (3, 7)
+        """
+        p7 = np.asarray(p7, float).reshape(7,)
+
+        # First make sure forward cache corresponds to this p7
+        tip = self(p7)
+
+        r_src = p7[0:3]
+        rvec = p7[3:6]
+        L_ins = float(p7[6])
+
+        q_src = self._quat_from_rotvec_ur(rvec)
+
+        L_model, wire_len, tip_len = effective_lengths(
+            L_ins,
+            L_tip_full=self.L_tip_full,
+            L_tip_min=self.L_tip_min,
+        )
+
+        info = self.last_info
+        if info is None or "u_flat_opt" not in info:
+            raise RuntimeError("No cached energy-min solution. Call forward first.")
+
+        u_ref = np.asarray(info["u_flat_opt"], float).copy()
+
+        m_local_fun = make_m_local_fun_wire_tip(
+            wire_len,
+            len_tip=tip_len,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        )
+
+        theta0 = np.hstack([r_src, np.zeros(3), L_model])
+
+        energy_grad_fun = make_energy_grad_fun_for_pose(
+            p0=self.p0_ur,
+            q0=self.q0_ur,
+            q_src0=q_src,
+            m_body=self.m_body,
+            Kinv_fun=self.Kinv_fun,
+            u_star=self.u_star,
+            m_moment=0.0,
+            N=self.N_nodes,
+            rotation_convention="world",
+            use_magnetic=True,
+            use_contact=self.use_lumen_jac,
+            lumen_query=LumenQuery(self.lumen_C, self.lumen_R) if self.use_lumen_jac else None,
+        )
+
+        def theta_builder(theta):
+            return {"theta0": theta0}
+
+        m_src = dipole_from_pose(q_src, self.m_body)
+
+        J_tip, sens_info = energy_min_tip_jacobian_implicit(
+            u_opt=u_ref,
+            p0=self.p0_ur,
+            q0=self.q0_ur,
+            L=L_model,
+            wire_len=wire_len,
+            Kinv_fun=self.Kinv_fun,
+            u_star=self.u_star,
+            r_src=r_src,
+            m_src=m_src,
+            m_local_fun=m_local_fun,
+            m_moment=0.0,
+            N=self.N_nodes,
+            theta_builder=theta_builder,
+            energy_grad_fun=energy_grad_fun,
+            eps_theta=eps_theta,
+            eps_hess=eps_hess,
+        )
+
+        self.last_J_tip_pose7 = J_tip.copy()
+        self.last_sens_info = sens_info
+
+        return J_tip
+
+    def jacobian_tip_pose8(self, p8, *, eps_theta=1e-6, eps_hess=1e-6):
+        """
+        p8 = [x, y, z, qw, qx, qy, qz, L]
+
+        Returns J_tip wrt p8 by converting through rotvec.
+
+        This uses finite difference only for the quaternion -> rotvec chain,
+        not for the energy-min solve.
+        """
+        p8 = np.asarray(p8, float).reshape(8,)
+        p7 = pose8_quat_to_pose7_rotvec(p8)
+
+        J_tip_p7 = self.jacobian_tip_pose7(
+            p7,
+            eps_theta=eps_theta,
+            eps_hess=eps_hess,
+        )
+
+        # chain rule: p7 = f(p8)
+        A = np.zeros((7, 8), dtype=float)
+
+        # translation
+        A[0:3, 0:3] = np.eye(3)
+
+        # length
+        A[6, 7] = 1.0
+
+        # quaternion -> rotvec numerical chain only
+        eps_q = 1e-7
+        for k in range(4):
+            p8p = p8.copy()
+            p8m = p8.copy()
+
+            p8p[3 + k] += eps_q
+            p8m[3 + k] -= eps_q
+
+            # renormalise quaternion
+            p8p[3:7] /= np.linalg.norm(p8p[3:7]) + 1e-12
+            p8m[3:7] /= np.linalg.norm(p8m[3:7]) + 1e-12
+
+            rv_p = pose8_quat_to_pose7_rotvec(p8p)[3:6]
+            rv_m = pose8_quat_to_pose7_rotvec(p8m)[3:6]
+
+            A[3:6, 3 + k] = (rv_p - rv_m) / (2.0 * eps_q)
+
+        return J_tip_p7 @ A

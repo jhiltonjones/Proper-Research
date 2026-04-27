@@ -17,7 +17,7 @@ from beam_direction_magnetisation.post_processing.post_processing import plot_en
 from beam_direction_magnetisation.post_processing.results_sim_paper import analyze_run 
 from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent, EnergyMinForwardWithAnalyticJac
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from scipy.stats import skew
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
@@ -3297,7 +3297,23 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
         bend_soft=1.0,
         tors_soft=1.0,
     )
-    forward_model = EnergyMinForwardWithLumen(
+    forward_model = EnergyMinForwardWithAnalyticJac(
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_body=m_body,
+        lumen_C=np.asarray(lumen_C, float),
+        lumen_R=np.asarray(lumen_R, float),
+        N_nodes=5,
+        maxiter=30,
+        L0_init=0.01,
+        dL_internal=0.005,
+        use_lumen_jac=True,
+        L_tip_full=tip_len_model,
+        L_tip_min=0.01,
+    )
+    forward_model_wrong = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
         Kinv_fun=Kinv_fun,
@@ -3313,23 +3329,39 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
+    # forward_model = EnergyMinForwardWithLumen(
+    #     p0_ur=p0_ur,
+    #     q0_ur=q0_ur,
+    #     Kinv_fun=Kinv_fun,
+    #     u_star=np.zeros(3),
+    #     m_body=m_body,
+    #     lumen_C=np.asarray(lumen_C, float),
+    #     lumen_R=np.asarray(lumen_R, float),
+    #     N_nodes=5,
+    #     maxiter=30,
+    #     L0_init=0.01,
+    #     dL_internal=0.005,
+    #     use_lumen_jac=False,
+    #     L_tip_full=tip_len_model,
+    #     L_tip_min=0.01,
+    # )
 
-    forward_model_wrong = EnergyMinForwardWithLumen(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kinv_fun,
-        u_star=np.zeros(3),
-        m_body=m_body,
-        lumen_C=np.asarray(lumen_C, float),
-        lumen_R=np.asarray(lumen_R, float),
-        N_nodes=8,
-        maxiter=30,
-        L0_init=0.01,
-        dL_internal=0.01,
-        use_lumen_jac=False,
-        L_tip_full=tip_len_model,
-        L_tip_min=0.01,
-    )
+    # forward_model_wrong = EnergyMinForwardWithLumen(
+    #     p0_ur=p0_ur,
+    #     q0_ur=q0_ur,
+    #     Kinv_fun=Kinv_fun,
+    #     u_star=np.zeros(3),
+    #     m_body=m_body,
+    #     lumen_C=np.asarray(lumen_C, float),
+    #     lumen_R=np.asarray(lumen_R, float),
+    #     N_nodes=8,
+    #     maxiter=30,
+    #     L0_init=0.01,
+    #     dL_internal=0.01,
+    #     use_lumen_jac=False,
+    #     L_tip_full=tip_len_model,
+    #     L_tip_min=0.01,
+    # )
 
     return p0_ur, q0_ur, lumen_C, lumen_R, lumen_path, s_path, forward_model, forward_model_wrong
 def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):

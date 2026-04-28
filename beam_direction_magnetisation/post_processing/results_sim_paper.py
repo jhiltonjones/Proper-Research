@@ -475,18 +475,17 @@ def plot_clearance_compare(
     plt.tight_layout()
     plt.show()
 if __name__ == "__main__":
-    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing/lumen_C.npy")
-    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing/lumen_R.npy")
+    lumen_C = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step_wbc/lumen_C.npy")
+    lumen_R = np.load("/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step_wbc/lumen_R.npy")
 
     summary_bc, series_bc = analyze_run(
-        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_3step/log.csv",
-        lumen_C, lumen_R, dt=0.01
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step_wbc/log.csv",
+        lumen_C, lumen_R, dt=0.05
     )
 
     summary_nobc, series_nobc = analyze_run(
-        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline/log.csv",
-        lumen_C, lumen_R, dt=0.01
-    )
+        "/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step/log.csv",
+        lumen_C, lumen_R, dt=0.05)
 
     print("BC summary:")
     print(summary_bc)
@@ -495,7 +494,7 @@ if __name__ == "__main__":
     print(summary_nobc)
 
     k_min = 1
-    k_max = 25
+    k_max = 150
 
     # Filter just for trajectory comparison if desired
     series_bc_f = filter_series_by_k(series_bc, k_min=k_min, k_max=k_max)
@@ -518,7 +517,7 @@ if __name__ == "__main__":
         series_nobc,
         label1="bc",
         label2="no bc",
-        dt=0.01,
+        dt=0.05,
         title_prefix="MPC 1-step prediction error",
         k_min=k_min,
         k_max=k_max,

@@ -292,13 +292,13 @@ def contact_energy_gradient_u(
         p,
         lumen_query,
         r_beam=beam_params.r,      # or whatever your beam radius variable is
-        k_contact=1e5,
-        pen_switch=5e-5,
-        k_hard=1e10,
+        k_contact=1e3,
+        pen_switch=2e-4,
+        k_hard=1e6,
         eps=1e-12,
         window=3,
         smooth=True,              # start with nonsmooth pure contact
-        smooth_eps=1e-7,
+        smooth_eps=1e-5,
     )
 
     grad = np.zeros_like(u_flat)
@@ -509,9 +509,9 @@ def solve_energy_min_3d(
         method="L-BFGS-B",
         options=dict(
             maxiter=maxiter,
-            ftol=1e-8,
-            gtol=1e-6,
-            maxls=50,
+            ftol=1e-12,
+            gtol=1e-10,
+            maxls=100,
         ),
     )
 
@@ -691,20 +691,25 @@ def energy_from_u(
     # Contact / lumen
     # -------------------------
     W_cf = 0.0
-    min_d = np.nan
+    min_gap = np.nan
+
     if use_lumen and (lumen_query is not None):
         C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
             p,
             lumen_query,
-            r_beam=beam_params.r,      # or whatever your beam radius variable is
-            k_contact=1e5,
-            pen_switch=5e-5,
-            k_hard=1e10,
+            r_beam=beam_params.r,
+            k_contact=1e3,
+            pen_switch=2e-4,
+            k_hard=1e8,
             eps=1e-12,
             window=3,
-            smooth=True,              # start with nonsmooth pure contact
-            smooth_eps=1e-7,
+            smooth=True,
+            smooth_eps=1e-5,
         )
+
+        h = float(s[1] - s[0])
+        W_cf = h * float(np.sum(C_nodes))
+        min_gap = float(np.min(gap_nodes))
 
     W_total = W_el + W_m + W_g + W_cf
     # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")
@@ -733,7 +738,8 @@ def energy_from_u(
         W_m=float(W_m),
         W_g=float(W_g),
         W_cf=float(W_cf),
-
+        gap_min=float(min_gap),
+        gap_nodes=np.asarray(gap_nodes, float).copy() if use_lumen and lumen_query is not None else None,
         s=np.asarray(s, float).copy(),
         B=np.asarray(B_mid, float).copy(),
         Bnorm=np.asarray(Bnorm, float).copy(),
@@ -758,69 +764,7 @@ def tip_len_fun(LL):
 def wire_len_fun(LL):
     # wire exists only after full tip is inside
     return max(float(LL) - L_tip_full, 0.0)
-def contact_barrier_energy_and_force(
-    p, lumen_C, lumen_R, *,
-    Kc=1e-2,          # stiffness parameter (tune!)
-    d_tilde=5e-4,     # barrier distance (m)
-    eps=1e-9,         # numerical safety
-    penalize_outside=True,
-    k_out=5e4         # fallback penalty if d <= 0
-):
-    """
-    Implements paper Eq. (34)-(36): barrier energy based on clearance d = R - delta.
-    p: (3,N) node positions.
 
-    Returns:
-      C: (N,)   barrier energy per node (sum these, not integrate)
-      F: (3,N)  contact force per node (world), from analytic gradient (optional use)
-      d: (N,)   clearance d_j
-    """
-    p = np.asarray(p, float)
-    N = p.shape[1]
-    C = np.zeros(N, float)
-    F = np.zeros((3, N), float)
-    d_arr = np.zeros(N, float)
-
-    for j in range(N):
-        x = p[:, j]
-        delta, i, t, q_closest = point_to_polyline_distance(x, lumen_C)
-        Rloc = interpolate_radius(lumen_R, i, t)
-
-        d = Rloc - delta   # clearance to wall
-        d_arr[j] = d
-
-        # outward radial unit vector from centerline to point
-        if delta > eps:
-            n = (x - q_closest) / delta
-        else:
-            n = np.array([1.0, 0.0, 0.0])
-
-        # --- barrier region: 0 < d < d_tilde ---
-        if (d > 0.0) and (d < d_tilde):
-            # C(d) = -Kc * (d - d_tilde)^2 * log(d/d_tilde)
-            log_term = np.log(max(d, eps) / d_tilde)
-            Cj = -Kc * (d - d_tilde)**2 * log_term
-            C[j] = Cj
-
-            # dC/dd = -Kc * [ 2(d-dt)*log(d/dt) + (d-dt)^2*(1/d) ]
-            dC_dd = -Kc * (2.0*(d - d_tilde)*log_term + (d - d_tilde)**2 * (1.0 / max(d, eps)))
-
-            # Force: F = -∂C/∂x = (dC/dd) * n  because d = R - delta, ∂d/∂x = -n
-            F[:, j] = dC_dd * n
-
-        elif d >= d_tilde:
-            # no contact energy/force
-            pass
-
-        else:
-            # d <= 0: outside/penetrating -> barrier undefined; add robust fallback
-            if penalize_outside:
-                pen = -d  # penetration amount
-                C[j] = 0.5 * k_out * pen * pen
-                # penalty force pushes inward (toward centerline): -k_out*pen * n
-                F[:, j] = -k_out * pen * n
-
-    return C, F, d_arr
 def solve_quasistatic_insertion(*,
     p0, q0,
     L0, Lf, dL,
@@ -854,8 +798,8 @@ def solve_quasistatic_insertion(*,
         else:
             len_tip = float(tip_len_fun(L_model))
 
-        if debug:
-            print(f"[CONT] L_model={L_model:.3f} len_wire={len_wire:.3f} len_tip={len_tip:.3f}")
+        # if debug:
+        #     print(f"[CONT] L_model={L_model:.3f} len_wire={len_wire:.3f} len_tip={len_tip:.3f}")
 
         # IMPORTANT: regenerate m_local_fun per step so tip magnetisation window moves correctly
         m_local_fun_k = make_m_local_fun_wire_tip(len_wire, len_tip=len_tip, mode="axial", eps=1e-3)
@@ -917,17 +861,17 @@ def solve_quasistatic_insertion(*,
                 )
             u_opt = info["u_flat_opt"].copy()
             parts = info["parts"]
-            print(f"message={info['message']}")
+            # print(f"message={info['message']}")
             du_init = np.nan
             if u0_before is not None and u0_before.size == u_opt.size:
                 du_init = np.linalg.norm(u_opt - u0_before)
 
-            print(
-                f"N={N:3d}, success={info['success']}, nit={info['nit']:4d}, "
-                f"W0={info['W0']:.6e}, W={info['W']:.6e}, dW={info['dW']:.6e}, "
-                f"W_el={parts['W_el']:.6e}, W_m={parts['W_m']:.6e}, W_cf={parts['W_cf']:.6e}, "
-                f"||u||={np.linalg.norm(u_opt):.6e}, ||u-u_init||={du_init:.6e}"
-            )
+            # print(
+            #     f"N={N:3d}, success={info['success']}, nit={info['nit']:4d}, "
+            #     f"W0={info['W0']:.6e}, W={info['W']:.6e}, dW={info['dW']:.6e}, "
+            #     f"W_el={parts['W_el']:.6e}, W_m={parts['W_m']:.6e}, W_cf={parts['W_cf']:.6e}, "
+            #     f"||u||={np.linalg.norm(u_opt):.6e}, ||u-u_init||={du_init:.6e}"
+            # )
 
             # CRITICAL: carry optimized solution forward
             u0 = u_opt
@@ -1270,9 +1214,9 @@ def check_Gtheta_columns(
         )
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.014
-    nodes = 12
-    dL = 0.0005
+    L_cmd = 0.01
+    nodes = 10
+    dL = 0.005
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
     mag_len = beam_params.length_of_mag
@@ -1283,13 +1227,13 @@ if __name__ == "__main__":
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.16),
+        pivot_point[0] - (L_cmd + 0.1),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 70, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(

@@ -5,7 +5,8 @@ from beam_direction_magnetisation.quarternions.quarternions_functions import (qu
                                                                               quat_to_rot, quat_to_R,
                                                                               T_to_p_quat_wxyz)
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
-
+import pandas as pd
+import os
 # ------------------------------------------------------------
 # pretty printing
 # ------------------------------------------------------------
@@ -401,7 +402,13 @@ def make_forward_tip_fn_der_residual(
             print(f"[WARN] {name} failed: {info.get('message', 'unknown')}")
         return p_opt[:, -1]
     return forward_y_fn
-
+def vec3_or_nan(v):
+    if v is None:
+        return [np.nan, np.nan, np.nan]
+    v = np.asarray(v, float).reshape(-1)
+    if v.size < 3:
+        return [np.nan, np.nan, np.nan]
+    return [float(v[0]), float(v[1]), float(v[2])]
 
 def make_forward_tip_fn_cosserat_direct(
     *,
@@ -611,8 +618,8 @@ if __name__ == "__main__":
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
 
-    L_cmd = 0.015
-    N_nodes = 50
+    L_cmd = 0.01
+    N_nodes = 5
 
     pivot_point = np.array([
         0.7981328220229531, -0.7112731669220016, -0.1,
@@ -620,13 +627,13 @@ if __name__ == "__main__":
     ], float)
 
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.11),
+        pivot_point[0] - (L_cmd + 0.06),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 60, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
 
     T_ur_pivot = ur_pose6_to_T(pivot_point)
@@ -732,7 +739,7 @@ if __name__ == "__main__":
             N_nodes=N_nodes,
             maxiter=30,
             L0_init=0.01,
-            dL_internal=0.005,
+            dL_internal=0.01,
             use_lumen_jac=USE_LUMEN,
             L_tip_full=mag_len,
             L_tip_min=0.01,
@@ -751,7 +758,7 @@ if __name__ == "__main__":
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             N_nodes=N_nodes,
-            maxiter=30,
+            maxiter=60,
             amp_init=2e-4,
             enforce_inextensibility=True,
             use_lumen=USE_LUMEN,
@@ -761,7 +768,249 @@ if __name__ == "__main__":
             use_continuation=False,
             N_coarse=9,
         )
+    # ============================================================
+    # Sweep over magnet angle and save results
+    # ============================================================
+    angles_deg = np.arange(0, 5, 5)   # 0, -5, -10, ..., -90
+    all_rows = []
 
+    for angle_deg in angles_deg:
+        print("\n" + "#" * 100)
+        print(f"RUNNING ANGLE = {angle_deg} deg")
+        print("#" * 100)
+
+        # --------------------------------------------------------
+        # Recompute source pose for this angle
+        # --------------------------------------------------------
+        start_point = np.asarray(get_point(0, angle_deg, base_point, pivot_point), dtype=float)
+        start_point[2] = -0.1
+
+        T_ur_mag = ur_pose6_to_T(start_point)
+        r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+
+        m_body = np.array([-mag_params.mag_epm, 0.0, 0.0], float)
+        m_src = dipole_from_pose(q_src_ur, m_body)
+
+        # common p7 input for wrappers
+        p7 = rotvec_pose7_from_start_point(start_point, L_cmd)
+
+        results = {}
+
+        # ---- 1) Cosserat wrapper ----
+        if fwd_cos is not None:
+            try:
+                tip_cos = fwd_cos(p7)
+                results["cos_wrapper"] = dict(
+                    tip=np.asarray(tip_cos, float).copy(),
+                    p_centerline=None if fwd_cos.last_p_centerline is None else fwd_cos.last_p_centerline.copy(),
+                    info=dict(success=True, message="wrapper run complete"),
+                )
+            except Exception as e:
+                print(f"cos_wrapper failed at angle {angle_deg}: {e}")
+                results["cos_wrapper"] = dict(tip=None, p_centerline=None, info=dict(success=False, message=str(e)))
+
+        # ---- 2) DER wrapper ----
+        if fwd_der is not None:
+            try:
+                tip_der = fwd_der(p7)
+                info = fwd_der.last_info if fwd_der.last_info is not None else {}
+                results["der_wrapper"] = dict(
+                    tip=np.asarray(tip_der, float).copy(),
+                    p_centerline=None if fwd_der.last_p_centerline is None else fwd_der.last_p_centerline.copy(),
+                    info=dict(
+                        success=bool(info.get("success", True)),
+                        message=str(info.get("message", "")),
+                        W=float(info.get("W", np.nan)) if "W" in info else np.nan,
+                        dbg=info.get("dbg", None),
+                        wire_len=info.get("wire_len", wire_len),
+                        tip_len=info.get("tip_len", tip_len),
+                        m_src=info.get("m_src", None),
+                        r_src=info.get("r_src", None),
+                        q_opt=info.get("q_opt", None),
+                    ),
+                )
+            except Exception as e:
+                print(f"der_wrapper failed at angle {angle_deg}: {e}")
+                results["der_wrapper"] = dict(tip=None, p_centerline=None, info=dict(success=False, message=str(e)))
+
+        # ---- 3) Direct DER energy minimization ----
+        info_min_direct = None
+        if RUN_DER_DIRECT_MIN:
+            try:
+                p_min, theta_min, info_min = solve_nodes_twist_min(
+                    p0=p0_ur,
+                    q0=q0_ur,
+                    L=L_model,
+                    N=N_nodes,
+                    wire_len=wire_len,
+                    tip_len=tip_len,
+                    Kinv_fun=Kinv_fun,
+                    r_src=r_src_ur,
+                    m_src=m_src,
+                    mu_tip=mu_line,
+                    EA_wire=EA_wire,
+                    EA_tip=EA_tip,
+                    lumen_C=lumen_C,
+                    lumen_R=lumen_R,
+                    use_lumen=USE_LUMEN,
+                    maxiter=300,
+                    M_ref_local=M_ref_local,
+                    ref_twist=None,
+                    enforce_inextensibility=True,
+                    amp_init=2e-4,
+                    q_init=None,
+                )
+                info_min_direct = info_min
+                results["der_direct_min"] = dict(
+                    tip=p_min[:, -1].copy(),
+                    p_centerline=p_min.copy(),
+                    info=info_min,
+                )
+            except Exception as e:
+                print(f"der_direct_min failed at angle {angle_deg}: {e}")
+                results["der_direct_min"] = dict(tip=None, p_centerline=None, info=dict(success=False, message=str(e)))
+
+        # ---- 4) Direct DER residual solver ----
+        if RUN_DER_RESIDUAL:
+            try:
+                q_init_res = None
+                if info_min_direct is not None and "q_opt" in info_min_direct:
+                    q_init_res = info_min_direct["q_opt"]
+
+                p_res, theta_res, info_res = solve_nodes_twist_residual(
+                    p0=p0_ur,
+                    q0=q0_ur,
+                    L=L_model,
+                    N=N_nodes,
+                    wire_len=wire_len,
+                    tip_len=tip_len,
+                    Kinv_fun=Kinv_fun,
+                    r_src=r_src_ur,
+                    m_src=m_src,
+                    mu_tip=mu_line,
+                    EA_wire=EA_wire,
+                    EA_tip=EA_tip,
+                    lumen_C=lumen_C,
+                    lumen_R=lumen_R,
+                    use_lumen=USE_LUMEN,
+                    maxiter=200,
+                    M_ref_local=M_ref_local,
+                    ref_twist=None,
+                    q_init=q_init_res,
+                )
+                results["der_residual"] = dict(
+                    tip=p_res[:, -1].copy(),
+                    p_centerline=p_res.copy(),
+                    info=info_res,
+                )
+            except Exception as e:
+                print(f"der_residual failed at angle {angle_deg}: {e}")
+                results["der_residual"] = dict(tip=None, p_centerline=None, info=dict(success=False, message=str(e)))
+
+        # ---- 5) Direct continuous Cosserat BVP ----
+        if RUN_DIRECT_COSSERAT:
+            try:
+                model = CosseratForwardModel(
+                    p0=p0_ur,
+                    q0=q0_ur,
+                    Kinv_fun=Kinv_fun,
+                    m_local_fun=make_m_local_fun_wire_tip(
+                        wire_len,
+                        len_tip=tip_len,
+                        mode="axial",
+                        alpha_end=0.0,
+                    ),
+                    m_moment=0.0,
+                    wire_len=wire_len,
+                )
+
+                out = model.forward(
+                    L=L_model,
+                    r_src=r_src_ur,
+                    q_src=q_src_ur,
+                    wire_len=wire_len,
+                    m_body=m_body,
+                )
+
+                p_cos_direct = out["profiles"]["p"]
+                results["cos_bvp_direct"] = dict(
+                    tip=out["p_tip"].copy(),
+                    p_centerline=p_cos_direct.copy(),
+                    info=dict(
+                        success=bool(out["solved"]),
+                        message=str(out["message"]),
+                        B_tip=float(out["B_tip"]),
+                        F_net=np.asarray(out["F_net"], float).copy(),
+                        T_net=np.asarray(out["T_net"], float).copy(),
+                        theta_y=float(out["theta_y"]),
+                        theta_z=float(out["theta_z"]),
+                        theta_total=float(out["theta_total"]),
+                    ),
+                )
+            except Exception as e:
+                print(f"cos_bvp_direct failed at angle {angle_deg}: {e}")
+                results["cos_bvp_direct"] = dict(tip=None, p_centerline=None, info=dict(success=False, message=str(e)))
+
+        # --------------------------------------------------------
+        # Save one summary row for this angle
+        # --------------------------------------------------------
+        row = {
+            "angle_deg": float(angle_deg),
+            "magnet_x": float(r_src_ur[0]),
+            "magnet_y": float(r_src_ur[1]),
+            "magnet_z": float(r_src_ur[2]),
+        }
+
+        for model_name, res in results.items():
+            tip = res.get("tip", None)
+            info = res.get("info", {})
+
+            tx, ty, tz = vec3_or_nan(tip)
+
+            row[f"{model_name}_success"] = info.get("success", np.nan)
+            row[f"{model_name}_tip_x"] = tx
+            row[f"{model_name}_tip_y"] = ty
+            row[f"{model_name}_tip_z"] = tz
+            row[f"{model_name}_message"] = info.get("message", "")
+
+            if "W" in info:
+                row[f"{model_name}_W"] = info.get("W", np.nan)
+            if "B_tip" in info:
+                row[f"{model_name}_B_tip"] = info.get("B_tip", np.nan)
+            if "theta_y" in info:
+                row[f"{model_name}_theta_y"] = info.get("theta_y", np.nan)
+            if "theta_z" in info:
+                row[f"{model_name}_theta_z"] = info.get("theta_z", np.nan)
+            if "theta_total" in info:
+                row[f"{model_name}_theta_total"] = info.get("theta_total", np.nan)
+
+        # pairwise tip differences
+        model_keys = list(results.keys())
+        for i in range(len(model_keys)):
+            for j in range(i + 1, len(model_keys)):
+                ni = model_keys[i]
+                nj = model_keys[j]
+                ti = results[ni]["tip"]
+                tj = results[nj]["tip"]
+
+                if (ti is None) or (tj is None):
+                    row[f"tipdiff_{ni}_vs_{nj}"] = np.nan
+                else:
+                    row[f"tipdiff_{ni}_vs_{nj}"] = float(np.linalg.norm(np.asarray(ti) - np.asarray(tj)))
+
+        all_rows.append(row)
+    df = pd.DataFrame(all_rows)
+
+    out_dir = "comparison_outputs"
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = os.path.join(out_dir, "model_comparison_angle_sweep_scrap.csv")
+    df.to_csv(csv_path, index=False)
+
+    print("\nSaved CSV to:")
+    print(csv_path)
+    print("\nColumns:")
+    print(df.columns.tolist())
     # ============================================================
     # Common p7 input for wrappers
     # ============================================================
@@ -823,7 +1072,7 @@ if __name__ == "__main__":
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             use_lumen=USE_LUMEN,
-            maxiter=300,
+            maxiter=50,
             M_ref_local=M_ref_local,
             ref_twist=None,
             enforce_inextensibility=True,
@@ -988,40 +1237,291 @@ if __name__ == "__main__":
                 print("DER Wm stored        =", mag["wm_seg"].sum())
                 print("DER Wm recomputed    =", Wm_same_midpoint)
                 print("difference           =", Wm_same_midpoint - mag["wm_seg"].sum())
-# ------------------------------------------------------------
-# Jacobian setup
-# ------------------------------------------------------------
-dt = 1.0
-dr = 5e-3
-dtheta = 3e-1
-dL = 1e-3
 
-eps_u = np.array([
-    dr / dt, dr / dt, dr / dt,
-    dtheta / dt, dtheta / dt, dtheta / dt,
-    dL / dt
-], dtype=float)
+    import numpy as np
+    import pandas as pd
+    import os
 
-row_labels = ["tip_x", "tip_y", "tip_z"]
-col_labels_full = ["vx", "vy", "vz", "wx", "wy", "wz", "L"]
-col_labels_red = ["vx", "vy", "wz", "L"]
+    
+    # ------------------------------------------------------------
+    # Jacobian configuration
+    # ------------------------------------------------------------
+    dt = 1.0
+    dr = 5e-3
+    dtheta = 3e-1
+    dL = 1e-3
 
-p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+    eps_u = np.array([
+        dr / dt, dr / dt, dr / dt,
+        dtheta / dt, dtheta / dt, dtheta / dt,
+        dL / dt,
+    ], dtype=float)
 
-jac_forward_fns = {}
+    row_labels = ["tip_x", "tip_y", "tip_z"]
+    col_labels_full = ["vx", "vy", "vz", "wx", "wy", "wz", "L"]
+    col_labels_red = ["vx", "vy", "wz", "L"]
 
-# wrapper models: cold versions are fairest for Jacobians
-if fwd_cos is not None:
-    fwd_cos_cold = WarmForwardP7(fwd_cos)
-    jac_forward_fns["cos_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_cos_cold, "cos_wrapper")
+    p8_nom = np.hstack([r_src_ur, q_src_ur, float(L_cmd)])
 
-if fwd_der is not None:
-    fwd_der_cold = WarmForwardP7(fwd_der)
-    jac_forward_fns["der_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_der_cold, "der_wrapper")
 
-# direct models
-if RUN_DER_DIRECT_MIN:
-    jac_forward_fns["der_direct_min"] = make_forward_tip_fn_der_direct_min(
+    # ------------------------------------------------------------
+    # Helper: build all Jacobian forward functions
+    # ------------------------------------------------------------
+    def build_jacobian_forward_functions(
+        *,
+        fwd_cos,
+        fwd_der,
+        RUN_DER_DIRECT_MIN,
+        RUN_DER_RESIDUAL,
+        RUN_DIRECT_COSSERAT,
+        results,
+        p0_ur,
+        q0_ur,
+        Kinv_fun,
+        EA_wire,
+        EA_tip,
+        M_ref_local,
+        m_body,
+        lumen_C,
+        lumen_R,
+        USE_LUMEN,
+        N_nodes,
+        mag_len,
+    ):
+        jac_forward_fns = {}
+
+        # -------------------------
+        # Wrapper models
+        # -------------------------
+        if fwd_cos is not None:
+            fwd_cos_cold = WarmForwardP7(fwd_cos)
+            jac_forward_fns["cos_wrapper"] = make_forward_tip_fn_from_p7_model(
+                fwd_cos_cold,
+                "cos_wrapper",
+            )
+
+        if fwd_der is not None:
+            fwd_der_cold = WarmForwardP7(fwd_der)
+            jac_forward_fns["der_wrapper"] = make_forward_tip_fn_from_p7_model(
+                fwd_der_cold,
+                "der_wrapper",
+            )
+
+        # -------------------------
+        # Direct DER energy minimisation
+        # -------------------------
+        if RUN_DER_DIRECT_MIN:
+            jac_forward_fns["der_direct_min"] = make_forward_tip_fn_der_direct_min(
+                p0_ur=p0_ur,
+                q0_ur=q0_ur,
+                Kinv_fun=Kinv_fun,
+                EA_wire=EA_wire,
+                EA_tip=EA_tip,
+                M_ref_local=M_ref_local,
+                m_body=m_body,
+                lumen_C=lumen_C,
+                lumen_R=lumen_R,
+                use_lumen=USE_LUMEN,
+                N_nodes=N_nodes,
+                mag_len=mag_len,
+            )
+
+        # -------------------------
+        # Direct DER residual
+        # -------------------------
+        if RUN_DER_RESIDUAL:
+            q_seed = None
+            if (
+                "der_direct_min" in results
+                and isinstance(results["der_direct_min"], dict)
+                and "info" in results["der_direct_min"]
+                and isinstance(results["der_direct_min"]["info"], dict)
+                and "q_opt" in results["der_direct_min"]["info"]
+            ):
+                q_seed = results["der_direct_min"]["info"]["q_opt"]
+
+            jac_forward_fns["der_residual"] = make_forward_tip_fn_der_residual(
+                p0_ur=p0_ur,
+                q0_ur=q0_ur,
+                Kinv_fun=Kinv_fun,
+                EA_wire=EA_wire,
+                EA_tip=EA_tip,
+                M_ref_local=M_ref_local,
+                m_body=m_body,
+                lumen_C=lumen_C,
+                lumen_R=lumen_R,
+                use_lumen=USE_LUMEN,
+                N_nodes=N_nodes,
+                mag_len=mag_len,
+                q_init_seed=q_seed,
+            )
+
+        # -------------------------
+        # Direct Cosserat
+        # -------------------------
+        if RUN_DIRECT_COSSERAT:
+            jac_forward_fns["cos_bvp_direct"] = make_forward_tip_fn_cosserat_direct(
+                p0_ur=p0_ur,
+                q0_ur=q0_ur,
+                Kinv_fun=Kinv_fun,
+                m_body=m_body,
+                mag_len=mag_len,
+            )
+
+        return jac_forward_fns
+
+
+    # ------------------------------------------------------------
+    # Helper: compute Jacobians for all models
+    # ------------------------------------------------------------
+    def compute_all_jacobians(
+        *,
+        jac_forward_fns,
+        p8_nom,
+        dt,
+        eps_u,
+        dL,
+        n_out=3,
+        n_repeat=1,
+        row_labels=None,
+        col_labels_full=None,
+        col_labels_red=None,
+        print_tables=True,
+    ):
+        jac_stats = {}
+
+        for name, forward_fn in jac_forward_fns.items():
+            print("\n" + "-" * 80)
+            print(f"Computing Jacobian for: {name}")
+            print("-" * 80)
+
+            stats = benchmark_jacobian_mode(
+                label=name,
+                forward_tip_fn=forward_fn,
+                p8_nom=p8_nom,
+                dt=dt,
+                eps_u=eps_u,
+                dL=dL,
+                n_out=n_out,
+                n_repeat=n_repeat,
+            )
+            jac_stats[name] = stats
+
+            if print_tables:
+                print_jacobian_table(
+                    stats["B_full"],
+                    row_labels=row_labels,
+                    col_labels=col_labels_full,
+                    title=f"{name} full Jacobian",
+                )
+
+                print_jacobian_table(
+                    stats["B_red"],
+                    row_labels=row_labels,
+                    col_labels=col_labels_red,
+                    title=f"{name} reduced Jacobian",
+                )
+
+        return jac_stats
+
+
+    # ------------------------------------------------------------
+    # Helper: pairwise comparisons
+    # ------------------------------------------------------------
+    def compare_all_jacobians(
+        *,
+        jac_stats,
+        row_labels,
+        col_labels_full,
+        col_labels_red,
+    ):
+        jac_names = list(jac_stats.keys())
+
+        for i in range(len(jac_names)):
+            for j in range(i + 1, len(jac_names)):
+                ni = jac_names[i]
+                nj = jac_names[j]
+
+                print("\n" + "=" * 80)
+                print(f"JACOBIAN COMPARISON: {ni} vs {nj}")
+                print("=" * 80)
+
+                print_jacobian_comparison(
+                    jac_stats[ni]["B_full"],
+                    jac_stats[nj]["B_full"],
+                    row_labels=row_labels,
+                    col_labels=col_labels_full,
+                    name_a=f"{ni}_full",
+                    name_b=f"{nj}_full",
+                )
+
+                print_jacobian_comparison(
+                    jac_stats[ni]["B_red"],
+                    jac_stats[nj]["B_red"],
+                    row_labels=row_labels,
+                    col_labels=col_labels_red,
+                    name_a=f"{ni}_red",
+                    name_b=f"{nj}_red",
+                )
+
+
+    # ------------------------------------------------------------
+    # Helper: save Jacobians to CSV
+    # ------------------------------------------------------------
+    def save_jacobians_to_csv(
+        jac_stats,
+        out_dir="jacobian_outputs_10nodes",
+        row_labels=None,
+        col_labels_full=None,
+        col_labels_red=None,
+    ):
+        os.makedirs(out_dir, exist_ok=True)
+
+        for name, stats in jac_stats.items():
+            B_full = np.asarray(stats["B_full"], float)
+            B_red = np.asarray(stats["B_red"], float)
+
+            df_full = pd.DataFrame(B_full, index=row_labels, columns=col_labels_full)
+            df_red = pd.DataFrame(B_red, index=row_labels, columns=col_labels_red)
+
+            df_full.to_csv(os.path.join(out_dir, f"{name}_jacobian_full.csv"))
+            df_red.to_csv(os.path.join(out_dir, f"{name}_jacobian_reduced.csv"))
+
+        # Also save one summary table if timing/norm metadata exists
+        summary_rows = []
+        for name, stats in jac_stats.items():
+            row = {"model": name}
+
+            if "elapsed_mean" in stats:
+                row["elapsed_mean"] = stats["elapsed_mean"]
+            if "elapsed_std" in stats:
+                row["elapsed_std"] = stats["elapsed_std"]
+            if "B_full" in stats:
+                row["full_fro_norm"] = float(np.linalg.norm(stats["B_full"]))
+            if "B_red" in stats:
+                row["red_fro_norm"] = float(np.linalg.norm(stats["B_red"]))
+
+            summary_rows.append(row)
+
+        if len(summary_rows) > 0:
+            pd.DataFrame(summary_rows).to_csv(
+                os.path.join(out_dir, "jacobian_summary.csv"),
+                index=False,
+            )
+
+        print(f"\nSaved Jacobian CSV files to: {out_dir}")
+
+
+    # ------------------------------------------------------------
+    # Main Jacobian run
+    # ------------------------------------------------------------
+    jac_forward_fns = build_jacobian_forward_functions(
+        fwd_cos=fwd_cos,
+        fwd_der=fwd_der,
+        RUN_DER_DIRECT_MIN=RUN_DER_DIRECT_MIN,
+        RUN_DER_RESIDUAL=RUN_DER_RESIDUAL,
+        RUN_DIRECT_COSSERAT=RUN_DIRECT_COSSERAT,
+        results=results,
         p0_ur=p0_ur,
         q0_ur=q0_ur,
         Kinv_fun=Kinv_fun,
@@ -1031,98 +1531,174 @@ if RUN_DER_DIRECT_MIN:
         m_body=m_body,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
-        use_lumen=USE_LUMEN,
+        USE_LUMEN=USE_LUMEN,
         N_nodes=N_nodes,
         mag_len=mag_len,
     )
 
-if RUN_DER_RESIDUAL:
-    q_seed = None
-    if "der_direct_min" in results and "q_opt" in results["der_direct_min"]["info"]:
-        q_seed = results["der_direct_min"]["info"]["q_opt"]
-    jac_forward_fns["der_residual"] = make_forward_tip_fn_der_residual(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kinv_fun,
-        EA_wire=EA_wire,
-        EA_tip=EA_tip,
-        M_ref_local=M_ref_local,
-        m_body=m_body,
-        lumen_C=lumen_C,
-        lumen_R=lumen_R,
-        use_lumen=USE_LUMEN,
-        N_nodes=N_nodes,
-        mag_len=mag_len,
-        q_init_seed=q_seed,
-    )
-
-if RUN_DIRECT_COSSERAT:
-    jac_forward_fns["cos_bvp_direct"] = make_forward_tip_fn_cosserat_direct(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kinv_fun,
-        m_body=m_body,
-        mag_len=mag_len,
-    )
-# ------------------------------------------------------------
-# Compute Jacobians for all models
-# ------------------------------------------------------------
-jac_stats = {}
-
-for name, forward_fn in jac_forward_fns.items():
-    stats = benchmark_jacobian_mode(
-        label=name,
-        forward_tip_fn=forward_fn,
+    jac_stats = compute_all_jacobians(
+        jac_forward_fns=jac_forward_fns,
         p8_nom=p8_nom,
         dt=dt,
         eps_u=eps_u,
         dL=dL,
         n_out=3,
-        n_repeat=1,   # raise to 3 for timing averages
-    )
-    jac_stats[name] = stats
-
-    print_jacobian_table(
-        stats["B_full"],
+        n_repeat=1,   # increase to 3 if you want timing averages
         row_labels=row_labels,
-        col_labels=col_labels_full,
-        title=f"{name} full Jacobian"
+        col_labels_full=col_labels_full,
+        col_labels_red=col_labels_red,
+        print_tables=True,
     )
 
-    print_jacobian_table(
-        stats["B_red"],
+    compare_all_jacobians(
+        jac_stats=jac_stats,
         row_labels=row_labels,
-        col_labels=col_labels_red,
-        title=f"{name} reduced Jacobian"
+        col_labels_full=col_labels_full,
+        col_labels_red=col_labels_red,
     )
-# ------------------------------------------------------------
-# Pairwise Jacobian comparisons
-# ------------------------------------------------------------
-jac_names = list(jac_stats.keys())
 
-for i in range(len(jac_names)):
-    for j in range(i + 1, len(jac_names)):
-        ni = jac_names[i]
-        nj = jac_names[j]
+    save_jacobians_to_csv(
+        jac_stats,
+        out_dir="jacobian_outputs",
+        row_labels=row_labels,
+        col_labels_full=col_labels_full,
+        col_labels_red=col_labels_red,
+    )
+# # ------------------------------------------------------------
+# # Jacobian setup
+# # ------------------------------------------------------------
+# dt = 1.0
+# dr = 5e-3
+# dtheta = 3e-1
+# dL = 1e-3
 
-        print("\n" + "=" * 80)
-        print(f"JACOBIAN COMPARISON: {ni} vs {nj}")
-        print("=" * 80)
+# eps_u = np.array([
+#     dr / dt, dr / dt, dr / dt,
+#     dtheta / dt, dtheta / dt, dtheta / dt,
+#     dL / dt
+# ], dtype=float)
 
-        print_jacobian_comparison(
-            jac_stats[ni]["B_full"],
-            jac_stats[nj]["B_full"],
-            row_labels=row_labels,
-            col_labels=col_labels_full,
-            name_a=f"{ni}_full",
-            name_b=f"{nj}_full",
-        )
+# row_labels = ["tip_x", "tip_y", "tip_z"]
+# col_labels_full = ["vx", "vy", "vz", "wx", "wy", "wz", "L"]
+# col_labels_red = ["vx", "vy", "wz", "L"]
 
-        print_jacobian_comparison(
-            jac_stats[ni]["B_red"],
-            jac_stats[nj]["B_red"],
-            row_labels=row_labels,
-            col_labels=col_labels_red,
-            name_a=f"{ni}_red",
-            name_b=f"{nj}_red",
-        )
+# p8_nom = np.hstack([r_src_ur, q_src_ur, L_cmd])
+
+# jac_forward_fns = {}
+
+# # wrapper models: cold versions are fairest for Jacobians
+# if fwd_cos is not None:
+#     fwd_cos_cold = WarmForwardP7(fwd_cos)
+#     jac_forward_fns["cos_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_cos_cold, "cos_wrapper")
+
+# if fwd_der is not None:
+#     fwd_der_cold = WarmForwardP7(fwd_der)
+#     jac_forward_fns["der_wrapper"] = make_forward_tip_fn_from_p7_model(fwd_der_cold, "der_wrapper")
+
+# # direct models
+# if RUN_DER_DIRECT_MIN:
+#     jac_forward_fns["der_direct_min"] = make_forward_tip_fn_der_direct_min(
+#         p0_ur=p0_ur,
+#         q0_ur=q0_ur,
+#         Kinv_fun=Kinv_fun,
+#         EA_wire=EA_wire,
+#         EA_tip=EA_tip,
+#         M_ref_local=M_ref_local,
+#         m_body=m_body,
+#         lumen_C=lumen_C,
+#         lumen_R=lumen_R,
+#         use_lumen=USE_LUMEN,
+#         N_nodes=N_nodes,
+#         mag_len=mag_len,
+#     )
+
+# if RUN_DER_RESIDUAL:
+#     q_seed = None
+#     if "der_direct_min" in results and "q_opt" in results["der_direct_min"]["info"]:
+#         q_seed = results["der_direct_min"]["info"]["q_opt"]
+#     jac_forward_fns["der_residual"] = make_forward_tip_fn_der_residual(
+#         p0_ur=p0_ur,
+#         q0_ur=q0_ur,
+#         Kinv_fun=Kinv_fun,
+#         EA_wire=EA_wire,
+#         EA_tip=EA_tip,
+#         M_ref_local=M_ref_local,
+#         m_body=m_body,
+#         lumen_C=lumen_C,
+#         lumen_R=lumen_R,
+#         use_lumen=USE_LUMEN,
+#         N_nodes=N_nodes,
+#         mag_len=mag_len,
+#         q_init_seed=q_seed,
+#     )
+
+# if RUN_DIRECT_COSSERAT:
+#     jac_forward_fns["cos_bvp_direct"] = make_forward_tip_fn_cosserat_direct(
+#         p0_ur=p0_ur,
+#         q0_ur=q0_ur,
+#         Kinv_fun=Kinv_fun,
+#         m_body=m_body,
+#         mag_len=mag_len,
+#     )
+# # ------------------------------------------------------------
+# # Compute Jacobians for all models
+# # ------------------------------------------------------------
+# jac_stats = {}
+
+# for name, forward_fn in jac_forward_fns.items():
+#     stats = benchmark_jacobian_mode(
+#         label=name,
+#         forward_tip_fn=forward_fn,
+#         p8_nom=p8_nom,
+#         dt=dt,
+#         eps_u=eps_u,
+#         dL=dL,
+#         n_out=3,
+#         n_repeat=1,   # raise to 3 for timing averages
+#     )
+#     jac_stats[name] = stats
+
+#     print_jacobian_table(
+#         stats["B_full"],
+#         row_labels=row_labels,
+#         col_labels=col_labels_full,
+#         title=f"{name} full Jacobian"
+#     )
+
+#     print_jacobian_table(
+#         stats["B_red"],
+#         row_labels=row_labels,
+#         col_labels=col_labels_red,
+#         title=f"{name} reduced Jacobian"
+#     )
+# # ------------------------------------------------------------
+# # Pairwise Jacobian comparisons
+# # ------------------------------------------------------------
+# jac_names = list(jac_stats.keys())
+
+# for i in range(len(jac_names)):
+#     for j in range(i + 1, len(jac_names)):
+#         ni = jac_names[i]
+#         nj = jac_names[j]
+
+#         print("\n" + "=" * 80)
+#         print(f"JACOBIAN COMPARISON: {ni} vs {nj}")
+#         print("=" * 80)
+
+#         print_jacobian_comparison(
+#             jac_stats[ni]["B_full"],
+#             jac_stats[nj]["B_full"],
+#             row_labels=row_labels,
+#             col_labels=col_labels_full,
+#             name_a=f"{ni}_full",
+#             name_b=f"{nj}_full",
+#         )
+
+#         print_jacobian_comparison(
+#             jac_stats[ni]["B_red"],
+#             jac_stats[nj]["B_red"],
+#             row_labels=row_labels,
+#             col_labels=col_labels_red,
+#             name_a=f"{ni}_red",
+#             name_b=f"{nj}_red",
+#         )

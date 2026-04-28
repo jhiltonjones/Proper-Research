@@ -560,7 +560,8 @@ def plot_reference_debug(
     R = np.asarray(mpc.lumen_R, float).reshape(-1) if getattr(mpc, "lumen_R", None) is not None else None
 
     i_ref = int(getattr(mpc, "i_ref_last", 0))
-    idx_ref = np.clip(i_ref + np.arange(n_ref), 0, len(C) - 1)
+    look = int(getattr(mpc, "ref_lookahead_pts", 0))
+    idx_ref = np.clip(i_ref + look + np.arange(n_ref), 0, len(C) - 1)
 
     fig, ax = plt.subplots(figsize=(7, 7))
 
@@ -592,8 +593,8 @@ def plot_reference_debug(
         ax.plot(right_bd[:, 0], right_bd[:, 1], "--", label="lumen boundary -R")
 
     ax.plot(x_meas[0], x_meas[1], "o", markersize=8, label="measured tip")
-    ax.plot(C[i_ref, 0], C[i_ref, 1], "s", markersize=8, label="i_ref")
-    ax.plot(C[idx_ref, 0], C[idx_ref, 1], "x--", label="future ref")
+    # ax.plot(C[i_ref, 0], C[i_ref, 1], "s", markersize=8, label="i_ref")
+    ax.plot(C[idx_ref, 0], C[idx_ref, 1], "x--", label="plotted MPC ref indices")
 
     if len(x_meas) >= 6:
         ax.arrow(
@@ -601,6 +602,37 @@ def plot_reference_debug(
             0.005 * x_meas[3], 0.005 * x_meas[4],
             head_width=0.0001, length_includes_head=True
         )
+    if info is not None:
+        # MPC tracking reference actually used in QP
+        mpc_debug = info.get("mpc_debug", None)
+        if mpc_debug is not None:
+            track_dbg = (
+                mpc_debug
+                .get("penalties", {})
+                .get("track", None)
+            )
+
+            if track_dbg is not None and "X_ref" in track_dbg:
+                X_ref_mpc = np.asarray(track_dbg["X_ref"], float)
+
+                if X_ref_mpc.ndim == 2 and X_ref_mpc.shape[1] >= 2:
+                    if np.all(np.isfinite(X_ref_mpc[:, :2])):
+                        ax.plot(
+                            X_ref_mpc[:, 0],
+                            X_ref_mpc[:, 1],
+                            "P-",
+                            markersize=9,
+                            linewidth=2,
+                            label="MPC X_ref used"
+                        )
+
+                        # ax.plot(
+                        #     X_ref_mpc[0, 0],
+                        #     X_ref_mpc[0, 1],
+                        #     "P",
+                        #     markersize=12,
+                        #     label="MPC X_ref[0]"
+                        # )
 
     if info is not None:
         X_pred = info.get("X_pred", None)
@@ -621,45 +653,45 @@ def plot_reference_debug(
             X_nom_last = np.asarray(X_nom_last, float)
             if X_nom_last.ndim == 2 and X_nom_last.shape[1] >= 2 and np.all(np.isfinite(X_nom_last[:, :2])):
                 ax.plot(X_nom_last[:, 0], X_nom_last[:, 1], ":+", label="nominal tip")
-    # current external magnet
-    if mag_pos is not None:
-        mag_pos = np.asarray(mag_pos, float).reshape(3,)
-        ax.plot(mag_pos[0], mag_pos[1], "md", markersize=9, label="magnet current")
+    # # current external magnet
+    # if mag_pos is not None:
+    #     mag_pos = np.asarray(mag_pos, float).reshape(3,)
+    #     ax.plot(mag_pos[0], mag_pos[1], "md", markersize=9, label="magnet current")
 
-        if mag_dir is not None:
-            mag_dir = np.asarray(mag_dir, float).reshape(3,)
-            nrm = np.linalg.norm(mag_dir[:2])
-            if nrm > 1e-12:
-                dxy = mag_dir[:2] / nrm
-                arrow_len = 0.01  # 10 mm in plot units [m]
-                ax.arrow(
-                    mag_pos[0], mag_pos[1],
-                    arrow_len * dxy[0], arrow_len * dxy[1],
-                    head_width=0.0015,
-                    head_length=0.0025,
-                    length_includes_head=True,
-                    color="m",
-                )
+    #     if mag_dir is not None:
+    #         mag_dir = np.asarray(mag_dir, float).reshape(3,)
+    #         nrm = np.linalg.norm(mag_dir[:2])
+    #         if nrm > 1e-12:
+    #             dxy = mag_dir[:2] / nrm
+    #             arrow_len = 0.01  # 10 mm in plot units [m]
+    #             ax.arrow(
+    #                 mag_pos[0], mag_pos[1],
+    #                 arrow_len * dxy[0], arrow_len * dxy[1],
+    #                 head_width=0.0015,
+    #                 head_length=0.0025,
+    #                 length_includes_head=True,
+    #                 color="m",
+    #             )
 
-    # next commanded external magnet
-    if mag_pos_next is not None:
-        mag_pos_next = np.asarray(mag_pos_next, float).reshape(3,)
-        ax.plot(mag_pos_next[0], mag_pos_next[1], "cs", markersize=8, label="magnet next")
+    # # next commanded external magnet
+    # if mag_pos_next is not None:
+    #     mag_pos_next = np.asarray(mag_pos_next, float).reshape(3,)
+    #     ax.plot(mag_pos_next[0], mag_pos_next[1], "cs", markersize=8, label="magnet next")
 
-        if mag_dir_next is not None:
-            mag_dir_next = np.asarray(mag_dir_next, float).reshape(3,)
-            nrm = np.linalg.norm(mag_dir_next[:2])
-            if nrm > 1e-12:
-                dxy = mag_dir_next[:2] / nrm
-                arrow_len = 0.01
-                ax.arrow(
-                    mag_pos_next[0], mag_pos_next[1],
-                    arrow_len * dxy[0], arrow_len * dxy[1],
-                    head_width=0.0015,
-                    head_length=0.0025,
-                    length_includes_head=True,
-                    color="c",
-                )
+    #     if mag_dir_next is not None:
+    #         mag_dir_next = np.asarray(mag_dir_next, float).reshape(3,)
+    #         nrm = np.linalg.norm(mag_dir_next[:2])
+    #         if nrm > 1e-12:
+    #             dxy = mag_dir_next[:2] / nrm
+    #             arrow_len = 0.01
+    #             ax.arrow(
+    #                 mag_pos_next[0], mag_pos_next[1],
+    #                 arrow_len * dxy[0], arrow_len * dxy[1],
+    #                 head_width=0.0015,
+    #                 head_length=0.0025,
+    #                 length_includes_head=True,
+    #                 color="c",
+    #             )
     # print("tip norm:", np.linalg.norm(x_meas[:3]))
     # print("lumen norm:", np.linalg.norm(mpc.lumen_C[0]))
     ax.axis("equal")
@@ -727,7 +759,7 @@ class mpc_controller_tipxy_LTI:
         self.Np = int(Np)
         self.ref_reach_tol_m = 1.8e-3        # 1 mm
         self.max_ref_advance_per_step = 15    # prevents jumping many points
-        self.ref_lookahead_pts = 5         # reduce from 8 if it still cuts corners
+        self.ref_lookahead_pts = 2     # reduce from 8 if it still cuts corners
         self.A = np.eye(self.n)
 
 
@@ -796,7 +828,7 @@ class mpc_controller_tipxy_LTI:
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
         # self.w_adv = 1    # start tiny (1e-5 .. 1e-3)
-        self.w_adv = 0.5
+        self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -807,13 +839,12 @@ class mpc_controller_tipxy_LTI:
 
         self.s_des = 5e-4  
 
-        self.enable_dipole_align = True
+        self.enable_dipole_align = False
         self.w_dipole_align = 0.05     # start small: 0.1..10
-        self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1]
-
+        self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.16
+        self.mag_center_standoff_m = 0.13
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -977,7 +1008,7 @@ class mpc_controller_tipxy_LTI:
 
         enable_adv_eff = ((self.w_adv != 0.0) and (not centerline_only))
         enable_standoff_eff = self.enable_mag_center_standoff
-        enable_inline_eff = bool(getattr(self, "enable_mag_tangent_inline", True))
+        enable_inline_eff = bool(getattr(self, "enable_mag_tangent_inline", False))
         enable_dipole_eff = self.enable_dipole_align
 
         # warm start
@@ -1256,9 +1287,23 @@ class mpc_controller_tipxy_LTI:
             #     f"tol={1e3 * reach_tol_m:.3f} mm"
             # )
             # print(f"REFERENCE {idx_ref}")
+            # i0 = int(getattr(self, "i_ref_last", 0))
+            # look = int(getattr(self, "ref_lookahead_pts", 2))
+
             i0 = int(getattr(self, "i_ref_last", 0))
-            look = int(getattr(self, "ref_lookahead_pts", 8))
+
+            err_to_center = np.linalg.norm(
+                np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i0, :2], float)
+            )
+
+            if err_to_center > 0.002:  # 1.5 mm
+                look = 0
+            else:
+                look = int(getattr(self, "ref_lookahead_pts", 2))
+
             idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
+            print(f"err_to_center [mm] = {1000.0 * err_to_center:.3f}")
+            print(f"lookahead used = {look}")
             print(f"REFERENCE {idx_ref}")
 
             X_ref = np.zeros((Np * n, 1), float)
@@ -1278,7 +1323,14 @@ class mpc_controller_tipxy_LTI:
             X_aff_last = X_aff
             X_nom_last = X_nom
             p_seq_last = p_seq
-
+            print("[TRACK DBG]")
+            print("idx_ref =", idx_ref)
+            print("Cc ref xyz =", Cc[idx_ref[0], :3].ravel())
+            print("X_aff xyz =", X_aff[:3, 0].ravel())
+            print("X_ref xyz =", X_ref[:3, 0].ravel())
+            print("X_aff_fixed xyz =", X_aff_fixed[:3, 0].ravel())
+            print("tracking error xyz =", (X_aff_fixed[:3, 0] - X_ref[:3, 0]).ravel())
+            print("Q diag =", np.diag(self.Q))
             H_track = 2.0 * (Mc.T @ Qtil @ Mc)
             f_track = 2.0 * (Mc.T @ Qtil @ (X_aff_fixed - X_ref))
             H = H_track.copy()
@@ -1582,7 +1634,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.14))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -1654,7 +1706,7 @@ class mpc_controller_tipxy_LTI:
                 w_slack_standoff = 0.0
 
             if ns_inline > 0:
-                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 5)))
+                w_slack_inline = float(getattr(self, "w_slack_inline", getattr(self, "w_mag_lat_inline", 0.1)))
                 i0i = off_inline
                 H_z[i0i:i0i + ns_inline, i0i:i0i + ns_inline] = 2.0 * w_slack_inline * np.eye(ns_inline)
             else:
@@ -1851,10 +1903,40 @@ class mpc_controller_tipxy_LTI:
             u0 = U_seq[0, :].copy()
 
         X_pred = np.full((Np, n), np.nan)
+
         if (not infeas_final) and (Mc_last is not None) and (X_aff_last is not None):
             U_vec = U_opt_vec.reshape(-1, 1)
             X_pred_stack = X_aff_last + Mc_last @ U_vec
             X_pred = X_pred_stack.reshape(Np, n)
+
+            # ---- TRACKING IMPROVEMENT DEBUG ----
+            if dbg_terms is not None and "track_model" in dbg_terms:
+                tm = dbg_terms["track_model"]
+                X_ref_dbg = tm["X_ref"]
+
+                X_aff_stack = X_aff_last.reshape(Np, n)
+                X_ref_stack = X_ref_dbg.reshape(Np, n)
+
+                err_before = X_aff_stack[:, :3] - X_ref_stack[:, :3]
+                err_after  = X_pred[:, :3] - X_ref_stack[:, :3]
+
+                print("[TRACK EFFECT]")
+                print("idx_ref =", tm["idx_ref"])
+                print("u0 =", u0)
+                err_before_xy = err_before[:, :2]
+                err_after_xy  = err_after[:, :2]
+
+                print("xy distance before [mm] =",
+                    1000.0 * np.linalg.norm(err_before_xy, axis=1))
+                print("xy distance after [mm] =",
+                    1000.0 * np.linalg.norm(err_after_xy, axis=1))
+                print("xy distance reduced? =",
+                    np.linalg.norm(err_after_xy, axis=1) < np.linalg.norm(err_before_xy, axis=1))
+            # -----------------------------------
+        # if (not infeas_final) and (Mc_last is not None) and (X_aff_last is not None):
+        #     U_vec = U_opt_vec.reshape(-1, 1)
+        #     X_pred_stack = X_aff_last + Mc_last @ U_vec
+        #     X_pred = X_pred_stack.reshape(Np, n)
 
         # real-control update:
         # - propagate p as internal actuator/configuration estimate
@@ -2739,12 +2821,15 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.015
+    L0 = 0.018
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
+    # pivot_point = np.array([
+    # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
+    # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.15),
+        pivot_point[0] - (L0 + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2764,14 +2849,14 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
 
-    # start_point = pose6
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt = 0.01
@@ -2805,7 +2890,7 @@ def build_controller(
     w_u = np.array([1e-5, 1e-5, 1e-4, 5e-1, 5e-1, 1e-6, 1e-4], dtype=float)
     w_du = np.array([1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8], dtype=float)
 
-    u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.03], dtype=float)
+    u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.01], dtype=float)
 
     dr = 5e-3
     dtheta = np.deg2rad(50.0)
@@ -2865,7 +2950,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(15.0, 15.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(3000.0, 3000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -2880,11 +2965,11 @@ def build_controller(
 
     mpc.enable_mag_center_standoff = True
     mpc.enable_mag_tangent_inline = False
-    mpc.enable_dipole_align = True
+    mpc.enable_dipole_align = False
     mpc.enable_hard_epm_tip_clearance = True
-    mpc.enable_standoff_soft = True
-    mpc.enable_inline_soft = True
-    mpc.enable_dipole_soft = True
+    mpc.enable_standoff_soft = False
+    mpc.enable_inline_soft = False
+    mpc.enable_dipole_soft = False
     mpc.enable_hard_theta = False
     mpc.enable_tangent_penalty = False
 
@@ -2948,7 +3033,9 @@ def run_control(
 ):
     history = []
     csv_rows = []
-
+    prev_ref_xyz = None
+    prev_pred_xyz = None
+    prev_i_ref = None
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
@@ -2989,7 +3076,19 @@ def run_control(
         )
         x_meas = np.asarray(x_meas, dtype=float).reshape(-1)
         print("same tip x_meas:", x_meas[:3])
+        if prev_ref_xyz is not None:
+            actual_err_to_prev_ref_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
+            pred_err_to_prev_ref_xy = np.linalg.norm(prev_pred_xyz[:2] - prev_ref_xyz[:2])
 
+            print("[ACTUAL VS PREVIOUS REF]")
+            print("prev_i_ref =", prev_i_ref)
+            print("prev_ref_xyz =", prev_ref_xyz)
+            print("current_measured_xyz =", x_meas[:3])
+            print("previous_predicted_xyz =", prev_pred_xyz)
+            print("actual err to prev ref xy [mm] =", 1000.0 * actual_err_to_prev_ref_xy)
+            print("predicted err to prev ref xy [mm] =", 1000.0 * pred_err_to_prev_ref_xy)
+            print("actual followed prediction? xy [mm] =",
+                1000.0 * np.linalg.norm(x_meas[:2] - prev_pred_xyz[:2]))
         C_live = vision_result.get("lumen_C_robot_m", None)
         if C_live is not None:
             C_live = np.asarray(C_live, float)
@@ -3035,8 +3134,8 @@ def run_control(
         mpc.i_ref_last = int(i_ref)
         # print("[VISION] i_ref =", i_ref)
         # print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
-        # print("[VISION] tip-to-reference distance [mm] =",
-        #     1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
+        print("[VISION] tip-to-reference distance [mm] =",
+            1000.0 * np.linalg.norm(x_meas[:3] - mpc.lumen_C[i_ref]))
 
         mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
         mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
@@ -3044,7 +3143,7 @@ def run_control(
 
         if hw is not None:
             L_meas = float(vision_result["beam_length_mm"]) / 1000.0
-            # L_meas += 0.00
+            L_meas += 0.007
             robot_pose6 = hw.get_robot_pose_once()
             p_meas8 = build_measured_p8_from_pose6_and_length(
                 robot_pose6,
@@ -3060,11 +3159,62 @@ def run_control(
             print("[MEAS P] p_meas8 =", p_meas8)
 
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
-
+        
         p_now, x_now, info = mpc.step(x_meas=x_meas)
-
+        print("[INFO DEBUG]")
         mag_pos_next = np.asarray(p_now[:3], dtype=float)
         mag_dir_next = np.asarray(dipole_dir_from_p8(p_now), dtype=float)
+        print("[INFO DEBUG]")
+        print("info keys =", info.keys())
+        print("mpc_debug type =", type(info.get("mpc_debug")))
+        print("X_pred type =", type(info.get("X_pred")))
+        print("X_aff_last type =", type(info.get("X_aff_last")))
+        track_dbg = (
+            info.get("mpc_debug", {})
+                .get("penalties", {})
+                .get("track", None)
+        )
+
+        if (
+            track_dbg is not None
+            and "X_ref" in track_dbg
+            and info.get("X_pred", None) is not None
+            and info.get("X_aff_last", None) is not None
+        ):
+            X_pred_arr = np.asarray(info["X_pred"], float)
+            n_pred = X_pred_arr.shape[1]
+
+            X_ref_used = np.asarray(track_dbg["X_ref"], float).reshape(-1, n_pred)
+            X_aff_stack = np.asarray(info["X_aff_last"], float).reshape(-1, n_pred)
+
+            ref = X_ref_used[0, :3]
+            pred = X_pred_arr[0, :3]
+            aff = X_aff_stack[0, :3]
+            meas = np.asarray(x_meas, float)[:3]
+
+            print("[Y FLIP CHECK]")
+            print("robot-frame dy meas-ref [mm] =", 1000.0 * (meas[1] - ref[1]))
+            print("plot/image-style dy ref-meas [mm] =", 1000.0 * (ref[1] - meas[1]))
+            print("robot-frame dx meas-ref [mm] =", 1000.0 * (meas[0] - ref[0]))
+            print("pred-ref xy [mm] =", 1000.0 * (pred[:2] - ref[:2]))
+
+            print("[Y SIGN CHECK]")
+            print("ref_y - aff_y [mm] =", 1000.0 * (ref[1] - aff[1]))
+            print("pred_y - aff_y [mm] =", 1000.0 * (pred[1] - aff[1]))
+            print("u0 vy =", np.asarray(info["u0"], float)[1])
+
+            prev_ref_xyz = ref.copy()
+            prev_pred_xyz = pred.copy()
+            prev_i_ref = int(np.asarray(track_dbg["idx_ref"]).reshape(-1)[0])
+
+        else:
+            print("[Y FLIP CHECK] Missing track debug data")
+            print("track_dbg is None:", track_dbg is None)
+            print("has X_ref:", track_dbg is not None and "X_ref" in track_dbg)
+            print("X_pred is None:", info.get("X_pred", None) is None)
+            print("X_aff_last is None:", info.get("X_aff_last", None) is None)
+        
+        
 
         plot_path = None
         if save_plots:
@@ -3268,7 +3418,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 12.7  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 14.7  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -3307,10 +3457,10 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=5,
         maxiter=30,
         L0_init=0.01,
-        dL_internal=0.001,
+        dL_internal=0.005,
         use_lumen_jac=True,
         L_tip_full=L_tip_full_physical,
         L_tip_min=0.01,
@@ -3439,7 +3589,7 @@ if __name__ == "__main__":
             blue_roi_path="blue_roi_box.json",
             green_roi_path="green_roi_box.json",
             pivot_hint=pivot_hint,
-            max_steps=100,
+            max_steps=150,
             show=False,
             send_commands=True,
             hw=hw,

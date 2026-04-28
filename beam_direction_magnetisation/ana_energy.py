@@ -728,8 +728,8 @@ def energy_from_u(
         print(f"max |m|={np.max(mnorm):.6e}")
         print(f"max |m x B|={np.max(tau_norm):.6e}")
         print(f"max angle(m,B) [deg]={np.max(th_deg):.3f}")
-        if use_lumen and (lumen_query is not None):
-            print(f"min clearance d={min_d:.6e}")
+        # if use_lumen and (lumen_query is not None):
+        #     print(f"min clearance d={min_d:.6e}")
 
     parts = dict(
         W_el=float(W_el),

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from proper_research.vision.vision_w_tangnet import detect_4_red_markers_in_roi
 from proper_research.vision.measure_length import new_capture
 from proper_research.vision.line_fit_through_points import measure_tip_base_angles,make_beam_frame_from_proximal_markers, project_point_to_beam_frame
-
+from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame
 # from proper_research.vision.boundaries import detect_blue_vessel_boundaries, smooth_boundary
 RED_ROI_CONFIG_FILE = "red_roi_box.json"
 BLUE_ROI_CONFIG_FILE = "blue_roi_box.json"
@@ -1002,12 +1002,13 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=27.5)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=15)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
     red_polygon = red_area["polygon"] if (red_area is not None and red_area["type"] == "polygon") else None
 
+    # First detect markers once, only to get fallback frame if needed
     tip_result = measure_tip_state_4markers(
         image_filename=image_filename,
         roi_box=None,
@@ -1019,29 +1020,40 @@ def reconstruct_beam_within_vessel(
     )
 
     markers = tip_result["markers"]
-    diameters = tip_result["marker_diameters_px"]
-    diameter_px_tip = diameters["tip_px"]
-    diameter_mm = diameter_px_tip * mm_per_pixel
-    print(f"Marker diameter at tip: {diameter_mm}")
-    manual_vessel = load_manual_vessel_boundaries(MANUAL_VESSEL_BOUNDARY_FILE)
 
-    left_smooth = manual_vessel["left_boundary_px"]
-    right_smooth = manual_vessel["right_boundary_px"]
-    vessel = {"mode": "manual"}
-    print("[INFO] Using manually drawn vessel boundaries.")
+    manual_vessel = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+
     if base_px_ref is None or ex_ref is None or ey_ref is None:
-        base_px_ref, ex_ref, ey_ref = make_fixed_local_frame(
-            base_px_ref=markers["base_px"],
-            mag_start_px_ref=markers["mag_start_px"],
-            tangent_start_px_ref=markers["tangent_start_px"],
-        )
+        base_px_ref = manual_vessel["base_px"]
+        ex_ref = manual_vessel["ex_img"]
+        ey_ref = manual_vessel["ey_img"]
     else:
         base_px_ref = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
         ex_ref = np.asarray(ex_ref, dtype=np.float32).reshape(2,)
         ey_ref = np.asarray(ey_ref, dtype=np.float32).reshape(2,)
 
-        ex_ref = ex_ref / (np.linalg.norm(ex_ref) + 1e-12)
-        ey_ref = ey_ref / (np.linalg.norm(ey_ref) + 1e-12)
+    ex_ref = ex_ref / (np.linalg.norm(ex_ref) + 1e-12)
+    ey_ref = ey_ref / (np.linalg.norm(ey_ref) + 1e-12)
+
+    tip_result = measure_tip_state_4markers(
+        image_filename=image_filename,
+        roi_box=None,
+        roi_polygon=red_roi_polygon,
+        show=show,
+        show_debug_markers=show,
+        unwrap_angle=True,
+        pivot_hint=pivot_hint,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
+    )
+
+    markers = tip_result["markers"]
+    left_smooth = manual_vessel["left_boundary_px"]
+    right_smooth = manual_vessel["right_boundary_px"]
+    vessel = {"mode": "manual"}
+    print("[INFO] Using manually drawn vessel boundaries.")
+
     tip_xy_fixed = image_to_fixed_local_frame(
         markers["tip_px"],
         base_px_ref,
@@ -1071,14 +1083,14 @@ def reconstruct_beam_within_vessel(
     image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         # --- beam reconstruction ---
     beam_points_px, ordered_pts = beam_polyline_from_markers(markers, n_samples_per_segment=40)
-    # beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
+    beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
     # beam_length_mm = beam_length_px * mm_per_pixel
-    beam_length_px, skeleton, beam_path_px = compute_black_beam_length_px(
-        image_gray,
-        markers["base_px"],
-        markers["tip_px"],
-        threshold=100
-    )
+    # beam_length_px, skeleton, beam_path_px = compute_black_beam_length_px(
+    #     image_gray,
+    #     markers["base_px"],
+    #     markers["tip_px"],
+    #     threshold=100
+    # )
 
     beam_length_mm = beam_length_px * mm_per_pixel
     beam_coeffs = None
@@ -1374,7 +1386,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=27.5):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=15):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 

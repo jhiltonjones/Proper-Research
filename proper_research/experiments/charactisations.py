@@ -64,8 +64,9 @@ from proper_research.vision.bounds_beam import (
     detect_2_green_calibration_points,
     measure_tip_state_4markers, load_polygon
 )
+from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
 
-
+MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
 
 mag_params = default_magnet_params()
 
@@ -217,19 +218,26 @@ def build_initial_lumen_from_vision(
     roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
+    manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
     show=True,
-    base_px_ref=None,
-    ex_ref=None,
-    ey_ref=None,
 ):
     new_capture()
 
-    roi_polygon = load_polygon(roi_polygon_path)
-    print("[DBG lumen frame actually passed through]")
+    manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
+
+    # Use your clicked base/origin and +x axis
+    base_px_ref = manual["base_px"]
+    ex_ref = manual["ex_img"]
+    ey_ref = manual["ey_img"]
+
+    print("[DBG lumen manual frame used]")
     print("  base_px_ref =", base_px_ref)
     print("  ex_ref =", ex_ref)
     print("  ey_ref =", ey_ref)
+
+    roi_polygon = load_polygon(roi_polygon_path)
+
     vision_result = reconstruct_beam_within_vessel(
         image_filename=image_filename,
         red_roi_polygon=roi_polygon,
@@ -243,17 +251,26 @@ def build_initial_lumen_from_vision(
         ey_ref=ey_ref,
     )
 
+    # The lumen_C_m should now already be in the clicked local frame:
+    # base click = (0,0), clicked reference direction = +x
+    lumen_C_m = np.asarray(vision_result["lumen_C_m"], float).copy()
+
+    # Force centerline start to local origin
+    lumen_C_m -= lumen_C_m[0:1, :]
 
     lumen_C_robot_m = transform_local_points_to_robot(
-        vision_result["lumen_C_m"],
+        lumen_C_m,
         pivot_point,
     )
+
     lumen_R_robot_m = np.asarray(vision_result["lumen_R_m"], float)
 
-    vision_result["lumen_C_robot_m"] = lumen_C_robot_m
-    vision_result["lumen_R_robot_m"] = lumen_R_robot_m
+    lumen_base_robot_m = transform_local_points_to_robot(
+        np.array([[0.0, 0.0, 0.0]], dtype=float),
+        pivot_point,
+    )[0]
 
-    return lumen_C_robot_m, lumen_R_robot_m
+    return lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m
 # def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
 #     """
 #     L_ins      : commanded insertion (what MPC tracks)
@@ -367,7 +384,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 12.7  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -405,29 +422,29 @@ def build_forward_model_no_lumen_effect(
     )
 
     if lumen:
-        lumen_C, lumen_R = build_initial_lumen_from_vision(
+        lumen_C, lumen_R ,_= build_initial_lumen_from_vision(
             pivot_point=pivot_pose6,
             image_filename=image_filename,
             blue_roi_path=blue_roi_path,
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=False,
-            base_px_ref=base_px_ref,
-            ex_ref=ex_ref,
-            ey_ref=ey_ref,
+
         )
         print("[DBG] using vision lumen in fixed reference frame")
+        print("[LUMEN LOCAL DEBUG]")
+        print("lumen_C_m[0] [mm] =", 1e3 * lumen_C[0])
+        print("min/max x [mm] =", 1e3 * np.min(lumen_C[:, 0]), 1e3 * np.max(lumen_C[:, 0]))
+        print("min/max y [mm] =", 1e3 * np.min(lumen_C[:, 1]), 1e3 * np.max(lumen_C[:, 1]))
     else:
-        lumen_C, lumen_R = build_initial_lumen_from_vision(
+        lumen_C, lumen_R,_ = build_initial_lumen_from_vision(
             pivot_point=pivot_pose6,
             image_filename=image_filename,
             blue_roi_path=blue_roi_path,
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=False,
-            base_px_ref=base_px_ref,
-            ex_ref=ex_ref,
-            ey_ref=ey_ref,
+
         )
         print("[DBG] lumen=False branch still using vision lumen")
         # later you can replace this with build_dummy_straight_lumen_from_pivot(...)
@@ -456,11 +473,11 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=5,
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.001,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
@@ -812,16 +829,23 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
     )
 
-    if ref_frame is not None:
-        meas = measure_tip_from_vision_base_local(
-            cfg,
-            base_px_ref=ref_frame["base_px_ref"],
-            ex_ref=ref_frame["ex_ref"],
-            ey_ref=ref_frame["ey_ref"],
-        )
-    else:
-        meas = measure_tip_from_vision_base_local(cfg)
+    # if ref_frame is not None:
+    #     meas = measure_tip_from_vision_base_local(
+    #         cfg,
+    #         base_px_ref=ref_frame["base_px_ref"],
+    #         ex_ref=ref_frame["ex_ref"],
+    #         ey_ref=ref_frame["ey_ref"],
+    #     )
+    # else:
+    #     meas = measure_tip_from_vision_base_local(cfg)
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
 
+    meas = measure_tip_from_vision_base_local(
+        cfg,
+        base_px_ref=manual["base_px"],
+        ex_ref=manual["ex_img"],
+        ey_ref=manual["ey_img"],
+    )
     pred_base_local_m = predicted_tip_to_base_local_from_base_point_robot(
         pred_tip_robot_m=pred["tip_robot_m"],
         beam_base_point_robot_m=np.asarray(cfg.beam_base_point_robot_m, dtype=float),
@@ -982,17 +1006,17 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     print("test  dipole =", test_m_robot)
     # Rebuild the same lumen used by the forward model, for plotting
     if True:  # set to False if you want dummy lumen instead
-        lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
+        lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m = build_initial_lumen_from_vision(
             pivot_point=cfg.pivot_pose6,
             image_filename=cfg.image_filename,
             blue_roi_path="blue_roi_box.json",
             green_roi_path=cfg.green_roi_path,
             pivot_hint=cfg.pivot_hint,
             show=False,
-            base_px_ref=ref_frame["base_px_ref"] if ref_frame is not None else None,
-            ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
-            ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
+
         )
+
+
     else:
         lumen_C_robot_m, lumen_R_robot_m = build_dummy_straight_lumen_from_pivot(
             pivot_pose6=cfg.pivot_pose6,
@@ -1004,7 +1028,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     lumen_C_base_local_m = robot_points_to_base_local(
         lumen_C_robot_m,
         pivot_pose6=cfg.pivot_pose6,
-        beam_base_point_robot_m=cfg.beam_base_point_robot_m,
+        beam_base_point_robot_m=lumen_base_robot_m,
     )
     import time
 
@@ -1130,12 +1154,12 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.017
+    L0 = 0.0176
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.18),
+        pivot_point[0] - (L0 + 0.14),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -1255,7 +1279,7 @@ def plot_single_tip_comparison_local(
             lumen_C_local_m,
             lumen_R_m,
             n=500,
-            smooth=1e-5,
+            smooth=0,
         )
 
         lumen_mm = 1e3 * lumen_C_plot_m
@@ -1607,7 +1631,7 @@ def build_forward_model(
         ex_ref=ex_ref,
         ey_ref=ey_ref,
     )
-MAG_YAW_CAL_DEG = 12.7
+MAG_YAW_CAL_DEG = 0
 
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
@@ -1706,7 +1730,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=28.70,
+        known_green_distance_mm=15,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

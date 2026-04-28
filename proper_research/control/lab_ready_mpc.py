@@ -16,6 +16,10 @@ import time
 from proper_research.robot.transformations import get_point
 import csv
 from proper_research.robot.live_hardware_control import LiveHardwareController
+from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
+
+MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
+
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
@@ -759,10 +763,11 @@ class mpc_controller_tipxy_LTI:
         self.Np = int(Np)
         self.ref_reach_tol_m = 1.8e-3        # 1 mm
         self.max_ref_advance_per_step = 15    # prevents jumping many points
-        self.ref_lookahead_pts = 2     # reduce from 8 if it still cuts corners
+        self.ref_lookahead_pts = 2    # reduce from 8 if it still cuts corners
         self.A = np.eye(self.n)
 
-
+        self.i_ref_progress = 0
+        self.max_ref_advance_per_step = 2
 
         self.U_warm = None
         self.model_mode = str(model_mode).lower()
@@ -1290,20 +1295,31 @@ class mpc_controller_tipxy_LTI:
             # i0 = int(getattr(self, "i_ref_last", 0))
             # look = int(getattr(self, "ref_lookahead_pts", 2))
 
-            i0 = int(getattr(self, "i_ref_last", 0))
+            i_closest = int(getattr(self, "i_ref_last", 0))
+            i_prog = int(getattr(self, "i_ref_progress", i_closest))
+
+            # never let progress fall behind closest point
+            i_prog = max(i_prog, i_closest)
 
             err_to_center = np.linalg.norm(
-                np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i0, :2], float)
+                np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i_prog, :2], float)
             )
 
-            if err_to_center > 0.002:  # 1.5 mm
-                look = 0
+            if err_to_center > 0.001:
+                target_start = i_prog
             else:
-                look = int(getattr(self, "ref_lookahead_pts", 2))
+                advance = int(getattr(self, "ref_lookahead_pts", 2))
+                max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
+                target_start = min(i_prog + min(advance, max_adv), M - 1)
+                self.i_ref_progress = target_start
 
-            idx_ref = np.clip(i0 + look + np.arange(Np), 0, M - 1)
+            idx_ref = np.clip(target_start + np.arange(Np), 0, M - 1)
+
+            print(f"i_closest={i_closest}, i_prog={i_prog}, target_start={target_start}")
+            print(f"err_to_center [mm]={1000.0 * err_to_center:.3f}")
+            print(f"REFERENCE {idx_ref}")
             print(f"err_to_center [mm] = {1000.0 * err_to_center:.3f}")
-            print(f"lookahead used = {look}")
+            # print(f"lookahead used = {look}")
             print(f"REFERENCE {idx_ref}")
 
             X_ref = np.zeros((Np * n, 1), float)
@@ -2821,7 +2837,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.018
+    L0 = 0.024
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -2835,20 +2851,20 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
-    start_point[2] = -0.1
-    pose6 = start_point
+    # start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    # start_point[2] = -0.1
+    # pose6 = start_point
     # pose6 = np.asarray(get_point(0, 0), dtype=float)
     # pose6 = hw.get_robot_pose_once()
     # pose6 = np.array([0.6464871989117105, -0.5659848620070453, 0.18000000000000002, 2.822035029384029, -1.334168531318762, -0.06004322067724725], float)
     # pose6[2] = -0.1
     # pose6[0] = 0.3
     # print(f"POSE6 is {pose6}")
-    T = ur_pose6_to_T(pose6)
-    p, q_wxyz = T_to_p_quat_wxyz(T)
+    # T = ur_pose6_to_T(pose6)
+    # p, q_wxyz = T_to_p_quat_wxyz(T)
 
-    p_now = np.concatenate([p, q_wxyz, [L0]])
-    u0 = np.zeros(7, dtype=float)
+    # p_now = np.concatenate([p, q_wxyz, [L0]])
+    # u0 = np.zeros(7, dtype=float)
     # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
@@ -3029,13 +3045,17 @@ def run_control(
     hw=None,
     save_plots=True,
     plot_dir="mpc_debug_plots",
-    csv_log_path="control_run_log_test_run_opti_1dt.csv",
+    lumen_C_robot_m=None,
+    lumen_R_robot_m=None,
+    csv_log_path="control_run_log_test_run_opti_1dt3.csv",
 ):
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
     csv_rows = []
     prev_ref_xyz = None
     prev_pred_xyz = None
     prev_i_ref = None
+    L_est = None
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
@@ -3044,26 +3064,35 @@ def run_control(
         roi_polygon = load_polygon(red_roi_path)
 
         vision_result = reconstruct_beam_within_vessel(
-            image_filename="focused_image.jpg",
+            image_filename=image_filename,
             red_roi_polygon=roi_polygon,
-            blue_roi_path="blue_roi_box.json",
+            blue_roi_path=blue_roi_path,
+            green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_opti_1dt/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_opti_1dt3/reconstruction_overlay_step_{k:04d}.png",
+            base_px_ref=manual["base_px"],
+            ex_ref=manual["ex_img"],
+            ey_ref=manual["ey_img"],
         )
+        print("HERE NOW PASS")
+        # vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
+        #     vision_result["lumen_C_m"],
+        #     pivot_point
+        # )
+        if lumen_C_robot_m is not None and lumen_R_robot_m is not None:
+            mpc.lumen_C = np.asarray(lumen_C_robot_m, dtype=float)
+            mpc.lumen_R = np.asarray(lumen_R_robot_m, dtype=float)
 
-        vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
-            vision_result["lumen_C_m"],
-            pivot_point
-        )
+            forward_pred = mpc.forward_tip_fn
+            forward_pred.fwd.lumen_C = mpc.lumen_C
+            forward_pred.fwd.lumen_R = mpc.lumen_R
+            forward_pred.reset_cache()
+        else:
+            raise ValueError("Pass fixed lumen_C_robot_m and lumen_R_robot_m into run_control")
+        # mpc.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
+        # mpc.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
 
-        mpc.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
-        mpc.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
-        forward_pred = mpc.forward_tip_fn   # or whatever object holds the wrapper
-
-        forward_pred.fwd.lumen_C = np.asarray(vision_result["lumen_C_robot_m"], dtype=float)
-        forward_pred.fwd.lumen_R = np.asarray(vision_result["lumen_R_m"], dtype=float)
-        forward_pred.reset_cache()
         # print("[VISION] lumen first point robot =", mpc.lumen_C[0])
         # print("[VISION] lumen last point robot  =", mpc.lumen_C[-1])
         # print("[VISION] lumen radius min/max [mm] =",
@@ -3089,12 +3118,10 @@ def run_control(
             print("predicted err to prev ref xy [mm] =", 1000.0 * pred_err_to_prev_ref_xy)
             print("actual followed prediction? xy [mm] =",
                 1000.0 * np.linalg.norm(x_meas[:2] - prev_pred_xyz[:2]))
-        C_live = vision_result.get("lumen_C_robot_m", None)
-        if C_live is not None:
-            C_live = np.asarray(C_live, float)
-            d2_live = np.sum((C_live - x_meas[:3][None, :])**2, axis=1)
-            i_live = int(np.argmin(d2_live))
-            print("LIVE lumen nearest dist [mm] =", 1000*np.sqrt(d2_live[i_live]))
+        C_live = np.asarray(mpc.lumen_C, float)
+        d2_live = np.sum((C_live - x_meas[:3][None, :])**2, axis=1)
+        i_live = int(np.argmin(d2_live))
+        print("LIVE/fixed lumen nearest dist [mm] =", 1000*np.sqrt(d2_live[i_live]))
 
         C_mpc = np.asarray(mpc.lumen_C, float)
         d2_mpc = np.sum((C_mpc - x_meas[:3][None, :])**2, axis=1)
@@ -3141,34 +3168,57 @@ def run_control(
         mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
 
 
+        # if hw is not None:
+        #     L_meas = float(vision_result["beam_length_mm"]) / 1000.0
+        #     L_meas += 0.007
+        #     robot_pose6 = hw.get_robot_pose_once()
+        #     p_meas8 = build_measured_p8_from_pose6_and_length(
+        #         robot_pose6,
+        #         L_meas,
+        #         z_offset=hw.z_offset,
+        #     )
+        #     mpc.set_measured_params(p_meas8)
+        #     mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
+        #     mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
+
+        #     print("[MEAS P] robot pose6 =", robot_pose6)
+        #     print("[MEAS P] L_meas =", L_meas)
+        #     print("[MEAS P] p_meas8 =", p_meas8)
         if hw is not None:
-            L_meas = float(vision_result["beam_length_mm"]) / 1000.0
-            L_meas += 0.007
             robot_pose6 = hw.get_robot_pose_once()
+
+            if L_est is None:
+                # initialize once from vision, with your offset
+                L_est = float(vision_result["beam_length_mm"]) / 1000.0 
+            else:
+                # use previous MPC/commanded length estimate
+                L_est = float(mpc.p[7])
+
             p_meas8 = build_measured_p8_from_pose6_and_length(
                 robot_pose6,
-                L_meas,
+                L_est,
                 z_offset=hw.z_offset,
             )
+
             mpc.set_measured_params(p_meas8)
+
             mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
             mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
 
             print("[MEAS P] robot pose6 =", robot_pose6)
-            print("[MEAS P] L_meas =", L_meas)
+            print("[MEAS P] L_est =", L_est)
             print("[MEAS P] p_meas8 =", p_meas8)
-
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         
         p_now, x_now, info = mpc.step(x_meas=x_meas)
-        print("[INFO DEBUG]")
+        L_est = float(p_now[7])
         mag_pos_next = np.asarray(p_now[:3], dtype=float)
         mag_dir_next = np.asarray(dipole_dir_from_p8(p_now), dtype=float)
-        print("[INFO DEBUG]")
-        print("info keys =", info.keys())
-        print("mpc_debug type =", type(info.get("mpc_debug")))
-        print("X_pred type =", type(info.get("X_pred")))
-        print("X_aff_last type =", type(info.get("X_aff_last")))
+        # print("[INFO DEBUG]")
+        # print("info keys =", info.keys())
+        # print("mpc_debug type =", type(info.get("mpc_debug")))
+        # print("X_pred type =", type(info.get("X_pred")))
+        # print("X_aff_last type =", type(info.get("X_aff_last")))
         track_dbg = (
             info.get("mpc_debug", {})
                 .get("penalties", {})
@@ -3370,38 +3420,96 @@ def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
     tip_len = min(tip_len, L_model)
 
     return L_model, wire_len, tip_len
+# def build_initial_lumen_from_vision(
+#     pivot_point,
+#     image_filename="focused_image.jpg",
+#     red_roi_path="red_roi_box.json",
+#     blue_roi_path="blue_roi_box.json",
+#     green_roi_path="green_roi_box.json",
+#     pivot_hint=None,
+#     show=True,
+# ):
+#     new_capture()
+#     roi_polygon_path="/home/jack/Proper-Research/custom_area.json"
+#     roi_polygon = load_polygon(roi_polygon_path)
+#     vision_result = reconstruct_beam_within_vessel(
+#         image_filename="focused_image.jpg",
+#         red_roi_polygon=roi_polygon,
+#         blue_roi_path="blue_roi_box.json",
+#         pivot_hint=pivot_hint,
+#         show=show,
+#         save_overlay_path="debug_outputs_new/reconstruction_overlay2.png",
+#     )
+
+#     lumen_C_robot_m = transform_local_points_to_robot(
+#         vision_result["lumen_C_m"],
+#         pivot_point,
+#     )
+#     lumen_R_robot_m = np.asarray(vision_result["lumen_R_m"], float)
+
+#     vision_result["lumen_C_robot_m"] = lumen_C_robot_m
+#     vision_result["lumen_R_robot_m"] = lumen_R_robot_m
+
+#     return vision_result, lumen_C_robot_m, lumen_R_robot_m
 def build_initial_lumen_from_vision(
     pivot_point,
     image_filename="focused_image.jpg",
-    red_roi_path="red_roi_box.json",
+    roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
+    manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
     show=True,
 ):
     new_capture()
-    roi_polygon_path="/home/jack/Proper-Research/custom_area.json"
+
+    manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
+
+    # Use your clicked base/origin and +x axis
+    base_px_ref = manual["base_px"]
+    ex_ref = manual["ex_img"]
+    ey_ref = manual["ey_img"]
+
+    print("[DBG lumen manual frame used]")
+    print("  base_px_ref =", base_px_ref)
+    print("  ex_ref =", ex_ref)
+    print("  ey_ref =", ey_ref)
+
     roi_polygon = load_polygon(roi_polygon_path)
+
     vision_result = reconstruct_beam_within_vessel(
-        image_filename="focused_image.jpg",
+        image_filename=image_filename,
         red_roi_polygon=roi_polygon,
-        blue_roi_path="blue_roi_box.json",
+        blue_roi_path=blue_roi_path,
+        green_roi_path=green_roi_path,
         pivot_hint=pivot_hint,
         show=show,
-        save_overlay_path="debug_outputs_new/reconstruction_overlay2.png",
+        save_overlay_path="debug_outputs/reconstruction_overlay.png",
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
     )
+
+    # The lumen_C_m should now already be in the clicked local frame:
+    # base click = (0,0), clicked reference direction = +x
+    lumen_C_m = np.asarray(vision_result["lumen_C_m"], float).copy()
+
+    # Force centerline start to local origin
+    lumen_C_m -= lumen_C_m[0:1, :]
 
     lumen_C_robot_m = transform_local_points_to_robot(
-        vision_result["lumen_C_m"],
+        lumen_C_m,
         pivot_point,
     )
+
     lumen_R_robot_m = np.asarray(vision_result["lumen_R_m"], float)
 
-    vision_result["lumen_C_robot_m"] = lumen_C_robot_m
-    vision_result["lumen_R_robot_m"] = lumen_R_robot_m
+    lumen_base_robot_m = transform_local_points_to_robot(
+        np.array([[0.0, 0.0, 0.0]], dtype=float),
+        pivot_point,
+    )[0]
 
-    return vision_result, lumen_C_robot_m, lumen_R_robot_m
-
+    return lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m
 def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -3418,7 +3526,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 14.7  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -3457,7 +3565,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
+        N_nodes=10,
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.005,
@@ -3549,10 +3657,10 @@ if __name__ == "__main__":
     pivot_point, start_point, L0, dt = make_initial_poses_single_use(hw)
 
     # 1. build lumen once from vision
-    vision_init, lumen_C_robot_m, lumen_R_robot_m = build_initial_lumen_from_vision(
+    lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m = build_initial_lumen_from_vision(
         pivot_point=pivot_point,
         image_filename="focused_image.jpg",
-        red_roi_path="/home/jack/Proper-Research/custom_area.json",
+        roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
         blue_roi_path="blue_roi_box.json",
         green_roi_path="green_roi_box.json",
         pivot_hint=pivot_hint,
@@ -3584,6 +3692,8 @@ if __name__ == "__main__":
         history = run_control(
             mpc=mpc,
             pivot_point=pivot_point,
+            lumen_C_robot_m=lumen_C_robot_m,
+            lumen_R_robot_m=lumen_R_robot_m,
             image_filename="focused_image.jpg",
             red_roi_path="/home/jack/Proper-Research/custom_area.json",
             blue_roi_path="blue_roi_box.json",
@@ -3594,7 +3704,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_opti_1dt",
+            plot_dir="mpc_run_opti_1dt3",
         )
 
     finally:

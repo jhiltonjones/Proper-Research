@@ -680,8 +680,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         self,
         p7,
         *,
-        eps_theta=1e-6,
-        eps_hess=1e-6,
+        eps_theta=1e-4,
+        eps_hess=1e-4,
     ):
         """
         Uses the already-cached nominal solve.
@@ -693,7 +693,14 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             raise RuntimeError(
                 "No cached solve available. Call forward model once before Jacobian."
             )
+        u_ref = np.asarray(self.last_info["u_flat_opt"], float).copy()
 
+        print("[J U_REF]")
+        print("  norm =", np.linalg.norm(u_ref))
+        print("  min/max =", np.min(u_ref), np.max(u_ref))
+        print("  first 10 =", u_ref[:10])
+        print("  mean =", np.mean(u_ref))
+        print("  sign sum =", np.sum(np.sign(u_ref)))
         r_src = p7[0:3]
         rvec = p7[3:6]
         L_ins = float(p7[6])
@@ -765,7 +772,9 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
 
         self.last_J_tip_pose7 = J_tip.copy()
         self.last_sens_info = sens_info
-
+        if "p7_last" in self.last_info:
+            print("[J CACHE CHECK] ||p7 - p7_last|| =",
+                np.linalg.norm(np.asarray(p7) - np.asarray(self.last_info["p7_last"])))
         return J_tip
 
     def jacobian_tip_pose7(
@@ -773,8 +782,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         p7,
         *,
         solve_if_needed=False,
-        eps_theta=1e-6,
-        eps_hess=1e-6,
+        eps_theta=1e-4,
+        eps_hess=1e-4,
     ):
         """
         Safe public method.

@@ -291,10 +291,10 @@ def contact_energy_gradient_u(
     C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
         p,
         lumen_query,
-        r_beam=beam_params.r,      # or whatever your beam radius variable is
+        r_beam=0.001,      # or whatever your beam radius variable is
         k_contact=1e3,
-        pen_switch=2e-4,
-        k_hard=1e6,
+        pen_switch=5e-5,
+        k_hard=1e8,
         eps=1e-12,
         window=3,
         smooth=True,              # start with nonsmooth pure contact
@@ -700,7 +700,7 @@ def energy_from_u(
             r_beam=beam_params.r,
             k_contact=1e3,
             pen_switch=2e-4,
-            k_hard=1e8,
+            k_hard=1e10,
             eps=1e-12,
             window=3,
             smooth=True,

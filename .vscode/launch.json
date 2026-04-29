@@ -203,10 +203,26 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Run beam compare",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.beam_mpc_compare",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Run ana jac",
             "type": "debugpy",
             "request": "launch",
             "module": "beam_direction_magnetisation.ana_jaccobian",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run ana energy",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.ana_energy",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

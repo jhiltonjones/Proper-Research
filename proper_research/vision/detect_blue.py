@@ -228,7 +228,21 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
             cv2.putText(vis, "+y", tuple(np.round(y_end).astype(int)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+        if base_point["pt"] is not None and len(left_points) > 0 and len(right_points) > 0:
+            b = np.asarray(base_point["pt"], float).copy()
+            start_y = 0.5 * (left_points[0][1] + right_points[0][1])
+            b_snap = np.array([b[0], start_y])
 
+            cv2.circle(vis, tuple(np.round(b_snap).astype(int)), 6, (0, 165, 255), 2)
+            cv2.putText(
+                vis,
+                "SNAPPED BASE",
+                (int(b_snap[0]) + 8, int(b_snap[1]) + 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 165, 255),
+                1,
+            )
         for pts, color, line_color, label in [
             (left_points, (0, 255, 0), (0, 150, 0), "L"),
             (right_points, (0, 0, 255), (0, 0, 180), "R"),
@@ -338,19 +352,29 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
 
             if len(left_points) < 2 or len(right_points) < 2:
                 print("[WARN] Need at least 2 points on each wall.")
-                continue
+                continue    
 
-            left_boundary_roi = resample_polyline_by_arclength(left_points, n_samples=200)
+            left_boundary_roi = resample_polyline_by_arclength(left_points, n_samples=200)                  
             right_boundary_roi = resample_polyline_by_arclength(right_points, n_samples=200)
 
             left_boundary_px = [to_full_px(p) for p in left_boundary_roi]
             right_boundary_px = [to_full_px(p) for p in right_boundary_roi]
+            base_px_clicked = to_full_px(base_point["pt"])
+            ref_px_clicked = to_full_px(ref_point["pt"])
 
-            base_px = to_full_px(base_point["pt"])
-            ref_px = to_full_px(ref_point["pt"])
+            # snap base onto same image-y as the start of the two vessel walls
+            base_px = snap_base_to_boundary_start_y(
+                base_px_clicked,
+                left_boundary_px,
+                right_boundary_px,
+            )
+
+            # keep reference point on same vertical offset relative to the snapped base
+            dy_snap = base_px[1] - base_px_clicked[1]
+            ref_px = (ref_px_clicked[0], ref_px_clicked[1] + dy_snap)
 
             save_manual_vessel_boundaries_with_frame(
-                left_boundary_px=left_boundary_px,
+                left_boundary_px=left_boundary_px,              
                 right_boundary_px=right_boundary_px,
                 base_px=base_px,
                 ref_px=ref_px,
@@ -370,8 +394,18 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
             cv2.destroyWindow(window_name)
             print("[INFO] Boundary drawing cancelled.")
             return None
-# manual = draw_manual_vessel_boundaries_with_origin_and_axis(
-#     image_filename="focused_image.jpg",
-#     save_path=MANUAL_VESSEL_BOUNDARY_FILE,
-#     blue_roi_path="blue_roi_box.json",
-# )
+def snap_base_to_boundary_start_y(base_px, left_boundary_px, right_boundary_px):
+    base_px = np.asarray(base_px, float).copy()
+    left0 = np.asarray(left_boundary_px[0], float)
+    right0 = np.asarray(right_boundary_px[0], float)
+
+    start_y = 0.5 * (left0[1] + right0[1])
+    base_px[1] = start_y
+
+    return tuple(base_px)
+if __name__ == "__main__":
+    manual = draw_manual_vessel_boundaries_with_origin_and_axis(
+        image_filename="focused_image.jpg",
+        save_path=MANUAL_VESSEL_BOUNDARY_FILE,
+        blue_roi_path="blue_roi_box.json",
+    )

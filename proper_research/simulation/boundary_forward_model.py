@@ -680,8 +680,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         self,
         p7,
         *,
-        eps_theta=1e-4,
-        eps_hess=1e-4,
+        eps_theta=1e-3,
+        eps_hess=1e-3,
     ):
         """
         Uses the already-cached nominal solve.
@@ -715,7 +715,7 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
 
         u_ref = np.asarray(self.last_info["u_flat_opt"], float).copy()
 
-        theta0 = np.hstack([r_src, np.zeros(3), L_model])
+        theta0 = np.hstack([r_src, np.zeros(3), L_ins])
 
         lumen_query = (
             LumenQuery(self.lumen_C, self.lumen_R)
@@ -732,12 +732,14 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             u_star=self.u_star,
             m_moment=0.0,
             N=self.N_nodes,
+            L_tip_full=self.L_tip_full,
+            L_tip_min=self.L_tip_min,
             rotation_convention="world",
             use_magnetic=True,
             use_contact=self.use_lumen_jac,
             lumen_query=lumen_query,
+            use_fast_contact_grad=False,
         )
-
         def theta_builder(theta):
             return {"theta0": theta0}
 

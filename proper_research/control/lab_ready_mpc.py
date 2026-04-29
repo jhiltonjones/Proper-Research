@@ -2939,14 +2939,14 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
 
-    start_point = pose6
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt = 0.01
@@ -3135,7 +3135,7 @@ def run_control(
     plot_dir="mpc_debug_plots",
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
-    csv_log_path="control_run_log_test_run_centreline_track_new_wbc_3step.csv",
+    csv_log_path="control_run_log_test_run_centreline_track_new_wbc_3step2.csv",
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3158,7 +3158,7 @@ def run_control(
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_centreline_track_new_wbc_3step/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_centreline_track_new_wbc_3step2/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
@@ -3827,7 +3827,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_centreline_track_new_wbc_3step",
+            plot_dir="mpc_run_centreline_track_new_wbc_3step2",
         )
 
     finally:

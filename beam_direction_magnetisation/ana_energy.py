@@ -341,6 +341,7 @@ def energy_gradient_u(
     lumen_query=None,
     use_magnetic=True,
     use_contact=True,
+    use_fast_contact_grad=False,
 ):
     grad = elastic_energy_gradient_u(
         u_flat,
@@ -362,13 +363,23 @@ def energy_gradient_u(
         )
 
     if use_contact and (lumen_query is not None):
-        grad += contact_energy_gradient_u(
-            u_flat,
-            p0=p0,
-            q0=q0,
-            s=s,
-            lumen_query=lumen_query,
-        )
+        if use_fast_contact_grad:
+            grad += contact_energy_gradient_u_faster_fdkin(
+                u_flat,
+                p0=p0,
+                q0=q0,
+                s=s,
+                lumen_query=lumen_query,
+                eps_kin=1e-7,
+            )
+        else:
+            grad += contact_energy_gradient_u(
+                u_flat,
+                p0=p0,
+                q0=q0,
+                s=s,
+                lumen_query=lumen_query,
+            )
 
     return grad
 def contact_energy_gradient_u_faster_fdkin(
@@ -392,7 +403,7 @@ def contact_energy_gradient_u_faster_fdkin(
         p,
         lumen_query,
         r_beam=beam_params.r,
-        k_contact=1e5,
+        k_contact=1e3,
         pen_switch=5e-5,
         k_hard=1e10,
         eps=1e-12,
@@ -436,7 +447,7 @@ def solve_energy_min_3d(
     lumen_C=None, lumen_R=None, use_lumen=True,
     contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
     contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0,
-    energy_scale=1e-8,
+    energy_scale=1e-8,use_fast_contact_grad=False,
 ):
     s = np.linspace(0.0, float(L), int(N))
     n_seg = N - 1
@@ -496,6 +507,7 @@ def solve_energy_min_3d(
             lumen_query=lumen_query,
             use_magnetic=True,
             use_contact=use_lumen,
+            use_fast_contact_grad=use_fast_contact_grad,
         )
 
         return (u_scale / energy_scale) * grad_u
@@ -1129,32 +1141,38 @@ def make_energy_grad_fun_for_pose(
     u_star,
     m_moment,
     N,
+    L_tip_full,
+    L_tip_min,
     rotation_convention="world",
     use_magnetic=True,
     use_contact=False,
     lumen_query=None,
+    use_fast_contact_grad=False,
 ):
     q_src0 = quat_normalize(q_src0)
-    r_src0 = None
 
     def energy_grad_fun(u_flat, theta):
-        theta = np.asarray(theta, float).reshape(7,)
+        theta = np.asarray(theta, float).reshape(7)
 
         r_src = theta[0:3]
         dphi = theta[3:6]
-        L = float(theta[6])
+        L_ins_or_model = float(theta[6])
+
+        L_model, wire_len, tip_len = effective_lengths(
+            L_ins_or_model,
+            L_tip_full=L_tip_full,
+            L_tip_min=L_tip_min,
+        )
 
         q_src = perturb_q_src(
             q_src0,
             dphi,
             convention=rotation_convention,
         )
+
         m_src = dipole_from_pose(q_src, m_body)
 
-        s = np.linspace(0.0, L, int(N))
-        wire_len = wire_len_fun(L)
-        tip_len = tip_len_fun(L)
-
+        s = np.linspace(0.0, L_model, int(N))
         K_seg = precompute_K_segments(s, Kinv_fun, wire_len)
 
         m_local_fun = make_m_local_fun_wire_tip(
@@ -1179,6 +1197,7 @@ def make_energy_grad_fun_for_pose(
             use_magnetic=use_magnetic,
             use_contact=use_contact,
             lumen_query=lumen_query,
+            use_fast_contact_grad=use_fast_contact_grad,
         )
 
     return energy_grad_fun

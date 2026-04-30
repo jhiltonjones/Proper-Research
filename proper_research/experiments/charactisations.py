@@ -220,7 +220,7 @@ def build_initial_lumen_from_vision(
     green_roi_path="green_roi_box.json",
     manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
-    show=True,
+    show=False,
 ):
     new_capture()
 
@@ -476,8 +476,8 @@ def build_forward_model_no_lumen_effect(
         N_nodes=10,
         maxiter=30,
         L0_init=0.01,
-        dL_internal=0.001,
-        use_lumen_jac=True,
+        dL_internal=0.02,
+        use_lumen_jac=False,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
@@ -628,7 +628,7 @@ def build_reference_beam_frame_from_image(
     pivot_hint=None,
     show: bool = False,
     roi_polygon=None,
-    show_debug_markers: bool = True,
+    show_debug_markers: bool = False,
     ):
     red_roi_box = load_roi_box(red_roi_path)
     roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
@@ -793,7 +793,7 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
             red_roi_path=cfg.red_roi_path,
             pivot_hint=cfg.pivot_hint,
             show=True,
-            show_debug_markers=True,
+            show_debug_markers=False,
         )
 
         print("\n--- REFERENCE FRAME ---")
@@ -1154,12 +1154,12 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.018
+    L0 = 0.0153
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.12),
+        pivot_point[0] - (L0 + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -1191,10 +1191,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
     # # # pose6[2] = -0.1
-    start_point = pose6
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt =0.01
@@ -1730,12 +1730,12 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=20,
+        known_green_distance_mm=17,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",
-        show_debug_vision=True,
-        show_debug_model=True,
+        show_debug_vision=False,
+        show_debug_model=False,
     )
 
     evaluate_single_pose(cfg)

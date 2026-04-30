@@ -42,7 +42,7 @@ def new_capture(filename="focused_image.jpg",
                 cam_index=0,
                 backend=cv2.CAP_V4L2,
                 warmup_frames=18,
-                exposure=25.0,     # try 200..5000 initially
+                exposure=22.0,     # try 200..5000 initially
                 gain=0.0,
                 auto_exposure_manual=1.0,  # working for you
                 brightness=None,     # e.g. 0.0
@@ -89,7 +89,7 @@ def load_roi_box(path=ROI_CONFIG_FILE):
     with open(path, "r") as f:
         data = json.load(f)
     box = (int(data["x"]), int(data["y"]), int(data["w"]), int(data["h"]))
-    print(f"[INFO] Loaded ROI from {path}: {data}")
+    # print(f"[INFO] Loaded ROI from {path}: {data}")
     return box
 
 def save_roi_box(box, path=ROI_CONFIG_FILE):
@@ -101,7 +101,7 @@ def save_roi_box(box, path=ROI_CONFIG_FILE):
     }
     with open(path, "w") as f:
         json.dump(data, f)
-    print(f"[INFO] ROI saved to {path}: {data}")
+    # print(f"[INFO] ROI saved to {path}: {data}")
 
 def select_roi_interactive(image, window_name="Select beam ROI"):
     img_copy = image.copy()

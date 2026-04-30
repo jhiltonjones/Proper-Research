@@ -438,18 +438,18 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # # draw vessel boundaries
-    # for x, y in left_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # draw vessel boundaries
+    for x, y in left_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    # for x, y in right_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # # if red_area is not None:
-    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    for x, y in right_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # if red_area is not None:
+    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    # if blue_area is not None:
-    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # # draw beam centerline
+    if blue_area is not None:
+        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # draw beam centerline
     # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
     # for i in range(len(beam_int) - 1):
     #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
@@ -919,14 +919,14 @@ def plot_tip_measurement_vs_lumen_local(result, tangent_scale_mm=8.0, n_tangent_
     plt.legend()
     plt.show()
 
-    print("[DBG LOCAL PLOT]")
-    print("  tip_xy_mm =", tip_xy_mm)
-    print("  nearest centerline idx =", i_near)
-    print("  nearest centerline point [mm] =", C_mm[i_near, :2])
-    print("  tip-centerline distance [mm] =", np.sqrt(d2[i_near]))
-    print("  measured tangent local =", t_meas_local)
-    print("  centerline tangent local =", c_tan)
-    print("  angle between tangents [deg] =", angle_deg)
+    # print("[DBG LOCAL PLOT]")
+    # print("  tip_xy_mm =", tip_xy_mm)
+    # print("  nearest centerline idx =", i_near)
+    # print("  nearest centerline point [mm] =", C_mm[i_near, :2])
+    # print("  tip-centerline distance [mm] =", np.sqrt(d2[i_near]))
+    # print("  measured tangent local =", t_meas_local)
+    # print("  centerline tangent local =", c_tan)
+    # print("  angle between tangents [deg] =", angle_deg)
 def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_px, tip_radius_px=0.0):
     left_pt, dist_left_center = closest_point_on_polyline(tip_px, left_boundary_px)
     right_pt, dist_right_center = closest_point_on_polyline(tip_px, right_boundary_px)
@@ -973,7 +973,7 @@ def reconstruct_beam_within_vessel(
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     pivot_hint=None,
-    show=True,
+    show=False,
     save_overlay_path=None,
     base_px_ref=None,
     ex_ref=None,
@@ -1002,7 +1002,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=20)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=17)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -1070,12 +1070,12 @@ def reconstruct_beam_within_vessel(
         mm_per_pixel=mm_per_pixel,
         z_mm=0.0,
     )
-    print("lumen_C_m first local =", lumen_C_m[0])
-    print("lumen_C_m last local  =", lumen_C_m[-1])
-    print("[DBG lumen frame actually used]")
-    print("  base_px_ref =", base_px_ref)
-    print("  ex_ref =", ex_ref)
-    print("  ey_ref =", ey_ref)
+    # print("lumen_C_m first local =", lumen_C_m[0])
+    # print("lumen_C_m last local  =", lumen_C_m[-1])
+    # print("[DBG lumen frame actually used]")
+    # print("  base_px_ref =", base_px_ref)
+    # print("  ex_ref =", ex_ref)
+    # print("  ey_ref =", ey_ref)
     image_bgr = cv2.imread(image_filename)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image at {image_filename}")
@@ -1386,7 +1386,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=20):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=17):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 
@@ -1685,18 +1685,18 @@ def measure_tip_state_4markers(
         "roi_polygon": roi_polygon,
     }
 
-    print("[DBG markers]")
-    print("  base_px         =", base_px)
-    print("  mag_start_px    =", mag_start_px)
-    print("  tangent_start_px=", tangent_start_px)
-    print("  tip_px          =", tip_px)
+    # print("[DBG markers]")
+    # print("  base_px         =", base_px)
+    # print("  mag_start_px    =", mag_start_px)
+    # print("  tangent_start_px=", tangent_start_px)
+    # print("  tip_px          =", tip_px)
 
-    print("[DBG fitted frame]")
-    print("  ex_fit =", ex_fit)
-    print("  ey_fit =", ey_fit)
+    # print("[DBG fitted frame]")
+    # print("  ex_fit =", ex_fit)
+    # print("  ey_fit =", ey_fit)
 
-    print("[DBG converted]")
-    print("  tip_xy_from_base =", tip_xy)
+    # print("[DBG converted]")
+    # print("  tip_xy_from_base =", tip_xy)
 
     if show:
         vis = image_bgr.copy()

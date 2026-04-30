@@ -58,7 +58,7 @@ class AlphaControllerParams:
 def default_beam_params():
     mag = 128e3
     r = 0.001
-    E = 4e5
+    E = 2e6
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4
     phi_intit = np.deg2rad(10)

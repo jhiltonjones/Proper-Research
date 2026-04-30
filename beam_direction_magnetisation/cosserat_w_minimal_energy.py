@@ -183,30 +183,15 @@ class LumenQuery:
 def contact_barrier_energy_and_force_fast(
     p, lumen_query: LumenQuery, *,
     r_beam=0.0,
-    k_contact=1e5,
+    k_contact=3e5,
     pen_switch=5e-4,
     k_hard=3e5,
     eps=1e-12,
     window=3,
     smooth=False,
     smooth_eps=1e-7,
+    debug=False,
 ):
-    """
-    Pure unilateral lumen contact.
-
-    phi = delta + r_beam - Rloc
-
-    phi <= 0 : no contact
-    phi >  0 : penetration penalty
-
-    Returns:
-      C      : nodal contact energy density-like values
-      F      : inward nodal contact force directions/magnitudes
-      gap    : physical surface clearance = Rloc - delta - r_beam
-               gap > 0 free
-               gap = 0 contact
-               gap < 0 penetration
-    """
     p = np.asarray(p, float)
     N = p.shape[1]
 
@@ -220,27 +205,26 @@ def contact_barrier_energy_and_force_fast(
         delta, Rloc, q_closest = lumen_query.closest(x, window=window)
 
         if delta > eps:
-            n = (x - q_closest) / delta   # outward normal
+            n = (x - q_closest) / delta
         else:
             n = np.array([1.0, 0.0, 0.0])
 
         gap = Rloc - delta - r_beam
-        phi = -gap   # positive means penetration
+        phi = -gap
 
         gap_arr[j] = gap
 
         if smooth:
-            # smooth positive part of phi
             phi_pos = 0.5 * (phi + np.sqrt(phi * phi + smooth_eps * smooth_eps))
             dphi_pos_dphi = 0.5 * (1.0 + phi / np.sqrt(phi * phi + smooth_eps * smooth_eps))
 
             C[j] = 0.5 * k_contact * phi_pos**2
-
-            # Force is inward, opposite outward normal
             F[:, j] = -(k_contact * phi_pos * dphi_pos_dphi) * n
 
         else:
             if phi <= 0.0:
+                if debug and gap < 0.0:
+                    print("[CONTACT DBG] impossible branch: gap < 0 but phi <= 0")
                 continue
 
             if phi <= pen_switch:
@@ -255,6 +239,33 @@ def contact_barrier_energy_and_force_fast(
                 C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
                 F[:, j] = -(F0 + k_hard * dp) * n
 
+        # if gap < 0.0:
+        #     print(
+        #         "[CONTACT DBG]",
+        #         "j=", j,
+        #         "delta[mm]=", 1e3 * delta,
+        #         "Rloc[mm]=", 1e3 * Rloc,
+        #         "r_beam[mm]=", 1e3 * r_beam,
+        #         "gap[mm]=", 1e3 * gap,
+        #         "phi[mm]=", 1e3 * phi,
+        #         "|F|=", np.linalg.norm(F[:, j]),
+        #         "n=", n,
+        #         "F=", F[:, j],
+        #     )
+        #     to_center = q_closest - x
+        #     to_center_unit = to_center / (np.linalg.norm(to_center) + 1e-12)
+
+        #     print(
+        #         "[CONTACT SIGN DBG]",
+        #         "j=", j,
+        #         "x=", x,
+        #         "q_closest=", q_closest,
+        #         "n_out=", n,
+        #         "to_center_unit=", to_center_unit,
+        #         "F_unit=", F[:, j] / (np.linalg.norm(F[:, j]) + 1e-12),
+        #         "dot(F, to_center_unit)=",
+        #         float(np.dot(F[:, j], to_center_unit)),
+        #     )
     return C, F, gap_arr
 
 
@@ -1206,7 +1217,7 @@ def energy_from_u(
             p,
             lumen_query,
             r_beam=beam_params.r,      # or whatever your beam radius variable is
-            k_contact=1e5,
+            k_contact=1e8,
             pen_switch=5e-5,
             k_hard=1e10,
             eps=1e-12,
@@ -1345,7 +1356,7 @@ def solve_energy_min_3d(
     r_src, m_src, m_local_fun, m_moment,
     N=60, u0_flat=None, maxiter=300,
     lumen_C=None, lumen_R=None, use_lumen=True,
-    contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
+    contact_k=3e5, contact_beta=50.0, contact_delta=5e-4,
     contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0
 ):
     """

@@ -845,11 +845,11 @@ class mpc_controller_tipxy_LTI:
         self.s_des = 5e-4  
 
         self.enable_dipole_align = True
-        self.w_dipole_align = 0.1     # start small: 0.1..10
+        self.w_dipole_align = 1    # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.12
+        self.mag_center_standoff_m = 0.13
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -909,16 +909,15 @@ class mpc_controller_tipxy_LTI:
 
 
     def _build_prediction_mats(self, p0, U_guess):
-        print("Here")
         n, m, Np = self.n, self.m, self.Np
 
         if U_guess is None:
             U_guess = np.zeros((Np, m))
 
         if self.model_mode == "lti":
-            print("[BUILD] before Jxy_fn")
+            # print("[BUILD] before Jxy_fn")
             J0 = np.asarray(self.Jxy_fn(p0), float)
-            print("[BUILD] after Jxy_fn, J0 shape =", J0.shape)
+            # print("[BUILD] after Jxy_fn, J0 shape =", J0.shape)
 
             if J0.shape != (n, m):
                 raise ValueError(f"Jxy_fn returned {J0.shape}, expected {(n, m)}")
@@ -927,12 +926,12 @@ class mpc_controller_tipxy_LTI:
                 raise ValueError("Jxy_fn returned non-finite values")
 
             B0 = J0
-            print("[BUILD] before seq_mat_lti")
+            # print("[BUILD] before seq_mat_lti")
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
-            print("[BUILD] after seq_mat_lti")
+            # print("[BUILD] after seq_mat_lti")
 
             p_seq = self._p_seq_from_U(p0, U_guess)
-            print("[BUILD] after _p_seq_from_U, p_seq shape =", np.shape(p_seq))
+            # print("[BUILD] after _p_seq_from_U, p_seq shape =", np.shape(p_seq))
 
             return p_seq, Mx, Mc, B0
 
@@ -967,10 +966,10 @@ class mpc_controller_tipxy_LTI:
         - outputs y are typically [x,y,z,tx,ty,tz]
         - self.p is still an internal actuator/configuration estimate
         """
-        print("ENTER step")
-        print("model_mode:", self.model_mode)
-        print("x_meas is None:", x_meas is None)
-        print("self.p is None:", self.p is None)
+        # print("ENTER step")
+        # print("model_mode:", self.model_mode)
+        # print("x_meas is None:", x_meas is None)
+        # print("self.p is None:", self.p is None)
         def _pos_row_idx(n, Np):
             return np.array([k * n + i for k in range(Np) for i in (0, 1, 2)], dtype=int)
 
@@ -998,7 +997,55 @@ class mpc_controller_tipxy_LTI:
 
         # measured state is truth
         self.x = np.asarray(x_meas, dtype=float).reshape(self.n,)
+        # ------------------------------------------------------------
+        # Previous-step prediction error
+        # ------------------------------------------------------------
+        raw_model_err_xyz = np.full(3, np.nan)
+        raw_model_err_xy = np.nan
 
+        nom_corr_resid_xyz = np.full(3, np.nan)
+        nom_corr_resid_xy = np.nan
+
+        pred0_current_resid_xyz = np.full(3, np.nan)
+        pred0_current_resid_xy = np.nan
+
+        nom_ref_err_xyz = np.full(3, np.nan)
+        nom_ref_err_xy = np.nan
+
+        pred_ref_err_xyz = np.full(3, np.nan)
+        pred_ref_err_xy = np.nan
+
+        model_bias_xyz = np.full(3, np.nan)
+
+        pred1_err_xy_nvslat = np.nan
+        pred1_err_xyz_nvslat = np.nan
+        tan1_err_nvslat = np.nan
+        meas_ref_err_xyz = np.full(3, np.nan)
+        meas_ref_err_xy = np.nan
+        meas_ref_idx = -1
+        meas_ref_xyz = np.full(3, np.nan)
+        one_step_pred_err_xyz = np.full(3, np.nan)
+        one_step_pred_err_xy = np.nan
+        pred1_err_xy = np.nan
+        pred1_err_xyz = np.nan
+
+        x_pred_prev_1 = getattr(self, "x_pred_prev_1", None)
+
+        if x_pred_prev_1 is not None:
+            x_pred_prev_1 = np.asarray(x_pred_prev_1, dtype=float).reshape(-1)
+
+            if x_pred_prev_1.size >= 3 and np.all(np.isfinite(x_pred_prev_1[:3])):
+                e_prev_pred = self.x[:3] - x_pred_prev_1[:3]
+
+                one_step_pred_err_xyz = e_prev_pred.copy()
+                one_step_pred_err_xy = float(np.linalg.norm(e_prev_pred[:2]))
+
+                pred1_err_xy = one_step_pred_err_xy
+                pred1_err_xyz = float(np.linalg.norm(e_prev_pred))
+
+        # print("[ONE STEP PRED START]")
+        # print("has previous X_pred:", x_pred_prev_1 is not None)
+        # print("one_step_pred_err_xy [mm]:", 1000.0 * one_step_pred_err_xy)
         n = int(self.n)
         m = int(self.m)
         Np = int(self.Np)
@@ -1039,6 +1086,9 @@ class mpc_controller_tipxy_LTI:
         f_z = None
         Z_opt = None
         tan1_err = np.nan
+        # ------------------------------------------------------------
+        # Prediction / model diagnostic defaults
+        # ------------------------------------------------------------
 
         for it in range(int(self.N_sqp)):
             p0 = self.p.copy()
@@ -1057,9 +1107,9 @@ class mpc_controller_tipxy_LTI:
             else:
                 pcl = np.asarray(pcl, float)
 
-                print("y0 =", y0)
-                print("tip =", tip)
-                print("pcl shape =", pcl.shape)
+                # print("y0 =", y0)
+                # print("tip =", tip)
+                # print("pcl shape =", pcl.shape)
 
                 if pcl.ndim != 2:
                     print("[DBG] unexpected pcl ndim:", pcl.ndim)
@@ -1071,10 +1121,10 @@ class mpc_controller_tipxy_LTI:
                         dist_first = np.linalg.norm(tip - p_first)
                         dist_last  = np.linalg.norm(tip - p_last)
 
-                        print("pcl first =", p_first)
-                        print("pcl last  =", p_last)
-                        print("dist tip to first =", dist_first)
-                        print("dist tip to last  =", dist_last)
+                        # print("pcl first =", p_first)
+                        # print("pcl last  =", p_last)
+                        # print("dist tip to first =", dist_first)
+                        # print("dist tip to last  =", dist_last)
 
                         if dist_first < dist_last:
                             print("[DBG] centerline appears ordered TIP->BASE")
@@ -1174,15 +1224,7 @@ class mpc_controller_tipxy_LTI:
                 print("[DEBUG] FLIPPED JACOBIAN Y ROW SIGN")
             # ------------------------------------
             B_first = np.asarray(B0, float).copy()
-            x_pred_prev_1 = getattr(self, "x_pred_prev_1", None)
 
-            pred1_err_xy = np.nan
-            pred1_err_xyz = np.nan
-
-            if x_pred_prev_1 is not None:
-                e = x_meas[:3] - x_pred_prev_1[:3]
-                pred1_err_xy = np.linalg.norm(e[:2])
-                pred1_err_xyz = np.linalg.norm(e[:3])
             # debug Jacobian info
             B = np.asarray(B0, float)
             _, mB = B.shape
@@ -1198,8 +1240,8 @@ class mpc_controller_tipxy_LTI:
             if n >= 6:
                 row_names = ["x", "y", "z", "tx", "ty", "tz"] + [f"y{i}" for i in range(6, n)]
 
-            print(f"\n[DBG] SQP it={it}  B0 shape = {B.shape}")
-            print("[DBG] B0 column norms:")
+            # print(f"\n[DBG] SQP it={it}  B0 shape = {B.shape}")
+            # print("[DBG] B0 column norms:")
             for j in range(mB):
                 print(f"  {col_names[j]:>2s}: {np.linalg.norm(B[:, j]):.3e}")
 
@@ -1264,7 +1306,13 @@ class mpc_controller_tipxy_LTI:
             y0_meas = np.asarray(x_meas, float).reshape(n,)
 
             model_bias = y0_meas - y0_model
+            # ------------------------------------------------------------
+            # Raw model error before bias correction
+            # ------------------------------------------------------------
+            model_bias_xyz = model_bias[:3].copy()
 
+            raw_model_err_xyz = model_bias[:3].copy()
+            raw_model_err_xy = float(np.linalg.norm(raw_model_err_xyz[:2]))
             Y_nom_corr = Y_nom.copy()
             for k in range(Np):
                 # Usually correct position only first
@@ -1408,7 +1456,30 @@ class mpc_controller_tipxy_LTI:
                 X_ref[k*n + 0, 0] = Cc[idx_ref[k], 0]
                 X_ref[k*n + 1, 0] = Cc[idx_ref[k], 1]
                 X_ref[k*n + 2, 0] = Cc[idx_ref[k], 2]
+            # ------------------------------------------------------------
+            # Explicit measured tracking error
+            #
+            # This is the actual camera-measured beam tip relative to the
+            # first reference point currently used by the MPC.
+            # ------------------------------------------------------------
+            X_ref_stack_dbg = X_ref.reshape(Np, n)
 
+            meas_ref_idx = int(idx_ref[0])
+            meas_ref_xyz = X_ref_stack_dbg[0, :3].copy()
+
+            meas_ref_err_xyz = y0_meas[:3] - meas_ref_xyz
+            meas_ref_err_xy = float(np.linalg.norm(meas_ref_err_xyz[:2]))
+            # ------------------------------------------------------------
+            # Bias-corrected nominal residual and nominal tracking error
+            # ------------------------------------------------------------
+            X_nom_stack_dbg = X_nom.reshape(Np, n)
+            X_ref_stack_dbg = X_ref.reshape(Np, n)
+
+            nom_corr_resid_xyz = y0_meas[:3] - X_nom_stack_dbg[0, :3]
+            nom_corr_resid_xy = float(np.linalg.norm(nom_corr_resid_xyz[:2]))
+
+            nom_ref_err_xyz = X_nom_stack_dbg[0, :3] - X_ref_stack_dbg[0, :3]
+            nom_ref_err_xy = float(np.linalg.norm(nom_ref_err_xyz[:2]))
             # Start from model affine prediction
             X_aff_track = X_aff.copy()
 
@@ -1737,7 +1808,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.11))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.13))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2011,7 +2082,21 @@ class mpc_controller_tipxy_LTI:
             U_vec = U_opt_vec.reshape(-1, 1)
             X_pred_stack = X_aff_last + Mc_last @ U_vec
             X_pred = X_pred_stack.reshape(Np, n)
+            # ------------------------------------------------------------
+            # Current optimized first-stage residual
+            #
+            # This is NOT a true prediction error unless X_pred[0] and
+            # x_meas refer to the same physical instant.
+            # ------------------------------------------------------------
+            pred0_current_resid_xyz = y0_meas[:3] - X_pred[0, :3]
+            pred0_current_resid_xy = float(np.linalg.norm(pred0_current_resid_xyz[:2]))
 
+            # ------------------------------------------------------------
+            # Optimized prediction tracking error to reference
+            # ------------------------------------------------------------
+            if "X_ref_stack_dbg" in locals():
+                pred_ref_err_xyz = X_pred[0, :3] - X_ref_stack_dbg[0, :3]
+                pred_ref_err_xy = float(np.linalg.norm(pred_ref_err_xyz[:2]))
             # ---- TRACKING IMPROVEMENT DEBUG ----
             if dbg_terms is not None and "track_model" in dbg_terms:
                 tm = dbg_terms["track_model"]
@@ -2321,7 +2406,7 @@ class mpc_controller_tipxy_LTI:
                 penalties=dbg_pen,
                 constraints=dbg_con,
             )
-            self.x_pred_prev_1 = X_pred[0].copy()
+
             print("\n[DBG MPC] objective term costs")
             for k_, v_ in dbg_costs.items():
                 print(f"  {k_:>18s}: {v_: .6e}")
@@ -2356,42 +2441,111 @@ class mpc_controller_tipxy_LTI:
                     for kk, vv in dbg_con[name].items():
                         if np.isscalar(vv):
                             print(f"  {kk}: {vv}")
+        # ------------------------------------------------------------
+        # Store this step's first prediction for comparison at next step
+        # ------------------------------------------------------------
+        if (
+            X_pred is not None
+            and X_pred.shape[0] > 0
+            and np.all(np.isfinite(X_pred[0, :3]))
+        ):
+            self.x_pred_prev_1 = X_pred[0].copy()
+        else:
+            self.x_pred_prev_1 = None
+
+        # print("[ONE STEP PRED INFO WRITE]")
+        # print("one_step_pred_err_xy before info [mm]:", 1000.0 * one_step_pred_err_xy)
+        # print("is finite:", np.isfinite(one_step_pred_err_xy))
 
         info = dict(
             status=status_last,
             infeasible=int(infeas_final),
+
             u0=u0.copy(),
             p_now=self.p.copy(),
             x_now=self.x.copy(),
             d=self.d.copy(),
+
             X_pred=X_pred.copy(),
-            X_nom = X_nom.copy(),
+            X_nom=X_nom.copy(),
             U_seq=U_seq.copy(),
+
             N_sqp=int(self.N_sqp),
             p_prev=p_prev.copy(),
             x_prev=x_prev.copy(),
+
             B_first=B_first.copy() if B_first is not None else None,
             p_lin=p_lin.copy() if isinstance(p_lin, np.ndarray) else p_lin,
             p_first=p_first.copy() if isinstance(p_first, np.ndarray) else p_first,
+
             X_aff_last=X_aff_last.copy() if X_aff_last is not None else None,
             Mc_last=Mc_last.copy() if Mc_last is not None else None,
             X_nom_last=X_nom_last.reshape(Np, n).copy() if X_nom_last is not None else None,
             p_seq_last=p_seq_last.copy() if p_seq_last is not None else None,
-            pred1_err_xy=float(pred1_err_xy) if x_pred_prev_1 is not None else None,
-            pred1_err_xyz=float(pred1_err_xyz) if x_pred_prev_1 is not None else None,
-            pred1_err_xy_nvslat=float(pred1_err_xy_nvslat)if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])) else None,
-            pred1_err_xyz_nvslat=float(pred1_err_xyz_nvslat) if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])) else None,
+
+            pred1_err_xy=float(pred1_err_xy) if np.isfinite(pred1_err_xy) else None,
+            pred1_err_xyz=float(pred1_err_xyz) if np.isfinite(pred1_err_xyz) else None,
+
+            pred1_err_xy_nvslat=(
+                float(pred1_err_xy_nvslat)
+                if np.isfinite(pred1_err_xy_nvslat)
+                else None
+            ),
+            pred1_err_xyz_nvslat=(
+                float(pred1_err_xyz_nvslat)
+                if np.isfinite(pred1_err_xyz_nvslat)
+                else None
+            ),
+
             tan1_err=float(tan1_err) if np.isfinite(tan1_err) else np.nan,
             theta0_deg=float(theta0) if np.isfinite(theta0) else np.nan,
             theta_max_deg=float(theta_max_deg),
+
             jac_svd_S=self._jac_svd_last["S"].copy() if hasattr(self, "_jac_svd_last") else None,
             jac_svd_cond=float(self._jac_svd_last["cond"]) if hasattr(self, "_jac_svd_last") else np.nan,
             jac_svd_rank=int(self._jac_svd_last["rank"]) if hasattr(self, "_jac_svd_last") else -1,
             jac_trans_norm=float(self._jac_svd_last["trans_norm"]) if hasattr(self, "_jac_svd_last") else np.nan,
             jac_omega_norm=float(self._jac_svd_last["omega_norm"]) if hasattr(self, "_jac_svd_last") else np.nan,
             jac_dL_norm=float(self._jac_svd_last["dL_norm"]) if hasattr(self, "_jac_svd_last") else np.nan,
+
             mpc_debug=self._mpc_dbg_last.copy() if hasattr(self, "_mpc_dbg_last") else None,
+
+            raw_model_err_xyz=raw_model_err_xyz.copy(),
+            raw_model_err_xy=float(raw_model_err_xy) if np.isfinite(raw_model_err_xy) else np.nan,
+
+            model_bias_xyz=model_bias_xyz.copy(),
+
+            nom_corr_resid_xyz=nom_corr_resid_xyz.copy(),
+            nom_corr_resid_xy=float(nom_corr_resid_xy) if np.isfinite(nom_corr_resid_xy) else np.nan,
+
+            pred0_current_resid_xyz=pred0_current_resid_xyz.copy(),
+            pred0_current_resid_xy=(
+                float(pred0_current_resid_xy)
+                if np.isfinite(pred0_current_resid_xy)
+                else np.nan
+            ),
+
+            nom_ref_err_xyz=nom_ref_err_xyz.copy(),
+            nom_ref_err_xy=float(nom_ref_err_xy) if np.isfinite(nom_ref_err_xy) else np.nan,
+
+            pred_ref_err_xyz=pred_ref_err_xyz.copy(),
+            pred_ref_err_xy=float(pred_ref_err_xy) if np.isfinite(pred_ref_err_xy) else np.nan,
+
+            one_step_pred_err_xyz=one_step_pred_err_xyz.copy(),
+            one_step_pred_err_xy=(
+                float(one_step_pred_err_xy)
+                if np.isfinite(one_step_pred_err_xy)
+                else np.nan
+            ),
+            meas_ref_err_xyz=meas_ref_err_xyz.copy(),
+            meas_ref_err_xy=float(meas_ref_err_xy) if np.isfinite(meas_ref_err_xy) else np.nan,
+            meas_ref_idx=int(meas_ref_idx),
+            meas_ref_xyz=meas_ref_xyz.copy(),
         )
+
+        # print("[ONE STEP PRED INFO STORED]")
+        # print("info one_step_pred_err_xy [mm]:",
+        #     1000.0 * float(info["one_step_pred_err_xy"]))
 
         return self.p.copy(), self.x.copy(), info
 def vision_result_to_x_meas_robot(
@@ -2417,8 +2571,8 @@ def vision_result_to_x_meas_robot(
 
     p_pivot = np.asarray(pivot_point_pose6[:3], float)
 
-    print("wrong p_robot =", p_pivot + p_local_wrong)
-    print("right p_robot =", p_pivot + p_local_right)
+    # print("wrong p_robot =", p_pivot + p_local_wrong)
+    # print("right p_robot =", p_pivot + p_local_right)
 
     tip_px = np.asarray(markers["tip_px"], dtype=float)
     tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
@@ -2476,18 +2630,18 @@ def vision_result_to_x_meas_robot(
         raise ValueError("Robot-frame tangent became zero-length.")
     t_robot /= nrm_t
 
-    print("[DBG TAN]")
-    print("  tip_xy_m =", tip_xy_m)
-    print("  p_local =", p_local)
-    print("  ref_source =", ref_source)
-    print("  ref =", ref)
-    print("  v_img =", v_img)
-    print("  ex =", ex)
-    print("  ey =", ey)
-    print("  tx_local, ty_local =", tx_local, ty_local)
-    print("  t_local =", t_local)
-    print("  p_robot =", p_robot)
-    print("  t_robot =", t_robot)
+    # print("[DBG TAN]")
+    # print("  tip_xy_m =", tip_xy_m)
+    # print("  p_local =", p_local)
+    # print("  ref_source =", ref_source)
+    # print("  ref =", ref)
+    # print("  v_img =", v_img)
+    # print("  ex =", ex)
+    # print("  ey =", ey)
+    # print("  tx_local, ty_local =", tx_local, ty_local)
+    # print("  t_local =", t_local)
+    # print("  p_robot =", p_robot)
+    # print("  t_robot =", t_robot)
 
     lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
     if align_tangent_with_lumen and (lumen_C_robot_m is not None):
@@ -2546,11 +2700,11 @@ def numerical_J_robot_xy_yaw_dL(
         y_full = np.asarray(forward_y_fn(p), float).reshape(-1)
         return y_full[:n_out]
 
-    print("[DBG] p8 =", p8)
+    # print("[DBG] p8 =", p8)
 
     # nominal
     y0 = eval_y(p8)
-    print("[DBG] y0 =", y0)
+    # print("[DBG] y0 =", y0)
 
     # 1) x central difference
     p_plus = p8.copy()
@@ -2561,7 +2715,7 @@ def numerical_J_robot_xy_yaw_dL(
     y_plus = eval_y(p_plus)
     y_minus = eval_y(p_minus)
 
-    print("[DBG] x+ =", y_plus, "x- =", y_minus, "central dy =", y_plus - y_minus)
+    # print("[DBG] x+ =", y_plus, "x- =", y_minus, "central dy =", y_plus - y_minus)
     J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
 
     # 2) y central difference
@@ -2573,7 +2727,7 @@ def numerical_J_robot_xy_yaw_dL(
     y_plus = eval_y(p_plus)
     y_minus = eval_y(p_minus)
 
-    print("[DBG] y+ =", y_plus, "y- =", y_minus, "central dy =", y_plus - y_minus)
+    # print("[DBG] y+ =", y_plus, "y- =", y_minus, "central dy =", y_plus - y_minus)
     J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
 
     # 3) yaw-z central difference
@@ -2591,7 +2745,7 @@ def numerical_J_robot_xy_yaw_dL(
     y_plus = eval_y(p_plus)
     y_minus = eval_y(p_minus)
 
-    print("[DBG] yaw+ =", y_plus, "yaw- =", y_minus, "central dy =", y_plus - y_minus)
+    # print("[DBG] yaw+ =", y_plus, "yaw- =", y_minus, "central dy =", y_plus - y_minus)
     J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw)
 
     # 4) L central difference
@@ -2603,12 +2757,12 @@ def numerical_J_robot_xy_yaw_dL(
     y_plus = eval_y(p_plus)
     y_minus = eval_y(p_minus)
 
-    print("[DBG] L+ =", y_plus, "L- =", y_minus, "central dy =", y_plus - y_minus)
+    # print("[DBG] L+ =", y_plus, "L- =", y_minus, "central dy =", y_plus - y_minus)
     J[:, 3] = (y_plus - y_minus) / (2.0 * dL)
 
     t1 = time.perf_counter()
-    print("[DBG] J =\n", J)
-    print(f"[TIME] numerical_J_robot total: {(t1-t0)*1e3:.2f} ms")
+    # print("[DBG] J =\n", J)
+    # print(f"[TIME] numerical_J_robot total: {(t1-t0)*1e3:.2f} ms")
 
     return J
 def J_full_from_robot_reduced(J_red, n_out_full=6):
@@ -2659,9 +2813,9 @@ def numerical_B_y_wrt_u(p8, forward_y_fn, dt, eps_u, n_out):
     B[:, 6] = dt * dy_dL
 
     t1 = time.perf_counter()
-    print(f"[TIME] numerical_B total: {(t1-t0)*1e3:.2f} ms")
-    print(f"[TIME] integrate total: {(tint)*1e3:.2f} ms")
-    print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
+    # print(f"[TIME] numerical_B total: {(t1-t0)*1e3:.2f} ms")
+    # print(f"[TIME] integrate total: {(tint)*1e3:.2f} ms")
+    # print(f"[TIME] forward total: {(tfwd)*1e3:.2f} ms")
 
     return B
 def numerical_B_y_wrt_u_forward(p8, forward_y_fn, dt, eps_u, n_out):
@@ -2911,7 +3065,7 @@ def analytic_J_robot_xy_yaw_dL(p8, forward_model, n_out=6):
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.016
+    L0 = 0.015
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -2919,7 +3073,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.12),
+        pivot_point[0] - (L0 + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -2939,14 +3093,14 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    robot_pose6 = hw.get_robot_pose_once()
-    robot_pose6[2] = -0.1
+    # robot_pose6 = hw.get_robot_pose_once()
+    # robot_pose6[2] = -0.1
 
-    start_point = robot_pose6
+    start_point = pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt = 0.01
@@ -2997,11 +3151,11 @@ def build_controller(
     def J_fn(p8):
         forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
-        print("[J_FN] before nominal solve")
+        # print("[J_FN] before nominal solve")
         y = forward6d_jac(p8, commit=True)
-        print("[J_FN] y =", y)
+        # print("[J_FN] y =", y)
 
-        print("[J_FN] fwd.last_info is None =", forward6d_jac.fwd.last_info is None)
+        # print("[J_FN] fwd.last_info is None =", forward6d_jac.fwd.last_info is None)
         if forward6d_jac.fwd.last_info is not None:
             print("[J_FN] last_info keys =", forward6d_jac.fwd.last_info.keys())
 
@@ -3011,7 +3165,7 @@ def build_controller(
             n_out=6,
         )
 
-        print("[J_FN] Jred_state shape =", np.shape(Jred_state))
+        # print("[J_FN] Jred_state shape =", np.shape(Jred_state))
 
         Jred_control = Jred_state.copy()
         Jred_control[:, 0] *= dt
@@ -3020,7 +3174,7 @@ def build_controller(
         Jred_control[:, 3] *= dt
 
         Jfull = J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
-        print("[J_FN] Jfull shape =", np.shape(Jfull))
+        # print("[J_FN] Jfull shape =", np.shape(Jfull))
         return Jfull
     # forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
@@ -3045,7 +3199,7 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=3,
+        Np=1,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -3075,7 +3229,7 @@ def build_controller(
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
     mpc.set_initial_params(p0)
-    print(f"Finished building controller")
+    # print(f"Finished building controller")
     return mpc, p0, p_min, p_max, u_max, forward6d_pred
 
 
@@ -3135,7 +3289,7 @@ def run_control(
     plot_dir="mpc_debug_plots",
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
-    csv_log_path="control_run_log_test_run_centreline_track_new_wbc_3step2.csv",
+    csv_log_path="control_run_log_test_run_centreline_track_day2wbc90.csv",
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3158,12 +3312,11 @@ def run_control(
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_centreline_track_new_wbc_3step2/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_centreline_track_day2wbc90/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
         )
-        print("HERE NOW PASS")
         # vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
         #     vision_result["lumen_C_m"],
         #     pivot_point
@@ -3192,7 +3345,7 @@ def run_control(
             pivot_point_pose6=pivot_point,
         )
         x_meas = np.asarray(x_meas, dtype=float).reshape(-1)
-        print("same tip x_meas:", x_meas[:3])
+        # print("same tip x_meas:", x_meas[:3])
         if prev_ref_xyz is not None:
             actual_err_to_prev_ref_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
             pred_err_to_prev_ref_xy = np.linalg.norm(prev_pred_xyz[:2] - prev_ref_xyz[:2])
@@ -3334,6 +3487,10 @@ def run_control(
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         
         p_now, x_now, info = mpc.step(x_meas=x_meas)
+        # print("[RUN_CONTROL INFO CHECK]")
+        # print("info one_step_pred_err_xy =", info.get("one_step_pred_err_xy"))
+        # print("info one_step_pred_err_xy [mm] =",
+        #     1000.0 * float(info.get("one_step_pred_err_xy", np.nan)))
         L_est = float(p_now[7])
         mag_pos_next = np.asarray(p_now[:3], dtype=float)
         mag_dir_next = np.asarray(dipole_dir_from_p8(p_now), dtype=float)
@@ -3365,16 +3522,16 @@ def run_control(
             aff = X_aff_stack[0, :3]
             meas = np.asarray(x_meas, float)[:3]
 
-            print("[Y FLIP CHECK]")
-            print("robot-frame dy meas-ref [mm] =", 1000.0 * (meas[1] - ref[1]))
-            print("plot/image-style dy ref-meas [mm] =", 1000.0 * (ref[1] - meas[1]))
-            print("robot-frame dx meas-ref [mm] =", 1000.0 * (meas[0] - ref[0]))
-            print("pred-ref xy [mm] =", 1000.0 * (pred[:2] - ref[:2]))
+            # print("[Y FLIP CHECK]")
+            # print("robot-frame dy meas-ref [mm] =", 1000.0 * (meas[1] - ref[1]))
+            # print("plot/image-style dy ref-meas [mm] =", 1000.0 * (ref[1] - meas[1]))
+            # print("robot-frame dx meas-ref [mm] =", 1000.0 * (meas[0] - ref[0]))
+            # print("pred-ref xy [mm] =", 1000.0 * (pred[:2] - ref[:2]))
 
-            print("[Y SIGN CHECK]")
-            print("ref_y - aff_y [mm] =", 1000.0 * (ref[1] - aff[1]))
-            print("pred_y - aff_y [mm] =", 1000.0 * (pred[1] - aff[1]))
-            print("u0 vy =", np.asarray(info["u0"], float)[1])
+            # print("[Y SIGN CHECK]")
+            # print("ref_y - aff_y [mm] =", 1000.0 * (ref[1] - aff[1]))
+            # print("pred_y - aff_y [mm] =", 1000.0 * (pred[1] - aff[1]))
+            # print("u0 vy =", np.asarray(info["u0"], float)[1])
 
             prev_ref_xyz = ref.copy()
             prev_pred_xyz = pred.copy()
@@ -3421,7 +3578,8 @@ def run_control(
         print("x_meas =", x_meas)
         print("p_now =", p_now)
         print("x_now =", x_now)
-        print("Error on 1 step ", info["pred1_err_xy"])
+        print("Previous one-step prediction error xy [mm] =",
+            1000.0 * float(info.get("one_step_pred_err_xy", np.nan)))
         print("u0_proposed =", info["u0"])
         print("i_ref =", mpc.i_ref_last)
         print("closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
@@ -3441,20 +3599,26 @@ def run_control(
         if hw is not None:
             mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
 
-        # use actual predicted tip, not x_now
+        # ------------------------------------------------------------
+        # Pull clean MPC diagnostics from info
+        # ------------------------------------------------------------
         X_pred = np.asarray(info["X_pred"], dtype=float)
         X_nom = np.asarray(info["X_nom"], dtype=float).reshape(-1)
 
         pred_tip = np.asarray(X_pred[0, :3], dtype=float)
         nom_tip = np.asarray(X_nom[:3], dtype=float)
-
         meas_tip = np.asarray(x_meas[:3], dtype=float)
 
-        err_xyz = meas_tip - pred_tip
-        err_xy = np.linalg.norm(err_xyz[:2])
-
-        err_nom_xyz = meas_tip - nom_tip
-        err_nom_xy = np.linalg.norm(err_nom_xyz[:2])
+        raw_model_err_xy = float(info.get("raw_model_err_xy", np.nan))
+        nom_corr_resid_xy = float(info.get("nom_corr_resid_xy", np.nan))
+        pred0_current_resid_xy = float(info.get("pred0_current_resid_xy", np.nan))
+        nom_ref_err_xy = float(info.get("nom_ref_err_xy", np.nan))
+        pred_ref_err_xy = float(info.get("pred_ref_err_xy", np.nan))
+        one_step_pred_err_xy = float(info.get("one_step_pred_err_xy", np.nan))
+        meas_ref_err_xy = float(info.get("meas_ref_err_xy", np.nan))
+        meas_ref_idx = int(info.get("meas_ref_idx", -1))
+        meas_ref_xyz = np.asarray(info.get("meas_ref_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
+        model_bias_xyz = np.asarray(info.get("model_bias_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
 
         row = {
             "step": int(k),
@@ -3470,12 +3634,21 @@ def run_control(
             "meas_x": float(meas_tip[0]),
             "meas_y": float(meas_tip[1]),
             "meas_z": float(meas_tip[2]),
+            "meas_ref_err_xy": meas_ref_err_xy,
+            "meas_ref_idx": meas_ref_idx,
+            "meas_ref_x": float(meas_ref_xyz[0]),
+            "meas_ref_y": float(meas_ref_xyz[1]),
+            "meas_ref_z": float(meas_ref_xyz[2]),
+            "raw_model_err_xy": raw_model_err_xy,
+            "nom_corr_resid_xy": nom_corr_resid_xy,
+            "pred0_current_resid_xy": pred0_current_resid_xy,
+            "nom_ref_err_xy": nom_ref_err_xy,
+            "pred_ref_err_xy": pred_ref_err_xy,
+            "one_step_pred_err_xy": one_step_pred_err_xy,
 
-            "err_xy": float(err_xy),
-            "nom_x": float(nom_tip[0]),
-            "nom_y": float(nom_tip[1]),
-            "nom_z": float(nom_tip[2]),
-            "err_nom_xy": float(err_nom_xy),
+            "model_bias_x": float(model_bias_xyz[0]),
+            "model_bias_y": float(model_bias_xyz[1]),
+            "model_bias_z": float(model_bias_xyz[2]),
 
             "i_ref": int(mpc.i_ref_last),
 
@@ -3593,10 +3766,10 @@ def build_initial_lumen_from_vision(
     ex_ref = manual["ex_img"]
     ey_ref = manual["ey_img"]
 
-    print("[DBG lumen manual frame used]")
-    print("  base_px_ref =", base_px_ref)
-    print("  ex_ref =", ex_ref)
-    print("  ey_ref =", ey_ref)
+    # print("[DBG lumen manual frame used]")
+    # print("  base_px_ref =", base_px_ref)
+    # print("  ex_ref =", ex_ref)
+    # print("  ey_ref =", ey_ref)
 
     roi_polygon = load_polygon(roi_polygon_path)
 
@@ -3688,10 +3861,10 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
-        maxiter=50,
+        N_nodes=10,
+        maxiter=30,
         L0_init=0.01,
-        dL_internal=0.001,
+        dL_internal=0.02,
         use_lumen_jac=True,
         L_tip_full=L_tip_full_physical,
         L_tip_min=0.01,
@@ -3713,7 +3886,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     #     L_tip_min=L_tip_min_physical,
     # )
 
-    print("Finished_building_model")
+    # print("Finished_building_model")
     return p0_ur, q0_ur, forward_model
 def make_Kbt_inv_profile(EI_wire, EI_tip, GJ_wire, GJ_tip, bend_soft=1.0, tors_soft=1.0):
     def Kbt_inv_profile(s, len_wire):
@@ -3827,7 +4000,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_centreline_track_new_wbc_3step2",
+            plot_dir="mpc_run_centreline_track_day2wbc90",
         )
 
     finally:

@@ -298,10 +298,10 @@ def detect_4_red_markers_in_roi(
         else:
             cx, cy = -1, -1
 
-        print(
-            f"[DEBUG] contour {i}: area={area:.2f}, "
-            f"bbox=({bx},{by},{bw},{bh}), center=({cx:.1f},{cy:.1f})"
-        )
+        # print(
+        #     f"[DEBUG] contour {i}: area={area:.2f}, "
+        #     f"bbox=({bx},{by},{bw},{bh}), center=({cx:.1f},{cy:.1f})"
+        # )
 
         cv2.drawContours(raw_debug, [cnt], -1, (0, 255, 0), 1)
         cv2.rectangle(raw_debug, (bx, by), (bx + bw, by + bh), (255, 255, 0), 1)

@@ -271,6 +271,10 @@ def contact_energy_gradient_u(
     q0,
     s,
     lumen_query,
+    r_beam=0.002,
+    k_contact=1e3,
+    pen_switch=5e-5,
+    k_hard=1e8,
     eps_kin=1e-7,
 ):
     """
@@ -291,16 +295,40 @@ def contact_energy_gradient_u(
     C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
         p,
         lumen_query,
-        r_beam=0.001,      # or whatever your beam radius variable is
-        k_contact=1e3,
-        pen_switch=5e-5,
-        k_hard=1e8,
+        r_beam=r_beam,
+        k_contact=k_contact,
+        pen_switch=pen_switch,
+        k_hard=k_hard,
         eps=1e-12,
         window=3,
-        smooth=True,              # start with nonsmooth pure contact
+        smooth=False,
         smooth_eps=1e-5,
     )
 
+    min_gap = float(np.min(gap_nodes))
+    j_min = int(np.argmin(gap_nodes))
+    active = np.flatnonzero(gap_nodes < 0.0)
+
+    # print("min surface gap [mm] =", 1e3 * min_gap)
+    # print("active penetration nodes =", active.size)
+    # print("most penetrating node =", j_min)
+    # print("force at most penetrating node |F| =", np.linalg.norm(F_nodes[:, j_min]))
+    # print("force at most penetrating node =", F_nodes[:, j_min])
+    # print("[CONTACT PARAMS]")
+    # print("r_beam =", r_beam)
+    # print("k_contact =", k_contact)
+    # print("pen_switch =", pen_switch)
+    # print("k_hard =", k_hard)
+    # if active.size > 0:
+    #     print("[CONTACT DBG] penetrating nodes:")
+    #     for j in active:
+    #         print(
+    #             "j=", int(j),
+    #             "gap[mm]=", 1e3 * gap_nodes[j],
+    #             "|F|=", np.linalg.norm(F_nodes[:, j]),
+    #             "F=", F_nodes[:, j],
+    #             "C=", C_nodes[j],
+    #         )
     grad = np.zeros_like(u_flat)
 
     # finite-difference kinematics only (NOT energy)
@@ -342,6 +370,10 @@ def energy_gradient_u(
     use_magnetic=True,
     use_contact=True,
     use_fast_contact_grad=False,
+    contact_r_beam=0.001,
+    contact_k=1e5,
+    contact_pen_switch=5e-5,
+    contact_k_hard=1e10,
 ):
     grad = elastic_energy_gradient_u(
         u_flat,
@@ -379,6 +411,10 @@ def energy_gradient_u(
                 q0=q0,
                 s=s,
                 lumen_query=lumen_query,
+                r_beam=contact_r_beam,
+                k_contact=contact_k,
+                pen_switch=contact_pen_switch,
+                k_hard=contact_k_hard,
             )
 
     return grad
@@ -402,8 +438,8 @@ def contact_energy_gradient_u_faster_fdkin(
     C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
         p,
         lumen_query,
-        r_beam=beam_params.r,
-        k_contact=1e3,
+        r_beam=0.002,
+        k_contact=1e6,
         pen_switch=5e-5,
         k_hard=1e10,
         eps=1e-12,
@@ -445,7 +481,7 @@ def solve_energy_min_3d(
     r_src, m_src, m_local_fun, m_moment,
     N=60, u0_flat=None, maxiter=300,
     lumen_C=None, lumen_R=None, use_lumen=True,
-    contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
+    contact_k=1e8, contact_beta=50.0, contact_delta=5e-4,
     contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0,
     energy_scale=1e-8,use_fast_contact_grad=False,
 ):
@@ -508,6 +544,10 @@ def solve_energy_min_3d(
             use_magnetic=True,
             use_contact=use_lumen,
             use_fast_contact_grad=use_fast_contact_grad,
+            contact_r_beam=0.002,
+            contact_k=contact_k,
+            contact_pen_switch=5e-5,
+            contact_k_hard=1e10,
         )
 
         return (u_scale / energy_scale) * grad_u
@@ -702,27 +742,39 @@ def energy_from_u(
     # -------------------------
     # Contact / lumen
     # -------------------------
+# -------------------------
+# Contact / lumen
+# -------------------------
     W_cf = 0.0
     min_gap = np.nan
+    gap_nodes = None
 
     if use_lumen and (lumen_query is not None):
+        # IMPORTANT:
+        # These parameters must match contact_energy_gradient_u().
+        contact_r_beam = 0.002         # or beam_params.r, but use the same value in the gradient
+        contact_k_soft = 1e8
+        contact_pen_switch = 5e-5
+        contact_k_hard = 1e10
+
         C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
             p,
             lumen_query,
-            r_beam=beam_params.r,
-            k_contact=1e3,
-            pen_switch=2e-4,
-            k_hard=1e10,
+            r_beam=contact_r_beam,
+            k_contact=contact_k_soft,
+            pen_switch=contact_pen_switch,
+            k_hard=contact_k_hard,
             eps=1e-12,
             window=3,
-            smooth=True,
+            smooth=False,
             smooth_eps=1e-5,
         )
 
+        # Same scaling as contact_energy_gradient_u():
+        # dW *= (s[1] - s[0])
         h = float(s[1] - s[0])
         W_cf = h * float(np.sum(C_nodes))
         min_gap = float(np.min(gap_nodes))
-
     W_total = W_el + W_m + W_g + W_cf
     # print(f"Energy on the beam: Magnetic: {W_m}, Elastic: {W_el}")
     if debug_mag:
@@ -796,101 +848,68 @@ def solve_quasistatic_insertion(*,
     hist = []
     u0 = u_init
 
-    L = float(L0)
+    L0 = float(L0)
     Lf = float(Lf)
     dL = float(dL)
 
-    while L <= Lf + 1e-12:
-        L_model = float(L)  # <-- the loop variable is the model length
+    if dL <= 0:
+        raise ValueError("dL must be positive")
+
+    L_values = list(np.arange(L0, Lf, dL))
+
+    # Always include final target length exactly
+    if len(L_values) == 0 or abs(L_values[-1] - Lf) > 1e-12:
+        L_values.append(Lf)
+
+    for L_model in L_values:
+        L_model = float(L_model)
+
         len_wire = float(wire_len_fun(L_model))
 
         if tip_len_fun is None:
-            # If you don't provide one, infer tip length as remainder
             len_tip = max(L_model - len_wire, 0.0)
         else:
             len_tip = float(tip_len_fun(L_model))
 
-        # if debug:
-        #     print(f"[CONT] L_model={L_model:.3f} len_wire={len_wire:.3f} len_tip={len_tip:.3f}")
+        m_local_fun_k = make_m_local_fun_wire_tip(
+            len_wire,
+            len_tip=len_tip,
+            mode="axial",
+            eps=1e-3,
+        )
 
-        # IMPORTANT: regenerate m_local_fun per step so tip magnetisation window moves correctly
-        m_local_fun_k = make_m_local_fun_wire_tip(len_wire, len_tip=len_tip, mode="axial", eps=1e-3)
-        # print("\n[SOLVE DEBUG]")
-        # print("r_src =", r_src)
-        # print("m_src =", m_src)
-        # print("m_local_fun =", m_local_fun)
-        # print("m_moment =", m_moment)
-        # print("Kinv_fun =", Kinv_fun)
-        # s = np.linspace(0.0, L, N)
-        # m = m_local_fun(s, None)      # (3,N)
-        # mx_int = np.trapezoid(m[0, :], s)
-        # my_int = np.trapezoid(m[1, :], s)
-        # mz_int = np.trapezoid(m[2, :], s)
-        # print(f"DEBUG for magnetisation: {N, mx_int, my_int, mz_int}")
         mesh_schedule = [N]
 
-        for N in mesh_schedule:
-            # if u0 is not None and N_prev is not None and N_prev != N:
-            #     print(f"\n[INTERP DEBUG] {N_prev} -> {N}")
-            #     u_prev_seg = np.asarray(u0, float).reshape(N_prev - 1, 3)
-            #     print(
-            #         "before interp component rms:",
-            #         np.sqrt(np.mean(u_prev_seg[:, 0] ** 2)),
-            #         np.sqrt(np.mean(u_prev_seg[:, 1] ** 2)),
-            #         np.sqrt(np.mean(u_prev_seg[:, 2] ** 2)),
-            #     )
+        for N_use in mesh_schedule:
+            p, q, u_seg, info = solve_energy_min_3d(
+                p0=p0,
+                q0=q0,
+                L=L_model,
+                wire_len=len_wire,
+                Kinv_fun=Kinv_fun,
+                u_star=u_star,
+                r_src=r_src,
+                m_src=m_src,
+                m_local_fun=m_local_fun_k,
+                m_moment=m_moment,
+                N=N_use,
+                u0_flat=u0,
+                maxiter=maxiter,
+                lumen_C=lumen_C,
+                lumen_R=lumen_R,
+                use_lumen=use_lumen,
+            )
 
-            #     u0 = interp_u_flat_between_meshes(u0, L_model, N_from=N_prev, N_to=N)
+            u0 = info["u_flat_opt"].copy()
 
-            #     u_new_seg = np.asarray(u0, float).reshape(N - 1, 3)
-            #     print(
-            #         "after interp component rms:",
-            #         np.sqrt(np.mean(u_new_seg[:, 0] ** 2)),
-            #         np.sqrt(np.mean(u_new_seg[:, 1] ** 2)),
-            #         np.sqrt(np.mean(u_new_seg[:, 2] ** 2)),
-            #     )
-
-            u0_before = None if u0 is None else u0.copy()
-            if N >=200:
-                u0_pert = u0.copy()
-                u0_pert += 1e-4 * np.random.randn(*u0_pert.shape)
-                p, q, u_seg, info = solve_energy_min_3d(
-                    p0=p0, q0=q0, L=L_model,
-                    wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
-                    r_src=r_src, m_src=m_src,
-                    m_local_fun=m_local_fun_k, m_moment=m_moment,
-                    N=N, u0_flat=u0_pert, maxiter=maxiter,
-                    lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
-                )
-            else:
-                p, q, u_seg, info = solve_energy_min_3d(
-                p0=p0, q0=q0, L=L_model,
-                wire_len=len_wire, Kinv_fun=Kinv_fun, u_star=u_star,
-                r_src=r_src, m_src=m_src,
-                m_local_fun=m_local_fun_k, m_moment=m_moment,
-                N=N, u0_flat=u0, maxiter=maxiter,
-                lumen_C=lumen_C, lumen_R=lumen_R, use_lumen=use_lumen
-                )
-            u_opt = info["u_flat_opt"].copy()
-            parts = info["parts"]
-            # print(f"message={info['message']}")
-            du_init = np.nan
-            if u0_before is not None and u0_before.size == u_opt.size:
-                du_init = np.linalg.norm(u_opt - u0_before)
-
-            # print(
-            #     f"N={N:3d}, success={info['success']}, nit={info['nit']:4d}, "
-            #     f"W0={info['W0']:.6e}, W={info['W']:.6e}, dW={info['dW']:.6e}, "
-            #     f"W_el={parts['W_el']:.6e}, W_m={parts['W_m']:.6e}, W_cf={parts['W_cf']:.6e}, "
-            #     f"||u||={np.linalg.norm(u_opt):.6e}, ||u-u_init||={du_init:.6e}"
-            # )
-
-            # CRITICAL: carry optimized solution forward
-            u0 = u_opt
-            N_prev = N
-
-        hist.append(dict(L=L_model, p=p, q=q, info=info, len_wire=len_wire, len_tip=len_tip))
-        L += dL
+        hist.append(dict(
+            L=L_model,
+            p=p,
+            q=q,
+            info=info,
+            len_wire=len_wire,
+            len_tip=len_tip,
+        ))
 
     return hist
 def magnetic_energy_only(
@@ -1148,6 +1167,12 @@ def make_energy_grad_fun_for_pose(
     use_contact=False,
     lumen_query=None,
     use_fast_contact_grad=False,
+
+    # Contact parameters
+    contact_r_beam=0.001,
+    contact_k=1e5,
+    contact_pen_switch=5e-5,
+    contact_k_hard=1e10,
 ):
     q_src0 = quat_normalize(q_src0)
 
@@ -1198,6 +1223,11 @@ def make_energy_grad_fun_for_pose(
             use_contact=use_contact,
             lumen_query=lumen_query,
             use_fast_contact_grad=use_fast_contact_grad,
+
+            contact_r_beam=contact_r_beam,
+            contact_k=contact_k,
+            contact_pen_switch=contact_pen_switch,
+            contact_k_hard=contact_k_hard,
         )
 
     return energy_grad_fun

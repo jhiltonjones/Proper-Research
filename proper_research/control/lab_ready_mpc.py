@@ -845,11 +845,11 @@ class mpc_controller_tipxy_LTI:
         self.s_des = 5e-4  
 
         self.enable_dipole_align = True
-        self.w_dipole_align = 1    # start small: 0.1..10
+        self.w_dipole_align = 0.2    # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.13
+        self.mag_center_standoff_m = 0.22
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1435,7 +1435,7 @@ class mpc_controller_tipxy_LTI:
                 np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i_prog, :2], float)
             )
 
-            if err_to_center > 0.001:
+            if err_to_center > 0.0035:
                 target_start = i_prog
             else:
                 advance = int(getattr(self, "ref_lookahead_pts", 2))
@@ -1674,7 +1674,7 @@ class mpc_controller_tipxy_LTI:
                     b_s[k, 0] = b_k
 
             if enable_inline_soft:
-                idx_ahead_inline = int(getattr(self, "idx_ahead_inline", 1))
+                idx_ahead_inline = int(getattr(self, "idx_ahead_inline", 0.1))
                 A_lat = np.zeros((2 * Np, Nu), float)
                 b_lat = np.zeros((2 * Np, 1), float)
 
@@ -1808,7 +1808,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.13))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.2))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -3073,7 +3073,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.13),
+        pivot_point[0] - (L0 + 0.2),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -3097,10 +3097,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
 
-    start_point = pose6
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt = 0.01
@@ -3195,6 +3195,23 @@ def build_controller(
     #     Jred_control[:, 2] *= dt
     #     Jred_control[:, 3] *= dt
     #     return J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
+    # mpc = mpc_controller_tipxy_LTI(
+    #     Jxy_fn=J_fn,
+    #     forward_tip_fn=forward6d_pred,
+    #     dt=dt,
+    #     Np=1,
+    #     n_out=6,
+    #     n_u=7,
+    #     n_p=8,
+    #     w_xy=(3000.0, 3000.0, 0.0, 0.0, 0.0, 0.0),
+    #     w_u=w_u,
+    #     w_du=w_du,
+    #     model_mode="lti",
+    #     u_max=u_max,
+    #     p_min=p_min,
+    #     p_max=p_max,
+    #     N_sqp=1,
+    # )
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
@@ -3203,7 +3220,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(3000.0, 3000.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -3212,7 +3229,6 @@ def build_controller(
         p_max=p_max,
         N_sqp=1,
     )
-
     mpc.R = np.diag([1e-3] * 7)
     mpc.Rd = np.diag([1e-4] * 7)
 
@@ -3222,7 +3238,7 @@ def build_controller(
     mpc.enable_hard_epm_tip_clearance = True
     mpc.enable_standoff_soft = False
     mpc.enable_inline_soft = False
-    mpc.enable_dipole_soft = False
+    mpc.enable_dipole_soft = True
     mpc.enable_hard_theta = False
     mpc.enable_tangent_penalty = False
 
@@ -3289,7 +3305,7 @@ def run_control(
     plot_dir="mpc_debug_plots",
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
-    csv_log_path="control_run_log_test_run_centreline_track_day2wbc90.csv",
+    csv_log_path="control_run_log_test_run_centreline_track_day2wboc90_inline2_try2_no_boundary.csv",
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3312,7 +3328,7 @@ def run_control(
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_centreline_track_day2wbc90/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_centreline_track_day2wboc90_inline2_try2_no_boundary/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
@@ -3865,7 +3881,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.02,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=L_tip_full_physical,
         L_tip_min=0.01,
     )
@@ -4000,7 +4016,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_centreline_track_day2wbc90",
+            plot_dir="mpc_run_centreline_track_day2wboc90_inline_try2_noboundary",
         )
 
     finally:

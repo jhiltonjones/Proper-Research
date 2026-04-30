@@ -741,9 +741,9 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             use_fast_contact_grad=False,
 
             contact_r_beam=0.001,
-            contact_k=1e2,
+            contact_k=1e8,
             contact_pen_switch=5e-5,
-            contact_k_hard=1e6,
+            contact_k_hard=1e10,
         )
         def theta_builder(theta):
             return {"theta0": theta0}

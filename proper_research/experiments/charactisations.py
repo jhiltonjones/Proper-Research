@@ -1154,12 +1154,12 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.0153
+    L0 = 0.0161
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.13),
+        pivot_point[0] - (L0 + 0.2),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001

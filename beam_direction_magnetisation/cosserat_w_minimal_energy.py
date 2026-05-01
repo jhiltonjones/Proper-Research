@@ -1750,7 +1750,7 @@ if __name__ == "__main__":
         wire_len=wire_len,
     )
     results_df = validate_cosserat_against_csv(
-        csv_path="/home/jack/Proper-Research/results_wo_lumen_60degree_pre_272/sweep_results.csv",
+        csv_path="/home/jack/Proper-Research/results_with_lumen_no_drawing_29/sweep_results.csv",
         model=model,
         base_point=base_point,
         pivot_point=pivot_point,

@@ -438,21 +438,21 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # draw vessel boundaries
-    for x, y in left_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # # draw vessel boundaries
+    # for x, y in left_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    for x, y in right_boundary_px:
-        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # if red_area is not None:
-    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    # for x, y in right_boundary_px:
+    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # # if red_area is not None:
+    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    if blue_area is not None:
-        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # draw beam centerline
-    # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
-    # for i in range(len(beam_int) - 1):
-    #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
+    # if blue_area is not None:
+    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # # draw beam centerline
+    # # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
+    # # for i in range(len(beam_int) - 1):
+    # #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
     if markers is not None:

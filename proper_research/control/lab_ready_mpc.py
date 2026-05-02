@@ -832,8 +832,8 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        # self.w_adv = 1    # start tiny (1e-5 .. 1e-3)
-        self.w_adv = 0
+        self.w_adv = .5    # start tiny (1e-5 .. 1e-3)
+        # self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -849,14 +849,18 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.22
+        self.mag_center_standoff_m = 0.14
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
 
     def _rebuild_S(self):
         self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
-
+    def apply_open_loop_control(self, u):
+        u = np.asarray(u, dtype=float).reshape(self.m,)
+        self.p = self._clamp_p(integrate_pose8_body(self.p, u, self.dt))
+        self.p_last_meas = self.p.copy()
+        return self.p.copy()
     def   _build_Du_matrix(self):
         Np = self.Np
         m = self.m
@@ -918,7 +922,15 @@ class mpc_controller_tipxy_LTI:
             # print("[BUILD] before Jxy_fn")
             J0 = np.asarray(self.Jxy_fn(p0), float)
             # print("[BUILD] after Jxy_fn, J0 shape =", J0.shape)
+            J0 = np.asarray(self.Jxy_fn(p0), float).copy()
 
+            jac_gain_pos = float(getattr(self, "jac_gain_pos", 0.6))
+            jac_gain_tan = float(getattr(self, "jac_gain_tan", 1.0))
+            jac_gain_L = float(getattr(self, "jac_gain_tan", 0.5))
+            J0[0:3, :] *= jac_gain_pos
+            J0[0:3, 6] *= jac_gain_L
+            if J0.shape[0] >= 6:
+                J0[3:6, :] *= jac_gain_tan
             if J0.shape != (n, m):
                 raise ValueError(f"Jxy_fn returned {J0.shape}, expected {(n, m)}")
 
@@ -1435,16 +1447,29 @@ class mpc_controller_tipxy_LTI:
                 np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i_prog, :2], float)
             )
 
-            if err_to_center > 0.0035:
-                target_start = i_prog
-            else:
-                advance = int(getattr(self, "ref_lookahead_pts", 2))
-                max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
-                target_start = min(i_prog + min(advance, max_adv), M - 1)
-                self.i_ref_progress = target_start
+            # if err_to_center > 0.004:
+            #     target_start = i_prog
+            # else:
+            advance = int(getattr(self, "ref_lookahead_pts", 2))
+            max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
+            target_start = min(i_prog + min(advance, max_adv), M - 1)
+            self.i_ref_progress = target_start
 
-            idx_ref = np.clip(target_start + np.arange(Np), 0, M - 1)
+            ref_ahead = int(getattr(self, "ref_ahead_pts", 3))
+            ref_stride = int(getattr(self, "ref_stride_pts", 3))
 
+            idx_ref = np.clip(
+                target_start + ref_ahead + ref_stride * np.arange(Np),
+                0,
+                M - 1,
+            )
+            print("[REF LOOKAHEAD]")
+            print("target_start =", target_start)
+            print("ref_ahead =", ref_ahead)
+            print("ref_stride =", ref_stride)
+            print("idx_ref =", idx_ref)
+            print("ref xyz =")
+            print(Cc[idx_ref, :3])
             print(f"i_closest={i_closest}, i_prog={i_prog}, target_start={target_start}")
             print(f"err_to_center [mm]={1000.0 * err_to_center:.3f}")
 
@@ -1808,7 +1833,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.2))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.13))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -3073,7 +3098,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.2),
+        pivot_point[0] - (L0 + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -3220,7 +3245,7 @@ def build_controller(
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(10.0, 10.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -3241,7 +3266,8 @@ def build_controller(
     mpc.enable_dipole_soft = True
     mpc.enable_hard_theta = False
     mpc.enable_tangent_penalty = False
-
+    mpc.jac_gain_pos = 0.8
+    mpc.jac_gain_tan = 1.0
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
     mpc.set_initial_params(p0)
@@ -3305,7 +3331,7 @@ def run_control(
     plot_dir="mpc_debug_plots",
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
-    csv_log_path="control_run_log_test_run_centreline_track_day2wboc90_inline2_try2_no_boundary.csv",
+    csv_log_path="control_run_log_test_run_track_day3wobc60_inline_centreline_wadv.csv",
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3314,6 +3340,10 @@ def run_control(
     prev_pred_xyz = None
     prev_i_ref = None
     L_est = None
+    prev_jac_test = None
+    mpc_command_buffer = []
+    mpc_pred_buffer = []
+    mpc_replan_every = 1
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
@@ -3328,7 +3358,7 @@ def run_control(
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_centreline_track_day2wboc90_inline2_try2_no_boundary/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_track_day3wobc60_inline_centreline_wadv/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
@@ -3361,7 +3391,44 @@ def run_control(
             pivot_point_pose6=pivot_point,
         )
         x_meas = np.asarray(x_meas, dtype=float).reshape(-1)
+        meas_tip = np.asarray(x_meas[:3], dtype=float)
+        meas_tan = np.asarray(x_meas[3:6], dtype=float)
+        # x_meas = np.asarray(x_meas, dtype=float).reshape(-1)
         # print("same tip x_meas:", x_meas[:3])
+        if prev_jac_test is not None:
+            x_prev = prev_jac_test["x_meas"]
+            u_prev = prev_jac_test["u0"]
+            B_prev = prev_jac_test["B_first"]
+
+            dx_real = x_meas[:3] - x_prev[:3]
+            dx_pred = B_prev[:3, :] @ u_prev
+
+            pred_xy = np.linalg.norm(dx_pred[:2])
+            real_xy = np.linalg.norm(dx_real[:2])
+
+            gain_real_over_pred = real_xy / (pred_xy + 1e-12)
+
+            cos_xy = np.dot(dx_pred[:2], dx_real[:2]) / (
+                pred_xy * real_xy + 1e-12
+            )
+
+            print("[JAC SENSITIVITY TEST]")
+            print("prev step =", prev_jac_test["k"])
+            print("dx_pred xyz [mm] =", 1000.0 * dx_pred)
+            print("dx_real xyz [mm] =", 1000.0 * dx_real)
+            print("pred_xy [mm] =", 1000.0 * pred_xy)
+            print("real_xy [mm] =", 1000.0 * real_xy)
+            print("gain real/pred =", gain_real_over_pred)
+            print("cos direction xy =", cos_xy)
+
+            if cos_xy > 0.7 and gain_real_over_pred < 0.8:
+                print("[JAC INTERPRETATION] Direction is reasonable, but Jacobian is too sensitive.")
+            elif cos_xy > 0.7 and gain_real_over_pred > 1.2:
+                print("[JAC INTERPRETATION] Direction is reasonable, but Jacobian is not sensitive enough.")
+            elif cos_xy < 0.0:
+                print("[JAC INTERPRETATION] Direction/sign/frame problem likely.")
+            else:
+                print("[JAC INTERPRETATION] Mixed result: check noise, backlash, delay, or constraints.")
         if prev_ref_xyz is not None:
             actual_err_to_prev_ref_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
             pred_err_to_prev_ref_xy = np.linalg.norm(prev_pred_xyz[:2] - prev_ref_xyz[:2])
@@ -3502,7 +3569,52 @@ def run_control(
             # print("[MEAS P] p_meas8 =", p_meas8)
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         
-        p_now, x_now, info = mpc.step(x_meas=x_meas)
+        # p_now, x_now, info = mpc.step(x_meas=x_meas)
+
+
+        # inside loop
+        if len(mpc_command_buffer) == 0:
+            p_now, x_now, info = mpc.step(x_meas=x_meas)
+
+            U_seq = np.asarray(info["U_seq"], dtype=float)
+            X_pred_plan = np.asarray(info["X_pred"], dtype=float)
+
+            n_exec = min(mpc_replan_every, U_seq.shape[0], X_pred_plan.shape[0])
+
+            mpc_command_buffer = [U_seq[i].copy() for i in range(n_exec)]
+            mpc_pred_buffer = [X_pred_plan[i, :3].copy() for i in range(n_exec)]
+
+            new_plan = True
+        else:
+            info = None
+            new_plan = False
+
+        u_cmd = mpc_command_buffer.pop(0)
+        pred_tip = mpc_pred_buffer.pop(0)
+
+        pred_meas_err_xyz = meas_tip - pred_tip
+        pred_meas_err_xy = float(np.linalg.norm(pred_meas_err_xyz[:2]))
+        if new_plan:
+            # mpc.step() already propagated self.p using the first command internally
+            p_now = mpc.p.copy()
+            x_now = mpc.x.copy()
+        else:
+            # For buffered commands, manually propagate internal actuator estimate
+            p_now = mpc.apply_open_loop_control(u_cmd)
+            x_now = x_meas.copy()
+        if send_commands:
+            print("[DBG] before hw.send_step")
+            hw.send_step(p_now=p_now, u0=u_cmd, dt=mpc.dt)
+            print("[DBG] after hw.send_step")
+        if info is not None and info.get("B_first", None) is not None:
+            prev_jac_test = {
+                "k": int(k),
+                "x_meas": x_meas.copy(),
+                "u0": np.asarray(info["u0"], dtype=float).copy(),
+                "B_first": np.asarray(info["B_first"], dtype=float).copy(),
+            }
+        else:
+            prev_jac_test = None
         # print("[RUN_CONTROL INFO CHECK]")
         # print("info one_step_pred_err_xy =", info.get("one_step_pred_err_xy"))
         # print("info one_step_pred_err_xy [mm] =",
@@ -3515,11 +3627,14 @@ def run_control(
         # print("mpc_debug type =", type(info.get("mpc_debug")))
         # print("X_pred type =", type(info.get("X_pred")))
         # print("X_aff_last type =", type(info.get("X_aff_last")))
-        track_dbg = (
-            info.get("mpc_debug", {})
-                .get("penalties", {})
-                .get("track", None)
-        )
+        if info is not None:
+            track_dbg = (
+                info.get("mpc_debug", {})
+                    .get("penalties", {})
+                    .get("track", None)
+            )
+        else:
+            track_dbg = None
 
         if (
             track_dbg is not None
@@ -3557,84 +3672,104 @@ def run_control(
             print("[Y FLIP CHECK] Missing track debug data")
             print("track_dbg is None:", track_dbg is None)
             print("has X_ref:", track_dbg is not None and "X_ref" in track_dbg)
-            print("X_pred is None:", info.get("X_pred", None) is None)
-            print("X_aff_last is None:", info.get("X_aff_last", None) is None)
-        
-        
+
+            if info is not None:
+                print("X_pred is None:", info.get("X_pred", None) is None)
+                print("X_aff_last is None:", info.get("X_aff_last", None) is None)
+            else:
+                print("[TRACK DBG] skipped on open-loop buffered step")
+    
+    
 
         plot_path = None
         if save_plots:
             plot_path = os.path.join(plot_dir, f"step_{k:04d}_reference_debug.png")
 
-        plot_reference_debug(
-            mpc,
-            x_meas,
-            info=info,
-            n_ref=3,
-            show_boundaries=True,
-            save_path=plot_path,
-            mag_pos=mag_pos_current,
-            mag_dir=mag_dir_current,
-            mag_pos_next=mag_pos_next,
-            mag_dir_next=mag_dir_next,
-        )
-
-        p7_now = pose8_quat_to_pose7_rotvec(p_now)
-        ur_pose6_next = p7_now[:6]
-        L_next = p7_now[6]
-
-        print("UR next pose:", ur_pose6_next)
-        print("Insertion next:", L_next)
-
-        u0 = np.asarray(info["u0"], dtype=float).copy()
-
-        print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
-        print("[MPC] jac rank =", info.get("jac_svd_rank", np.nan))
-        print(f"[CONTROL] step={k}")
-        print("x_meas =", x_meas)
-        print("p_now =", p_now)
-        print("x_now =", x_now)
-        print("Previous one-step prediction error xy [mm] =",
-            1000.0 * float(info.get("one_step_pred_err_xy", np.nan)))
-        print("u0_proposed =", info["u0"])
-        print("i_ref =", mpc.i_ref_last)
-        print("closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
-        print("status =", info.get("status"))
-        print("infeasible =", info.get("infeasible"))
+        # plot_reference_debug(
+        #     mpc,
+        #     x_meas,
+        #     info=info,
+        #     n_ref=3,
+        #     show_boundaries=True,
+        #     save_path=plot_path,
+        #     mag_pos=mag_pos_current,
+        #     mag_dir=mag_dir_current,
+        #     mag_pos_next=mag_pos_next,
+        #     mag_dir_next=mag_dir_next,
+        # )
+        if info is not None:
+            plot_reference_debug(
+                mpc,
+                x_meas,
+                info=info,
+                n_ref=3,
+                show_boundaries=True,
+                save_path=plot_path,
+                mag_pos=mag_pos_current,
+                mag_dir=mag_dir_current,
+                mag_pos_next=mag_pos_next,
+                mag_dir_next=mag_dir_next,
+            )
+        else:
+            print("[PLOT] skipping MPC debug plot on open-loop buffered step")
+        meas_tip = np.asarray(x_meas[:3], dtype=float)
 
         left_tan = np.asarray(
             vision_result["tip_wall_angle_info"]["left_wall_tangent_vec_cartesian"],
             dtype=float
         )
+
         right_tan = np.asarray(
             vision_result["tip_wall_angle_info"]["right_wall_tangent_vec_cartesian"],
             dtype=float
         )
+        if info is not None:
+            u0_log = np.asarray(info["u0"], dtype=float).copy()
 
-        mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
-        if hw is not None:
-            mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
+            print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
+            print("[MPC] jac rank =", info.get("jac_svd_rank", np.nan))
+            print("Previous one-step prediction error xy [mm] =",
+                1000.0 * float(info.get("one_step_pred_err_xy", np.nan)))
+            print("u0_proposed =", info["u0"])
+            print("status =", info.get("status"))
+            print("infeasible =", info.get("infeasible"))
 
-        # ------------------------------------------------------------
-        # Pull clean MPC diagnostics from info
-        # ------------------------------------------------------------
-        X_pred = np.asarray(info["X_pred"], dtype=float)
-        X_nom = np.asarray(info["X_nom"], dtype=float).reshape(-1)
+            X_pred = np.asarray(info["X_pred"], dtype=float)
+            X_nom = np.asarray(info["X_nom"], dtype=float).reshape(-1)
 
-        pred_tip = np.asarray(X_pred[0, :3], dtype=float)
-        nom_tip = np.asarray(X_nom[:3], dtype=float)
-        meas_tip = np.asarray(x_meas[:3], dtype=float)
+            # pred_tip = np.asarray(X_pred[0, :3], dtype=float)
+            nom_tip = np.asarray(X_nom[:3], dtype=float)
 
-        raw_model_err_xy = float(info.get("raw_model_err_xy", np.nan))
-        nom_corr_resid_xy = float(info.get("nom_corr_resid_xy", np.nan))
-        pred0_current_resid_xy = float(info.get("pred0_current_resid_xy", np.nan))
-        nom_ref_err_xy = float(info.get("nom_ref_err_xy", np.nan))
-        pred_ref_err_xy = float(info.get("pred_ref_err_xy", np.nan))
-        one_step_pred_err_xy = float(info.get("one_step_pred_err_xy", np.nan))
-        meas_ref_err_xy = float(info.get("meas_ref_err_xy", np.nan))
-        meas_ref_idx = int(info.get("meas_ref_idx", -1))
-        meas_ref_xyz = np.asarray(info.get("meas_ref_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
-        model_bias_xyz = np.asarray(info.get("model_bias_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
+            raw_model_err_xy = float(info.get("raw_model_err_xy", np.nan))
+            nom_corr_resid_xy = float(info.get("nom_corr_resid_xy", np.nan))
+            pred0_current_resid_xy = float(info.get("pred0_current_resid_xy", np.nan))
+            nom_ref_err_xy = float(info.get("nom_ref_err_xy", np.nan))
+            pred_ref_err_xy = float(info.get("pred_ref_err_xy", np.nan))
+            one_step_pred_err_xy = float(info.get("one_step_pred_err_xy", np.nan))
+            meas_ref_err_xy = float(info.get("meas_ref_err_xy", np.nan))
+            meas_ref_idx = int(info.get("meas_ref_idx", -1))
+            meas_ref_xyz = np.asarray(info.get("meas_ref_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
+            model_bias_xyz = np.asarray(info.get("model_bias_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
+
+        else:
+            u0_log = u_cmd.copy()
+
+            print("[MPC] open-loop buffered command")
+            print("u_cmd =", u_cmd)
+
+            # pred_tip = np.full(3, np.nan)
+            nom_tip = np.full(3, np.nan)
+
+            raw_model_err_xy = np.nan
+            nom_corr_resid_xy = np.nan
+            pred0_current_resid_xy = np.nan
+            nom_ref_err_xy = np.nan
+            pred_ref_err_xy = np.nan
+            one_step_pred_err_xy = np.nan
+            meas_ref_err_xy = np.nan
+            meas_ref_idx = -1
+            meas_ref_xyz = np.full(3, np.nan)
+            model_bias_xyz = np.full(3, np.nan)
 
         row = {
             "step": int(k),
@@ -3661,7 +3796,10 @@ def run_control(
             "nom_ref_err_xy": nom_ref_err_xy,
             "pred_ref_err_xy": pred_ref_err_xy,
             "one_step_pred_err_xy": one_step_pred_err_xy,
-
+            "pred_meas_err_xy": float(pred_meas_err_xy),
+            "pred_meas_err_x": float(pred_meas_err_xyz[0]),
+            "pred_meas_err_y": float(pred_meas_err_xyz[1]),
+            "pred_meas_err_z": float(pred_meas_err_xyz[2]),
             "model_bias_x": float(model_bias_xyz[0]),
             "model_bias_y": float(model_bias_xyz[1]),
             "model_bias_z": float(model_bias_xyz[2]),
@@ -3695,16 +3833,16 @@ def run_control(
             "x_meas": x_meas.copy(),
             "x_now": np.asarray(x_now, dtype=float).copy(),
             "p_now": np.asarray(p_now, dtype=float).copy(),
-            "u0_proposed": u0.copy(),
+            "u0_proposed": u0_log.copy(),
             "i_ref": int(mpc.i_ref_last),
             "vision_result": vision_result,
             "info": info,
         })
 
-        if send_commands:
-            print("[DBG] before hw.send_step")
-            hw.send_step(p_now=p_now, u0=u0, dt=mpc.dt)
-            print("[DBG] after hw.send_step")
+        # if send_commands:
+        #     print("[DBG] before hw.send_step")
+        #     hw.send_step(p_now=p_now, u0=u0, dt=mpc.dt)
+        #     print("[DBG] after hw.send_step")
 
     print(f"[SAVE] CSV log saved to {csv_log_path}")
     return history
@@ -3838,7 +3976,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 5  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -3881,7 +4019,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.02,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
         L_tip_full=L_tip_full_physical,
         L_tip_min=0.01,
     )
@@ -4016,7 +4154,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_centreline_track_day2wboc90_inline_try2_noboundary",
+            plot_dir="mpc_run_track_day2wbc60_inline_centreline_wdv",
         )
 
     finally:

@@ -544,7 +544,7 @@ def solve_energy_min_3d(
             use_magnetic=True,
             use_contact=use_lumen,
             use_fast_contact_grad=use_fast_contact_grad,
-            contact_r_beam=0.002,
+            contact_r_beam=0.001,
             contact_k=contact_k,
             contact_pen_switch=5e-5,
             contact_k_hard=1e10,
@@ -1169,8 +1169,8 @@ def make_energy_grad_fun_for_pose(
     use_fast_contact_grad=False,
 
     # Contact parameters
-    contact_r_beam=0.001,
-    contact_k=1e5,
+    contact_r_beam=0.002,
+    contact_k=1e8,
     contact_pen_switch=5e-5,
     contact_k_hard=1e10,
 ):
@@ -1263,9 +1263,9 @@ def check_Gtheta_columns(
         )
 if __name__ == "__main__":
     DEBUG = True
-    L_cmd = 0.01
+    L_cmd = 0.025
     nodes = 10
-    dL = 0.005
+    dL = 0.02
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
     mag_len = beam_params.length_of_mag
@@ -1274,6 +1274,7 @@ if __name__ == "__main__":
         0.7981328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
+    start_point = np.array([0.7066483614169905, -0.5824066178468699, 0.1800201230581867, -2.8005727522139634, 1.4065222006280855, 0.050100223167642295], float)
 
     base_point = np.array([
         pivot_point[0] - (L_cmd + 0.1),
@@ -1282,7 +1283,7 @@ if __name__ == "__main__":
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
+    # start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(
@@ -1431,6 +1432,8 @@ if __name__ == "__main__":
         use_magnetic=True,
         use_contact=False,
         lumen_query=None,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
     )
 
     def theta_builder(theta):

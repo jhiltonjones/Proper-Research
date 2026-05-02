@@ -384,7 +384,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 5  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -477,7 +477,7 @@ def build_forward_model_no_lumen_effect(
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.02,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
         L_tip_full=tip_len_model,
         L_tip_min=0.01,
     )
@@ -1154,12 +1154,12 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.0161
+    L0 = 0.033
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.2),
+        pivot_point[0] - (L0 + 0.13),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -1187,7 +1187,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # print("z_offset:", hw.z_offset)
     # print("final sent pose:", np.array([*ur_pose6_next[:2], ur_pose6_next[2] + hw.z_offset, *ur_pose6_next[3:]]))
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.01)
+    # hw.send_step(p_now=p_now, u0=u0, dt=0.01)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
@@ -1631,7 +1631,7 @@ def build_forward_model(
         ex_ref=ex_ref,
         ey_ref=ey_ref,
     )
-MAG_YAW_CAL_DEG = 0
+MAG_YAW_CAL_DEG = 5
 
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
@@ -1730,7 +1730,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=17,
+        known_green_distance_mm=15,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

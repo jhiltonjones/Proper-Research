@@ -935,28 +935,28 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         L_m=float(cfg.L_m),
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
     )
-    jac_check = compare_analytic_vs_fd_jacobian(
-        forward6d=fwd_no_lumen,
-        pose6=np.asarray(cfg.test_pose6, dtype=float),
-        L_m=float(cfg.L_m),
-        dt=0.01,
-        dx=5e-3,
-        dy=5e-3,
-        dyaw=np.deg2rad(5.0),
-        dL=1e-3,
-        n_out=3,
-        results_dir=cfg.results_dir,
-        name="with_lumen_after_forward_solution",
-    )
-    # if ref_frame is not None:
-    #     meas = measure_tip_from_vision_base_local(
-    #         cfg,
-    #         base_px_ref=ref_frame["base_px_ref"],
-    #         ex_ref=ref_frame["ex_ref"],
-    #         ey_ref=ref_frame["ey_ref"],
-    #     )
-    # else:
-    #     meas = measure_tip_from_vision_base_local(cfg)
+    # jac_check = compare_analytic_vs_fd_jacobian(
+    #     forward6d=fwd_no_lumen,
+    #     pose6=np.asarray(cfg.test_pose6, dtype=float),
+    #     L_m=float(cfg.L_m),
+    #     dt=0.01,
+    #     dx=5e-3,
+    #     dy=5e-3,
+    #     dyaw=np.deg2rad(5.0),
+    #     dL=1e-3,
+    #     n_out=3,
+    #     results_dir=cfg.results_dir,
+    #     name="with_lumen_after_forward_solution",
+    # )
+    if ref_frame is not None:
+        meas = measure_tip_from_vision_base_local(
+            cfg,
+            base_px_ref=ref_frame["base_px_ref"],
+            ex_ref=ref_frame["ex_ref"],
+            ey_ref=ref_frame["ey_ref"],
+        )
+    else:
+        meas = measure_tip_from_vision_base_local(cfg)
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
 
     meas = measure_tip_from_vision_base_local(
@@ -1012,10 +1012,10 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         "meas_tip_base_local_m": meas["tip_base_local_m"].tolist(),
         "mm_per_pixel": float(meas["mm_per_pixel"]),
 
-        "jacobian_max_abs_err_state": jac_check["max_abs_err_state"],
-        "jacobian_mean_abs_err_state": jac_check["mean_abs_err_state"],
-        "jacobian_max_rel_err_state": jac_check["max_rel_err_state"],
-        "jacobian_mean_rel_err_state": jac_check["mean_rel_err_state"],
+        # "jacobian_max_abs_err_state": jac_check["max_abs_err_state"],
+        # "jacobian_mean_abs_err_state": jac_check["mean_abs_err_state"],
+        # "jacobian_max_rel_err_state": jac_check["max_rel_err_state"],
+        # "jacobian_mean_rel_err_state": jac_check["mean_rel_err_state"],
 
         **err,
     }
@@ -1279,7 +1279,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.0301
+    L0 = 0.0166
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1549,36 +1549,36 @@ def plot_single_tip_comparison_local(
         #             label="Predicted beam centerline",
         #         )
 
-    if src_local_m is not None:
-        src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
-        src_mm = 1e3 * src_local_m
+    # if src_local_m is not None:
+    #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+    #     src_mm = 1e3 * src_local_m
 
-        plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+    #     plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
 
-        plt.annotate(
-            f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
-            (src_mm[0], src_mm[1]),
-            textcoords="offset points",
-            xytext=(8, 8),
-        )
+    #     plt.annotate(
+    #         f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+    #         (src_mm[0], src_mm[1]),
+    #         textcoords="offset points",
+    #         xytext=(8, 8),
+    #     )
 
-        # optional dipole direction arrow
-        if src_dir_local is not None:
-            src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
-            dxy = src_dir_local[:2]
-            n = np.linalg.norm(dxy)
-            if n > 1e-12:
-                dxy = dxy / n
-                arrow_len_mm = 25.0
-                plt.arrow(
-                    src_mm[0],
-                    src_mm[1],
-                    arrow_len_mm * dxy[0],
-                    arrow_len_mm * dxy[1],
-                    head_width=3.0,
-                    head_length=5.0,
-                    length_includes_head=True,
-                )
+    #     # optional dipole direction arrow
+    #     if src_dir_local is not None:
+    #         src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+    #         dxy = src_dir_local[:2]
+    #         n = np.linalg.norm(dxy)
+    #         if n > 1e-12:
+    #             dxy = dxy / n
+    #             arrow_len_mm = 25.0
+    #             plt.arrow(
+    #                 src_mm[0],
+    #                 src_mm[1],
+    #                 arrow_len_mm * dxy[0],
+    #                 arrow_len_mm * dxy[1],
+    #                 head_width=3.0,
+    #                 head_length=5.0,
+    #                 length_includes_head=True,
+    #             )
 
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")
@@ -2676,47 +2676,47 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=15,
+        known_green_distance_mm=17,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",
         show_debug_vision=False,
         show_debug_model=False,
     )
-    validate_one_physical_jacobian_step(
-        hw=hw,
-        cfg=cfg,
-        dx=0.0,
-        dy=1.0e-3,          # 1 mm
-        dyaw=0.0,
-        dL=0.0,
-        dt=0.05,
-    )
-    validate_one_physical_jacobian_step(
-        hw=hw,
-        cfg=cfg,
-        dx=1.0e-3,          # 1 mm
-        dy=0.0,
-        dyaw=0.0,
-        dL=0.0,
-        dt=0.05,
-    )
-    validate_one_physical_jacobian_step(
-        hw=hw,
-        cfg=cfg,
-        dx=0.0,
-        dy=0.0,
-        dyaw=np.deg2rad(1.0),   # 1 degree
-        dL=0.0,
-        dt=0.05,
-    )
-    validate_one_physical_jacobian_step(
-        hw=hw,
-        cfg=cfg,
-        dx=0.0,
-        dy=0.0,
-        dyaw=0.0,
-        dL=0.3e-3,          # 0.3 mm
-        dt=0.05,
-    )
+    # validate_one_physical_jacobian_step(
+    #     hw=hw,
+    #     cfg=cfg,
+    #     dx=0.0,
+    #     dy=1.0e-3,          # 1 mm
+    #     dyaw=0.0,
+    #     dL=0.0,
+    #     dt=0.05,
+    # )
+    # validate_one_physical_jacobian_step(
+    #     hw=hw,
+    #     cfg=cfg,
+    #     dx=1.0e-3,          # 1 mm
+    #     dy=0.0,
+    #     dyaw=0.0,
+    #     dL=0.0,
+    #     dt=0.05,
+    # )
+    # validate_one_physical_jacobian_step(
+    #     hw=hw,
+    #     cfg=cfg,
+    #     dx=0.0,
+    #     dy=0.0,
+    #     dyaw=np.deg2rad(1.0),   # 1 degree
+    #     dL=0.0,
+    #     dt=0.05,
+    # )
+    # validate_one_physical_jacobian_step(
+    #     hw=hw,
+    #     cfg=cfg,
+    #     dx=0.0,
+    #     dy=0.0,
+    #     dyaw=0.0,
+    #     dL=0.3e-3,          # 0.3 mm
+    #     dt=0.05,
+    # )
     evaluate_single_pose(cfg)

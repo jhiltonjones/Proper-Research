@@ -365,64 +365,124 @@ import numpy as np
 # from skimage.morphology import skeletonize
 # from skimage.graph import route_through_array
 
-
-def compute_black_beam_length_px(image_gray, base_px, tip_px, threshold=100):
+def compute_marker_anchored_black_beam_length_px(
+    image_bgr,
+    ordered_pts,
+    threshold=100,
+    tube_radius_px=25,
+    bridge_radius_px=8,
+):
     """
-    Estimate curved beam length from a black beam on white background.
+    Estimate beam length using red markers as anchors and black beam pixels
+    between markers.
 
-    Parameters
-    ----------
-    image_gray : 2D ndarray
-        Grayscale image.
-    base_px, tip_px : (x, y)
-        Approximate beam endpoints.
-    threshold : int
-        Pixels darker than this are treated as beam.
+    ordered_pts:
+        array/list of marker centres in order, shape (M, 2), as (x, y).
 
-    Returns
-    -------
-    length_px : float
-        Curved centerline length in pixels.
-    skeleton : 2D bool ndarray
-        Skeletonized beam mask.
-    path_xy : ndarray shape (N, 2)
-        Ordered centerline coordinates as (x, y).
+    Strategy:
+        - threshold black beam
+        - force small disks around marker centres to be traversable
+        - restrict path search to a tube around each marker-marker chord
+        - route through black skeleton/cost between consecutive markers
+        - sum segment lengths
     """
+    import cv2
+    import numpy as np
+    from skimage.morphology import skeletonize
+    from skimage.graph import route_through_array
 
-    # 1. Segment black beam
+    ordered_pts = np.asarray(ordered_pts, float).reshape(-1, 2)
+
+    image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    # Black beam mask
     beam_mask = image_gray < threshold
-
-    # 2. Clean mask a little
     beam_mask = beam_mask.astype(np.uint8)
+
     kernel = np.ones((3, 3), np.uint8)
     beam_mask = cv2.morphologyEx(beam_mask, cv2.MORPH_CLOSE, kernel)
-    beam_mask = beam_mask.astype(bool)
 
-    # 3. Skeletonize to get one-pixel-wide centerline
-    skeleton = skeletonize(beam_mask)
+    # Important: bridge red marker holes.
+    # Add small disks around marker centres into the traversable mask.
+    H, W = beam_mask.shape
+    for x, y in ordered_pts:
+        cv2.circle(
+            beam_mask,
+            (int(round(x)), int(round(y))),
+            int(bridge_radius_px),
+            1,
+            thickness=-1,
+        )
 
-    # 4. Route along skeleton from base to tip
-    # Cost is low on skeleton, high elsewhere
-    cost = np.where(skeleton, 1.0, 1e6)
+    beam_mask_bool = beam_mask.astype(bool)
+    skeleton = skeletonize(beam_mask_bool)
 
-    start_rc = (int(round(base_px[1])), int(round(base_px[0])))  # row, col
-    end_rc = (int(round(tip_px[1])), int(round(tip_px[0])))
+    total_length_px = 0.0
+    all_path_xy = []
 
-    path_rc, _ = route_through_array(
-        cost,
-        start_rc,
-        end_rc,
-        fully_connected=True
-    )
+    yy, xx = np.mgrid[0:H, 0:W]
 
-    path_rc = np.asarray(path_rc)
-    path_xy = np.column_stack([path_rc[:, 1], path_rc[:, 0]])
+    for a, b in zip(ordered_pts[:-1], ordered_pts[1:]):
+        ax, ay = a
+        bx, by = b
 
-    # 5. Arc length of ordered path
-    diffs = np.diff(path_xy.astype(float), axis=0)
-    length_px = np.sum(np.linalg.norm(diffs, axis=1))
+        # Build a local tube around the straight segment a-b.
+        ab = np.array([bx - ax, by - ay], float)
+        ab_len = np.linalg.norm(ab)
 
-    return float(length_px), skeleton, path_xy
+        if ab_len < 1e-9:
+            continue
+
+        ab_unit = ab / ab_len
+
+        apx = xx - ax
+        apy = yy - ay
+
+        proj = apx * ab_unit[0] + apy * ab_unit[1]
+        closest_x = ax + np.clip(proj, 0.0, ab_len) * ab_unit[0]
+        closest_y = ay + np.clip(proj, 0.0, ab_len) * ab_unit[1]
+
+        dist_to_segment = np.sqrt((xx - closest_x) ** 2 + (yy - closest_y) ** 2)
+        tube = dist_to_segment <= tube_radius_px
+
+        # Cost: prefer skeleton, allow black mask, strongly discourage outside tube.
+        cost = np.full((H, W), 1e6, dtype=float)
+        cost[tube & beam_mask_bool] = 10.0
+        cost[tube & skeleton] = 1.0
+
+        # Ensure marker centre pixels are reachable.
+        start_rc = (int(round(ay)), int(round(ax)))
+        end_rc = (int(round(by)), int(round(bx)))
+
+        cv2.circle(cost, (int(round(ax)), int(round(ay))), int(bridge_radius_px), 1.0, thickness=-1)
+        cv2.circle(cost, (int(round(bx)), int(round(by))), int(bridge_radius_px), 1.0, thickness=-1)
+
+        path_rc, _ = route_through_array(
+            cost,
+            start_rc,
+            end_rc,
+            fully_connected=True,
+        )
+
+        path_rc = np.asarray(path_rc, dtype=float)
+        path_xy = np.column_stack([path_rc[:, 1], path_rc[:, 0]])
+
+        diffs = np.diff(path_xy, axis=0)
+        seg_len = float(np.sum(np.linalg.norm(diffs, axis=1)))
+
+        total_length_px += seg_len
+
+        if len(all_path_xy) == 0:
+            all_path_xy.append(path_xy)
+        else:
+            all_path_xy.append(path_xy[1:])
+
+    if len(all_path_xy) > 0:
+        full_path_xy = np.vstack(all_path_xy)
+    else:
+        full_path_xy = ordered_pts.copy()
+
+    return total_length_px, skeleton, full_path_xy
 def draw_beam_and_vessel_overlay(
     image_bgr,
     beam_points_px,
@@ -438,21 +498,21 @@ def draw_beam_and_vessel_overlay(
 ):
     vis = image_bgr.copy()
 
-    # # draw vessel boundaries
-    # for x, y in left_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
+    # draw vessel boundaries
+    for x, y in left_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 255, 0), -1)
 
-    # for x, y in right_boundary_px:
-    #     cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
-    # # if red_area is not None:
-    # #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
+    for x, y in right_boundary_px:
+        cv2.circle(vis, (int(round(x)), int(round(y))), 1, (0, 0, 255), -1)
+    # if red_area is not None:
+    #     draw_area_overlay(vis, red_area, color=(0, 255, 255), thickness=2)
 
-    # if blue_area is not None:
-    #     draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
-    # # draw beam centerline
-    # # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
-    # # for i in range(len(beam_int) - 1):
-    # #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
+    if blue_area is not None:
+        draw_area_overlay(vis, blue_area, color=(255, 255, 0), thickness=2)
+    # draw beam centerline
+    # beam_int = [(int(round(x)), int(round(y))) for x, y in beam_points_px]
+    # for i in range(len(beam_int) - 1):
+    #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
     # draw markers
     if markers is not None:
@@ -1002,7 +1062,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=15)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=17)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -1082,8 +1142,34 @@ def reconstruct_beam_within_vessel(
 
     image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         # --- beam reconstruction ---
-    beam_points_px, ordered_pts = beam_polyline_from_markers(markers, n_samples_per_segment=40)
-    beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
+    # Original marker-ordered polyline, still useful as a fallback/debug path.
+    beam_points_marker_px, ordered_pts = beam_polyline_from_markers(
+        markers,
+        n_samples_per_segment=40,
+    )
+
+    ordered_pts = np.asarray(ordered_pts, float)
+
+    beam_length_px, skeleton, beam_path_px = compute_marker_anchored_black_beam_length_px(
+        image_bgr=image_bgr,
+        ordered_pts=ordered_pts,
+        threshold=100,
+        tube_radius_px=25,
+        bridge_radius_px=8,
+    )
+
+    # Use the routed black-beam path as the beam centreline downstream.
+    beam_points_px = np.asarray(beam_path_px, float)
+
+    # Fallback if route failed or returned too few points.
+    if beam_points_px.ndim != 2 or beam_points_px.shape[0] < 2 or beam_points_px.shape[1] != 2:
+        print("[WARN] black-beam routed path failed; falling back to marker polyline")
+        beam_points_px = np.asarray(beam_points_marker_px, float)
+        beam_length_px = compute_beam_length_from_ordered_pts(ordered_pts)
+
+    beam_length_mm = beam_length_px * mm_per_pixel
+    beam_coeffs = None
+    beam_degree = None
     # beam_length_mm = beam_length_px * mm_per_pixel
     # beam_length_px, skeleton, beam_path_px = compute_black_beam_length_px(
     #     image_gray,
@@ -1386,7 +1472,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=15):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=17):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 

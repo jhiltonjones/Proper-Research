@@ -643,12 +643,12 @@ def plot_reference_debug(
             if X_pred.ndim == 2 and X_pred.shape[1] >= 2 and np.all(np.isfinite(X_pred[:, :2])):
                 ax.plot(X_pred[:, 0], X_pred[:, 1], "o-.", label="predicted tip")
                 ax.plot(X_pred[0, 0], X_pred[0, 1], "D", markersize=8, label="predicted tip[0]")
-                if X_pred.shape[1] >= 6:
-                    ax.arrow(
-                        X_pred[0, 0], X_pred[0, 1],
-                        0.005 * X_pred[0, 3], 0.005 * X_pred[0, 4],
-                        head_width=0.0001, length_includes_head=True
-                    )
+                # if X_pred.shape[1] >= 6:
+                #     ax.arrow(
+                #         X_pred[0, 0], X_pred[0, 1],
+                #         0.005 * X_pred[0, 3], 0.005 * X_pred[0, 4],
+                #         head_width=0.0001, length_includes_head=True
+                #     )
 
         X_nom_last = info.get("X_nom_last", None)
         if X_nom_last is not None:
@@ -830,7 +830,7 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        # self.w_adv = .5    # start tiny (1e-5 .. 1e-3)
+        # self.w_adv = .4   # start tiny (1e-5 .. 1e-3)
         self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
@@ -847,7 +847,7 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.12
+        self.mag_center_standoff_m = 0.13
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1468,12 +1468,12 @@ class mpc_controller_tipxy_LTI:
                 np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i_prog, :2], float)
             )
 
-            if err_to_center > 0.001:
-                target_start = i_prog
-            else:
-                advance = int(getattr(self, "ref_lookahead_pts", 2))
-                max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
-                target_start = min(i_prog + min(advance, max_adv), M - 1)
+            # if err_to_center > 0.001:
+            #     target_start = i_prog
+            # else:
+            advance = int(getattr(self, "ref_lookahead_pts", 2))
+            max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
+            target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
             ref_ahead = int(getattr(self, "ref_ahead_pts", 3))
@@ -1854,7 +1854,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.11))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -3120,7 +3120,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.01514
+    L0 = 0.01652
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3148,7 +3148,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
@@ -3360,7 +3360,7 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=8,
+        Np=6,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -3466,7 +3466,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 8
+    mpc_replan_every = 6
 
 
 
@@ -3689,10 +3689,27 @@ def run_control(
         if hw is not None:
             robot_pose6 = hw.get_robot_pose_once()
 
-            if L_est is None:
-                L_est = float(vision_result["beam_length_mm"]) / 1000.0
+            L_model = float(mpc.p[7])
+            L_vision_raw = float(vision_result["beam_length_mm"]) / 1000.0
+
+            # Reject impossible vision lengths.
+            if not np.isfinite(L_vision_raw) or L_vision_raw < 0.005 or L_vision_raw > 0.08:
+                L_est = L_model
+                L_source = "model_only_bad_vision"
             else:
-                L_est = float(mpc.p[7])
+                max_correction_per_frame = 0.0003  # 0.3 mm
+                alpha_L = 0.5
+
+                L_err = L_vision_raw - L_model
+                L_err_clipped = np.clip(
+                    L_err,
+                    -max_correction_per_frame,
+                    +max_correction_per_frame,
+                )
+
+                L_est = L_model + alpha_L * L_err_clipped
+                L_est = float(np.clip(L_est, 0.01, 0.05))
+                L_source = "model_plus_limited_vision"
 
             p_meas8 = build_measured_p8_from_pose6_and_length(
                 robot_pose6,
@@ -3706,7 +3723,10 @@ def run_control(
             mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
 
             print("[MEAS P] robot_pose6 =", robot_pose6)
-            print("[MEAS P] L_est =", L_est)
+            print("[MEAS P] L_model  [mm] =", 1e3 * L_model)
+            print("[MEAS P] L_vision [mm] =", 1e3 * L_vision_raw)
+            print("[MEAS P] L_est    [mm] =", 1e3 * L_est)
+            print("[MEAS P] L_source =", L_source)
             print("[MEAS P] p_meas8 =", p_meas8)
 
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)

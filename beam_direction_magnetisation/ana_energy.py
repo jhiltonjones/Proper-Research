@@ -20,45 +20,26 @@ beam_params = default_beam_params()
 mag_params = default_magnet_params()
 L_tip_full = 0.04
 def energy_min_tip_jacobian_implicit(
-
     *,
-
     u_opt,
-
     p0, q0,
-
     L,
-
     wire_len,
-
     Kinv_fun,
-
     u_star,
-
     r_src,
-
     m_src,
-
     m_local_fun,
-
     m_moment,
-
     N,
-
     theta_builder,
-
     energy_grad_fun,
-
     lumen_query=None,
-
     contact=None,
-
+    debug_jac=False,              # <-- add this
     debug_hessian_terms=False,
-
     eps_theta=1e-6,
-
     eps_hess=1e-6,
-
 ):
 
     contact = contact or ContactParams()
@@ -148,11 +129,12 @@ def energy_min_tip_jacobian_implicit(
     g0 = energy_grad_fun(u_opt, theta0)
 
     H = np.zeros((n_u, n_u), dtype=float)
-    print("\n--- IMPLICIT JAC STATIONARITY ---")
-    print("||g0|| =", np.linalg.norm(g0))
-    print("max |g0| =", np.max(np.abs(g0)))
-    print("mean |g0| =", np.mean(np.abs(g0)))
-    print("||u_opt|| =", np.linalg.norm(u_opt))
+    if debug_jac:
+        print("\n--- IMPLICIT JAC STATIONARITY ---")
+        print("||g0|| =", np.linalg.norm(g0))
+        print("max |g0| =", np.max(np.abs(g0)))
+        print("mean |g0| =", np.mean(np.abs(g0)))
+        print("||u_opt|| =", np.linalg.norm(u_opt))
 
     for k in range(n_u):
         up = u_opt.copy()
@@ -167,13 +149,18 @@ def energy_min_tip_jacobian_implicit(
 
     # regularise very lightly for numerical safety
     H_reg = H + 1e-10 * np.eye(n_u)
-    print("\n--- HESSIAN DIAGNOSTIC ---")
-    print("||H|| =", np.linalg.norm(H))
-    print("cond(H_reg) =", np.linalg.cond(H_reg))
-    print("min/max eig sym(H) =",
-        np.min(np.linalg.eigvalsh(0.5 * (H + H.T))),
-        np.max(np.linalg.eigvalsh(0.5 * (H + H.T))))
-    print("H asymmetry =", np.linalg.norm(H - H.T) / (np.linalg.norm(H) + 1e-12))
+
+    if debug_jac:
+        H_sym_dbg = 0.5 * (H + H.T)
+        print("\n--- HESSIAN DIAGNOSTIC ---")
+        print("||H|| =", np.linalg.norm(H))
+        print("cond(H_reg) =", np.linalg.cond(H_reg))
+        print(
+            "min/max eig sym(H) =",
+            np.min(np.linalg.eigvalsh(H_sym_dbg)),
+            np.max(np.linalg.eigvalsh(H_sym_dbg)),
+        )
+        print("H asymmetry =", np.linalg.norm(H - H.T) / (np.linalg.norm(H) + 1e-12))
     # -------------------------------------------------
     # Gtheta = d/dtheta grad_u E
     # -------------------------------------------------
@@ -252,8 +239,9 @@ def energy_min_tip_jacobian_implicit(
 
     P_theta_direct[:, -1] = (p_plus - p_minus) / (2.0 * eps_L_direct)
 
-    print("tangent direct L approx =", t_tip)
-    print("FD fixed-u direct L     =", P_theta_direct[:, -1])
+    if debug_jac:
+        print("tangent direct L approx =", t_tip)
+        print("FD fixed-u direct L     =", P_theta_direct[:, -1])
     J_tip_theta = P_u @ du_dtheta + P_theta_direct
     J_implicit = P_u @ du_dtheta
 
@@ -261,25 +249,17 @@ def energy_min_tip_jacobian_implicit(
 
     J_tip_theta = J_implicit + J_direct
 
-    print("\n--- ANALYTIC J L BREAKDOWN ---")
-
-    print("direct L term:")
-
-    print(J_direct[:, -1])
-
-    print("implicit L term:")
-
-    print(J_implicit[:, -1])
-
-    print("total L term:")
-
-    print(J_tip_theta[:, -1])
-
-    print("||Gtheta_L|| =", np.linalg.norm(Gtheta[:, -1]))
-
-    print("||du_dtheta_L|| =", np.linalg.norm(du_dtheta[:, -1]))
-
-    print("||P_u|| =", np.linalg.norm(P_u))
+    if debug_jac:
+        print("\n--- ANALYTIC J L BREAKDOWN ---")
+        print("direct L term:")
+        print(J_direct[:, -1])
+        print("implicit L term:")
+        print(J_implicit[:, -1])
+        print("total L term:")
+        print(J_tip_theta[:, -1])
+        print("||Gtheta_L|| =", np.linalg.norm(Gtheta[:, -1]))
+        print("||du_dtheta_L|| =", np.linalg.norm(du_dtheta[:, -1]))
+        print("||P_u|| =", np.linalg.norm(P_u))
 
     return J_tip_theta, dict(
         H=H,

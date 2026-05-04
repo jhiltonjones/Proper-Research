@@ -7,7 +7,7 @@ from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from beam_direction_magnetisation.post_processing.post_processing import quat_wxyz_to_R
 from scipy.spatial.transform import Rotation as Rot
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithAnalyticJac ,EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
+from proper_research.simulation.boundary_forward_model import ContactParams,EnergyMinForwardWithAnalyticJac ,EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
 from beam_direction_magnetisation.post_processing.debug import closest_point_polyline
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, load_polygon
 from proper_research.vision.measure_length import new_capture
@@ -600,12 +600,12 @@ def plot_reference_debug(
     # ax.plot(C[i_ref, 0], C[i_ref, 1], "s", markersize=8, label="i_ref")
     ax.plot(C[idx_ref, 0], C[idx_ref, 1], "x--", label="plotted MPC ref indices")
 
-    if len(x_meas) >= 6:
-        ax.arrow(
-            x_meas[0], x_meas[1],
-            0.005 * x_meas[3], 0.005 * x_meas[4],
-            head_width=0.0001, length_includes_head=True
-        )
+    # if len(x_meas) >= 6:
+    #     ax.arrow(
+    #         x_meas[0], x_meas[1],
+    #         0.005 * x_meas[3], 0.005 * x_meas[4],
+    #         head_width=0.0001, length_includes_head=True
+    #     )
     if info is not None:
         # MPC tracking reference actually used in QP
         mpc_debug = info.get("mpc_debug", None)
@@ -832,8 +832,8 @@ class mpc_controller_tipxy_LTI:
         self.risk_window = 120          # how far ahead to search on centerline for predicted mapping
         self.theta_crit_deg = 40.0
         # --- NEW: contact-based reweighting (only active near wall) ---
-        self.w_adv = .5    # start tiny (1e-5 .. 1e-3)
-        # self.w_adv = 0
+        # self.w_adv = .5    # start tiny (1e-5 .. 1e-3)
+        self.w_adv = 0
         # baseline multipliers (keep 1.0 unless you want global scaling)
         self.w_adv_base = float(self.w_adv)
         self.w_adv_eff = float(self.w_adv)   # can be overridden per-step
@@ -849,7 +849,7 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.14
+        self.mag_center_standoff_m = 0.12
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -924,9 +924,9 @@ class mpc_controller_tipxy_LTI:
             # print("[BUILD] after Jxy_fn, J0 shape =", J0.shape)
             J0 = np.asarray(self.Jxy_fn(p0), float).copy()
 
-            jac_gain_pos = float(getattr(self, "jac_gain_pos", 0.6))
+            jac_gain_pos = float(getattr(self, "jac_gain_pos", 1.0))
             jac_gain_tan = float(getattr(self, "jac_gain_tan", 1.0))
-            jac_gain_L = float(getattr(self, "jac_gain_tan", 0.5))
+            jac_gain_L = float(getattr(self, "jac_gain_tan", 1.0))
             J0[0:3, :] *= jac_gain_pos
             J0[0:3, 6] *= jac_gain_L
             if J0.shape[0] >= 6:
@@ -1447,12 +1447,12 @@ class mpc_controller_tipxy_LTI:
                 np.asarray(x_meas[:2], float) - np.asarray(self.lumen_C[i_prog, :2], float)
             )
 
-            # if err_to_center > 0.004:
-            #     target_start = i_prog
-            # else:
-            advance = int(getattr(self, "ref_lookahead_pts", 2))
-            max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
-            target_start = min(i_prog + min(advance, max_adv), M - 1)
+            if err_to_center > 0.001:
+                target_start = i_prog
+            else:
+                advance = int(getattr(self, "ref_lookahead_pts", 2))
+                max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
+                target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
             ref_ahead = int(getattr(self, "ref_ahead_pts", 3))
@@ -1833,7 +1833,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.13))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.1))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -2984,18 +2984,27 @@ def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):
     J_full[:, 5] = J_red[:, 2]   # yaw about z
     J_full[:, 6] = J_red[:, 3]   # insertion
     return J_full
-def analytic_J_robot_xy_yaw_dL(p8, forward_model, n_out=6):
+def analytic_J_robot_xy_yaw_dL(
+    p8,
+    forward6d,
+    n_out=6,
+    debug_jac=False,
+):
     p8 = np.asarray(p8, float).reshape(8,)
 
-    if hasattr(forward_model, "fwd"):
-        fm = forward_model.fwd
+    if hasattr(forward6d, "fwd"):
+        fm = forward6d.fwd
     else:
-        fm = forward_model
+        fm = forward6d
 
     p7 = pose8_quat_to_pose7_rotvec(p8)
 
     # Do NOT solve here. Caller must already have called wrapper(p8, commit=True).
-    J_tip_7 = fm.jacobian_tip_pose7_from_cache(p7)
+    J_tip_7 = fm.jacobian_tip_pose7_from_cache(
+        p7,
+        debug_jac=debug_jac,
+        debug_hessian_terms=False,
+    )
 
     J = np.zeros((n_out, 4), dtype=float)
     J[0:3, 0] = J_tip_7[:, 0]   # robot x
@@ -3090,7 +3099,7 @@ def analytic_J_robot_xy_yaw_dL(p8, forward_model, n_out=6):
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.015
+    L0 = 0.01514
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3118,7 +3127,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
     u0 = np.zeros(7, dtype=float)
-    hw.send_step(p_now=p_now, u0=u0, dt=0.1)
+    # hw.send_step(p_now=p_now, u0=u0, dt=0.1)
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
@@ -3134,7 +3143,85 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
 
+def hybrid_J_robot_xy_yaw_dL(
+    *,
+    p8,
+    fwd_analytic,
+    fwd_fd,
+    n_out=6,
+    dyaw_fd=np.deg2rad(1.0),
+    dL_fd=1e-3,
+    use_fd_yaw=True,
+    use_fd_L=True,
+    yaw_sign=1.0,
+    dx_sign=1.0,
+    dy_sign=1.0,
+    debug_jac=False,
+):
+    """
+    Hybrid reduced Jacobian wrt [x, y, yaw_z, L].
 
+    Columns:
+      0: dx
+      1: dy
+      2: yaw_z
+      3: dL
+
+    Uses analytic dx/dy, and optionally FD yaw/L.
+    fwd_analytic and fwd_fd must be independent wrapper copies.
+    """
+
+    p8 = np.asarray(p8, float).reshape(8,)
+
+    # Make sure analytic object has nominal cache.
+    _ = np.asarray(fwd_analytic(p8, commit=True), float).reshape(-1)[:n_out]
+
+    J = analytic_J_robot_xy_yaw_dL(
+        p8,
+        fwd_analytic,
+        n_out=n_out,
+        debug_jac=debug_jac,
+    )
+
+    J = np.asarray(J, float)[:n_out, :4]
+
+    # Apply known physical/model sign conventions for translational columns.
+    J[:, 0] *= float(dx_sign)
+    J[:, 1] *= float(dy_sign)
+
+    # Prepare FD branch from the same nominal pose.
+    _ = np.asarray(fwd_fd(p8, commit=True), float).reshape(-1)[:n_out]
+
+    if use_fd_yaw:
+        p_plus = p8.copy()
+        p_minus = p8.copy()
+
+        q = quat_wxyz_normalize(p8[3:7])
+
+        dq_plus = quat_from_yaw_wxyz(+float(yaw_sign) * dyaw_fd)
+        dq_minus = quat_from_yaw_wxyz(-float(yaw_sign) * dyaw_fd)
+
+        p_plus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dq_plus, q))
+        p_minus[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dq_minus, q))
+
+        y_plus = np.asarray(fwd_fd(p_plus, commit=False), float).reshape(-1)[:n_out]
+        y_minus = np.asarray(fwd_fd(p_minus, commit=False), float).reshape(-1)[:n_out]
+
+        J[:, 2] = (y_plus - y_minus) / (2.0 * dyaw_fd)
+
+    if use_fd_L:
+        p_plus = p8.copy()
+        p_minus = p8.copy()
+
+        p_plus[7] += dL_fd
+        p_minus[7] -= dL_fd
+
+        y_plus = np.asarray(fwd_fd(p_plus, commit=False), float).reshape(-1)[:n_out]
+        y_minus = np.asarray(fwd_fd(p_minus, commit=False), float).reshape(-1)[:n_out]
+
+        J[:, 3] = (y_plus - y_minus) / (2.0 * dL_fd)
+
+    return J
 
 
 def build_controller(
@@ -3145,107 +3232,118 @@ def build_controller(
     lumen_C,
     lumen_R,
 ):
-    start_point_pose6 = start_point
+    start_point_pose6 = np.asarray(start_point, float).reshape(6,)
+
     p0_pose7 = np.array([
-        start_point_pose6[0], start_point_pose6[1], start_point_pose6[2],
-        start_point_pose6[3], start_point_pose6[4], start_point_pose6[5], L0
+        start_point_pose6[0],
+        start_point_pose6[1],
+        start_point_pose6[2],
+        start_point_pose6[3],
+        start_point_pose6[4],
+        start_point_pose6[5],
+        L0,
     ], dtype=float)
 
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)
 
-    p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, 0.01])
-    p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.05])
-
-    w_u = np.array([1e-5, 1e-5, 1e-4, 5e-1, 5e-1, 1e-6, 1e-4], dtype=float)
-    w_du = np.array([1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8, 1e-8], dtype=float)
-
-    u_max = np.array([1, 1, 1, np.deg2rad(60), np.deg2rad(60), np.deg2rad(360), 0.1], dtype=float)
-
-    dr = 5e-3
-    dtheta = np.deg2rad(50.0)
-    dL = 1e-3
-
-    eps_u = np.array([
-        dr / dt, dr / dt, dr / dt,
-        dtheta / dt, dtheta / dt, dtheta / dt,
-        dL / dt
+    p_min = np.array([
+        0.2,
+        -1.0,
+        start_point_pose6[2],
+        -np.inf,
+        -np.inf,
+        -np.inf,
+        -np.inf,
+        0.01,
     ], dtype=float)
 
+    p_max = np.array([
+        start_point_pose6[0] + 0.5,
+        1.5,
+        start_point_pose6[2],
+        np.inf,
+        np.inf,
+        np.inf,
+        np.inf,
+        0.05,
+    ], dtype=float)
+
+    w_u = np.array([
+        1e-5,   # vx
+        1e-5,   # vy
+        1e-4,   # vz
+        5e-1,   # wx
+        5e-1,   # wy
+        1e-6,   # wz
+        1e-4,   # vL
+    ], dtype=float)
+
+    w_du = np.array([1e-8] * 7, dtype=float)
+
+    u_max = np.array([
+        1.0,
+        1.0,
+        1.0,
+        np.deg2rad(60),
+        np.deg2rad(60),
+        np.deg2rad(360),
+        0.1,
+    ], dtype=float)
+
+    # Prediction model used by MPC rollout.
     forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
     def J_fn(p8):
-        forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+        p8 = np.asarray(p8, float).reshape(8,)
 
-        # print("[J_FN] before nominal solve")
-        y = forward6d_jac(p8, commit=True)
-        # print("[J_FN] y =", y)
+        # Independent wrappers:
+        # - fwd_analytic holds the nominal cache for analytic dx/dy.
+        # - fwd_fd is used for finite-difference yaw/L.
+        fwd_analytic = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+        fwd_fd = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
-        # print("[J_FN] fwd.last_info is None =", forward6d_jac.fwd.last_info is None)
-        if forward6d_jac.fwd.last_info is not None:
-            print("[J_FN] last_info keys =", forward6d_jac.fwd.last_info.keys())
-
-        Jred_state = analytic_J_robot_xy_yaw_dL(
-            p8,
-            forward6d_jac,
+        Jred_state = hybrid_J_robot_xy_yaw_dL(
+            p8=p8,
+            fwd_analytic=fwd_analytic,
+            fwd_fd=fwd_fd,
             n_out=6,
+            dyaw_fd=np.deg2rad(1.0),
+            dL_fd=1e-3,
+            use_fd_yaw=True,
+            use_fd_L=True,
+            yaw_sign=-1.0,
+            dx_sign=1.0,
+            dy_sign=1.0,
+            debug_jac=False,
         )
 
-        # print("[J_FN] Jred_state shape =", np.shape(Jred_state))
+        # State Jacobian:
+        #   dy/d[x, y, yaw_z, L]
+        #
+        # Control convention:
+        #   dx    = vx * dt
+        #   dy    = vy * dt
+        #   dyaw  = wz * dt
+        #   dL    = vL * dt
+        Jred_control = np.asarray(Jred_state, float).copy()
+        Jred_control *= float(dt)
 
-        Jred_control = Jred_state.copy()
-        Jred_control[:, 0] *= dt
-        Jred_control[:, 1] *= dt
-        Jred_control[:, 2] *= dt
-        Jred_control[:, 3] *= dt
+        Jfull = J_full_from_robot_reduced_tip_tangent(
+            Jred_control,
+            n_out_full=6,
+        )
 
-        Jfull = J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
-        # print("[J_FN] Jfull shape =", np.shape(Jfull))
         return Jfull
-    # forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
-    # def J_fn(p8):
-    #     forward6d_jac = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
-    #     Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
-    #         p8,
-    #         forward6d_jac,
-    #         dx=1e-2,
-    #         dy=1e-2,
-    #         dyaw=3e-1,
-    #         dL=1e-3,
-    #         n_out=6,
-    #     )
-    #     Jred_control = Jred_state.copy()
-    #     Jred_control[:, 0] *= dt
-    #     Jred_control[:, 1] *= dt
-    #     Jred_control[:, 2] *= dt
-    #     Jred_control[:, 3] *= dt
-    #     return J_full_from_robot_reduced_tip_tangent(Jred_control, n_out_full=6)
-    # mpc = mpc_controller_tipxy_LTI(
-    #     Jxy_fn=J_fn,
-    #     forward_tip_fn=forward6d_pred,
-    #     dt=dt,
-    #     Np=1,
-    #     n_out=6,
-    #     n_u=7,
-    #     n_p=8,
-    #     w_xy=(3000.0, 3000.0, 0.0, 0.0, 0.0, 0.0),
-    #     w_u=w_u,
-    #     w_du=w_du,
-    #     model_mode="lti",
-    #     u_max=u_max,
-    #     p_min=p_min,
-    #     p_max=p_max,
-    #     N_sqp=1,
-    # )
     mpc = mpc_controller_tipxy_LTI(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=1,
+        Np=5,
         n_out=6,
         n_u=7,
         n_p=8,
-        w_xy=(10.0, 10.0, 0.0, 0.0, 0.0, 0.0),
+        w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
         model_mode="lti",
@@ -3254,26 +3352,30 @@ def build_controller(
         p_max=p_max,
         N_sqp=1,
     )
+
     mpc.R = np.diag([1e-3] * 7)
     mpc.Rd = np.diag([1e-4] * 7)
 
     mpc.enable_mag_center_standoff = True
     mpc.enable_mag_tangent_inline = True
-    mpc.enable_dipole_align = True
+    mpc.enable_dipole_align = False
     mpc.enable_hard_epm_tip_clearance = True
+
     mpc.enable_standoff_soft = False
     mpc.enable_inline_soft = False
-    mpc.enable_dipole_soft = True
+    mpc.enable_dipole_soft = False
     mpc.enable_hard_theta = False
     mpc.enable_tangent_penalty = False
-    mpc.jac_gain_pos = 0.8
+
+    mpc.jac_gain_pos = 1.0
     mpc.jac_gain_tan = 1.0
+
     mpc.lumen_C = np.asarray(lumen_C, float)
     mpc.lumen_R = np.asarray(lumen_R, float)
-    mpc.set_initial_params(p0)
-    # print(f"Finished building controller")
-    return mpc, p0, p_min, p_max, u_max, forward6d_pred
 
+    mpc.set_initial_params(p0)
+
+    return mpc, p0, p_min, p_max, u_max, forward6d_pred
 
 
 def transform_local_points_to_robot(
@@ -3331,7 +3433,7 @@ def run_control(
     plot_dir="mpc_debug_plots",
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
-    csv_log_path="control_run_log_test_run_track_day3wobc60_inline_centreline_wadv.csv",
+    csv_log_path="control_run_log_test_run_testing.csv",
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3343,7 +3445,10 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 1
+    mpc_replan_every = 5
+
+
+
     for k in range(max_steps):
         print(f"\n================ CONTROL STEP {k} ================")
 
@@ -3358,7 +3463,7 @@ def run_control(
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=show,
-            save_overlay_path=f"debug_outputs_run_track_day3wobc60_inline_centreline_wadv/reconstruction_overlay_step_{k:04d}.png",
+            save_overlay_path=f"debug_outputs_run_track_dtesting/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
@@ -3395,6 +3500,41 @@ def run_control(
         meas_tan = np.asarray(x_meas[3:6], dtype=float)
         # x_meas = np.asarray(x_meas, dtype=float).reshape(-1)
         # print("same tip x_meas:", x_meas[:3])
+
+        jac_row = {
+            "jac_prev_step": np.nan,
+
+            "jac_dx_pred_x": np.nan,
+            "jac_dx_pred_y": np.nan,
+            "jac_dx_pred_z": np.nan,
+
+            "jac_dx_real_x": np.nan,
+            "jac_dx_real_y": np.nan,
+            "jac_dx_real_z": np.nan,
+
+            "jac_dx_pred_x_mm": np.nan,
+            "jac_dx_pred_y_mm": np.nan,
+            "jac_dx_pred_z_mm": np.nan,
+
+            "jac_dx_real_x_mm": np.nan,
+            "jac_dx_real_y_mm": np.nan,
+            "jac_dx_real_z_mm": np.nan,
+
+            "jac_pred_xy_mm": np.nan,
+            "jac_real_xy_mm": np.nan,
+            "jac_gain_real_over_pred": np.nan,
+            "jac_cos_xy": np.nan,
+
+            "jac_err_x_mm": np.nan,
+            "jac_err_y_mm": np.nan,
+            "jac_err_z_mm": np.nan,
+            "jac_err_xy_mm": np.nan,
+            "jac_err_xyz_mm": np.nan,
+
+            "jac_interpretation": "",
+        }
+
+
         if prev_jac_test is not None:
             x_prev = prev_jac_test["x_meas"]
             u_prev = prev_jac_test["u0"]
@@ -3411,7 +3551,49 @@ def run_control(
             cos_xy = np.dot(dx_pred[:2], dx_real[:2]) / (
                 pred_xy * real_xy + 1e-12
             )
+            dx_jac_err = dx_real[:3] - dx_pred[:3]
 
+            if cos_xy > 0.7 and gain_real_over_pred < 0.8:
+                jac_interpretation = "direction_ok_jac_too_sensitive"
+            elif cos_xy > 0.7 and gain_real_over_pred > 1.2:
+                jac_interpretation = "direction_ok_jac_not_sensitive_enough"
+            elif cos_xy < 0.0:
+                jac_interpretation = "sign_or_frame_problem"
+            else:
+                jac_interpretation = "mixed_noise_backlash_delay_or_constraints"
+
+            jac_row.update({
+                "jac_prev_step": int(prev_jac_test["k"]),
+
+                "jac_dx_pred_x": float(dx_pred[0]),
+                "jac_dx_pred_y": float(dx_pred[1]),
+                "jac_dx_pred_z": float(dx_pred[2]),
+
+                "jac_dx_real_x": float(dx_real[0]),
+                "jac_dx_real_y": float(dx_real[1]),
+                "jac_dx_real_z": float(dx_real[2]),
+
+                "jac_dx_pred_x_mm": float(1000.0 * dx_pred[0]),
+                "jac_dx_pred_y_mm": float(1000.0 * dx_pred[1]),
+                "jac_dx_pred_z_mm": float(1000.0 * dx_pred[2]),
+
+                "jac_dx_real_x_mm": float(1000.0 * dx_real[0]),
+                "jac_dx_real_y_mm": float(1000.0 * dx_real[1]),
+                "jac_dx_real_z_mm": float(1000.0 * dx_real[2]),
+
+                "jac_pred_xy_mm": float(1000.0 * pred_xy),
+                "jac_real_xy_mm": float(1000.0 * real_xy),
+                "jac_gain_real_over_pred": float(gain_real_over_pred),
+                "jac_cos_xy": float(cos_xy),
+
+                "jac_err_x_mm": float(1000.0 * dx_jac_err[0]),
+                "jac_err_y_mm": float(1000.0 * dx_jac_err[1]),
+                "jac_err_z_mm": float(1000.0 * dx_jac_err[2]),
+                "jac_err_xy_mm": float(1000.0 * np.linalg.norm(dx_jac_err[:2])),
+                "jac_err_xyz_mm": float(1000.0 * np.linalg.norm(dx_jac_err[:3])),
+
+                "jac_interpretation": jac_interpretation,
+            })
             print("[JAC SENSITIVITY TEST]")
             print("prev step =", prev_jac_test["k"])
             print("dx_pred xyz [mm] =", 1000.0 * dx_pred)
@@ -3421,14 +3603,7 @@ def run_control(
             print("gain real/pred =", gain_real_over_pred)
             print("cos direction xy =", cos_xy)
 
-            if cos_xy > 0.7 and gain_real_over_pred < 0.8:
-                print("[JAC INTERPRETATION] Direction is reasonable, but Jacobian is too sensitive.")
-            elif cos_xy > 0.7 and gain_real_over_pred > 1.2:
-                print("[JAC INTERPRETATION] Direction is reasonable, but Jacobian is not sensitive enough.")
-            elif cos_xy < 0.0:
-                print("[JAC INTERPRETATION] Direction/sign/frame problem likely.")
-            else:
-                print("[JAC INTERPRETATION] Mixed result: check noise, backlash, delay, or constraints.")
+            print("[JAC INTERPRETATION]", jac_interpretation)
         if prev_ref_xyz is not None:
             actual_err_to_prev_ref_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
             pred_err_to_prev_ref_xy = np.linalg.norm(prev_pred_xyz[:2] - prev_ref_xyz[:2])
@@ -3512,61 +3687,7 @@ def run_control(
             print("[MEAS P] robot_pose6 =", robot_pose6)
             print("[MEAS P] L_est =", L_est)
             print("[MEAS P] p_meas8 =", p_meas8)
-    # if hw is not None:
-    #     robot_pose6 = hw.get_robot_pose_once()
 
-    #     if L_est is None:
-    #         # Initialize from measured tip position, not vision beam length
-    #         L_est = estimate_length_from_tip_position(
-    #             x_meas=x_meas,
-    #             pivot_point=pivot_point,
-    #         )
-    #     else:
-    #         # After first step, continue with commanded/internal MPC length
-    #         L_est = float(mpc.p[7])
-
-    #     L_est = float(np.clip(L_est, 0.010, 0.050))
-
-    #     p_meas8 = build_measured_p8_from_pose6_and_length(
-    #         robot_pose6,
-    #         L_est,
-    #         z_offset=hw.z_offset,
-    #     )
-
-    #     mpc.set_measured_params(p_meas8)
-
-    #     mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
-    #     mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
-
-    #     print("[MEAS P] robot_pose6 =", robot_pose6)
-    #     print("[MEAS P] L_est =", L_est)
-    #     print("[MEAS P] p_meas8 =", p_meas8)
-        # if hw is not None:
-        #     L_meas = float(vision_result["beam_length_mm"]) / 1000.0
-        #     # L_meas += 0.007
-        #     robot_pose6 = hw.get_robot_pose_once()
-        #     p_meas8 = build_measured_p8_from_pose6_and_length(
-        #         robot_pose6,
-        #         L_meas,
-        #         z_offset=hw.z_offset,
-        #     )
-        #     mpc.set_measured_params(p_meas8)
-        #     mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
-        #     mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
-
-        #     print("[MEAS P] robot pose6 =", robot_pose6)
-        #     print("[MEAS P] L_meas =", L_meas)
-        #     print("[MEAS P] p_meas8 =", p_meas8)
-
-
-            # mpc.set_measured_params(p_meas8)
-
-            # mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
-            # mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
-
-            # print("[MEAS P] robot pose6 =", robot_pose6)
-            # print("[MEAS P] L_est =", L_est)
-            # print("[MEAS P] p_meas8 =", p_meas8)
         plot_reference_debug_simple(mpc, x_meas, n_ref=10)
         
         # p_now, x_now, info = mpc.step(x_meas=x_meas)
@@ -3820,6 +3941,7 @@ def run_control(
             "beam_left_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"]),
             "beam_right_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"]),
         }
+        row.update(jac_row)
         csv_rows.append(row)
 
         # write CSV each step so you do not lose data if run stops
@@ -4007,6 +4129,16 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         bend_soft=1.0,
         tors_soft=1.0,
     )
+    contact = ContactParams(
+        r_beam=beam_params.r,
+        k=1e8,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        smooth=True,
+        smooth_eps=1e-5,
+        window=3,
+    )
+
     forward_model = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
@@ -4018,10 +4150,12 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         N_nodes=10,
         maxiter=30,
         L0_init=0.01,
-        dL_internal=0.02,
+        dL_internal=0.04,
         use_lumen_jac=True,
-        L_tip_full=L_tip_full_physical,
+        L_tip_full=0.04,
         L_tip_min=0.01,
+        contact_params=contact,
+        use_fast_contact_grad=False,
     )
     # forward_model = EnergyMinForwardWithLumen(
     #     p0_ur=p0_ur,
@@ -4154,7 +4288,7 @@ if __name__ == "__main__":
             send_commands=True,
             hw=hw,
             save_plots=True,
-            plot_dir="mpc_run_track_day2wbc60_inline_centreline_wdv",
+            plot_dir="mpc_run_track_testing",
         )
 
     finally:

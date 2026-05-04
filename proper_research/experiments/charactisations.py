@@ -72,7 +72,7 @@ from proper_research.vision.bounds_beam import (
 )
 from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
 
-MANUAL_VESSEL_BOUNDARY_FILE = "/Users/jackhilton-jones/Proper-Research/manual_vessel_boundaries.json"
+MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
 
 mag_params = default_magnet_params()
 
@@ -138,21 +138,21 @@ def debug_raw_forward_position_sensitivity(warm_fwd, p8_nominal):
 
     yz = np.asarray(raw_fwd(p7_z), float).reshape(-1)
 
-    print("\n==============================")
-    print(" RAW FORWARD POSITION TEST ")
-    print("==============================")
-    print("p7 nominal =", p7)
-    print("p7_x       =", p7_x)
-    print("p7_y       =", p7_y)
-    print("p7_z       =", p7_z)
+    # print("\n==============================")
+    # print(" RAW FORWARD POSITION TEST ")
+    # print("==============================")
+    # print("p7 nominal =", p7)
+    # print("p7_x       =", p7_x)
+    # print("p7_y       =", p7_y)
+    # print("p7_z       =", p7_z)
 
-    print("\ny0 =", y0)
-    print("yx =", yx)
-    print("yx - y0 =", yx - y0)
-    print("yy =", yy)
-    print("yy - y0 =", yy - y0)
-    print("yz =", yz)
-    print("yz - y0 =", yz - y0)
+    # print("\ny0 =", y0)
+    # print("yx =", yx)
+    # print("yx - y0 =", yx - y0)
+    # print("yy =", yy)
+    # print("yy - y0 =", yy - y0)
+    # print("yz =", yz)
+    # print("yz - y0 =", yz - y0)
 def pivot_rotation_matrix(pivot_pose6: np.ndarray) -> np.ndarray:
     T = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
     return T[:3, :3]
@@ -268,14 +268,14 @@ def transform_local_points_to_robot(
 def build_initial_lumen_from_vision(
     pivot_point,
     image_filename="focused_image.jpg",
-    roi_polygon_path="/Users/jackhilton-jones/Proper-Research/custom_area.json",
+    roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
     show=False,
 ):
-    # new_capture()
+    new_capture()
 
     manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
 
@@ -484,11 +484,11 @@ def build_forward_model_no_lumen_effect(
             show=False,
 
         )
-        print("[DBG] using vision lumen in fixed reference frame")
-        print("[LUMEN LOCAL DEBUG]")
-        print("lumen_C_m[0] [mm] =", 1e3 * lumen_C[0])
-        print("min/max x [mm] =", 1e3 * np.min(lumen_C[:, 0]), 1e3 * np.max(lumen_C[:, 0]))
-        print("min/max y [mm] =", 1e3 * np.min(lumen_C[:, 1]), 1e3 * np.max(lumen_C[:, 1]))
+        # print("[DBG] using vision lumen in fixed reference frame")
+        # print("[LUMEN LOCAL DEBUG]")
+        # print("lumen_C_m[0] [mm] =", 1e3 * lumen_C[0])
+        # print("min/max x [mm] =", 1e3 * np.min(lumen_C[:, 0]), 1e3 * np.max(lumen_C[:, 0]))
+        # print("min/max y [mm] =", 1e3 * np.min(lumen_C[:, 1]), 1e3 * np.max(lumen_C[:, 1]))
     else:
         lumen_C, lumen_R,_ = build_initial_lumen_from_vision(
             pivot_point=pivot_pose6,
@@ -671,7 +671,7 @@ def compute_mm_per_pixel_from_green(image_bgr, green_roi_box, known_distance_mm:
     #     max_area=50000,
     #     show_debug=False,
     # )
-    green_result = get_saved_2_point_calibration("/Users/jackhilton-jones/Proper-Research/calibration_points.json")
+    green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
 
     p1, p2 = green_result["points_px"]
     p1 = np.asarray(p1, dtype=float)
@@ -700,7 +700,7 @@ def build_reference_beam_frame_from_image(
     show_debug_markers: bool = False,
     ):
     red_roi_box = load_roi_box(red_roi_path)
-    roi_polygon = load_polygon("/Users/jackhilton-jones/Proper-Research/custom_area.json")
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     ref_result = measure_tip_state_4markers(
         image_filename=image_filename,
         roi_box=None,
@@ -742,7 +742,7 @@ def measure_tip_from_vision_base_local(
         known_distance_mm=cfg.known_green_distance_mm,
     )
     print(f"MM pixel: {mm_per_pixel} and known distance {cfg.known_green_distance_mm}")
-    roi_polygon = load_polygon("/Users/jackhilton-jones/Proper-Research/custom_area.json")
+    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
     tip_result = measure_tip_state_4markers(
         image_filename=cfg.image_filename,
         roi_box=None,
@@ -763,16 +763,16 @@ def measure_tip_from_vision_base_local(
     proj_dist_px = np.linalg.norm(tip_xy_px)
 
 
-    print("\n--- VISION SANITY CHECK ---")
-    print("raw base->tip vector [px] =", raw_vec_px)
-    print("raw base->tip distance [px] =", raw_dist_px)
-    print("projected tip_xy_from_base [px] =", tip_xy_px)
-    print("projected tip_xy_from_base [px] in x =", raw_dist_px_x)
-    print("projected tip_xy_from_base [px] in y =", raw_dist_px_y)
-    print("projected distance [px] =", proj_dist_px)
-    print("axial distance [mm] =", tip_xy_px[0] * mm_per_pixel)
-    print("lateral distance [mm] =", tip_xy_px[1] * mm_per_pixel)
-    print("euclidean distance [mm] =", np.linalg.norm(tip_xy_px) * mm_per_pixel)
+    # print("\n--- VISION SANITY CHECK ---")
+    # print("raw base->tip vector [px] =", raw_vec_px)
+    # print("raw base->tip distance [px] =", raw_dist_px)
+    # print("projected tip_xy_from_base [px] =", tip_xy_px)
+    # print("projected tip_xy_from_base [px] in x =", raw_dist_px_x)
+    # print("projected tip_xy_from_base [px] in y =", raw_dist_px_y)
+    # print("projected distance [px] =", proj_dist_px)
+    # print("axial distance [mm] =", tip_xy_px[0] * mm_per_pixel)
+    # print("lateral distance [mm] =", tip_xy_px[1] * mm_per_pixel)
+    # print("euclidean distance [mm] =", np.linalg.norm(tip_xy_px) * mm_per_pixel)
     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
@@ -924,9 +924,9 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
     dp_local = R_pivot.T @ dp_robot
 
-    print("\n--- FRAME DEBUG ---")
-    print("dp_robot [mm] =", 1e3 * dp_robot)
-    print("dp_local [mm] =", 1e3 * dp_local)
+    # print("\n--- FRAME DEBUG ---")
+    # print("dp_robot [mm] =", 1e3 * dp_robot)
+    # print("dp_local [mm] =", 1e3 * dp_local)
 
 
     pred = predict_tip_local_from_model(
@@ -1107,21 +1107,21 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     dp_robot_u = dp_robot / (np.linalg.norm(dp_robot) + 1e-12)
     x_pivot_robot_u = x_pivot_robot / (np.linalg.norm(x_pivot_robot) + 1e-12)
 
-    print("dp_robot unit =", dp_robot_u)
-    print("pivot x-axis  =", x_pivot_robot_u)
-    print("dot(dp_robot_u, pivot x-axis) =", np.dot(dp_robot_u, x_pivot_robot_u))
-    print("\n--- CONSISTENT LOCAL DEBUG ---")
-    print("src_pos_local [mm] =", 1e3 * src_pos_local)
-    print("m_local =", m_local / (np.linalg.norm(m_local) + 1e-12))
-    print("dot(m_local, +x_local) =", float(np.dot(m_local, pivot_x_local)))
-    print("dot(m_local, -x_local) =", float(np.dot(m_local, pivot_neg_x_local)))
-    print("\n--- DIPOLE DEBUG ---")
-    print("m_robot =", m_robot)
-    print("src_dir_local =", src_dir_local)
-    print("difference =", src_dir_local - m_robot)
-    print("xy angle in robot/local [deg] =",
-        np.degrees(np.arctan2(m_robot[1], m_robot[0])),
-        np.degrees(np.arctan2(src_dir_local[1], src_dir_local[0])))
+    # print("dp_robot unit =", dp_robot_u)
+    # print("pivot x-axis  =", x_pivot_robot_u)
+    # print("dot(dp_robot_u, pivot x-axis) =", np.dot(dp_robot_u, x_pivot_robot_u))
+    # print("\n--- CONSISTENT LOCAL DEBUG ---")
+    # print("src_pos_local [mm] =", 1e3 * src_pos_local)
+    # print("m_local =", m_local / (np.linalg.norm(m_local) + 1e-12))
+    # print("dot(m_local, +x_local) =", float(np.dot(m_local, pivot_x_local)))
+    # print("dot(m_local, -x_local) =", float(np.dot(m_local, pivot_neg_x_local)))
+    # print("\n--- DIPOLE DEBUG ---")
+    # print("m_robot =", m_robot)
+    # print("src_dir_local =", src_dir_local)
+    # print("difference =", src_dir_local - m_robot)
+    # print("xy angle in robot/local [deg] =",
+    #     np.degrees(np.arctan2(m_robot[1], m_robot[0])),
+    #     np.degrees(np.arctan2(src_dir_local[1], src_dir_local[0])))
     pivot_m_robot = source_dipole_in_robot(cfg.pivot_pose6)
     test_m_robot = source_dipole_in_robot(cfg.test_pose6)
 
@@ -1278,8 +1278,8 @@ def offset_walls_from_centerline(C_m, R_m):
     lower[:, :2] = C[:, :2] - normal * R[:, None]
 
     return upper, lower
-def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.016
+def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
+    L0 = 0.0301
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1316,10 +1316,10 @@ def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, floa
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    # robot_pose6 = hw.get_robot_pose_once()
-    # robot_pose6[2] = -0.1
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6[2] = -0.1
     # # # pose6[2] = -0.1
-    start_point = pose6
+    start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt =0.01
@@ -1673,9 +1673,9 @@ def numerical_J_raw_pose7_tip(
         y = np.asarray(raw_fwd(p7_eval), float).reshape(-1)
         y = y[:n_out]
 
-        print(f"\n[RAW FD {label}]")
-        print("p7 =", p7_eval)
-        print("y  =", y)
+        # print(f"\n[RAW FD {label}]")
+        # print("p7 =", p7_eval)
+        # print("y  =", y)
 
         return y
 
@@ -1793,13 +1793,13 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
     y_minus = eval_y_from_p8(p_minus, label="x minus")
 
-    print("\n[FD DEBUG x]")
-    print("p8[0] nominal:", p8[0])
-    print("p_plus[0]:", p_plus[0])
-    print("p_minus[0]:", p_minus[0])
-    print("y_plus:", y_plus)
-    print("y_minus:", y_minus)
-    print("y_plus - y_minus:", y_plus - y_minus)
+    # print("\n[FD DEBUG x]")
+    # print("p8[0] nominal:", p8[0])
+    # print("p_plus[0]:", p_plus[0])
+    # print("p_minus[0]:", p_minus[0])
+    # print("y_plus:", y_plus)
+    # print("y_minus:", y_minus)
+    # print("y_plus - y_minus:", y_plus - y_minus)
 
     J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
 
@@ -1813,13 +1813,13 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
 
     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
     y_minus = eval_y_from_p8(p_minus)
-    print("\n[FD DEBUG y]")
-    print("p8[1] nominal:", p8[1])
-    print("p_plus[1]:", p_plus[1])
-    print("p_minus[1]:", p_minus[1])
-    print("y_plus:", y_plus)
-    print("y_minus:", y_minus)
-    print("y_plus - y_minus:", y_plus - y_minus)
+    # print("\n[FD DEBUG y]")
+    # print("p8[1] nominal:", p8[1])
+    # print("p_plus[1]:", p_plus[1])
+    # print("p_minus[1]:", p_minus[1])
+    # print("y_plus:", y_plus)
+    # print("y_minus:", y_minus)
+    # print("y_plus - y_minus:", y_plus - y_minus)
     J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
 
     # 3) yaw
@@ -1928,18 +1928,20 @@ def compare_analytic_vs_fd_jacobian(
 
     # Use separate copies so the analytic and FD evaluations do not contaminate
     # each other's warm-start cache.
-    fwd_analytic = copy.deepcopy(forward6d)
-    fwd_fd = copy.deepcopy(forward6d)
+
 
     # ============================================================
-    # Analytic Jacobian
+    # Analytic / hybrid Jacobian
     # ============================================================
     t0 = time.perf_counter()
+
+    fwd_analytic = copy.deepcopy(forward6d)
+    fwd_fd = copy.deepcopy(forward6d)
 
     if hasattr(fwd_analytic, "start_step"):
         fwd_analytic.start_step()
 
-    # Commit nominal solve so analytic_J_robot_xy_yaw_dL can use last_info.
+    # Commit nominal solve once so analytic_J_robot_xy_yaw_dL can use last_info.
     y_nom = np.asarray(fwd_analytic(p8, commit=True), float).reshape(-1)[:n_out]
 
     if hasattr(fwd_analytic, "fwd") and getattr(fwd_analytic.fwd, "last_info", None) is not None:
@@ -1947,25 +1949,15 @@ def compare_analytic_vs_fd_jacobian(
     else:
         print("[WARNING] fwd_analytic.fwd.last_info is None before analytic Jacobian")
 
-    J_an_state = analytic_J_robot_xy_yaw_dL(
-        p8,
-        fwd_analytic,
+    J_an_state = hybrid_J_robot_xy_yaw_dL(
+        p8=p8,
+        fwd_analytic=fwd_analytic,
+        fwd_fd=fwd_fd,
         n_out=n_out,
+        dL_fd=max(abs(dL), 3e-4),  # or simply 1e-3
     )
 
-    # Replace only L column using finite difference
-    dL = 1e-3
-    p_plus = p8.copy()
-    p_minus = p8.copy()
-    p_plus[7] += dL
-    p_minus[7] -= dL
-
-    y_plus = np.asarray(fwd_fd(p_plus, commit=False), float).reshape(-1)[:n_out]
-    y_minus = np.asarray(fwd_fd(p_minus, commit=False), float).reshape(-1)[:n_out]
-
-    J_an_state[:, 3] = (y_plus - y_minus) / (2.0 * dL)
-
-    print(f"[TIME] analytic reduced Jacobian: {(time.perf_counter() - t0) * 1e3:.2f} ms")
+    print(f"[TIME] analytic/hybrid reduced Jacobian: {(time.perf_counter() - t0) * 1e3:.2f} ms")
 
     # ============================================================
     # Finite-difference Jacobian
@@ -2174,65 +2166,7 @@ def compare_analytic_vs_fd_jacobian(
         "max_rel_err_state": float(np.max(rel_err_state)),
         "mean_rel_err_state": float(np.mean(rel_err_state)),
     }
-def compute_model_jacobian(
-    forward6d,
-    pose6,
-    L_m,
-    dt=0.01,
-    dx=1e-2,
-    dy=1e-2,
-    dyaw=3e-1,
-    dL=1e-3,
-    n_out=6,
-    mode="analytic",
-):
-    """
-    Returns full 7-control Jacobian.
 
-    mode:
-        "analytic"
-        "fd"
-    """
-    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
-
-    fwd = clone_warm_forward_model(forward6d)
-
-    if hasattr(fwd, "start_step"):
-        fwd.start_step()
-
-    if mode == "analytic":
-        # Commit nominal solve so analytic Jacobian has last_info.
-        _ = np.asarray(fwd(p8, commit=True), float).reshape(-1)[:n_out]
-
-        J_red_state = analytic_J_robot_xy_yaw_dL(
-            p8,
-            fwd,
-            n_out=n_out,
-        )
-
-    elif mode == "fd":
-        J_red_state = numerical_J_robot_xy_yaw_dL_warm_branch(
-            p8=p8,
-            forward_model=fwd,
-            dx=dx,
-            dy=dy,
-            dyaw=dyaw,
-            dL=dL,
-            n_out=n_out,
-        )
-
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
-
-    J_red_control = np.asarray(J_red_state, float).copy()
-    J_red_control *= dt
-
-    J_full = J_full_from_robot_reduced_tip_tangent(
-        J_red_control,
-        n_out_full=n_out,
-    )
-
-    return J_full, J_red_state, p8
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
@@ -2326,29 +2260,385 @@ def plot_analytic_vs_fd_jacobian(
     plt.close()
 
     print(f"Saved analytic-vs-FD Jacobian plot to: {out_path}")
+def apply_reduced_step_to_p8(
+    p8: np.ndarray,
+    *,
+    dx: float = 0.0,
+    dy: float = 0.0,
+    dyaw: float = 0.0,
+    dL: float = 0.0,
+    flip_yaw: bool = True,
+) -> np.ndarray:
+    """
+    Reduced state perturbation:
+        [x, y, yaw_z, L]
+
+    dx, dy in metres.
+    dyaw in radians.
+    dL in metres.
+
+    If flip_yaw=True, the commanded yaw sign is inverted before applying
+    the quaternion update.
+    """
+    p8_next = np.asarray(p8, float).copy()
+
+    p8_next[0] += float(dx)
+    p8_next[1] += float(dy)
+
+    q = quat_wxyz_normalize(p8_next[3:7])
+
+    dyaw_apply = -float(dyaw) if flip_yaw else float(dyaw)
+    dqz = quat_from_yaw_wxyz(dyaw_apply)
+
+    p8_next[3:7] = quat_wxyz_normalize(quat_wxyz_mul(dqz, q))
+
+    p8_next[7] += float(dL)
+
+    if p8_next[7] <= 0.0:
+        raise ValueError(f"Invalid insertion length after step: {p8_next[7]}")
+
+    return p8_next
+def capture_and_measure_tip_base_local(cfg: SinglePoseEvalConfig) -> Dict:
+    """
+    Capture image from camera, then measure physical tip in base-local coordinates.
+    """
+    new_capture()
+
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+
+    meas = measure_tip_from_vision_base_local(
+        cfg,
+        base_px_ref=manual["base_px"],
+        ex_ref=manual["ex_img"],
+        ey_ref=manual["ey_img"],
+    )
+
+    return meas
+def validate_one_physical_jacobian_step(
+    *,
+    hw,
+    cfg: SinglePoseEvalConfig,
+    dx: float = 0.0,
+    dy: float = 0.0,
+    dyaw: float = 0.0,
+    dL: float = 0.0,
+    dt: float = 0.01,
+) -> Dict:
+    """
+    Physically move the robot a small amount and compare:
+
+        measured delta tip
+        nonlinear model delta tip
+        linear Jacobian delta tip
+
+    Reduced step:
+        dq = [dx, dy, dyaw, dL]
+
+    Units:
+        dx, dy, dL in metres
+        dyaw in radians
+    """
+
+    os.makedirs(cfg.results_dir, exist_ok=True)
+
+    print("\n==============================")
+    print(" PHYSICAL ONE-STEP JACOBIAN TEST ")
+    print("==============================")
+    print("dx [mm]    =", 1e3 * dx)
+    print("dy [mm]    =", 1e3 * dy)
+    print("dyaw [deg] =", np.degrees(dyaw))
+    print("dL [mm]    =", 1e3 * dL)
+
+    # ------------------------------------------------------------
+    # Current nominal pose/state
+    # ------------------------------------------------------------
+    pose6_0 = np.asarray(cfg.test_pose6, float).reshape(6,)
+    L0 = float(cfg.L_m)
+    p8_0 = pose6_and_L_to_pose8_quat(pose6_0, L0)
+
+    # ------------------------------------------------------------
+    # Measure physical initial tip
+    # ------------------------------------------------------------
+    print("\n--- CAPTURE INITIAL PHYSICAL TIP ---")
+    meas0 = capture_and_measure_tip_base_local(cfg)
+    y_meas0_base = np.asarray(meas0["tip_base_local_m"], float).reshape(3,)
+
+    # ------------------------------------------------------------
+    # Build model at initial image/lumen
+    # ------------------------------------------------------------
+    print("\n--- BUILD FORWARD MODEL ---")
+    fwd = build_forward_model_no_lumen_effect(
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+        L0=L0,
+        image_filename=cfg.image_filename,
+        red_roi_path=cfg.red_roi_path,
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path=cfg.green_roi_path,
+        pivot_hint=cfg.pivot_hint,
+        lumen=True,
+    )
+
+    # ------------------------------------------------------------
+    # Nonlinear model nominal prediction
+    # ------------------------------------------------------------
+    print("\n--- MODEL NOMINAL PREDICTION ---")
+    pred0 = predict_tip_local_from_model(
+        forward6d=fwd,
+        pose6=pose6_0,
+        L_m=L0,
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    y_model0_robot = np.asarray(pred0["tip_robot_m"], float).reshape(3)
+    y_model0_base = predicted_tip_to_base_local_from_base_point_robot(
+        pred_tip_robot_m=y_model0_robot,
+        beam_base_point_robot_m=np.asarray(cfg.beam_base_point_robot_m, dtype=float),
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    # ------------------------------------------------------------
+    # Compute analytic Jacobian at nominal pose
+    # ------------------------------------------------------------
+    print("\n--- ANALYTIC JACOBIAN AT NOMINAL ---")
+
+    fwd_jac = copy.deepcopy(fwd)
+
+    # Make sure nominal state is committed before analytic Jacobian.
+    _ = np.asarray(fwd_jac(p8_0, commit=True), float).reshape(-1)[:3]
+
+    fwd_L_fd = copy.deepcopy(fwd)
+
+    J_state_robot = hybrid_J_robot_xy_yaw_dL(
+        p8=p8_0,
+        fwd_analytic=fwd_jac,
+        fwd_fd=fwd_L_fd,
+        n_out=3,
+        dL_fd=1e-3,
+    )
+
+    # Convert robot-frame tip delta Jacobian to base-local coordinates.
+    R_pivot = pivot_rotation_matrix(cfg.pivot_pose6)
+    J_state_base = R_pivot.T @ J_state_robot
+
+    dq = np.array([dx, dy, dyaw, dL], dtype=float)
+
+    dy_lin_base = J_state_base @ dq
+    y_lin1_base = y_model0_base + dy_lin_base
+
+    # ------------------------------------------------------------
+    # Nonlinear model prediction at commanded next pose
+    # ------------------------------------------------------------
+    p8_1 = apply_reduced_step_to_p8(
+        p8_0,
+        dx=dx,
+        dy=dy,
+        dyaw=dyaw,
+        dL=dL,
+    )
+
+    pose6_1, L1 = p8_to_ur_pose6_and_L(p8_1)
+
+    pred1 = predict_tip_local_from_model(
+        forward6d=fwd,
+        pose6=np.asarray(pose6_1, float),
+        L_m=float(L1),
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    y_model1_robot = np.asarray(pred1["tip_robot_m"], float).reshape(3)
+    y_model1_base = predicted_tip_to_base_local_from_base_point_robot(
+        pred_tip_robot_m=y_model1_robot,
+        beam_base_point_robot_m=np.asarray(cfg.beam_base_point_robot_m, dtype=float),
+        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+    )
+
+    dy_nonlinear_base = y_model1_base - y_model0_base
+
+    # ------------------------------------------------------------
+    # Hardware move
+    # ------------------------------------------------------------
+    print("\n--- SEND SMALL HARDWARE STEP ---")
+    print("pose6_0 =", pose6_0)
+    print("pose6_1 =", pose6_1)
+    print("L0 =", L0)
+    print("L1 =", L1)
+
+    # send_step expects velocity-like control over dt.
+    u_step = np.zeros(7, dtype=float)
+    u_step[0] = dx / dt
+    u_step[1] = dy / dt
+    u_step[5] = dyaw / dt
+    u_step[6] = dL / dt
+
+    print("u_step =", u_step)
+    print("dt =", dt)
+
+    hw.send_step(
+        p_now=p8_0,
+        u0=u_step,
+        dt=dt,
+    )
+
+    time.sleep(0.5)
+
+    # ------------------------------------------------------------
+    # Measure physical final tip
+    # ------------------------------------------------------------
+    print("\n--- CAPTURE FINAL PHYSICAL TIP ---")
+    cfg_after = copy.deepcopy(cfg)
+    cfg_after.test_pose6 = np.asarray(pose6_1, float)
+    cfg_after.L_m = float(L1)
+
+    meas1 = capture_and_measure_tip_base_local(cfg_after)
+    y_meas1_base = np.asarray(meas1["tip_base_local_m"], float).reshape(3)
+
+    dy_meas_base = y_meas1_base - y_meas0_base
+
+    # ------------------------------------------------------------
+    # Compare deltas
+    # ------------------------------------------------------------
+    err_lin_delta = dy_meas_base - dy_lin_base
+    err_nonlin_delta = dy_meas_base - dy_nonlinear_base
+
+    print("\n==============================")
+    print(" ONE-STEP RESULT ")
+    print("==============================")
+
+    print("\n--- base-local initial/final measured tip [mm] ---")
+    print("meas0 [mm] =", 1e3 * y_meas0_base)
+    print("meas1 [mm] =", 1e3 * y_meas1_base)
+
+    print("\n--- base-local model nominal/final tip [mm] ---")
+    print("model0 [mm] =", 1e3 * y_model0_base)
+    print("model1 nonlinear [mm] =", 1e3 * y_model1_base)
+    print("model1 linear [mm]    =", 1e3 * y_lin1_base)
+
+    print("\n--- delta tip [mm] ---")
+    print("measured delta      =", 1e3 * dy_meas_base)
+    print("nonlinear model     =", 1e3 * dy_nonlinear_base)
+    print("linear J prediction =", 1e3 * dy_lin_base)
+
+    print("\n--- delta errors [mm] ---")
+    print("measured - nonlinear =", 1e3 * err_nonlin_delta)
+    print("measured - linear    =", 1e3 * err_lin_delta)
+
+    print("\n--- norms [mm] ---")
+    print("||measured delta||      =", 1e3 * np.linalg.norm(dy_meas_base))
+    print("||nonlinear delta||     =", 1e3 * np.linalg.norm(dy_nonlinear_base))
+    print("||linear delta||        =", 1e3 * np.linalg.norm(dy_lin_base))
+    print("||meas - nonlinear||    =", 1e3 * np.linalg.norm(err_nonlin_delta))
+    print("||meas - linear||       =", 1e3 * np.linalg.norm(err_lin_delta))
+
+    result = {
+        "dx_m": float(dx),
+        "dy_m": float(dy),
+        "dyaw_rad": float(dyaw),
+        "dL_m": float(dL),
+        "dt": float(dt),
+
+        "pose6_0": pose6_0.tolist(),
+        "pose6_1": np.asarray(pose6_1, float).tolist(),
+        "L0": float(L0),
+        "L1": float(L1),
+
+        "y_meas0_base_m": y_meas0_base.tolist(),
+        "y_meas1_base_m": y_meas1_base.tolist(),
+        "dy_meas_base_m": dy_meas_base.tolist(),
+
+        "y_model0_base_m": y_model0_base.tolist(),
+        "y_model1_nonlinear_base_m": y_model1_base.tolist(),
+        "dy_nonlinear_base_m": dy_nonlinear_base.tolist(),
+
+        "dy_linear_base_m": dy_lin_base.tolist(),
+        "y_model1_linear_base_m": y_lin1_base.tolist(),
+
+        "err_linear_delta_m": err_lin_delta.tolist(),
+        "err_nonlinear_delta_m": err_nonlin_delta.tolist(),
+
+        "err_linear_delta_norm_mm": float(1e3 * np.linalg.norm(err_lin_delta)),
+        "err_nonlinear_delta_norm_mm": float(1e3 * np.linalg.norm(err_nonlin_delta)),
+
+        "J_state_robot": J_state_robot.tolist(),
+        "J_state_base": J_state_base.tolist(),
+    }
+
+    out_path = os.path.join(cfg.results_dir, "physical_one_step_jacobian_test.json")
+    with open(out_path, "w") as f:
+        json.dump(result, f, indent=2)
+
+    print("\nSaved physical one-step result to:", out_path)
+
+    return result
+def hybrid_J_robot_xy_yaw_dL(
+    *,
+    p8,
+    fwd_analytic,
+    fwd_fd,
+    n_out=3,
+    dL_fd=1e-3,
+):
+    """
+    Hybrid reduced Jacobian wrt [x, y, yaw_z, L].
+
+    Columns:
+      0: analytic dx
+      1: analytic dy
+      2: analytic yaw_z
+      3: finite-difference dL
+
+    Important:
+      fwd_analytic should already have had the nominal pose committed
+      if analytic_J_robot_xy_yaw_dL expects cached last_info.
+
+      fwd_fd should be an independent deepcopy/wrapper so FD calls do not
+      contaminate the analytic cache.
+    """
+    p8 = np.asarray(p8, float).reshape(8,)
+
+    # Analytic x, y, yaw, and provisional L.
+    J = analytic_J_robot_xy_yaw_dL(
+        p8,
+        fwd_analytic,
+        n_out=n_out,
+    )
+
+    J = np.asarray(J, float)[:n_out, :4]
+
+    # Replace only the L column using finite difference.
+    p8_Lp = p8.copy()
+    p8_Lm = p8.copy()
+    p8_Lp[7] += dL_fd
+    p8_Lm[7] -= dL_fd
+
+    y_Lp = np.asarray(fwd_fd(p8_Lp, commit=False), float).reshape(-1)[:n_out]
+    y_Lm = np.asarray(fwd_fd(p8_Lm, commit=False), float).reshape(-1)[:n_out]
+
+    J[:, 3] = (y_Lp - y_Lm) / (2.0 * dL_fd)
+
+    return J
 if __name__ == "__main__":
 
 
-    # hw = LiveHardwareController(
-    #     robot_ip="192.168.56.101",
-    #     dry_run=False,                 # True first
-    #     use_advancer=True,
-    #     advancer_port="/dev/ttyACM0",
-    #     advancer_baud=115200,
-    #     advancer_delay_us=20,
-    #     advancer_min_cmd_mm=0.166,
-    #     xyz_min=(0.20, -1.50, -0.30),
-    #     xyz_max=(1.20, +1.50, +1.50),
-    #     max_trans_m=0.01,
-    #     max_rot_rad=0.2,
-    #     z_offset=0.27,
-    #     use_moveL_params=False,
-    #     v=0.10,
-    #     a=0.30,
-    # )
-    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
+    hw = LiveHardwareController(
+        robot_ip="192.168.56.101",
+        dry_run=False,                 # True first
+        use_advancer=True,
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=0.28,
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
+    )
+    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
-    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
+    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
     # new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
@@ -2381,10 +2671,10 @@ if __name__ == "__main__":
         test_pose6=test_pose6,
         beam_base_point_robot_m=beam_base_point_robot_m,
         L_m=L_test,
-        image_filename="/Users/jackhilton-jones/Proper-Research/focused_image.jpg",
-        reference_image_filename="/Users/jackhilton-jones/Proper-Research/focused_image.jpg",
+        image_filename="/home/jack/Proper-Research/focused_image.jpg",
+        reference_image_filename="/home/jack/Proper-Research/focused_image.jpg",
         use_reference_frame=True,
-        red_roi_path="/Users/jackhilton-jones/Proper-Research/red_roi_box.json",
+        red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=15,
         pivot_hint=pivot_hint,
@@ -2393,5 +2683,40 @@ if __name__ == "__main__":
         show_debug_vision=False,
         show_debug_model=False,
     )
-
+    validate_one_physical_jacobian_step(
+        hw=hw,
+        cfg=cfg,
+        dx=0.0,
+        dy=1.0e-3,          # 1 mm
+        dyaw=0.0,
+        dL=0.0,
+        dt=0.05,
+    )
+    validate_one_physical_jacobian_step(
+        hw=hw,
+        cfg=cfg,
+        dx=1.0e-3,          # 1 mm
+        dy=0.0,
+        dyaw=0.0,
+        dL=0.0,
+        dt=0.05,
+    )
+    validate_one_physical_jacobian_step(
+        hw=hw,
+        cfg=cfg,
+        dx=0.0,
+        dy=0.0,
+        dyaw=np.deg2rad(1.0),   # 1 degree
+        dL=0.0,
+        dt=0.05,
+    )
+    validate_one_physical_jacobian_step(
+        hw=hw,
+        cfg=cfg,
+        dx=0.0,
+        dy=0.0,
+        dyaw=0.0,
+        dL=0.3e-3,          # 0.3 mm
+        dt=0.05,
+    )
     evaluate_single_pose(cfg)

@@ -1,6 +1,6 @@
 import time
-# import rtde_control
-# import rtde_receive
+import rtde_control
+import rtde_receive
 
 
 class URRtde:

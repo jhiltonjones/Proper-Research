@@ -738,6 +738,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         *,
         eps_theta=1e-3,
         eps_hess=1e-2,
+        debug_jac=False,
+        debug_hessian_terms=False,
     ):
         """
         Uses the already-cached nominal solve.
@@ -751,12 +753,13 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             )
         u_ref = np.asarray(self.last_info["u_flat_opt"], float).copy()
 
-        print("[J U_REF]")
-        print("  norm =", np.linalg.norm(u_ref))
-        print("  min/max =", np.min(u_ref), np.max(u_ref))
-        print("  first 10 =", u_ref[:10])
-        print("  mean =", np.mean(u_ref))
-        print("  sign sum =", np.sum(np.sign(u_ref)))
+        if debug_jac:
+            print("[J U_REF]")
+            print("  norm =", np.linalg.norm(u_ref))
+            print("  min/max =", np.min(u_ref), np.max(u_ref))
+            print("  first 10 =", u_ref[:10])
+            print("  mean =", np.mean(u_ref))
+            print("  sign sum =", np.sum(np.sign(u_ref)))
         r_src = p7[0:3]
 
         rvec = p7[3:6]
@@ -883,7 +886,7 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             grad_fun_abs = make_energy_grad_fun_for_pose(
                 p0=self.p0_ur,
                 q0=self.q0_ur,
-                q_src0=q_src,
+                q_src0=q_src_abs,
                 m_body=self.m_body,
                 Kinv_fun=self.Kinv_fun,
                 u_star=self.u_star,
@@ -908,13 +911,14 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
                 return grad_fun_abs(u_flat, theta_local)
 
             return grad_fun_rebuilt
-        debug_theta_gradient_consistency(
-            u_ref=u_ref,
-            theta0=theta0,
-            energy_grad_fun=energy_grad_fun,
-            rebuild_energy_grad_fun_for_pose=rebuild_energy_grad_fun_for_pose,
-            eps=1e-4,
-        )
+            if debug_jac:
+                debug_theta_gradient_consistency(
+                    u_ref=u_ref,
+                    theta0=theta0,
+                    energy_grad_fun=energy_grad_fun,
+                    rebuild_energy_grad_fun_for_pose=rebuild_energy_grad_fun_for_pose,
+                    eps=1e-4,
+                )
         m_src = dipole_from_pose(q_src, self.m_body)
 
         m_local_fun = make_m_local_fun_wire_tip(
@@ -942,7 +946,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             energy_grad_fun=energy_grad_fun,
             lumen_query=lumen_query,
             contact=self.contact,
-            debug_hessian_terms=True,
+            debug_jac=debug_jac,
+            debug_hessian_terms=debug_hessian_terms,
             eps_theta=eps_theta,
             eps_hess=eps_hess,
         )
@@ -959,8 +964,9 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         p7,
         *,
         solve_if_needed=False,
-        eps_theta=1e-4,
-        eps_hess=1e-4,
+        eps_theta=1e-3,
+        eps_hess=1e-2,
+        debug_jac=False,
     ):
         """
         Safe public method.

@@ -384,31 +384,29 @@ def update_i_ref_only_when_close(
 
 def seq_mat_ltv(A, B_list):
     """
-    Build stacked prediction matrices for time-varying B_k (LTV system)
-      x_{k+1} = A x_k + B_k u_k
+    Build stacked prediction matrices for:
+        x_{k+1} = A x_k + B_k u_k
 
     Returns:
-      Mx: (Np*n, n)
-      Mc: (Np*n, Np*m)
-
-    B_list: list length Np with each B_k shape (n,m)
-            where B_0 corresponds to step from x0 -> x1
+        Mx: (Np*n, n)
+        Mc: (Np*n, Np*m)
     """
-    B_list = [np.asarray(B) for B in B_list]
+    B_list = [np.asarray(B, float) for B in B_list]
+
     Np = len(B_list)
     n, m = B_list[0].shape
 
-    Mx = np.zeros((Np*n, n))
-    Mc = np.zeros((Np*n, Np*m))
+    A = np.asarray(A, float).reshape(n, n)
 
-    A_pow = np.eye(n)
+    Mx = np.zeros((Np * n, n), dtype=float)
+    Mc = np.zeros((Np * n, Np * m), dtype=float)
 
     for i in range(Np):
-        # x_{i+1} = A^{i+1} x0 + sum_{j=0..i} A^{i-j} B_j u_j
-        A_pow = A @ A_pow
-        Mx[i*n:(i+1)*n, :] = A_pow
+        # x_{i+1} contribution from x0
+        Mx[i*n:(i+1)*n, :] = np.linalg.matrix_power(A, i + 1)
 
         for j in range(i + 1):
+            # contribution of u_j to x_{i+1}
             A_ij = np.linalg.matrix_power(A, i - j)
             Mc[i*n:(i+1)*n, j*m:(j+1)*m] = A_ij @ B_list[j]
 
@@ -916,47 +914,70 @@ class mpc_controller_tipxy_LTI:
         n, m, Np = self.n, self.m, self.Np
 
         if U_guess is None:
-            U_guess = np.zeros((Np, m))
+            U_guess = np.zeros((Np, m), dtype=float)
+        else:
+            U_guess = np.asarray(U_guess, float).reshape(Np, m)
 
         if self.model_mode == "lti":
-            # print("[BUILD] before Jxy_fn")
-            J0 = np.asarray(self.Jxy_fn(p0), float)
-            # print("[BUILD] after Jxy_fn, J0 shape =", J0.shape)
             J0 = np.asarray(self.Jxy_fn(p0), float).copy()
 
-            jac_gain_pos = float(getattr(self, "jac_gain_pos", 1.0))
-            jac_gain_tan = float(getattr(self, "jac_gain_tan", 1.0))
-            jac_gain_L = float(getattr(self, "jac_gain_tan", 1.0))
-            J0[0:3, :] *= jac_gain_pos
-            J0[0:3, 6] *= jac_gain_L
-            if J0.shape[0] >= 6:
-                J0[3:6, :] *= jac_gain_tan
             if J0.shape != (n, m):
                 raise ValueError(f"Jxy_fn returned {J0.shape}, expected {(n, m)}")
 
             if not np.all(np.isfinite(J0)):
                 raise ValueError("Jxy_fn returned non-finite values")
 
+            jac_gain_pos = float(getattr(self, "jac_gain_pos", 1.0))
+            jac_gain_tan = float(getattr(self, "jac_gain_tan", 1.0))
+            jac_gain_L = float(getattr(self, "jac_gain_L", 1.0))
+
+            J0[0:3, :] *= jac_gain_pos
+            J0[0:3, 6] *= jac_gain_L
+
+            if J0.shape[0] >= 6:
+                J0[3:6, :] *= jac_gain_tan
+
             B0 = J0
-            # print("[BUILD] before seq_mat_lti")
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
-            # print("[BUILD] after seq_mat_lti")
 
             p_seq = self._p_seq_from_U(p0, U_guess)
-            # print("[BUILD] after _p_seq_from_U, p_seq shape =", np.shape(p_seq))
 
             return p_seq, Mx, Mc, B0
 
-        p_seq = self._p_seq_from_U(p0, U_guess)
-        B_list = []
-        for i in range(Np):
-            Ji = np.asarray(self.Jxy_fn(p_seq[i]), float)
-            if Ji.shape != (n, m):
-                raise ValueError(f"Jxy_fn returned {Ji.shape}, expected {(n, m)} at i={i}")
-            B_list.append(Ji)
+        elif self.model_mode == "ltv":
+            p_seq = self._p_seq_from_U(p0, U_guess)
 
-        Mx, Mc = seq_mat_ltv(self.A, B_list)
-        return p_seq, Mx, Mc, B_list[0]
+            B_list = []
+
+            jac_gain_pos = float(getattr(self, "jac_gain_pos", 1.0))
+            jac_gain_tan = float(getattr(self, "jac_gain_tan", 1.0))
+            jac_gain_L = float(getattr(self, "jac_gain_L", 1.0))
+
+            for i in range(Np):
+                Ji = np.asarray(self.Jxy_fn(p_seq[i]), float).copy()
+
+                if Ji.shape != (n, m):
+                    raise ValueError(
+                        f"Jxy_fn returned {Ji.shape}, expected {(n, m)} at i={i}"
+                    )
+
+                if not np.all(np.isfinite(Ji)):
+                    raise ValueError(f"Jxy_fn returned non-finite values at i={i}")
+
+                Ji[0:3, :] *= jac_gain_pos
+                Ji[0:3, 6] *= jac_gain_L
+
+                if Ji.shape[0] >= 6:
+                    Ji[3:6, :] *= jac_gain_tan
+
+                B_list.append(Ji)
+
+            Mx, Mc = seq_mat_ltv(self.A, B_list)
+
+            return p_seq, Mx, Mc, B_list[0]
+
+        else:
+            raise ValueError(f"Unknown model_mode: {self.model_mode}")
 
     def step(self, x_meas=None):
         """
@@ -3339,14 +3360,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=5,
+        Np=8,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="lti",
+        model_mode="ltv",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3445,7 +3466,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 5
+    mpc_replan_every = 8
 
 
 
@@ -4151,7 +4172,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,

@@ -17,6 +17,17 @@ from beam_direction_magnetisation.ana_energy import make_energy_grad_fun_for_pos
 beam_params = default_beam_params()
 
 mu_tip = beam_params.mag * beam_params.A_cs
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ContactParams:
+    r_beam: float = 0.001
+    k: float = 1e8
+    pen_switch: float = 5e-5
+    k_hard: float = 1e10
+    smooth: bool = True
+    smooth_eps: float = 1e-5
+    window: int = 3
 
 def pose8_quat_to_pose7_rotvec(p8):
     p8 = np.asarray(p8, float).ravel()
@@ -50,24 +61,37 @@ def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
     tip_len = min(tip_len, L_model)
 
     return L_model, wire_len, tip_len
-class  EnergyMinForwardWithLumen:
-    def __init__(self, *,
-                 p0_ur, q0_ur,
-                 Kinv_fun, u_star,
-                 m_body,
-                 lumen_C, lumen_R,
-                 N_nodes=15, maxiter=15,
-                 L0_init=0.009, dL_internal=0.002,
-                 use_lumen_jac=True,
-                 L_tip_full=0.04,
-                 L_tip_min=0.01):
+class EnergyMinForwardWithLumen:
+    def __init__(
+        self,
+        *,
+        p0_ur,
+        q0_ur,
+        Kinv_fun,
+        u_star,
+        m_body,
+        lumen_C,
+        lumen_R,
+        N_nodes=15,
+        maxiter=15,
+        L0_init=0.009,
+        dL_internal=0.002,
+        use_lumen_jac=True,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+
+        # Contact parameters: used by both forward solve and analytic Jacobian
+        contact_params=None,
+        use_fast_contact_grad=False,
+    ):
         self.p0_ur = np.asarray(p0_ur, float)
         self.q0_ur = np.asarray(q0_ur, float)
-        self.L_tip_full  = float(L_tip_full)
+        self.contact = contact_params or ContactParams()
+        self.L_tip_full = float(L_tip_full)
         self.L_tip_min = float(L_tip_min)
+
         self.Kinv_fun = Kinv_fun
         self.u_star = np.asarray(u_star, float).reshape(3,)
-
         self.m_body = np.asarray(m_body, float).reshape(3,)
 
         self.lumen_C = np.asarray(lumen_C, float)
@@ -76,27 +100,42 @@ class  EnergyMinForwardWithLumen:
         self.N_nodes = int(N_nodes)
         self.maxiter = int(maxiter)
 
-        # internal continuation controls
         self.L0_init = float(L0_init)
         self.dL_internal = float(dL_internal)
-        self.use_lumen_jac = use_lumen_jac
-        # cache
+        self.use_lumen_jac = bool(use_lumen_jac)
+
+        # Store one canonical set of contact parameters
+        # self.contact_r_beam = float(contact_r_beam)
+        # self.contact_k = float(contact_k)
+        # self.contact_pen_switch = float(contact_pen_switch)
+        # self.contact_k_hard = float(contact_k_hard)
+        self.use_fast_contact_grad = bool(use_fast_contact_grad)
+
         self._last = dict(
             p=None,
             L=None,
             u_init=None,
             tip=None,
-            p_centerline=None,   # NEW
-            info=None,           # NEW
-            hist=None            # NEW (optional but handy)
+            p_centerline=None,
+            info=None,
+            hist=None,
         )
 
-        # public last-result mirrors (nice for plotting/debug)
         self.last_p_centerline = None
         self.last_tip = None
         self.last_info = None
         self.last_hist = None
-
+    def print_contact_params(self, prefix="[CONTACT PARAMS]"):
+        c = self.contact
+        print(prefix)
+        print("  contact.r_beam      =", c.r_beam)
+        print("  contact.k           =", c.k)
+        print("  contact.pen_switch  =", c.pen_switch)
+        print("  contact.k_hard      =", c.k_hard)
+        print("  contact.smooth      =", c.smooth)
+        print("  contact.smooth_eps  =", c.smooth_eps)
+        print("  contact.window      =", c.window)
+        print("  use_fast_contact_grad =", self.use_fast_contact_grad)
     def _quat_from_rotvec_ur(self, rvec):
         # UR rotvec is axis-angle; scipy Rot.from_rotvec uses same
         Rm = Rot.from_rotvec(rvec).as_matrix()
@@ -112,7 +151,13 @@ class  EnergyMinForwardWithLumen:
         r_src = p[0:3]
         rvec  = p[3:6]
         L_ins = float(p[6])
+        # print("\n[EnergyMinForwardWithLumen.__call__]")
 
+        # print("r_src =", r_src)
+
+        # print("rvec  =", rvec)
+
+        # print("L_ins =", L_ins)
         # print("\n[FWD] p =", p)
         # print("[FWD] r_src =", r_src)
         # print("[FWD] rvec =", rvec)
@@ -158,10 +203,7 @@ class  EnergyMinForwardWithLumen:
             # magnet grows with LL until full physical tip inside
             return min(float(LL), self.L_tip_full)
 
-        def wire_len_fun(LL):
-            # wire exists only after full tip is inside
-            return max(float(LL) - self.L_tip_full, 0.0)
-            print("[FWD] lumen_C shape =", self.lumen_C.shape)
+
         # print("[FWD] lumen_R shape =", self.lumen_R.shape)
         # print("[FWD] N_nodes =", self.N_nodes, "maxiter =", self.maxiter)
         # print("[FWD] use_lumen_jac =", self.use_lumen_jac)
@@ -205,24 +247,38 @@ class  EnergyMinForwardWithLumen:
         #         f"Kinv_b1={Ktest[1,1,i]:.6e} "
         #         f"Kinv_b2={Ktest[2,2,i]:.6e}"
         #     )
+        # self.print_contact_params("[FORWARD CONTACT PARAMS]")
         hist = solve_quasistatic_insertion(
-            p0=self.p0_ur, q0=self.q0_ur,
-            L0=L_start, Lf=L_model, dL=self.dL_internal,
-            wire_len_fun=wire_len_fun,
+            p0=self.p0_ur,
+            q0=self.q0_ur,
+            L0=L_start,
+            Lf=L_model,
+            dL=self.dL_internal,
             tip_len_fun=tip_len_fun,
-            Kinv_fun=self.Kinv_fun, u_star=self.u_star,
-            r_src=r_src, m_src=m_src,
-            m_local_fun=m_local_fun, m_moment=0.0,
-            lumen_C=self.lumen_C, lumen_R=self.lumen_R,
-            N=self.N_nodes, maxiter=self.maxiter,
+            Kinv_fun=self.Kinv_fun,
+            u_star=self.u_star,
+            r_src=r_src,
+            m_src=m_src,
+            m_local_fun=m_local_fun,
+            m_moment=0.0,
+            lumen_C=self.lumen_C,
+            lumen_R=self.lumen_R,
+            N=self.N_nodes,
+            maxiter=self.maxiter,
             use_lumen=self.use_lumen_jac,
             u_init=u_init,
-            debug=True
+            contact=self.contact,
+
+            use_fast_contact_grad=self.use_fast_contact_grad,
+
         )
         if (not hist) or (hist[-1].get("p", None) is None):
             print("[FWD] solve failed")
             return np.array([1e4, 1e4, 1e4], float)
-
+        # print("[CALLING solve_quasistatic_insertion]")
+        # print("r_src passed =", r_src)
+        # print("m_src passed =", m_src)
+        # print("m_src norm   =", np.linalg.norm(m_src))
         pE = hist[-1]["p"]
         tip = pE[:, -1].copy()
         info = hist[-1].get("info", {})
@@ -681,7 +737,7 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         p7,
         *,
         eps_theta=1e-3,
-        eps_hess=1e-3,
+        eps_hess=1e-2,
     ):
         """
         Uses the already-cached nominal solve.
@@ -702,27 +758,45 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         print("  mean =", np.mean(u_ref))
         print("  sign sum =", np.sum(np.sign(u_ref)))
         r_src = p7[0:3]
+
         rvec = p7[3:6]
+
         L_ins = float(p7[6])
 
         q_src = self._quat_from_rotvec_ur(rvec)
 
         L_model, wire_len, tip_len = effective_lengths(
+
             L_ins,
+
             L_tip_full=self.L_tip_full,
+
             L_tip_min=self.L_tip_min,
+
         )
 
         u_ref = np.asarray(self.last_info["u_flat_opt"], float).copy()
 
-        theta0 = np.hstack([r_src, np.zeros(3), L_ins])
+        # theta is the sensitivity parameter used by energy_grad_fun:
+
+        # [source_position_xyz, small_orientation_perturbation_xyz, insertion_L]
+
+        theta0 = np.hstack([r_src, np.zeros(3), L_ins]).astype(float)
+
+        def theta_builder(theta):
+            if theta is None:
+                return {"theta0": theta0.copy()}
+
+            theta = np.asarray(theta, float).reshape(7)
+            return {"theta0": theta}
+        # theta0 = np.hstack([r_src, np.zeros(3), L_ins])
 
         lumen_query = (
             LumenQuery(self.lumen_C, self.lumen_R)
             if self.use_lumen_jac
             else None
         )
-
+        # self.print_contact_params("[JACOBIAN CONTACT PARAMS]")
         energy_grad_fun = make_energy_grad_fun_for_pose(
             p0=self.p0_ur,
             q0=self.q0_ur,
@@ -738,16 +812,109 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             use_magnetic=True,
             use_contact=self.use_lumen_jac,
             lumen_query=lumen_query,
-            use_fast_contact_grad=False,
-
-            contact_r_beam=0.001,
-            contact_k=1e8,
-            contact_pen_switch=5e-5,
-            contact_k_hard=1e10,
+            contact=self.contact,
         )
-        def theta_builder(theta):
-            return {"theta0": theta0}
+        def debug_theta_gradient_consistency(
+            *,
+            u_ref,
+            theta0,
+            energy_grad_fun,
+            rebuild_energy_grad_fun_for_pose,
+            eps=1e-4,
+        ):
+            """
+            Checks whether energy_grad_fun(u, theta +/- eps e_j)
+            matches rebuilding the whole gradient function at the perturbed pose.
 
+            rebuild_energy_grad_fun_for_pose(theta_abs) must return a callable:
+                grad_fun(u_flat) -> grad_u
+            """
+            u_ref = np.asarray(u_ref, float).reshape(-1)
+            theta0 = np.asarray(theta0, float).reshape(7)
+
+            labels = ["x", "y", "z", "rx_small", "ry_small", "rz_small", "L"]
+
+            print("\n==============================")
+            print(" THETA GRADIENT CONSISTENCY ")
+            print("==============================")
+
+            for j, lab in enumerate(labels):
+                thp = theta0.copy()
+                thm = theta0.copy()
+                thp[j] += eps
+                thm[j] -= eps
+
+                gp_theta = energy_grad_fun(u_ref, thp)
+                gm_theta = energy_grad_fun(u_ref, thm)
+                dtheta_internal = (gp_theta - gm_theta) / (2.0 * eps)
+
+                grad_fun_p = rebuild_energy_grad_fun_for_pose(thp)
+                grad_fun_m = rebuild_energy_grad_fun_for_pose(thm)
+
+                gp_rebuild = grad_fun_p(u_ref)
+                gm_rebuild = grad_fun_m(u_ref)
+                dtheta_rebuild = (gp_rebuild - gm_rebuild) / (2.0 * eps)
+
+                err = dtheta_internal - dtheta_rebuild
+
+                print(f"\n[{lab}]")
+                print("||internal|| =", np.linalg.norm(dtheta_internal))
+                print("||rebuild || =", np.linalg.norm(dtheta_rebuild))
+                print("||err     || =", np.linalg.norm(err))
+                print("rel err    =", np.linalg.norm(err) / (np.linalg.norm(dtheta_rebuild) + 1e-12))
+                print("dot cos    =", np.dot(dtheta_internal, dtheta_rebuild) / (
+                    np.linalg.norm(dtheta_internal) * np.linalg.norm(dtheta_rebuild) + 1e-12
+                ))
+        def rebuild_energy_grad_fun_for_pose(theta_abs):
+            theta_abs = np.asarray(theta_abs, float).reshape(7)
+
+            r_src_abs = theta_abs[:3].copy()
+            drot_abs = theta_abs[3:6].copy()
+            L_abs = float(theta_abs[6])
+
+            # Build perturbed source quaternion using the same "world small rotation" convention.
+            R0 = Rot.from_quat([q_src[1], q_src[2], q_src[3], q_src[0]])
+            dR = Rot.from_rotvec(drot_abs)
+            Rp = dR * R0
+
+            q_xyzw = Rp.as_quat()
+            q_src_abs = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], float)
+
+            grad_fun_abs = make_energy_grad_fun_for_pose(
+                p0=self.p0_ur,
+                q0=self.q0_ur,
+                q_src0=q_src,
+                m_body=self.m_body,
+                Kinv_fun=self.Kinv_fun,
+                u_star=self.u_star,
+                m_moment=0.0,
+                N=self.N_nodes,
+                L_tip_full=self.L_tip_full,
+                L_tip_min=self.L_tip_min,
+                rotation_convention="world",
+                use_magnetic=True,
+                use_contact=self.use_lumen_jac,
+                lumen_query=lumen_query,
+                contact=self.contact,
+            )
+
+            # Important:
+            # The rebuilt function already has q_src_abs baked in.
+            # Therefore pass zero small-rotation in the local theta, but pass the perturbed
+            # source position and perturbed length.
+            theta_local = np.hstack([r_src_abs, np.zeros(3), L_abs]).astype(float)
+
+            def grad_fun_rebuilt(u_flat):
+                return grad_fun_abs(u_flat, theta_local)
+
+            return grad_fun_rebuilt
+        debug_theta_gradient_consistency(
+            u_ref=u_ref,
+            theta0=theta0,
+            energy_grad_fun=energy_grad_fun,
+            rebuild_energy_grad_fun_for_pose=rebuild_energy_grad_fun_for_pose,
+            eps=1e-4,
+        )
         m_src = dipole_from_pose(q_src, self.m_body)
 
         m_local_fun = make_m_local_fun_wire_tip(
@@ -773,6 +940,9 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             N=self.N_nodes,
             theta_builder=theta_builder,
             energy_grad_fun=energy_grad_fun,
+            lumen_query=lumen_query,
+            contact=self.contact,
+            debug_hessian_terms=True,
             eps_theta=eps_theta,
             eps_hess=eps_hess,
         )

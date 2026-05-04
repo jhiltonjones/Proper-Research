@@ -20,45 +20,139 @@ beam_params = default_beam_params()
 mag_params = default_magnet_params()
 L_tip_full = 0.04
 def energy_min_tip_jacobian_implicit(
+
     *,
+
     u_opt,
+
     p0, q0,
+
     L,
+
     wire_len,
+
     Kinv_fun,
+
     u_star,
+
     r_src,
+
     m_src,
+
     m_local_fun,
+
     m_moment,
+
     N,
+
     theta_builder,
+
     energy_grad_fun,
+
+    lumen_query=None,
+
+    contact=None,
+
+    debug_hessian_terms=False,
+
     eps_theta=1e-6,
+
     eps_hess=1e-6,
+
 ):
-    """
-    Implicit Jacobian for energy minimisation.
 
-    theta is whatever controls you want:
-      [r_src(3), source rotation(3), L(1)] -> 7 columns.
-
-    Requires:
-      energy_grad_fun(u_flat, theta) -> dE/du_flat
-      theta_builder(theta) -> dict containing updated L, s, K_seg, r_src, m_src, etc.
-    """
+    contact = contact or ContactParams()
 
     u_opt = np.asarray(u_opt, float).reshape(-1)
+
     n_u = u_opt.size
 
     theta0 = np.asarray(theta_builder(None)["theta0"], float).reshape(-1)
+
     n_theta = theta0.size
 
-    # -------------------------------------------------
-    # Hessian H = d/du grad_u E
-    # -------------------------------------------------
+    # Rebuild the same nominal discretisation used by the Jacobian.
+
+    s = np.linspace(0.0, float(L), int(N))
+
+    K_seg = precompute_K_segments(s, Kinv_fun, wire_len)
+
+    if debug_hessian_terms:
+
+        hessian_diagnostic_for_grad(
+            "elastic only",
+            lambda u: elastic_energy_gradient_u(
+                u,
+                s=s,
+                K_seg=K_seg,
+                u_star=u_star,
+            ),
+            u_opt,
+            eps=eps_hess,
+        )
+
+        hessian_diagnostic_for_grad(
+            "magnetic only",
+            lambda u: magnetic_energy_gradient_u_virtual_work(
+                u,
+                p0=p0,
+                q0=q0,
+                s=s,
+                m_src=m_src,
+                r_src=r_src,
+                m_local_fun=m_local_fun,
+                m_moment=m_moment,
+            ),
+            u_opt,
+            eps=eps_hess,
+        )
+
+        check_magnetic_grad_against_energy_fd(
+            u_opt,
+            p0=p0,
+            q0=q0,
+            s=s,
+            m_src=m_src,
+            r_src=r_src,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            eps_list=(1e-3, 3e-4, 1e-4, 3e-5),
+            max_cols=12,
+        )
+
+        if lumen_query is not None:
+            hessian_diagnostic_for_grad(
+                "contact only",
+                lambda u: contact_energy_gradient_u(
+                    u,
+                    p0=p0,
+                    q0=q0,
+                    s=s,
+                    lumen_query=lumen_query,
+                    contact=contact,
+                ),
+                u_opt,
+                eps=eps_hess,
+            )
+
+        hessian_diagnostic_for_grad(
+            "full energy_grad_fun",
+            lambda u: energy_grad_fun(u, theta0),
+            u_opt,
+            eps=eps_hess,
+        )
+
+    # existing Hessian code continues here
+
     g0 = energy_grad_fun(u_opt, theta0)
+
     H = np.zeros((n_u, n_u), dtype=float)
+    print("\n--- IMPLICIT JAC STATIONARITY ---")
+    print("||g0|| =", np.linalg.norm(g0))
+    print("max |g0| =", np.max(np.abs(g0)))
+    print("mean |g0| =", np.mean(np.abs(g0)))
+    print("||u_opt|| =", np.linalg.norm(u_opt))
 
     for k in range(n_u):
         up = u_opt.copy()
@@ -73,7 +167,13 @@ def energy_min_tip_jacobian_implicit(
 
     # regularise very lightly for numerical safety
     H_reg = H + 1e-10 * np.eye(n_u)
-
+    print("\n--- HESSIAN DIAGNOSTIC ---")
+    print("||H|| =", np.linalg.norm(H))
+    print("cond(H_reg) =", np.linalg.cond(H_reg))
+    print("min/max eig sym(H) =",
+        np.min(np.linalg.eigvalsh(0.5 * (H + H.T))),
+        np.max(np.linalg.eigvalsh(0.5 * (H + H.T))))
+    print("H asymmetry =", np.linalg.norm(H - H.T) / (np.linalg.norm(H) + 1e-12))
     # -------------------------------------------------
     # Gtheta = d/dtheta grad_u E
     # -------------------------------------------------
@@ -93,8 +193,10 @@ def energy_min_tip_jacobian_implicit(
     # -------------------------------------------------
     # du*/dtheta = -H^{-1} Gtheta
     # -------------------------------------------------
+    # du_dtheta = -np.linalg.solve(H_reg, Gtheta)
+    H_sym = 0.5 * (H + H.T)
+    H_reg = H_sym + 1e-10 * np.eye(n_u)
     du_dtheta = -np.linalg.solve(H_reg, Gtheta)
-
     # -------------------------------------------------
     # dp_tip/du
     # -------------------------------------------------
@@ -134,9 +236,50 @@ def energy_min_tip_jacobian_implicit(
     q_tip = q_base[:, -1]
     R_tip = quat_to_R(q_tip)
     t_tip = R_tip @ np.array([-1.0, 0.0, 0.0])
-    P_theta_direct[:, -1] = t_tip
+    # P_theta_direct[:, -1] = t_tip
+    def tip_from_fixed_u_at_L(L_eval):
+        p_eval, q_eval, _ = integrate_pq_from_u(
+            u_opt,
+            p0=p0,
+            q0=q0,
+            s=np.linspace(0.0, float(L_eval), int(N)),
+        )
+        return p_eval[:, -1]
 
+    eps_L_direct = 1e-5
+    p_plus = tip_from_fixed_u_at_L(L + eps_L_direct)
+    p_minus = tip_from_fixed_u_at_L(L - eps_L_direct)
+
+    P_theta_direct[:, -1] = (p_plus - p_minus) / (2.0 * eps_L_direct)
+
+    print("tangent direct L approx =", t_tip)
+    print("FD fixed-u direct L     =", P_theta_direct[:, -1])
     J_tip_theta = P_u @ du_dtheta + P_theta_direct
+    J_implicit = P_u @ du_dtheta
+
+    J_direct = P_theta_direct
+
+    J_tip_theta = J_implicit + J_direct
+
+    print("\n--- ANALYTIC J L BREAKDOWN ---")
+
+    print("direct L term:")
+
+    print(J_direct[:, -1])
+
+    print("implicit L term:")
+
+    print(J_implicit[:, -1])
+
+    print("total L term:")
+
+    print(J_tip_theta[:, -1])
+
+    print("||Gtheta_L|| =", np.linalg.norm(Gtheta[:, -1]))
+
+    print("||du_dtheta_L|| =", np.linalg.norm(du_dtheta[:, -1]))
+
+    print("||P_u|| =", np.linalg.norm(P_u))
 
     return J_tip_theta, dict(
         H=H,
@@ -145,6 +288,31 @@ def energy_min_tip_jacobian_implicit(
         P_u=P_u,
         p_tip_base=p_tip_base,
     )
+def hessian_diagnostic_for_grad(name, grad_fun, u_ref, eps=1e-5):
+    u_ref = np.asarray(u_ref, float).reshape(-1)
+    n = u_ref.size
+
+    g0 = grad_fun(u_ref)
+    H = np.zeros((n, n), float)
+
+    for k in range(n):
+        up = u_ref.copy()
+        um = u_ref.copy()
+        up[k] += eps
+        um[k] -= eps
+
+        gp = grad_fun(up)
+        gm = grad_fun(um)
+
+        H[:, k] = (gp - gm) / (2.0 * eps)
+
+    Hs = 0.5 * (H + H.T)
+
+    print(f"\n--- H DIAG: {name} ---")
+    print("||g0|| =", np.linalg.norm(g0))
+    print("||H|| =", np.linalg.norm(H))
+    print("H asymmetry =", np.linalg.norm(H - H.T) / (np.linalg.norm(H) + 1e-30))
+    print("eig sym min/max =", np.min(np.linalg.eigvalsh(Hs)), np.max(np.linalg.eigvalsh(Hs)))
 def elastic_energy_gradient_u(u_flat, *, s, K_seg, u_star):
     u_seg = np.asarray(u_flat, float).reshape(len(s) - 1, 3)
     ds = np.diff(s)
@@ -271,12 +439,10 @@ def contact_energy_gradient_u(
     q0,
     s,
     lumen_query,
-    r_beam=0.002,
-    k_contact=1e3,
-    pen_switch=5e-5,
-    k_hard=1e8,
+    contact=None,
     eps_kin=1e-7,
 ):
+    contact = contact or ContactParams()
     """
     Analytic contact gradient via chain rule:
 
@@ -295,14 +461,14 @@ def contact_energy_gradient_u(
     C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
         p,
         lumen_query,
-        r_beam=r_beam,
-        k_contact=k_contact,
-        pen_switch=pen_switch,
-        k_hard=k_hard,
+        r_beam=contact.r_beam,
+        k_contact=contact.k,
+        pen_switch=contact.pen_switch,
+        k_hard=contact.k_hard,
         eps=1e-12,
-        window=3,
-        smooth=False,
-        smooth_eps=1e-5,
+        window=contact.window,
+        smooth=contact.smooth,
+        smooth_eps=contact.smooth_eps,
     )
 
     min_gap = float(np.min(gap_nodes))
@@ -357,24 +523,14 @@ def contact_energy_gradient_u(
 def energy_gradient_u(
     u_flat,
     *,
-    p0,
-    q0,
-    s,
-    K_seg,
-    u_star,
-    m_src,
-    r_src,
-    m_local_fun,
-    m_moment,
+    p0, q0, s, K_seg, u_star,
+    m_src, r_src, m_local_fun, m_moment,
     lumen_query=None,
     use_magnetic=True,
     use_contact=True,
-    use_fast_contact_grad=False,
-    contact_r_beam=0.001,
-    contact_k=1e5,
-    contact_pen_switch=5e-5,
-    contact_k_hard=1e10,
+    contact=None,
 ):
+    contact = contact or ContactParams()
     grad = elastic_energy_gradient_u(
         u_flat,
         s=s,
@@ -395,27 +551,14 @@ def energy_gradient_u(
         )
 
     if use_contact and (lumen_query is not None):
-        if use_fast_contact_grad:
-            grad += contact_energy_gradient_u_faster_fdkin(
-                u_flat,
-                p0=p0,
-                q0=q0,
-                s=s,
-                lumen_query=lumen_query,
-                eps_kin=1e-7,
-            )
-        else:
-            grad += contact_energy_gradient_u(
-                u_flat,
-                p0=p0,
-                q0=q0,
-                s=s,
-                lumen_query=lumen_query,
-                r_beam=contact_r_beam,
-                k_contact=contact_k,
-                pen_switch=contact_pen_switch,
-                k_hard=contact_k_hard,
-            )
+        grad += contact_energy_gradient_u(
+            u_flat,
+            p0=p0,
+            q0=q0,
+            s=s,
+            lumen_query=lumen_query,
+            contact=contact,
+        )
 
     return grad
 def contact_energy_gradient_u_faster_fdkin(
@@ -477,14 +620,33 @@ def contact_energy_gradient_u_faster_fdkin(
 
     return grad
 def solve_energy_min_3d(
-    *, p0, q0, L, wire_len, Kinv_fun, u_star,
+
+    *,
+
+    p0, q0, L, wire_len, Kinv_fun, u_star,
+
     r_src, m_src, m_local_fun, m_moment,
-    N=60, u0_flat=None, maxiter=300,
-    lumen_C=None, lumen_R=None, use_lumen=True,
-    contact_k=1e8, contact_beta=50.0, contact_delta=5e-4,
-    contact_mode="tip", contact_s_on=0.0, contact_s_off=0.0,
-    energy_scale=1e-8,use_fast_contact_grad=False,
+
+    N=60,
+
+    u0_flat=None,
+
+    maxiter=300,
+
+    lumen_C=None,
+
+    lumen_R=None,
+
+    use_lumen=True,
+
+    contact=None,
+
+    energy_scale=1e-8,
+    use_fast_contact_grad=False,
 ):
+
+    contact = contact or ContactParams()
+
     s = np.linspace(0.0, float(L), int(N))
     n_seg = N - 1
     K_seg = precompute_K_segments(s, Kinv_fun, wire_len)
@@ -509,20 +671,21 @@ def solve_energy_min_3d(
         u_flat = u_scale * np.asarray(z, float)
         W, _ = energy_from_u(
             u_flat,
-            p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
-            m_src=m_src, r_src=r_src,
-            m_local_fun=m_local_fun, m_moment=m_moment,
+            p0=p0,
+            q0=q0,
+            s=s,
+            K_seg=K_seg,
+            u_star=u_star,
+            m_src=m_src,
+            r_src=r_src,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
             wire_len=wire_len,
-            include_gravity=False,
-            lumen_C=lumen_C, lumen_R=lumen_R,
+            lumen_C=lumen_C,
+            lumen_R=lumen_R,
             lumen_query=lumen_query,
             use_lumen=use_lumen,
-            contact_k=contact_k,
-            contact_beta=contact_beta,
-            contact_delta=contact_delta,
-            contact_mode=contact_mode,
-            contact_s_on=contact_s_on,
-            contact_s_off=contact_s_off,
+            contact=contact,
         )
         return W / energy_scale
 
@@ -543,11 +706,7 @@ def solve_energy_min_3d(
             lumen_query=lumen_query,
             use_magnetic=True,
             use_contact=use_lumen,
-            use_fast_contact_grad=use_fast_contact_grad,
-            contact_r_beam=0.001,
-            contact_k=contact_k,
-            contact_pen_switch=5e-5,
-            contact_k_hard=1e10,
+            contact=contact,
         )
 
         return (u_scale / energy_scale) * grad_u
@@ -572,20 +731,21 @@ def solve_energy_min_3d(
 
     W, parts = energy_from_u(
         u_flat_opt,
-        p0=p0, q0=q0, s=s, K_seg=K_seg, u_star=u_star,
-        m_src=m_src, r_src=r_src,
-        m_local_fun=m_local_fun, m_moment=m_moment,
+        p0=p0,
+        q0=q0,
+        s=s,
+        K_seg=K_seg,
+        u_star=u_star,
+        m_src=m_src,
+        r_src=r_src,
+        m_local_fun=m_local_fun,
+        m_moment=m_moment,
         wire_len=wire_len,
-        include_gravity=False,
-        lumen_C=lumen_C, lumen_R=lumen_R,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
         lumen_query=lumen_query,
         use_lumen=use_lumen,
-        contact_k=contact_k,
-        contact_beta=contact_beta,
-        contact_delta=contact_delta,
-        contact_mode=contact_mode,
-        contact_s_on=contact_s_on,
-        contact_s_off=contact_s_off,
+        contact=contact,
     )
 
     W0 = W0_scaled * energy_scale
@@ -608,14 +768,26 @@ def solve_energy_min_3d(
 
     return p, q, u_seg, info
 def energy_from_u(
-    u_flat, *, p0, q0, s, K_seg, u_star,
+    u_flat,
+
+    *,
+
+    p0, q0, s, K_seg, u_star,
+
     m_src, r_src, m_local_fun, m_moment, wire_len,
-    lumen_C=None, lumen_R=None,
-    contact_k=1e3, contact_beta=50.0, contact_delta=5e-4,
-    contact_mode="tip", include_gravity=False,
-    contact_s_on=0.0, contact_s_off=0.0,
-    lumen_query=None, use_lumen=True,
-    debug_mag=False, debug_every=1, debug_head=8
+
+    lumen_C=None,
+
+    lumen_R=None,
+
+    lumen_query=None,
+
+    use_lumen=True,
+
+    contact=None,
+    debug_mag=False,
+    debug_every=1,
+    debug_head=8,
 ):
     """
     Computes total potential energy Π(u) in 3D using:
@@ -735,9 +907,9 @@ def energy_from_u(
     # Gravity
     # -------------------------
     W_g = 0.0
-    if include_gravity:
-        fg = np.asarray(beam_params.f_g, float).reshape(3,)
-        W_g = -np.trapezoid(np.sum(fg[:, None] * p, axis=0), s)
+    # if include_gravity:
+    #     fg = np.asarray(beam_params.f_g, float).reshape(3,)
+    #     W_g = -np.trapezoid(np.sum(fg[:, None] * p, axis=0), s)
 
     # -------------------------
     # Contact / lumen
@@ -750,25 +922,22 @@ def energy_from_u(
     gap_nodes = None
 
     if use_lumen and (lumen_query is not None):
-        # IMPORTANT:
-        # These parameters must match contact_energy_gradient_u().
-        contact_r_beam = 0.002         # or beam_params.r, but use the same value in the gradient
-        contact_k_soft = 1e8
-        contact_pen_switch = 5e-5
-        contact_k_hard = 1e10
-
         C_nodes, F_nodes, gap_nodes = contact_barrier_energy_and_force_fast(
             p,
             lumen_query,
-            r_beam=contact_r_beam,
-            k_contact=contact_k_soft,
-            pen_switch=contact_pen_switch,
-            k_hard=contact_k_hard,
+            r_beam=contact.r_beam,
+            k_contact=contact.k,
+            pen_switch=contact.pen_switch,
+            k_hard=contact.k_hard,
             eps=1e-12,
-            window=3,
-            smooth=False,
-            smooth_eps=1e-5,
+            window=contact.window,
+            smooth=contact.smooth,
+            smooth_eps=contact.smooth_eps,
         )
+
+        h = float(s[1] - s[0])
+        W_cf = h * float(np.sum(C_nodes))
+        min_gap = float(np.min(gap_nodes))
 
         # Same scaling as contact_energy_gradient_u():
         # dW *= (s[1] - s[0])
@@ -820,7 +989,83 @@ def energy_from_u(
         W_t_seg=np.asarray(W_t_seg, float),
     )
     return float(W_total), parts
+def check_magnetic_grad_against_energy_fd(
+    u_ref,
+    *,
+    p0,
+    q0,
+    s,
+    m_src,
+    r_src,
+    m_local_fun,
+    m_moment,
+    wire_len,
+    eps_list=(1e-3, 3e-4, 1e-4, 3e-5),
+    max_cols=10,
+):
+    u_ref = np.asarray(u_ref, float).reshape(-1)
 
+    g_vw = magnetic_energy_gradient_u_virtual_work(
+        u_ref,
+        p0=p0,
+        q0=q0,
+        s=s,
+        m_src=m_src,
+        r_src=r_src,
+        m_local_fun=m_local_fun,
+        m_moment=m_moment,
+    )
+
+    def Wmag(u):
+        W, parts = energy_from_u(
+            u,
+            p0=p0,
+            q0=q0,
+            s=s,
+            K_seg=np.zeros((len(s) - 1, 3, 3)),  # ignored if elastic manually zeroed? see note below
+            u_star=np.zeros(3),
+            m_src=m_src,
+            r_src=r_src,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            lumen_query=None,
+            use_lumen=False,
+        )
+        return parts["W_m"]
+
+    print("\n==============================")
+    print(" MAGNETIC GRADIENT VS ENERGY FD ")
+    print("==============================")
+    print("||g_virtual_work|| =", np.linalg.norm(g_vw))
+
+    cols = list(range(min(max_cols, u_ref.size)))
+
+    for eps in eps_list:
+        g_fd = np.zeros_like(g_vw)
+
+        for k in cols:
+            up = u_ref.copy()
+            um = u_ref.copy()
+            up[k] += eps
+            um[k] -= eps
+
+            g_fd[k] = (Wmag(up) - Wmag(um)) / (2.0 * eps)
+
+        err = g_vw[cols] - g_fd[cols]
+
+        print(f"\neps = {eps}")
+        print("||g_fd subset|| =", np.linalg.norm(g_fd[cols]))
+        print("||err subset||  =", np.linalg.norm(err))
+        print("rel err subset  =", np.linalg.norm(err) / (np.linalg.norm(g_fd[cols]) + 1e-12))
+
+        for k in cols:
+            print(
+                f"k={k:3d}: "
+                f"vw={g_vw[k]: .6e}, "
+                f"fd={g_fd[k]: .6e}, "
+                f"err={g_vw[k] - g_fd[k]: .6e}"
+            )
 def tip_len_fun(LL):
     # magnet grows with LL until full physical tip inside
     return min(float(LL), L_tip_full)
@@ -828,20 +1073,38 @@ def tip_len_fun(LL):
 def wire_len_fun(LL):
     # wire exists only after full tip is inside
     return max(float(LL) - L_tip_full, 0.0)
+def solve_quasistatic_insertion(
 
-def solve_quasistatic_insertion(*,
+    *,
+
     p0, q0,
+
     L0, Lf, dL,
-    wire_len_fun,          # function wire_len(L_model)
+
+
     Kinv_fun, u_star,
+
     r_src, m_src, m_local_fun, m_moment,
+
     lumen_C, lumen_R,
-    N=30, maxiter=200,
+
+    N=30,
+
+    maxiter=200,
+
     u_init=None,
+
     use_lumen=True,
-    tip_len_fun=None,      # OPTIONAL: function tip_len(L_model)
-    debug=False
+
+    tip_len_fun=None,
+
+    contact=None,
+
+    debug=False,
+    use_fast_contact_grad=False,
 ):
+
+    contact = contact or ContactParams()
     """
     Continuation in model length L (NOT insertion length).
     """
@@ -898,6 +1161,9 @@ def solve_quasistatic_insertion(*,
                 lumen_C=lumen_C,
                 lumen_R=lumen_R,
                 use_lumen=use_lumen,
+                contact=contact,
+            
+                use_fast_contact_grad=use_fast_contact_grad,
             )
 
             u0 = info["u_flat_opt"].copy()
@@ -1164,16 +1430,11 @@ def make_energy_grad_fun_for_pose(
     L_tip_min,
     rotation_convention="world",
     use_magnetic=True,
-    use_contact=False,
+    use_contact=True,
     lumen_query=None,
-    use_fast_contact_grad=False,
-
-    # Contact parameters
-    contact_r_beam=0.002,
-    contact_k=1e8,
-    contact_pen_switch=5e-5,
-    contact_k_hard=1e10,
+    contact=None,
 ):
+    contact = contact or ContactParams()
     q_src0 = quat_normalize(q_src0)
 
     def energy_grad_fun(u_flat, theta):
@@ -1219,15 +1480,10 @@ def make_energy_grad_fun_for_pose(
             r_src=r_src,
             m_local_fun=m_local_fun,
             m_moment=m_moment,
+            lumen_query=lumen_query,
             use_magnetic=use_magnetic,
             use_contact=use_contact,
-            lumen_query=lumen_query,
-            use_fast_contact_grad=use_fast_contact_grad,
-
-            contact_r_beam=contact_r_beam,
-            contact_k=contact_k,
-            contact_pen_switch=contact_pen_switch,
-            contact_k_hard=contact_k_hard,
+            contact=contact,
         )
 
     return energy_grad_fun

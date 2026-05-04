@@ -1,33 +1,51 @@
 from pathlib import Path
-import re
+from PIL import Image
 import imageio.v2 as imageio
 
 
-INPUT_DIR = Path("/home/jack/Proper-Research/debug_outputs_opti_mid_nobc")
-OUTPUT_GIF = INPUT_DIR / "reconstruction_overlay.gif"
+INPUT_DIR = Path("/Users/jackhilton-jones/Proper-Research/mpc_run_centreline_track_day21stepstepwobc10nodes")
+OUTPUT_GIF = INPUT_DIR / "reference_debug.gif"
 
-# seconds per frame
 FRAME_DURATION = 0.15
-
-# 0 = infinite loop
 LOOP = 0
 
-
-def numeric_key(path: Path):
-    m = re.search(r"(\d+)(?=\.png$)", path.name)
-    return int(m.group(1)) if m else -1
+START_FRAME = 0
+END_FRAME = None
 
 
 def main():
-    png_files = sorted(
-        INPUT_DIR.glob("reconstruction_overlay_step_*.png"),
-        key=numeric_key
-    )
+    frames = []
+    frame_idx = START_FRAME
+    target_size = None
 
-    if not png_files:
+    while True:
+        if END_FRAME is not None and frame_idx > END_FRAME:
+            break
+
+        png = INPUT_DIR / f"step_{frame_idx:04d}_reference_debug.png"
+
+        if not png.exists():
+            if END_FRAME is None:
+                break
+            print(f"Skipping missing file: {png}")
+            frame_idx += 1
+            continue
+
+        img = Image.open(png).convert("RGB")
+
+        if target_size is None:
+            target_size = img.size
+            print(f"Using target frame size: {target_size}")
+
+        if img.size != target_size:
+            print(f"Resizing {png.name} from {img.size} to {target_size}")
+            img = img.resize(target_size)
+
+        frames.append(img)
+        frame_idx += 1
+
+    if not frames:
         raise FileNotFoundError(f"No matching PNG files found in {INPUT_DIR}")
-
-    frames = [imageio.imread(png) for png in png_files]
 
     imageio.mimsave(
         OUTPUT_GIF,

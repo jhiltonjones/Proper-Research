@@ -32,9 +32,16 @@ Files:
     result_summary.json
     comparison_overlay.png   (if your vision code saves it)
 """
+
+from proper_research.simulation.boundary_forward_model import ContactParams
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 import copy
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithAnalyticJac ,effective_lengths,EnergyMinForwardWithLumen,DeterministicForward6D ,WarmForwardP8TipTangent
+from proper_research.simulation.boundary_forward_model import (
+    EnergyMinForwardWithAnalyticJac,
+    effective_lengths,
+    EnergyMinForwardWithLumen,
+    DeterministicForward6D,
+    WarmForwardP8TipTangent,)
 import time
 import json
 import os
@@ -51,13 +58,12 @@ from beam_direction_magnetisation.cosserat_6d_pose import ur_pose6_to_T
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
 from proper_research.robot.transformations import get_point
 
-from proper_research.control.lab_ready_mpc import integrate_pose8_body
+from proper_research.control.lab_ready_mpc import pose8_quat_to_pose7_rotvec ,integrate_pose8_body, analytic_J_robot_xy_yaw_dL
 from proper_research.vision.measure_length import new_capture
 from proper_research.vision.bounds_beam import reconstruct_beam_within_vessel, get_saved_2_point_calibration
 
 from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
 from proper_research.parameters import default_magnet_params, default_beam_params
-
 # ---- vision side ----
 # Update this import path if your vision utilities live elsewhere.
 from proper_research.vision.bounds_beam import (
@@ -66,7 +72,7 @@ from proper_research.vision.bounds_beam import (
 )
 from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
 
-MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
+MANUAL_VESSEL_BOUNDARY_FILE = "/Users/jackhilton-jones/Proper-Research/manual_vessel_boundaries.json"
 
 mag_params = default_magnet_params()
 
@@ -98,7 +104,55 @@ class SinglePoseEvalConfig:
     show_debug_vision: bool = True
     show_debug_model: bool = True
 
+def debug_raw_forward_position_sensitivity(warm_fwd, p8_nominal):
+    raw_fwd = warm_fwd.fwd
 
+    p7 = pose8_quat_to_pose7_rotvec(p8_nominal)
+
+    p7_x = p7.copy()
+    p7_y = p7.copy()
+    p7_z = p7.copy()
+
+    p7_x[0] += 0.05
+    p7_y[1] += 0.05
+    p7_z[2] += 0.05
+
+    # Reset caches between calls so warm-start does not obscure anything.
+    if hasattr(warm_fwd, "reset_cache"):
+        warm_fwd.reset_cache()
+
+    y0 = np.asarray(raw_fwd(p7), float).reshape(-1)
+
+    if hasattr(warm_fwd, "reset_cache"):
+        warm_fwd.reset_cache()
+
+    yx = np.asarray(raw_fwd(p7_x), float).reshape(-1)
+
+    if hasattr(warm_fwd, "reset_cache"):
+        warm_fwd.reset_cache()
+
+    yy = np.asarray(raw_fwd(p7_y), float).reshape(-1)
+
+    if hasattr(warm_fwd, "reset_cache"):
+        warm_fwd.reset_cache()
+
+    yz = np.asarray(raw_fwd(p7_z), float).reshape(-1)
+
+    print("\n==============================")
+    print(" RAW FORWARD POSITION TEST ")
+    print("==============================")
+    print("p7 nominal =", p7)
+    print("p7_x       =", p7_x)
+    print("p7_y       =", p7_y)
+    print("p7_z       =", p7_z)
+
+    print("\ny0 =", y0)
+    print("yx =", yx)
+    print("yx - y0 =", yx - y0)
+    print("yy =", yy)
+    print("yy - y0 =", yy - y0)
+    print("yz =", yz)
+    print("yz - y0 =", yz - y0)
 def pivot_rotation_matrix(pivot_pose6: np.ndarray) -> np.ndarray:
     T = ur_pose6_to_T(np.asarray(pivot_pose6, dtype=float).reshape(6,))
     return T[:3, :3]
@@ -173,7 +227,6 @@ def pose6_and_L_to_pose8_quat(ur_pose6: np.ndarray, L_m: float) -> np.ndarray:
 
 
 
-
 def compute_position_errors_mm(pred_local_m: np.ndarray, meas_local_m: np.ndarray) -> Dict[str, float]:
     e = np.asarray(meas_local_m, dtype=float).reshape(3,) - np.asarray(pred_local_m, dtype=float).reshape(3,)
 
@@ -215,14 +268,14 @@ def transform_local_points_to_robot(
 def build_initial_lumen_from_vision(
     pivot_point,
     image_filename="focused_image.jpg",
-    roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
+    roi_polygon_path="/Users/jackhilton-jones/Proper-Research/custom_area.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
     manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
     show=False,
 ):
-    new_capture()
+    # new_capture()
 
     manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
 
@@ -465,6 +518,16 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_full=tip_len_model,
     #     L_tip_min=0.01,
     # )
+    contact = ContactParams(
+        r_beam=beam_params.r,   # or 0.001, but use one value everywhere
+        k=1e8,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        smooth=True,
+        smooth_eps=1e-5,
+        window=3,
+    )
+
     forward_model = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
@@ -476,10 +539,16 @@ def build_forward_model_no_lumen_effect(
         N_nodes=10,
         maxiter=30,
         L0_init=0.01,
-        dL_internal=0.02,
+        dL_internal=0.04,
         use_lumen_jac=True,
-        L_tip_full=tip_len_model,
+
+        # Use physical full tip length, not current inserted tip length
+        L_tip_full=0.04,
         L_tip_min=0.01,
+
+        # New canonical contact parameter object
+        contact_params=contact,
+        use_fast_contact_grad=False,
     )
     return WarmForwardP8TipTangent(forward_model)
 
@@ -602,7 +671,7 @@ def compute_mm_per_pixel_from_green(image_bgr, green_roi_box, known_distance_mm:
     #     max_area=50000,
     #     show_debug=False,
     # )
-    green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
+    green_result = get_saved_2_point_calibration("/Users/jackhilton-jones/Proper-Research/calibration_points.json")
 
     p1, p2 = green_result["points_px"]
     p1 = np.asarray(p1, dtype=float)
@@ -631,7 +700,7 @@ def build_reference_beam_frame_from_image(
     show_debug_markers: bool = False,
     ):
     red_roi_box = load_roi_box(red_roi_path)
-    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+    roi_polygon = load_polygon("/Users/jackhilton-jones/Proper-Research/custom_area.json")
     ref_result = measure_tip_state_4markers(
         image_filename=image_filename,
         roi_box=None,
@@ -673,7 +742,7 @@ def measure_tip_from_vision_base_local(
         known_distance_mm=cfg.known_green_distance_mm,
     )
     print(f"MM pixel: {mm_per_pixel} and known distance {cfg.known_green_distance_mm}")
-    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+    roi_polygon = load_polygon("/Users/jackhilton-jones/Proper-Research/custom_area.json")
     tip_result = measure_tip_state_4markers(
         image_filename=cfg.image_filename,
         roi_box=None,
@@ -813,6 +882,44 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
         ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
     )
+    p8_test = pose6_and_L_to_pose8_quat(cfg.test_pose6, cfg.L_m)
+    debug_raw_forward_position_sensitivity(fwd_no_lumen, p8_test)
+    p8_test = pose6_and_L_to_pose8_quat(cfg.test_pose6, cfg.L_m)
+
+    fwd_debug = copy.deepcopy(fwd_no_lumen)
+
+    y0 = np.asarray(fwd_debug(p8_test, commit=True), float).reshape(-1)[:6]
+
+    p8_x = p8_test.copy()
+    p8_x[0] += 0.05  # 50 mm, deliberately huge
+
+    y_x = np.asarray(fwd_debug(p8_x, commit=False), float).reshape(-1)[:6]
+
+    p8_y = p8_test.copy()
+    p8_y[1] += 0.05  # 50 mm, deliberately huge
+
+    y_y = np.asarray(fwd_debug(p8_y, commit=False), float).reshape(-1)[:6]
+
+    p8_z = p8_test.copy()
+    p8_z[2] += 0.05  # 50 mm, deliberately huge
+
+    y_z = np.asarray(fwd_debug(p8_z, commit=False), float).reshape(-1)[:6]
+
+    print("\n==============================")
+    print(" DIRECT SOURCE POSITION TEST ")
+    print("==============================")
+    print("p8 nominal[:3] =", p8_test[:3])
+    print("p8_x[:3]       =", p8_x[:3])
+    print("p8_y[:3]       =", p8_y[:3])
+    print("p8_z[:3]       =", p8_z[:3])
+
+    print("\ny0 =", y0)
+    print("y_x =", y_x)
+    print("y_x - y0 =", y_x - y0)
+    print("y_y =", y_y)
+    print("y_y - y0 =", y_y - y0)
+    print("y_z =", y_z)
+    print("y_z - y0 =", y_z - y0)
     dp_robot = np.asarray(cfg.test_pose6[:3], float) - np.asarray(cfg.pivot_pose6[:3], float)
     R_pivot = ur_pose6_to_T(cfg.pivot_pose6)[:3, :3]
     dp_local = R_pivot.T @ dp_robot
@@ -828,7 +935,19 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         L_m=float(cfg.L_m),
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
     )
-
+    jac_check = compare_analytic_vs_fd_jacobian(
+        forward6d=fwd_no_lumen,
+        pose6=np.asarray(cfg.test_pose6, dtype=float),
+        L_m=float(cfg.L_m),
+        dt=0.01,
+        dx=5e-3,
+        dy=5e-3,
+        dyaw=np.deg2rad(5.0),
+        dL=1e-3,
+        n_out=3,
+        results_dir=cfg.results_dir,
+        name="with_lumen_after_forward_solution",
+    )
     # if ref_frame is not None:
     #     meas = measure_tip_from_vision_base_local(
     #         cfg,
@@ -877,20 +996,26 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     print("meas_tip_angle_from_ref_deg =", meas["tip_result"]["tip_base_angle_from_ref_deg"])
     
     
-    
     result = {
         "pivot_pose6": np.asarray(cfg.pivot_pose6, dtype=float).tolist(),
         "test_pose6": np.asarray(cfg.test_pose6, dtype=float).tolist(),
         "base_point_robot_m": np.asarray(cfg.beam_base_point_robot_m, dtype=float).tolist(),
         "L_m": float(cfg.L_m),
+
         "pred_tip_angle_from_ref_deg": float(pred_tip_angle_deg),
         "meas_tip_angle_from_ref_deg": float(meas["tip_result"]["tip_base_angle_from_ref_deg"]),
+
         "pred_tip_robot_m": pred["tip_robot_m"].tolist(),
         "pred_tip_pivot_local_m": pred["tip_local_m"].tolist(),
         "pred_tip_base_local_m": pred_base_local_m.tolist(),
 
         "meas_tip_base_local_m": meas["tip_base_local_m"].tolist(),
         "mm_per_pixel": float(meas["mm_per_pixel"]),
+
+        "jacobian_max_abs_err_state": jac_check["max_abs_err_state"],
+        "jacobian_mean_abs_err_state": jac_check["mean_abs_err_state"],
+        "jacobian_max_rel_err_state": jac_check["max_rel_err_state"],
+        "jacobian_mean_rel_err_state": jac_check["mean_rel_err_state"],
 
         **err,
     }
@@ -1153,8 +1278,8 @@ def offset_walls_from_centerline(C_m, R_m):
     lower[:, :2] = C[:, :2] - normal * R[:, None]
 
     return upper, lower
-def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.033
+def make_initial_poses_single_use() -> tuple[np.ndarray, np.ndarray, float, float]:
+    L0 = 0.016
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1191,10 +1316,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # start_point = np.array([
     # 0.665894307606053, -0.7112810117612073, -0.1, np.pi, 0,0
     # ], float)
-    robot_pose6 = hw.get_robot_pose_once()
-    robot_pose6[2] = -0.1
+    # robot_pose6 = hw.get_robot_pose_once()
+    # robot_pose6[2] = -0.1
     # # # pose6[2] = -0.1
-    start_point = robot_pose6
+    start_point = pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
     dt =0.01
@@ -1424,36 +1549,36 @@ def plot_single_tip_comparison_local(
         #             label="Predicted beam centerline",
         #         )
 
-    # if src_local_m is not None:
-    #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
-    #     src_mm = 1e3 * src_local_m
+    if src_local_m is not None:
+        src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+        src_mm = 1e3 * src_local_m
 
-    #     plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+        plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
 
-    #     plt.annotate(
-    #         f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
-    #         (src_mm[0], src_mm[1]),
-    #         textcoords="offset points",
-    #         xytext=(8, 8),
-    #     )
+        plt.annotate(
+            f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+            (src_mm[0], src_mm[1]),
+            textcoords="offset points",
+            xytext=(8, 8),
+        )
 
-    #     # optional dipole direction arrow
-    #     if src_dir_local is not None:
-    #         src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
-    #         dxy = src_dir_local[:2]
-    #         n = np.linalg.norm(dxy)
-    #         if n > 1e-12:
-    #             dxy = dxy / n
-    #             arrow_len_mm = 25.0
-    #             plt.arrow(
-    #                 src_mm[0],
-    #                 src_mm[1],
-    #                 arrow_len_mm * dxy[0],
-    #                 arrow_len_mm * dxy[1],
-    #                 head_width=3.0,
-    #                 head_length=5.0,
-    #                 length_includes_head=True,
-    #             )
+        # optional dipole direction arrow
+        if src_dir_local is not None:
+            src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+            dxy = src_dir_local[:2]
+            n = np.linalg.norm(dxy)
+            if n > 1e-12:
+                dxy = dxy / n
+                arrow_len_mm = 25.0
+                plt.arrow(
+                    src_mm[0],
+                    src_mm[1],
+                    arrow_len_mm * dxy[0],
+                    arrow_len_mm * dxy[1],
+                    head_width=3.0,
+                    head_length=5.0,
+                    length_includes_head=True,
+                )
 
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")
@@ -1504,23 +1629,151 @@ def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):
     J_full[:, 5] = J_red[:, 2]   # yaw about z
     J_full[:, 6] = J_red[:, 3]   # insertion
     return J_full
+def reset_energy_forward_cache(raw_fwd):
+    if hasattr(raw_fwd, "_last"):
+        raw_fwd._last = dict(
+            p=None,
+            L=None,
+            u_init=None,
+            tip=None,
+            p_centerline=None,
+            info=None,
+            hist=None,
+        )
+
+    for name in ["last_info", "last_p_centerline", "last_tip", "last_hist"]:
+        if hasattr(raw_fwd, name):
+            setattr(raw_fwd, name, None)
+
+
+def numerical_J_raw_pose7_tip(
+    raw_fwd,
+    p7,
+    dx=5e-3,
+    dy=5e-3,
+    dz=5e-3,
+    drz=np.deg2rad(5.0),
+    dL=1e-3,
+    n_out=3,
+):
+    """
+    Finite-difference Jacobian of the raw full-coordinate forward model.
+
+    p7 = [x, y, z, rx, ry, rz, L]
+
+    Columns:
+        [x, y, z, rz, L]
+    """
+    p7 = np.asarray(p7, float).reshape(7,)
+    J = np.zeros((n_out, 5), float)
+
+    def eval_y(p7_eval, label=""):
+        reset_energy_forward_cache(raw_fwd)
+
+        y = np.asarray(raw_fwd(p7_eval), float).reshape(-1)
+        y = y[:n_out]
+
+        print(f"\n[RAW FD {label}]")
+        print("p7 =", p7_eval)
+        print("y  =", y)
+
+        return y
+
+    # x
+    pp = p7.copy()
+    pm = p7.copy()
+    pp[0] += dx
+    pm[0] -= dx
+    yp = eval_y(pp, "x plus")
+    ym = eval_y(pm, "x minus")
+    print("x diff =", yp - ym)
+    J[:, 0] = (yp - ym) / (2.0 * dx)
+
+    # y
+    pp = p7.copy()
+    pm = p7.copy()
+    pp[1] += dy
+    pm[1] -= dy
+    yp = eval_y(pp, "y plus")
+    ym = eval_y(pm, "y minus")
+    print("y diff =", yp - ym)
+    J[:, 1] = (yp - ym) / (2.0 * dy)
+
+    # z
+    pp = p7.copy()
+    pm = p7.copy()
+    pp[2] += dz
+    pm[2] -= dz
+    yp = eval_y(pp, "z plus")
+    ym = eval_y(pm, "z minus")
+    print("z diff =", yp - ym)
+    J[:, 2] = (yp - ym) / (2.0 * dz)
+
+    # simple rotvec-z perturbation
+    pp = p7.copy()
+    pm = p7.copy()
+    pp[5] += drz
+    pm[5] -= drz
+    yp = eval_y(pp, "rz plus")
+    ym = eval_y(pm, "rz minus")
+    print("rz diff =", yp - ym)
+    J[:, 3] = (yp - ym) / (2.0 * drz)
+
+    # L
+    pp = p7.copy()
+    pm = p7.copy()
+    pp[6] += dL
+    pm[6] -= dL
+    yp = eval_y(pp, "L plus")
+    ym = eval_y(pm, "L minus")
+    print("L diff =", yp - ym)
+    J[:, 4] = (yp - ym) / (2.0 * dL)
+
+    print("\n--- RAW POSE7 FD JACOBIAN ---")
+    print("columns = [x, y, z, rz, L]")
+    print(J)
+
+    return J
 def numerical_J_robot_xy_yaw_dL_warm_branch(
     p8,
     forward_model,   # the actual warm wrapper object, not just a plain fn
-    dx=5e-3,
-    dy=5e-3,
+    dx=1e-2,
+    dy=1e-2,
     dyaw=np.deg2rad(5.0),
     dL=1e-3,
     n_out=5,         # e.g. [tip_x, tip_y, tip_z, tx, ty]
 ):
+    
+
+
+    def eval_y_from_p8(p, label=""):
+        y = np.asarray(forward_model(p), float).reshape(-1)
+
+        print(f"\n[FD EVAL {label}]")
+        print("input p[:3] =", p[:3])
+        print("input q     =", p[3:7])
+        print("input L     =", p[7])
+        print("output y    =", y[:n_out])
+
+        fwd_obj = forward_model.fwd if hasattr(forward_model, "fwd") else forward_model
+        info = getattr(fwd_obj, "last_info", None)
+
+        if info is not None:
+            print("last_info keys =", list(info.keys()))
+            for k, v in info.items():
+                kl = k.lower()
+                if any(s in kl for s in ["src", "source", "mag", "pose", "p_", "x", "field", "dipole"]):
+                    print(f"last_info[{k}] =", v)
+
+        return y[:n_out]
     t0 = time.perf_counter()
 
     p8 = np.asarray(p8, float).ravel().copy()
     J = np.zeros((n_out, 4), float)
 
-    def eval_y_from_p8(p):
-        y = np.asarray(forward_model(p), float).reshape(-1)
-        return y[:n_out]
+    # def eval_y_from_p8(p):
+    #     y = np.asarray(forward_model(p), float).reshape(-1)
+    #     return y[:n_out]
 
     # First solve nominal point ONCE to establish current branch
     y0 = eval_y_from_p8(p8)
@@ -1529,16 +1782,27 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
     snap0 = snapshot_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model)
 
     # 1) x
-    p_plus = p8.copy();  p_plus[0] += dx
-    p_minus = p8.copy(); p_minus[0] -= dx
+    # 1) x
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+    p_plus[0] += dx
+    p_minus[0] -= dx
 
     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_plus = eval_y_from_p8(p_plus)
-
+    y_plus = eval_y_from_p8(p_plus, label="x plus")
     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
-    y_minus = eval_y_from_p8(p_minus)
+    y_minus = eval_y_from_p8(p_minus, label="x minus")
+
+    print("\n[FD DEBUG x]")
+    print("p8[0] nominal:", p8[0])
+    print("p_plus[0]:", p_plus[0])
+    print("p_minus[0]:", p_minus[0])
+    print("y_plus:", y_plus)
+    print("y_minus:", y_minus)
+    print("y_plus - y_minus:", y_plus - y_minus)
 
     J[:, 0] = (y_plus - y_minus) / (2.0 * dx)
+
 
     # 2) y
     p_plus = p8.copy();  p_plus[1] += dy
@@ -1549,7 +1813,13 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
 
     restore_forward_cache(forward_model.fwd if hasattr(forward_model, "fwd") else forward_model, snap0)
     y_minus = eval_y_from_p8(p_minus)
-
+    print("\n[FD DEBUG y]")
+    print("p8[1] nominal:", p8[1])
+    print("p_plus[1]:", p_plus[1])
+    print("p_minus[1]:", p_minus[1])
+    print("y_plus:", y_plus)
+    print("y_minus:", y_minus)
+    print("y_plus - y_minus:", y_plus - y_minus)
     J[:, 1] = (y_plus - y_minus) / (2.0 * dy)
 
     # 3) yaw
@@ -1586,29 +1856,7 @@ def numerical_J_robot_xy_yaw_dL_warm_branch(
     t1 = time.perf_counter()
     print(f"[TIME] numerical_J_robot_warm_branch total: {(t1-t0)*1e3:.2f} ms")
     return J
-def compute_model_jacobian(forward6d, pose6, L_m, dt=0.01,
-                           dr=5e-3, dtheta_deg=50.0, dL=1e-3, n_out=6):
-    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
 
-    eps_u = np.array([
-        dr / dt, dr / dt, dr / dt,
-        np.deg2rad(dtheta_deg) / dt,
-        np.deg2rad(dtheta_deg) / dt,
-        np.deg2rad(dtheta_deg) / dt,
-        dL / dt
-    ], dtype=float)
-
-    if hasattr(forward6d, "start_step"):
-        forward6d.start_step()
-
-    J = numerical_J_robot_xy_yaw_dL_warm_branch(
-        p8=p8,
-        forward_y_fn=lambda pp: forward6d(pp, commit=False),
-        dt=dt,
-        eps_u=eps_u,
-        n_out=n_out,
-    )
-    return J, p8, eps_u
 def build_forward_model(
     pivot_pose6,
     L0,
@@ -1632,7 +1880,359 @@ def build_forward_model(
         ey_ref=ey_ref,
     )
 MAG_YAW_CAL_DEG = 5
+def clone_warm_forward_model(forward6d):
+    """
+    Make an independent warm forward model for Jacobian tests.
 
+    This avoids contaminating the main prediction object's warm cache.
+    """
+    return copy.deepcopy(forward6d)
+
+def compare_analytic_vs_fd_jacobian(
+    forward6d,
+    pose6,
+    L_m,
+    dt=0.01,
+    dx=1e-2,
+    dy=1e-2,
+    dyaw=3e-1,
+    dL=1e-3,
+    n_out=6,
+    results_dir=None,
+    name="jacobian_check",
+):
+    """
+    Compare analytic Jacobian and central finite-difference Jacobian.
+
+    Reduced state Jacobian:
+        columns = [x, y, yaw_z, L]
+        shape   = (n_out, 4)
+
+    Full control Jacobian:
+        columns = [vx, vy, vz, wx, wy, wz, vL]
+        shape   = (n_out, 7)
+
+    Mapping:
+        delta_x   = vx * dt
+        delta_y   = vy * dt
+        delta_yaw = wz * dt
+        delta_L   = vL * dt
+
+    Therefore:
+        J_control = dt * J_state
+    """
+    if results_dir is not None:
+        os.makedirs(results_dir, exist_ok=True)
+
+    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
+
+    # Use separate copies so the analytic and FD evaluations do not contaminate
+    # each other's warm-start cache.
+    fwd_analytic = copy.deepcopy(forward6d)
+    fwd_fd = copy.deepcopy(forward6d)
+
+    # ============================================================
+    # Analytic Jacobian
+    # ============================================================
+    t0 = time.perf_counter()
+
+    if hasattr(fwd_analytic, "start_step"):
+        fwd_analytic.start_step()
+
+    # Commit nominal solve so analytic_J_robot_xy_yaw_dL can use last_info.
+    y_nom = np.asarray(fwd_analytic(p8, commit=True), float).reshape(-1)[:n_out]
+
+    if hasattr(fwd_analytic, "fwd") and getattr(fwd_analytic.fwd, "last_info", None) is not None:
+        print("[ANALYTIC] last_info keys =", fwd_analytic.fwd.last_info.keys())
+    else:
+        print("[WARNING] fwd_analytic.fwd.last_info is None before analytic Jacobian")
+
+    J_an_state = analytic_J_robot_xy_yaw_dL(
+        p8,
+        fwd_analytic,
+        n_out=n_out,
+    )
+
+    # Replace only L column using finite difference
+    dL = 1e-3
+    p_plus = p8.copy()
+    p_minus = p8.copy()
+    p_plus[7] += dL
+    p_minus[7] -= dL
+
+    y_plus = np.asarray(fwd_fd(p_plus, commit=False), float).reshape(-1)[:n_out]
+    y_minus = np.asarray(fwd_fd(p_minus, commit=False), float).reshape(-1)[:n_out]
+
+    J_an_state[:, 3] = (y_plus - y_minus) / (2.0 * dL)
+
+    print(f"[TIME] analytic reduced Jacobian: {(time.perf_counter() - t0) * 1e3:.2f} ms")
+
+    # ============================================================
+    # Finite-difference Jacobian
+    # ============================================================
+    # ============================================================
+    # Finite-difference Jacobian from raw pose7 forward model
+    # ============================================================
+    t0 = time.perf_counter()
+
+    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
+    p7 = pose8_quat_to_pose7_rotvec(p8)
+
+    J_fd_pose7 = numerical_J_raw_pose7_tip(
+        raw_fwd=fwd_fd.fwd,
+        p7=p7,
+        dx=dx,
+        dy=dy,
+        dz=5e-3,
+        drz=dyaw,
+        dL=dL,
+        n_out=3,
+    )
+
+    # J_fd_pose7 columns are [x, y, z, rz, L].
+    # Convert to reduced columns [x, y, yaw_z, L].
+    J_fd_state = np.column_stack([
+        J_fd_pose7[:, 0],
+        J_fd_pose7[:, 1],
+        J_fd_pose7[:, 3],
+        J_fd_pose7[:, 4],
+    ])
+
+    # For now compare tip position only.
+    J_an_state = np.asarray(J_an_state, float)[:3, :]
+    J_fd_state = np.asarray(J_fd_state, float)
+    n_out_cmp = 3
+
+    print(f"[TIME] finite-difference reduced Jacobian: {(time.perf_counter() - t0) * 1e3:.2f} ms")
+    # ============================================================
+    # Shape checks
+    # ============================================================
+    expected_shape = (3, 4)
+
+    if J_an_state.shape != expected_shape:
+        raise ValueError(
+            f"Analytic reduced Jacobian has shape {J_an_state.shape}, "
+            f"expected {expected_shape}"
+        )
+
+    if J_fd_state.shape != expected_shape:
+        raise ValueError(
+            f"FD reduced Jacobian has shape {J_fd_state.shape}, "
+            f"expected {expected_shape}"
+        )
+
+    # ============================================================
+    # Reduced-state comparison
+    # ============================================================
+    J_err_state = J_an_state - J_fd_state
+    abs_err_state = np.abs(J_err_state)
+
+    rel_denom_state = np.maximum(np.abs(J_fd_state), 1e-12)
+    rel_err_state = abs_err_state / rel_denom_state
+
+    print("\n==============================")
+    print(" ANALYTIC VS FD JACOBIAN CHECK ")
+    print("==============================")
+
+    print("\n--- nominal output y ---")
+    print(y_nom)
+
+    print("\n--- J_fd_state: dy/d[x, y, yaw_z, L] ---")
+    print(J_fd_state)
+
+    print("\n--- J_an_state: dy/d[x, y, yaw_z, L] ---")
+    print(J_an_state)
+
+    print("\n--- J_an_state - J_fd_state ---")
+    print(J_err_state)
+
+    print("\n--- reduced-state error summary ---")
+    print("max abs error:", float(np.max(abs_err_state)))
+    print("mean abs error:", float(np.mean(abs_err_state)))
+    print("fro abs error:", float(np.linalg.norm(J_err_state, ord="fro")))
+    print("max relative error:", float(np.max(rel_err_state)))
+    print("mean relative error:", float(np.mean(rel_err_state)))
+
+    row_labels = ["tip_x", "tip_y", "tip_z"]
+    col_labels_red = ["x", "y", "yaw_z", "L"]
+
+    print("\n--- per-entry reduced comparison ---")
+    for i in range(3):
+        for j in range(4):
+            print(
+                f"{row_labels[i]:>8s} wrt {col_labels_red[j]:>5s}: "
+                f"analytic={J_an_state[i, j]: .6e}, "
+                f"fd={J_fd_state[i, j]: .6e}, "
+                f"abs_err={J_err_state[i, j]: .6e}, "
+                f"rel_err={rel_err_state[i, j]: .6e}"
+            )
+
+    # ============================================================
+    # Full control Jacobians
+    # ============================================================
+    J_an_full = J_full_from_robot_reduced_tip_tangent(
+        dt * J_an_state,
+        n_out_full=n_out,
+    )
+
+    J_fd_full = J_full_from_robot_reduced_tip_tangent(
+        dt * J_fd_state,
+        n_out_full=n_out,
+    )
+
+    J_err_full = J_an_full - J_fd_full
+
+    print("\n--- full control Jacobian comparison ---")
+    print("columns = [vx, vy, vz, wx, wy, wz, vL]")
+
+    print("\nJ_fd_full:")
+    print(J_fd_full)
+
+    print("\nJ_an_full:")
+    print(J_an_full)
+
+    print("\nJ_an_full - J_fd_full:")
+    print(J_err_full)
+
+    print("\n--- full-control error summary ---")
+    print("max abs error:", float(np.max(np.abs(J_err_full))))
+    print("mean abs error:", float(np.mean(np.abs(J_err_full))))
+    print("fro abs error:", float(np.linalg.norm(J_err_full, ord="fro")))
+
+    # ============================================================
+    # Save files
+    # ============================================================
+    if results_dir is not None:
+        np.save(os.path.join(results_dir, f"{name}_J_fd_state.npy"), J_fd_state)
+        np.save(os.path.join(results_dir, f"{name}_J_an_state.npy"), J_an_state)
+        np.save(os.path.join(results_dir, f"{name}_J_err_state.npy"), J_err_state)
+
+        np.save(os.path.join(results_dir, f"{name}_J_fd_full.npy"), J_fd_full)
+        np.save(os.path.join(results_dir, f"{name}_J_an_full.npy"), J_an_full)
+        np.save(os.path.join(results_dir, f"{name}_J_err_full.npy"), J_err_full)
+
+        np.savetxt(os.path.join(results_dir, f"{name}_J_fd_state.csv"), J_fd_state, delimiter=",")
+        np.savetxt(os.path.join(results_dir, f"{name}_J_an_state.csv"), J_an_state, delimiter=",")
+        np.savetxt(os.path.join(results_dir, f"{name}_J_err_state.csv"), J_err_state, delimiter=",")
+
+        np.savetxt(os.path.join(results_dir, f"{name}_J_fd_full.csv"), J_fd_full, delimiter=",")
+        np.savetxt(os.path.join(results_dir, f"{name}_J_an_full.csv"), J_an_full, delimiter=",")
+        np.savetxt(os.path.join(results_dir, f"{name}_J_err_full.csv"), J_err_full, delimiter=",")
+
+        summary = {
+            "name": name,
+            "dt": float(dt),
+            "dx": float(dx),
+            "dy": float(dy),
+            "dyaw": float(dyaw),
+            "dL": float(dL),
+            "n_out": int(n_out),
+            "p8": p8.tolist(),
+            "y_nom": y_nom.tolist(),
+            "max_abs_err_state": float(np.max(abs_err_state)),
+            "mean_abs_err_state": float(np.mean(abs_err_state)),
+            "fro_abs_err_state": float(np.linalg.norm(J_err_state, ord="fro")),
+            "max_rel_err_state": float(np.max(rel_err_state)),
+            "mean_rel_err_state": float(np.mean(rel_err_state)),
+            "max_abs_err_full": float(np.max(np.abs(J_err_full))),
+            "mean_abs_err_full": float(np.mean(np.abs(J_err_full))),
+            "fro_abs_err_full": float(np.linalg.norm(J_err_full, ord="fro")),
+        }
+
+        with open(os.path.join(results_dir, f"{name}_summary.json"), "w") as f:
+            json.dump(summary, f, indent=2)
+
+        plot_analytic_vs_fd_jacobian(
+            J_an=J_an_state,
+            J_fd=J_fd_state,
+            results_dir=results_dir,
+            filename=f"{name}_reduced_state.png",
+            title_prefix="Reduced dy/d[x,y,yaw,L]",
+        )
+
+        plot_analytic_vs_fd_jacobian(
+            J_an=J_an_full,
+            J_fd=J_fd_full,
+            results_dir=results_dir,
+            filename=f"{name}_full_control.png",
+            title_prefix="Full dy/d[vx,vy,vz,wx,wy,wz,vL]",
+        )
+
+        print(f"\nSaved Jacobian comparison files to: {results_dir}")
+
+    return {
+        "p8": p8,
+        "y_nom": y_nom,
+        "J_fd_state": J_fd_state,
+        "J_an_state": J_an_state,
+        "J_err_state": J_err_state,
+        "J_fd_full": J_fd_full,
+        "J_an_full": J_an_full,
+        "J_err_full": J_err_full,
+        "max_abs_err_state": float(np.max(abs_err_state)),
+        "mean_abs_err_state": float(np.mean(abs_err_state)),
+        "max_rel_err_state": float(np.max(rel_err_state)),
+        "mean_rel_err_state": float(np.mean(rel_err_state)),
+    }
+def compute_model_jacobian(
+    forward6d,
+    pose6,
+    L_m,
+    dt=0.01,
+    dx=1e-2,
+    dy=1e-2,
+    dyaw=3e-1,
+    dL=1e-3,
+    n_out=6,
+    mode="analytic",
+):
+    """
+    Returns full 7-control Jacobian.
+
+    mode:
+        "analytic"
+        "fd"
+    """
+    p8 = pose6_and_L_to_pose8_quat(pose6, L_m)
+
+    fwd = clone_warm_forward_model(forward6d)
+
+    if hasattr(fwd, "start_step"):
+        fwd.start_step()
+
+    if mode == "analytic":
+        # Commit nominal solve so analytic Jacobian has last_info.
+        _ = np.asarray(fwd(p8, commit=True), float).reshape(-1)[:n_out]
+
+        J_red_state = analytic_J_robot_xy_yaw_dL(
+            p8,
+            fwd,
+            n_out=n_out,
+        )
+
+    elif mode == "fd":
+        J_red_state = numerical_J_robot_xy_yaw_dL_warm_branch(
+            p8=p8,
+            forward_model=fwd,
+            dx=dx,
+            dy=dy,
+            dyaw=dyaw,
+            dL=dL,
+            n_out=n_out,
+        )
+
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    J_red_control = np.asarray(J_red_state, float).copy()
+    J_red_control *= dt
+
+    J_full = J_full_from_robot_reduced_tip_tangent(
+        J_red_control,
+        n_out_full=n_out,
+    )
+
+    return J_full, J_red_state, p8
 def source_dipole_in_robot(pose6_robot):
     rvec = np.asarray(pose6_robot[3:6], float)
     R = Rot.from_rotvec(rvec).as_matrix()
@@ -1670,30 +2270,86 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
 
     t_robot = R @ t_body
     return t_robot / (np.linalg.norm(t_robot) + 1e-12)
+
+def plot_analytic_vs_fd_jacobian(
+    J_an,
+    J_fd,
+    results_dir,
+    filename="analytic_vs_fd_jacobian.png",
+    title_prefix="Reduced state Jacobian",
+):
+    os.makedirs(results_dir, exist_ok=True)
+
+    J_an = np.asarray(J_an, float)
+    J_fd = np.asarray(J_fd, float)
+    J_err = J_an - J_fd
+
+    row_labels = ["tip_x", "tip_y", "tip_z", "tan_x", "tan_y", "tan_z"][:J_an.shape[0]]
+    col_labels = ["x", "y", "yaw_z", "L"][:J_an.shape[1]]
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
+
+    vmax = max(np.max(np.abs(J_an)), np.max(np.abs(J_fd)), 1e-12)
+    vmax_err = max(np.max(np.abs(J_err)), 1e-12)
+
+    mats = [J_fd, J_an, J_err]
+    titles = [
+        f"{title_prefix}: finite difference",
+        f"{title_prefix}: analytic",
+        "analytic - finite difference",
+    ]
+    vlims = [vmax, vmax, vmax_err]
+
+    for ax, M, title, lim in zip(axes, mats, titles, vlims):
+        im = ax.imshow(M, aspect="auto", cmap="coolwarm", vmin=-lim, vmax=lim)
+        ax.set_title(title)
+        ax.set_xticks(range(len(col_labels)))
+        ax.set_xticklabels(col_labels, rotation=45, ha="right")
+        ax.set_yticks(range(len(row_labels)))
+        ax.set_yticklabels(row_labels)
+
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]):
+                ax.text(
+                    j,
+                    i,
+                    f"{M[i, j]:.2e}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                )
+
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    out_path = os.path.join(results_dir, filename)
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+
+    print(f"Saved analytic-vs-FD Jacobian plot to: {out_path}")
 if __name__ == "__main__":
 
 
-    hw = LiveHardwareController(
-        robot_ip="192.168.56.101",
-        dry_run=False,                 # True first
-        use_advancer=True,
-        advancer_port="/dev/ttyACM0",
-        advancer_baud=115200,
-        advancer_delay_us=20,
-        advancer_min_cmd_mm=0.166,
-        xyz_min=(0.20, -1.50, -0.30),
-        xyz_max=(1.20, +1.50, +1.50),
-        max_trans_m=0.01,
-        max_rot_rad=0.2,
-        z_offset=0.27,
-        use_moveL_params=False,
-        v=0.10,
-        a=0.30,
-    )
-    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
+    # hw = LiveHardwareController(
+    #     robot_ip="192.168.56.101",
+    #     dry_run=False,                 # True first
+    #     use_advancer=True,
+    #     advancer_port="/dev/ttyACM0",
+    #     advancer_baud=115200,
+    #     advancer_delay_us=20,
+    #     advancer_min_cmd_mm=0.166,
+    #     xyz_min=(0.20, -1.50, -0.30),
+    #     xyz_max=(1.20, +1.50, +1.50),
+    #     max_trans_m=0.01,
+    #     max_rot_rad=0.2,
+    #     z_offset=0.27,
+    #     use_moveL_params=False,
+    #     v=0.10,
+    #     a=0.30,
+    # )
+    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use(hw)
 
-    # pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
-    new_capture()
+    pivot_point2, start_point2, L0_default, dt = make_initial_poses_single_use()
+    # new_capture()
 
     # src_local = np.array([-0.183, 0.0, 0.0], dtype=float)
     # src_robot = pivot_local_point_to_robot(src_local, pivot_point2)
@@ -1725,10 +2381,10 @@ if __name__ == "__main__":
         test_pose6=test_pose6,
         beam_base_point_robot_m=beam_base_point_robot_m,
         L_m=L_test,
-        image_filename="focused_image.jpg",
-        reference_image_filename="focused_image_straight.jpg",
+        image_filename="/Users/jackhilton-jones/Proper-Research/focused_image.jpg",
+        reference_image_filename="/Users/jackhilton-jones/Proper-Research/focused_image.jpg",
         use_reference_frame=True,
-        red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
+        red_roi_path="/Users/jackhilton-jones/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
         known_green_distance_mm=15,
         pivot_hint=pivot_hint,

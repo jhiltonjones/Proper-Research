@@ -4088,7 +4088,7 @@ if __name__ == "__main__":
 
     hw = LiveHardwareController(
         robot_ip="192.168.56.101",
-        dry_run=False,                 # True first
+        dry_run=False,                
         use_advancer=True,
         advancer_port="/dev/ttyACM0",
         advancer_baud=115200,

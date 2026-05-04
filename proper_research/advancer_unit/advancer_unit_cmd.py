@@ -1,4 +1,4 @@
-import serial
+# import serial
 import time
 from queue import Queue
 import threading

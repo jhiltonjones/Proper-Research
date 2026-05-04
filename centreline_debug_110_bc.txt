@@ -1,0 +1,1325 @@
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:961: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  J_total = float(0.5 * (z.T @ H @ z) + (f.T @ z))
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:973: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  out["J_u"] = float(U.T @ Rt @ U)
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:980: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  out["J_wall_slack"] = float(w_slack_wall * (s_wall.T @ s_wall))
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:984: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  out["J_prog_slack"] = float(w_slack_prog * (s_prog.T @ s_prog))
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:991: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  out["J_adv_reward"] = float(-(w_adv_eff * (g.T @ U)))  # negative = "reward"
+/Users/jackhilton-jones/Proper-Research/proper_research/control/no_path_plan_mpc.py:1226: DeprecationWarning: Conversion of an array with ndim > 0 to a scalar is deprecated, and will error in future. Ensure you extract a single element from your array before performing this operation. (Deprecated NumPy 1.25.)
+  J = float(0.5 * (U.T @ Ht @ U) + (ft.T @ U))
+[INIT] L_ins=0.020 -> L_model=0.020, wire_len=0.000, tip_len=0.020
+max |Δx| per step (mm): 1.0003618260286662
+max |Δy| per step (mm): 0.04496942903404322
+max |Δz| per step (mm): 0.06030138203078584
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.424e-03
+  wz: 1.422e-03
+  dL: 1.000e-02
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +7.579e-07 -2.985e-07 -9.991e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -6.165e-07 -1.848e-05 +1.529e-04
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.852e-05 -8.429e-07 +3.959e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.919e-05 -2.228e-05 +5.551e-16
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.663e-05 -1.420e-03 +2.049e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.422e-03 -6.481e-05 -7.803e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 2.012e-03
+  ||B_dL||_F    = 1.000e-02
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 4.970
+[DBG] svd singular values: [1.000e-02 1.432e-03 1.413e-03 7.829e-20 4.397e-20 7.609e-21]
+[DBG] rank≈3/6   cond≈1.000e+14
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.754 wz:-0.657 dL:+0.000
+  mode2: vx:+0.000 vy:-0.000 vz:-0.000 wx:+0.000 wy:-0.657 wz:-0.754 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.008 z:+0.010 tx:+0.041 ty:+0.626 tz:+0.779
+  out_mode2: x:-0.000 y:+0.010 z:-0.008 tx:-0.016 ty:+0.779 tz:-0.626
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  20 d_nom=0.1303 d_opt=0.1403 (d_opt-d0)=-0.0097 e_lin=-0.0097
+[STANDOFF] idx_k: [20]
+[STANDOFF] Ck[0]: [ 0.83815084 -0.70522412 -0.09920829] Ck[-1]: [ 0.83815084 -0.70522412 -0.09920829]
+   [OBJ] total(OSQP) = -0.0022260784290688345
+   [OBJ]            J_u =  1.024989e-03
+   [OBJ]   J_wall_slack =  0.000000e+00
+   [OBJ]   J_prog_slack =  2.366000e-06
+   [OBJ]   J_adv_reward = -2.211667e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0486
+   [OBJ] prog_slack_rms_mm =  0.0486
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9999725090549276e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  0.95 deg
+  max=0.95 deg  mean=0.95 deg  w_dipole=1
+xbase0 [ 0.83815084 -0.70522412 -0.09920829] xaff0 [ 0.83815084 -0.70522412 -0.09920829]
+[TRACK] pred_ref_rms=0.442mm pred_ref_max=0.442mm rho_rms=0.003mm rho_max=0.003mm clear_min=2.997mm
+[COST_TERMS] {'J_effort': 0.0010249887114374126, 'J_track': 1.9567165739167356e-05, 'J_advance': -2.211666574697917e-08, 'J_standoff': -0.0029298829604601983, 'J_inline_lat': -7.072114273452989e-07, 'J_inline_fwd': -0.00029476507283648527, 'J_dipole': -4.7622944483624135e-05}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  20 lat_nom=(+1.44,+4.05)mm rho_nom=4.30mm fwd_nom=-19.74mm | lat_opt=(+1.39,+3.98)mm rho_opt=4.22mm fwd_opt=-9.74mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004418974214961402 from u0 dx = -0.9995698131544737
+[CURSOR] k=0000 i_ref=  19 i_seg=  19 Δs= +0.000mm d=  0.00mm stall= 1 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0000 tip=[+0.8382,-0.7052,-0.0992] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=4.4200e-04
+   path index i_ref=19
+   p_now: x=+0.698 y=-0.705 z=-0.090  rotvec=[-3.102,+0.023,+0.061] |theta|=177.7deg  L=0.020
+   u0: dx=-0.9996 dy=+0.0130 dz=+0.0323  omega_body=[+0.0000,-0.0060,-0.1505]  dL=+0.04423
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8377,-0.7052,-0.0992]  tan=[-0.999,+0.016,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8382,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8382,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.442mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5005831405442012
+max |Δy| per step (mm): 0.03209706265346568
+max |Δz| per step (mm): 0.03672346889208623
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.158e-03
+  wz: 1.157e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +6.338e-07 -2.355e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -5.488e-07 -1.520e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.520e-05 -6.435e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +4.922e-05 -1.720e-05 +6.661e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.152e-05 -1.156e-03 +5.678e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.156e-03 -4.898e-05 -3.778e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.637e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.054
+[DBG] svd singular values: [5.000e-03 1.162e-03 1.153e-03 5.724e-20 4.703e-20 2.137e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.733 wz:-0.680 dL:+0.000
+  mode2: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.680 wz:-0.733 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.009 z:+0.010 tx:+0.041 ty:+0.650 tz:+0.758
+  out_mode2: x:-0.000 y:+0.010 z:-0.009 tx:-0.018 ty:+0.759 tz:-0.650
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  20 d_nom=0.1503 d_opt=0.1454 (d_opt-d0)=-0.0046 e_lin=-0.0046
+[STANDOFF] idx_k: [20]
+[STANDOFF] Ck[0]: [ 0.83815084 -0.70522412 -0.09920829] Ck[-1]: [ 0.83815084 -0.70522412 -0.09920829]
+   [OBJ] total(OSQP) = -0.0005440944157566546
+   [OBJ]            J_u =  2.777359e-04
+   [OBJ]   J_wall_slack =  8.261369e-16
+   [OBJ]   J_prog_slack =  2.720305e-06
+   [OBJ]   J_adv_reward = -1.073305e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0522
+   [OBJ] prog_slack_rms_mm =  0.0522
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999972482451456e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  0.78 deg
+  max=0.78 deg  mean=0.78 deg  w_dipole=1
+xbase0 [ 0.83815084 -0.70522412 -0.09920829] xaff0 [ 0.83792984 -0.70522303 -0.09919954]
+[TRACK] pred_ref_rms=0.436mm pred_ref_max=0.436mm rho_rms=0.000mm rho_max=0.000mm clear_min=3.000mm
+[COST_TERMS] {'J_effort': 0.000277735886227025, 'J_track': 1.4102795612013735e-05, 'J_advance': -1.073304662709139e-08, 'J_standoff': -0.0007269262501209701, 'J_inline_lat': -1.8984700996307342e-06, 'J_inline_fwd': -7.793489249990597e-05, 'J_dipole': -3.1883056697222735e-05}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  20 lat_nom=(+1.35,+3.59)mm rho_nom=3.83mm fwd_nom=-0.19mm | lat_opt=(+1.30,+3.43)mm rho_opt=3.66mm fwd_opt=-5.09mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004354426459745042 from u0 dx = -0.5104068608044067
+[CURSOR] k=0001 i_ref=  20 i_seg=  20 Δs= +0.000mm d=  0.00mm stall= 2 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0001 tip=[+0.8377,-0.7052,-0.0992] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=6.5156e-06
+   path index i_ref=20
+   p_now: x=+0.693 y=-0.705 z=-0.090  rotvec=[-3.102,+0.021,+0.061] |theta|=177.7deg  L=0.021
+   u0: dx=-0.5104 dy=+0.0136 dz=-0.0031  omega_body=[-0.0000,-0.0049,-0.1231]  dL=+0.04293
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8377,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8377,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8377,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.007mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5004483379834889
+max |Δy| per step (mm): 0.028982235855765537
+max |Δz| per step (mm): 0.03456723566586686
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 9.900e-04
+  wz: 9.893e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.376e-07 -2.138e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.789e-07 -1.326e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.327e-05 -5.596e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +4.062e-05 -1.550e-05 -2.220e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -3.547e-05 -9.882e-04 -3.586e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +9.885e-04 -4.174e-05 +8.042e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.400e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.572
+[DBG] svd singular values: [5.000e-03 9.932e-04 9.862e-04 3.500e-20 1.251e-20 2.860e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:+0.000 vz:-0.000 wx:+0.000 wy:+0.742 wz:-0.670 dL:+0.000
+  mode2: vx:-0.000 vy:+0.000 vz:-0.000 wx:+0.000 wy:-0.670 wz:-0.742 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.009 z:+0.010 tx:+0.041 ty:+0.640 tz:+0.767
+  out_mode2: x:-0.000 y:+0.010 z:-0.009 tx:-0.016 ty:+0.768 tz:-0.640
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  21 d_nom=0.1495 d_opt=0.1473 (d_opt-d0)=-0.0027 e_lin=-0.0027
+[STANDOFF] idx_k: [21]
+[STANDOFF] Ck[0]: [ 0.83715172 -0.70520995 -0.0991687 ] Ck[-1]: [ 0.83715172 -0.70520995 -0.0991687 ]
+   [OBJ] total(OSQP) = -0.0003110473955046084
+   [OBJ]            J_u =  2.009033e-04
+   [OBJ]   J_wall_slack =  1.328893e-13
+   [OBJ]   J_prog_slack =  2.312017e-08
+   [OBJ]   J_adv_reward = -1.397202e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0048
+   [OBJ] prog_slack_rms_mm =  0.0048
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999968796209808e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  2.10 deg
+  max=2.10 deg  mean=2.10 deg  w_dipole=1
+xbase0 [ 0.8377089  -0.70521736 -0.09919078] xaff0 [ 0.83749441 -0.70521571 -0.09918229]
+[TRACK] pred_ref_rms=0.064mm pred_ref_max=0.064mm rho_rms=0.003mm rho_max=0.003mm clear_min=2.997mm
+[COST_TERMS] {'J_effort': 0.00020090332513213543, 'J_track': -1.1360509903173294e-05, 'J_advance': -1.397201526358587e-08, 'J_standoff': -0.00024122156566811, 'J_inline_lat': -1.9520634708996495e-06, 'J_inline_fwd': -2.3647902142759217e-05, 'J_dipole': -0.00023377782760859248}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  21 lat_nom=(-1.43,+3.22)mm rho_nom=3.53mm fwd_nom=-0.40mm | lat_opt=(-1.16,+3.19)mm rho_opt=3.40mm fwd_opt=-2.58mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004936878909274078 from u0 dx = -0.2934538511176434
+[CURSOR] k=0002 i_ref=  20 i_seg=  20 Δs= +0.000mm d=  0.00mm stall= 3 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0002 tip=[+0.8373,-0.7052,-0.0992] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=6.4862e-05
+   path index i_ref=20
+   p_now: x=+0.690 y=-0.705 z=-0.090  rotvec=[-3.101,+0.016,+0.061] |theta|=177.7deg  L=0.021
+   u0: dx=-0.2935 dy=-0.0114 dz=-0.0146  omega_body=[+0.0000,-0.0134,-0.3334]  dL=+0.05590
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8372,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8373,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8373,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.065mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5003586105316343
+max |Δy| per step (mm): 0.02690569024880285
+max |Δz| per step (mm): 0.03313380955493388
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.708e-04
+  wz: 8.701e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +4.759e-07 -1.977e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.287e-07 -1.198e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.198e-05 -5.053e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.485e-05 -1.408e-05 -7.216e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -3.091e-05 -8.692e-04 -3.614e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.695e-04 -3.673e-05 -3.487e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.231e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 4.062
+[DBG] svd singular values: [5.000e-03 8.737e-04 8.673e-04 2.843e-20 4.546e-21 1.733e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.744 wz:-0.668 dL:+0.000
+  mode2: vx:+0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:-0.668 wz:-0.744 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.009 z:+0.011 tx:+0.040 ty:+0.639 tz:+0.768
+  out_mode2: x:-0.000 y:+0.011 z:-0.009 tx:-0.015 ty:+0.769 tz:-0.639
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  21 d_nom=0.1503 d_opt=0.1488 (d_opt-d0)=-0.0012 e_lin=-0.0012
+[STANDOFF] idx_k: [21]
+[STANDOFF] Ck[0]: [ 0.83715172 -0.70520995 -0.0991687 ] Ck[-1]: [ 0.83715172 -0.70520995 -0.0991687 ]
+   [OBJ] total(OSQP) = -0.0001210402286305838
+   [OBJ]            J_u =  1.029968e-04
+   [OBJ]   J_wall_slack =  4.780188e-14
+   [OBJ]   J_prog_slack =  1.540515e-06
+   [OBJ]   J_adv_reward = -8.620526e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0392
+   [OBJ] prog_slack_rms_mm =  0.0392
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999968433558543e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  1.79 deg
+  max=1.79 deg  mean=1.79 deg  w_dipole=1
+xbase0 [ 0.83727996 -0.7052108  -0.09917378] xaff0 [ 0.83700064 -0.70521052 -0.09916273]
+[TRACK] pred_ref_rms=0.324mm pred_ref_max=0.324mm rho_rms=0.004mm rho_max=0.004mm clear_min=2.996mm
+[COST_TERMS] {'J_effort': 0.00010299684022449709, 'J_track': 8.18796847975014e-06, 'J_advance': -8.620526477885898e-09, 'J_standoff': -5.524607542575881e-05, 'J_inline_lat': -2.0037397959354696e-06, 'J_inline_fwd': -6.870113113438065e-06, 'J_dipole': -0.00016963700297679298}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  21 lat_nom=(-1.07,+3.08)mm rho_nom=3.26mm fwd_nom=-0.20mm | lat_opt=(-1.06,+3.06)mm rho_opt=3.24mm fwd_opt=-1.71mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004515774932809524 from u0 dx = -0.1428698311910013
+[CURSOR] k=0003 i_ref=  21 i_seg=  21 Δs= +0.000mm d=  0.01mm stall= 4 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0003 tip=[+0.8367,-0.7052,-0.0992] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=1.0697e-04
+   path index i_ref=21
+   p_now: x=+0.689 y=-0.705 z=-0.090  rotvec=[-3.101,+0.011,+0.061] |theta|=177.7deg  L=0.022
+   u0: dx=-0.1429 dy=-0.0108 dz=-0.0224  omega_body=[-0.0000,-0.0114,-0.2840]  dL=+0.03449
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8368,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8367,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8367,-0.7052,-0.0992]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.107mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5003362087302897
+max |Δy| per step (mm): 0.026375683164701735
+max |Δz| per step (mm): 0.032767550097895407
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.336e-04
+  wz: 8.330e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +4.590e-07 -1.948e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.149e-07 -1.165e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.165e-05 -4.913e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.301e-05 -1.371e-05 -6.661e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.943e-05 -8.321e-04 -3.583e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.323e-04 -3.516e-05 -3.515e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.178e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 4.243
+[DBG] svd singular values: [5.000e-03 8.364e-04 8.301e-04 3.831e-20 1.997e-20 3.661e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:+0.740 wz:-0.672 dL:+0.000
+  mode2: vx:+0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:-0.672 wz:-0.740 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.009 z:+0.011 tx:+0.040 ty:+0.643 tz:+0.765
+  out_mode2: x:-0.000 y:+0.011 z:-0.009 tx:-0.015 ty:+0.766 tz:-0.643
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  22 d_nom=0.1492 d_opt=0.1489 (d_opt-d0)=-0.0011 e_lin=-0.0011
+[STANDOFF] idx_k: [22]
+[STANDOFF] Ck[0]: [ 0.83615253 -0.70520676 -0.09912912] Ck[-1]: [ 0.83615253 -0.70520676 -0.09912912]
+   [OBJ] total(OSQP) = -0.00043299927266908863
+   [OBJ]            J_u =  3.757211e-04
+   [OBJ]   J_wall_slack =  1.763447e-13
+   [OBJ]   J_prog_slack =  2.813194e-08
+   [OBJ]   J_adv_reward = -1.604796e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0053
+   [OBJ] prog_slack_rms_mm =  0.0053
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9999583657913883e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  3.76 deg
+  max=3.76 deg  mean=3.76 deg  w_dipole=1
+xbase0 [ 0.83672144 -0.70520225 -0.09915165] xaff0 [ 0.83654908 -0.70520293 -0.09914483]
+[TRACK] pred_ref_rms=0.077mm pred_ref_max=0.077mm rho_rms=0.014mm rho_max=0.014mm clear_min=2.986mm
+[COST_TERMS] {'J_effort': 0.0003757210823558005, 'J_track': -1.5155752077269573e-05, 'J_advance': -1.6047957437511098e-08, 'J_standoff': -3.819259467195532e-05, 'J_inline_lat': -6.786094416348789e-06, 'J_inline_fwd': -3.477312991346622e-06, 'J_dipole': -0.0007451206848542814}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  22 lat_nom=(-5.54,+3.01)mm rho_nom=6.30mm fwd_nom=-0.65mm | lat_opt=(-5.12,+3.01)mm rho_opt=5.94mm fwd_opt=-0.91mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004933915206645212 from u0 dx = -0.11650692537461195
+[CURSOR] k=0004 i_ref=  21 i_seg=  21 Δs= +0.000mm d=  0.01mm stall= 5 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0004 tip=[+0.8364,-0.7052,-0.0991] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=1.4889e-04
+   path index i_ref=21
+   p_now: x=+0.688 y=-0.706 z=-0.090  rotvec=[-3.101,+0.002,+0.061] |theta|=177.7deg  L=0.022
+   u0: dx=-0.1165 dy=-0.0517 dz=-0.0232  omega_body=[+0.0000,-0.0245,-0.5952]  dL=+0.06429
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8362,-0.7052,-0.0991]  tan=[-0.999,+0.016,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8364,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8364,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.149mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.500377016660109
+max |Δy| per step (mm): 0.02732784519180398
+max |Δz| per step (mm): 0.03343233647922139
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.511e-04
+  wz: 8.506e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +4.813e-07 -2.059e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.301e-07 -1.224e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.225e-05 -5.182e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.360e-05 -1.409e-05 -7.216e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.963e-05 -8.497e-04 -3.414e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.498e-04 -3.604e-05 -3.306e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.203e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 4.155
+[DBG] svd singular values: [5.000e-03 8.544e-04 8.474e-04 3.634e-20 1.417e-20 1.889e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.731 wz:-0.683 dL:+0.000
+  mode2: vx:+0.000 vy:+0.000 vz:-0.000 wx:+0.000 wy:-0.683 wz:-0.731 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.009 z:+0.011 tx:+0.040 ty:+0.654 tz:+0.756
+  out_mode2: x:-0.000 y:+0.011 z:-0.009 tx:-0.015 ty:+0.756 tz:-0.654
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  22 d_nom=0.1501 d_opt=0.1495 (d_opt-d0)=-0.0005 e_lin=-0.0005
+[STANDOFF] idx_k: [22]
+[STANDOFF] Ck[0]: [ 0.83615253 -0.70520676 -0.09912912] Ck[-1]: [ 0.83615253 -0.70520676 -0.09912912]
+   [OBJ] total(OSQP) = -0.0002936446916046329
+   [OBJ]            J_u =  2.706761e-04
+   [OBJ]   J_wall_slack =  2.350396e-13
+   [OBJ]   J_prog_slack =  8.816785e-07
+   [OBJ]   J_adv_reward = -7.118868e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0297
+   [OBJ] prog_slack_rms_mm =  0.0297
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999956404472599e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  3.24 deg
+  max=3.24 deg  mean=3.24 deg  w_dipole=1
+xbase0 [ 0.83637683 -0.70519698 -0.099138  ] xaff0 [ 0.83605558 -0.70519936 -0.09912529]
+[TRACK] pred_ref_rms=0.240mm pred_ref_max=0.240mm rho_rms=0.021mm rho_max=0.021mm clear_min=2.979mm
+[COST_TERMS] {'J_effort': 0.0002706760655314832, 'J_track': 4.820003373737995e-06, 'J_advance': -7.1188679693691835e-09, 'J_standoff': -8.99588482652284e-06, 'J_inline_lat': -6.138811546719592e-06, 'J_inline_fwd': -1.4612569169514853e-06, 'J_dipole': -0.0005534193668711506}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  22 lat_nom=(-4.63,+2.96)mm rho_nom=5.50mm fwd_nom=-0.38mm | lat_opt=(-4.65,+2.95)mm rho_opt=5.51mm fwd_opt=-0.96mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004637264464418811 from u0 dx = -0.05857820986510222
+[CURSOR] k=0005 i_ref=  22 i_seg=  22 Δs= +0.000mm d=  0.03mm stall= 6 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0005 tip=[+0.8357,-0.7052,-0.0991] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=1.7859e-04
+   path index i_ref=22
+   p_now: x=+0.687 y=-0.706 z=-0.090  rotvec=[-3.101,-0.006,+0.062] |theta|=177.7deg  L=0.023
+   u0: dx=-0.0586 dy=-0.0472 dz=-0.0262  omega_body=[-0.0000,-0.0211,-0.5129]  dL=+0.02854
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8359,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8357,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8357,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.179mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5003260405021349
+max |Δy| per step (mm): 0.027920115646636993
+max |Δz| per step (mm): 0.036615675393100997
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.044e-03
+  wz: 8.684e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.916e-07 -2.332e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -3.750e-07 -1.266e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.523e-05 -5.575e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +2.356e-05 -1.612e-05 -6.661e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.476e-05 -8.673e-04 -3.302e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.043e-03 -3.834e-05 -3.032e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.358e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.683
+[DBG] svd singular values: [5.000e-03 1.044e-03 8.678e-04 1.417e-20 6.663e-21 1.881e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.000 wz:-0.000 dL:-1.000
+  mode1: vx:-0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:+0.998 wz:-0.056 dL:-0.000
+  mode2: vx:-0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:+0.056 wz:+0.998 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:-0.000 ty:+0.000 tz:-0.000
+  out_mode1: x:+0.001 y:+0.000 z:+0.015 tx:+0.023 ty:+0.023 tz:+0.999
+  out_mode2: x:-0.000 y:-0.015 z:+0.000 tx:-0.017 ty:-0.999 tz:+0.023
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  23 d_nom=0.1491 d_opt=0.1493 (d_opt-d0)=-0.0007 e_lin=-0.0007
+[STANDOFF] idx_k: [23]
+[STANDOFF] Ck[0]: [ 0.83515361 -0.70522795 -0.09908953] Ck[-1]: [ 0.83515361 -0.70522795 -0.09908953]
+   [OBJ] total(OSQP) = -0.0009618631121479968
+   [OBJ]            J_u =  8.622514e-04
+   [OBJ]   J_wall_slack =  8.690271e-13
+   [OBJ]   J_prog_slack =  3.017759e-08
+   [OBJ]   J_adv_reward = -1.751697e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0055
+   [OBJ] prog_slack_rms_mm =  0.0055
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999933501886416e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  5.79 deg
+  max=5.79 deg  mean=5.79 deg  w_dipole=1
+xbase0 [ 0.83573455 -0.70518715 -0.09911255] xaff0 [ 0.83559187 -0.70519147 -0.09910687]
+[TRACK] pred_ref_rms=0.102mm pred_ref_max=0.102mm rho_rms=0.048mm rho_max=0.048mm clear_min=2.952mm
+[COST_TERMS] {'J_effort': 0.0008622513726751611, 'J_track': -1.8333032948069148e-05, 'J_advance': -1.7516973054693965e-08, 'J_standoff': -1.637557574799846e-05, 'J_inline_lat': -2.1724665550433068e-05, 'J_inline_fwd': -1.5878616189366664e-06, 'J_dipole': -0.001766106009579142}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  23 lat_nom=(-10.58,+2.94)mm rho_nom=10.98mm fwd_nom=-0.80mm | lat_opt=(-10.05,+2.95)mm rho_opt=10.47mm fwd_opt=-0.62mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004943391737162184 from u0 dx = -0.0738091950956658
+[CURSOR] k=0006 i_ref=  22 i_seg=  22 Δs= +0.000mm d=  0.04mm stall= 7 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0006 tip=[+0.8354,-0.7052,-0.0991] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.0936e-04
+   path index i_ref=22
+   p_now: x=+0.686 y=-0.707 z=-0.090  rotvec=[-3.101,-0.020,+0.062] |theta|=177.7deg  L=0.023
+   u0: dx=-0.0738 dy=-0.1014 dz=-0.0248  omega_body=[-0.0000,-0.0387,-0.9162]  dL=+0.07043
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8352,-0.7052,-0.0991]  tan=[-0.999,+0.016,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8354,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8354,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.210mm  tan=0.02deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5004648809613486
+max |Δy| per step (mm): 0.03842050269879682
+max |Δz| per step (mm): 0.034615516186307
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.970e-04
+  wz: 1.283e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.320e-07 +2.280e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.564e-07 -1.929e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.348e-05 -4.528e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.562e-05 +2.450e-05 -1.110e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -3.013e-05 -1.283e-03 -3.083e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.957e-04 -2.948e-05 +1.039e-13
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.566e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.193
+[DBG] svd singular values: [5.000e-03 1.284e-03 8.969e-04 2.926e-20 6.881e-21 5.062e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.016 wz:+1.000 dL:+0.000
+  mode2: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-1.000 wz:+0.016 dL:+0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:-0.000
+  out_mode1: x:-0.000 y:-0.015 z:-0.000 tx:+0.020 ty:-1.000 tz:-0.012
+  out_mode2: x:-0.001 y:+0.000 z:-0.015 tx:-0.039 ty:+0.011 tz:-0.999
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  23 d_nom=0.1500 d_opt=0.1496 (d_opt-d0)=-0.0004 e_lin=-0.0004
+[STANDOFF] idx_k: [23]
+[STANDOFF] Ck[0]: [ 0.83515361 -0.70522795 -0.09908953] Ck[-1]: [ 0.83515361 -0.70522795 -0.09908953]
+   [OBJ] total(OSQP) = -0.0007088240617310543
+   [OBJ]            J_u =  6.472021e-04
+   [OBJ]   J_wall_slack =  6.712738e-13
+   [OBJ]   J_prog_slack =  5.167053e-07
+   [OBJ]   J_adv_reward = -6.023434e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0227
+   [OBJ] prog_slack_rms_mm =  0.0227
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999926411114623e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  5.03 deg
+  max=5.03 deg  mean=5.03 deg  w_dipole=1
+xbase0 [ 0.8354494  -0.70518279 -0.09910125] xaff0 [ 0.83509778 -0.70519509 -0.09908721]
+[TRACK] pred_ref_rms=0.184mm pred_ref_max=0.184mm rho_rms=0.060mm rho_max=0.060mm clear_min=2.940mm
+[COST_TERMS] {'J_effort': 0.0006472021303961877, 'J_track': 2.983347827734579e-06, 'J_advance': -6.023434329733051e-09, 'J_standoff': -4.1716673313951125e-06, 'J_inline_lat': -1.876563666342906e-05, 'J_inline_fwd': -9.248557197654605e-07, 'J_dipole': -0.0013356580621033116}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  23 lat_nom=(-9.07,+2.92)mm rho_nom=9.53mm fwd_nom=-0.52mm | lat_opt=(-9.13,+2.91)mm rho_opt=9.58mm fwd_opt=-0.89mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004732105677821563 from u0 dx = -0.03785991640604896
+[CURSOR] k=0007 i_ref=  23 i_seg=  23 Δs= +0.000mm d=  0.08mm stall= 8 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0007 tip=[+0.8347,-0.7052,-0.0991] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.3057e-04
+   path index i_ref=23
+   p_now: x=+0.686 y=-0.708 z=-0.090  rotvec=[-3.101,-0.033,+0.062] |theta|=177.7deg  L=0.024
+   u0: dx=-0.0379 dy=-0.0924 dz=-0.0266  omega_body=[-0.0000,-0.0336,-0.7967]  dL=+0.02430
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8350,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8347,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8347,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.231mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5004442420314008
+max |Δy| per step (mm): 0.02916008566352879
+max |Δz| per step (mm): 0.03471024721815763
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.817e-04
+  wz: 8.830e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.253e-07 -2.194e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.374e-07 -1.341e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.338e-05 -5.748e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.475e-05 -1.413e-05 -4.441e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.857e-05 -8.820e-04 -3.098e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.805e-04 -3.793e-05 +5.898e-16
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.248e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 4.007
+[DBG] svd singular values: [5.000e-03 8.873e-04 8.774e-04 1.808e-20 9.800e-21 3.106e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:+0.659 wz:-0.752 dL:-0.000
+  mode2: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.752 wz:-0.659 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:-0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:+0.011 z:+0.010 tx:+0.038 ty:+0.726 tz:+0.686
+  out_mode2: x:-0.000 y:+0.010 z:-0.011 tx:-0.019 ty:+0.687 tz:-0.726
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  24 d_nom=0.1490 d_opt=0.1493 (d_opt-d0)=-0.0007 e_lin=-0.0007
+[STANDOFF] idx_k: [24]
+[STANDOFF] Ck[0]: [ 0.8341562  -0.70528608 -0.09904995] Ck[-1]: [ 0.8341562  -0.70528608 -0.09904995]
+   [OBJ] total(OSQP) = -0.0018542484773856407
+   [OBJ]            J_u =  1.673947e-03
+   [OBJ]   J_wall_slack =  1.316698e-12
+   [OBJ]   J_prog_slack =  3.598795e-08
+   [OBJ]   J_adv_reward = -1.855669e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0060
+   [OBJ] prog_slack_rms_mm =  0.0060
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999871515654882e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  8.10 deg
+  max=8.10 deg  mean=8.10 deg  w_dipole=1
+xbase0 [ 0.8347457  -0.70517202 -0.09907337] xaff0 [ 0.83462415 -0.70518086 -0.09906857]
+[TRACK] pred_ref_rms=0.158mm pred_ref_max=0.158mm rho_rms=0.118mm rho_max=0.118mm clear_min=2.882mm
+[COST_TERMS] {'J_effort': 0.0016739465484215043, 'J_track': -2.0540366681151937e-05, 'J_advance': -1.8556686153049786e-08, 'J_standoff': -1.2799991205699263e-05, 'J_inline_lat': -5.102061750812317e-05, 'J_inline_fwd': -1.782703940490681e-06, 'J_dipole': -0.0034420687777387223}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  24 lat_nom=(-16.39,+2.92)mm rho_nom=16.64mm fwd_nom=-1.10mm | lat_opt=(-15.76,+2.93)mm rho_opt=16.02mm fwd_opt=-0.81mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004969748235184035 from u0 dx = -0.05940786507318281
+[CURSOR] k=0008 i_ref=  23 i_seg=  23 Δs= +0.000mm d=  0.10mm stall= 9 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0008 tip=[+0.8345,-0.7052,-0.0991] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.5441e-04
+   path index i_ref=23
+   p_now: x=+0.685 y=-0.710 z=-0.090  rotvec=[-3.100,-0.053,+0.063] |theta|=177.7deg  L=0.024
+   u0: dx=-0.0594 dy=-0.1590 dz=-0.0247  omega_body=[+0.0000,-0.0558,-1.2790]  dL=+0.07520
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8342,-0.7052,-0.0991]  tan=[-0.999,+0.016,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8345,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8345,-0.7052,-0.0991]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.255mm  tan=0.02deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5004765155966566
+max |Δy| per step (mm): 0.03003656811199107
+max |Δz| per step (mm): 0.03530303132134764
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.871e-04
+  wz: 8.921e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.414e-07 -2.291e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.248e-07 -1.397e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.389e-05 -6.125e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.465e-05 -1.431e-05 +1.110e-14
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.687e-05 -8.910e-04 +4.771e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.860e-04 -3.922e-05 +6.883e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.258e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.974
+[DBG] svd singular values: [5.000e-03 8.964e-04 8.828e-04 6.935e-20 2.929e-20 8.115e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.564 wz:-0.826 dL:-0.000
+  mode2: vx:+0.000 vy:-0.000 vz:-0.000 wx:+0.000 wy:-0.826 wz:-0.564 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:-0.000 ty:-0.000 tz:-0.000
+  out_mode1: x:+0.001 y:+0.013 z:+0.009 tx:+0.035 ty:+0.804 tz:+0.594
+  out_mode2: x:-0.000 y:+0.009 z:-0.013 tx:-0.023 ty:+0.594 tz:-0.804
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  24 d_nom=0.1499 d_opt=0.1496 (d_opt-d0)=-0.0004 e_lin=-0.0004
+[STANDOFF] idx_k: [24]
+[STANDOFF] Ck[0]: [ 0.8341562  -0.70528608 -0.09904995] Ck[-1]: [ 0.8341562  -0.70528608 -0.09904995]
+   [OBJ] total(OSQP) = -0.0014064775686816763
+   [OBJ]            J_u =  1.280303e-03
+   [OBJ]   J_wall_slack =  1.567363e-12
+   [OBJ]   J_prog_slack =  3.279148e-07
+   [OBJ]   J_adv_reward = -5.189908e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0181
+   [OBJ] prog_slack_rms_mm =  0.0181
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9998463462143945e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  7.09 deg
+  max=7.09 deg  mean=7.09 deg  w_dipole=1
+xbase0 [ 0.83450292 -0.7051683  -0.09906375] xaff0 [ 0.83412698 -0.70518045 -0.09904888]
+[TRACK] pred_ref_rms=0.183mm pred_ref_max=0.183mm rho_rms=0.137mm rho_max=0.137mm clear_min=2.863mm
+[COST_TERMS] {'J_effort': 0.0012803025324439308, 'J_track': 2.1457357262138147e-06, 'J_advance': -5.189908325690309e-09, 'J_standoff': -3.681942172263031e-06, 'J_inline_lat': -4.356875685146949e-05, 'J_inline_fwd': -1.1607542140846411e-06, 'J_dipole': -0.002640837108540174}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  24 lat_nom=(-14.22,+2.89)mm rho_nom=14.51mm fwd_nom=-0.80mm | lat_opt=(-14.32,+2.89)mm rho_opt=14.61mm fwd_opt=-1.11mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.00048210998188580323 from u0 dx = -0.029546546441945078
+[CURSOR] k=0009 i_ref=  24 i_seg=  24 Δs= +0.000mm d=  0.17mm stall=10 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0009 tip=[+0.8338,-0.7052,-0.0990] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.6933e-04
+   path index i_ref=24
+   p_now: x=+0.685 y=-0.711 z=-0.090  rotvec=[-3.100,-0.070,+0.063] |theta|=177.7deg  L=0.025
+   u0: dx=-0.0295 dy=-0.1448 dz=-0.0263  omega_body=[+0.0000,-0.0488,-1.1202]  dL=+0.02130
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8340,-0.7052,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8338,-0.7052,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8338,-0.7052,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.270mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5003175315811631
+max |Δy| per step (mm): 0.03303428742012104
+max |Δz| per step (mm): 0.03559056484896818
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 8.956e-04
+  wz: 9.970e-04
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.777e-07 -1.038e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -4.735e-07 -1.585e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.424e-05 -5.662e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +3.650e-05 -4.092e-06 +6.106e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -2.929e-05 -9.963e-04 +4.768e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +8.942e-04 -3.565e-05 -2.928e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.340e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.731
+[DBG] svd singular values: [5.000e-03 9.971e-04 8.955e-04 1.940e-20 3.117e-21 1.826e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:-0.015 wz:+1.000 dL:+0.000
+  mode2: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-1.000 wz:-0.015 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:-0.000 y:-0.016 z:-0.001 tx:-0.005 ty:-0.999 tz:-0.049
+  out_mode2: x:-0.001 y:+0.001 z:-0.016 tx:-0.041 ty:+0.049 tz:-0.998
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  25 d_nom=0.1490 d_opt=0.1492 (d_opt-d0)=-0.0008 e_lin=-0.0008
+[STANDOFF] idx_k: [25]
+[STANDOFF] Ck[0]: [ 0.83316282 -0.70539263 -0.09901036] Ck[-1]: [ 0.83316282 -0.70539263 -0.09901036]
+   [OBJ] total(OSQP) = -0.0031170031624112517
+   [OBJ]            J_u =  2.531692e-03
+   [OBJ]   J_wall_slack =  2.197656e-12
+   [OBJ]   J_prog_slack =  5.553461e-08
+   [OBJ]   J_adv_reward = -1.918610e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0075
+   [OBJ] prog_slack_rms_mm =  0.0075
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.999690489865245e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle= 10.56 deg
+  max=10.56 deg  mean=10.56 deg  w_dipole=1
+xbase0 [ 0.83375156 -0.7051568  -0.09903398] xaff0 [ 0.83364508 -0.70517295 -0.09902971]
+[TRACK] pred_ref_rms=0.266mm pred_ref_max=0.266mm rho_rms=0.232mm rho_max=0.232mm clear_min=2.768mm
+[COST_TERMS] {'J_effort': 0.0025316919330147926, 'J_track': -2.1060443118571945e-05, 'J_advance': -1.918610347355038e-08, 'J_standoff': -1.2362164902142205e-05, 'J_inline_lat': -9.729306712499552e-05, 'J_inline_fwd': -2.946225725645133e-06, 'J_dipole': -0.0055150695430680585}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  25 lat_nom=(-22.71,+2.92)mm rho_nom=22.90mm fwd_nom=-1.66mm | lat_opt=(-21.99,+2.93)mm rho_opt=22.19mm fwd_opt=-1.35mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0005006386288548548 from u0 dx = -0.04806273400486414
+[CURSOR] k=0010 i_ref=  24 i_seg=  24 Δs= +0.000mm d=  0.20mm stall=11 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0010 tip=[+0.8335,-0.7052,-0.0990] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.8808e-04
+   path index i_ref=24
+   p_now: x=+0.684 y=-0.714 z=-0.090  rotvec=[-3.099,-0.094,+0.064] |theta|=177.7deg  L=0.025
+   u0: dx=-0.0481 dy=-0.2218 dz=-0.0241  omega_body=[-0.0000,-0.0754,-1.5709]  dL=+0.07893
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8333,-0.7051,-0.0990]  tan=[-0.999,+0.016,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8335,-0.7052,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8335,-0.7052,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.288mm  tan=0.03deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5007050802523004
+max |Δy| per step (mm): 0.03756877322233876
+max |Δz| per step (mm): 0.03939066593518085
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.094e-03
+  wz: 1.121e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +9.914e-07 +7.463e-08 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -9.931e-07 -1.839e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.789e-05 -5.503e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +6.489e-05 +1.021e-05 +9.437e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -6.062e-05 -1.121e-03 +4.581e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.090e-03 -3.340e-05 +6.460e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.567e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.191
+[DBG] svd singular values: [5.000e-03 1.128e-03 1.088e-03 3.048e-20 1.586e-21 7.792e-22]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.398 wz:+0.917 dL:+0.000
+  mode2: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.917 wz:-0.398 dL:+0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:-0.000 y:-0.015 z:+0.006 tx:+0.031 ty:-0.933 tz:+0.358
+  out_mode2: x:+0.001 y:+0.006 z:+0.015 tx:+0.051 ty:+0.359 tz:+0.932
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  25 d_nom=0.1498 d_opt=0.1496 (d_opt-d0)=-0.0004 e_lin=-0.0004
+[STANDOFF] idx_k: [25]
+[STANDOFF] Ck[0]: [ 0.83316282 -0.70539263 -0.09901036] Ck[-1]: [ 0.83316282 -0.70539263 -0.09901036]
+   [OBJ] total(OSQP) = -0.002467205655602117
+   [OBJ]            J_u =  2.243901e-03
+   [OBJ]   J_wall_slack =  4.904055e-12
+   [OBJ]   J_prog_slack =  2.506173e-07
+   [OBJ]   J_adv_reward = -4.479721e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0158
+   [OBJ] prog_slack_rms_mm =  0.0158
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9995908812245835e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle=  9.40 deg
+  max=9.40 deg  mean=9.40 deg  w_dipole=1
+xbase0 [ 0.83353877 -0.70515355 -0.09902555] xaff0 [ 0.83314469 -0.70517648 -0.09900945]
+[TRACK] pred_ref_rms=0.270mm pred_ref_max=0.270mm rho_rms=0.261mm rho_max=0.261mm clear_min=2.739mm
+[COST_TERMS] {'J_effort': 0.002243901011201271, 'J_track': 2.591831494793677e-06, 'J_advance': -4.4797211336562675e-09, 'J_standoff': -4.117817725480127e-06, 'J_inline_lat': -8.288416718729146e-05, 'J_inline_fwd': -1.956281682726988e-06, 'J_dipole': -0.004624986369260517}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  25 lat_nom=(-19.87,+2.89)mm rho_nom=20.08mm fwd_nom=-1.27mm | lat_opt=(-20.01,+2.89)mm rho_opt=20.21mm fwd_opt=-1.57mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004897755486101829 from u0 dx = -0.02086341048369683
+[CURSOR] k=0011 i_ref=  25 i_seg=  25 Δs= +0.000mm d=  0.32mm stall=12 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0011 tip=[+0.8328,-0.7051,-0.0990] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.9884e-04
+   path index i_ref=25
+   p_now: x=+0.684 y=-0.716 z=-0.090  rotvec=[-3.098,-0.117,+0.064] |theta|=177.6deg  L=0.026
+   u0: dx=-0.0209 dy=-0.2019 dz=-0.0256  omega_body=[-0.0000,-0.0663,-1.4823]  dL=+0.01912
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8330,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8328,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8328,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.299mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5006166512623752
+max |Δy| per step (mm): 0.03636467938746912
+max |Δz| per step (mm): 0.03970522988565686
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.100e-03
+  wz: 1.065e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.013e-06 -4.243e-09 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -1.066e-06 -1.757e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.812e-05 -5.972e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +6.587e-05 +4.070e-06 +6.106e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -6.449e-05 -1.064e-03 +4.612e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.096e-03 -3.617e-05 -3.015e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.531e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.266
+[DBG] svd singular values: [5.000e-03 1.105e-03 1.060e-03 2.447e-20 1.533e-20 1.415e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:+0.000 vz:-0.000 wx:+0.000 wy:+0.947 wz:+0.321 dL:+0.000
+  mode2: vx:-0.000 vy:-0.000 vz:-0.000 wx:+0.000 wy:-0.321 wz:+0.947 dL:+0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.000 y:-0.006 z:+0.015 tx:+0.058 ty:-0.365 tz:+0.929
+  out_mode2: x:-0.000 y:-0.015 z:-0.006 tx:-0.016 ty:-0.931 tz:-0.365
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  26 d_nom=0.1489 d_opt=0.1491 (d_opt-d0)=-0.0009 e_lin=-0.0009
+[STANDOFF] idx_k: [26]
+[STANDOFF] Ck[0]: [ 0.83217781 -0.7055596  -0.09897078] Ck[-1]: [ 0.83217781 -0.7055596  -0.09897078]
+   [OBJ] total(OSQP) = -0.00451405247323783
+   [OBJ]            J_u =  2.566909e-03
+   [OBJ]   J_wall_slack =  2.831802e-12
+   [OBJ]   J_prog_slack =  1.106514e-07
+   [OBJ]   J_adv_reward = -1.947204e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0105
+   [OBJ] prog_slack_rms_mm =  0.0105
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9990750821151e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle= 13.10 deg
+  max=13.10 deg  mean=13.10 deg  w_dipole=1
+xbase0 [ 0.83275022 -0.70514148 -0.09899431] xaff0 [ 0.83265476 -0.70516614 -0.09899021]
+[TRACK] pred_ref_rms=0.433mm pred_ref_max=0.433mm rho_rms=0.399mm rho_max=0.399mm clear_min=2.601mm
+[COST_TERMS] {'J_effort': 0.0025669088813862306, 'J_track': -1.953274154117988e-05, 'J_advance': -1.9472043471340143e-08, 'J_standoff': -1.2835094382893324e-05, 'J_inline_lat': -0.00015872601350588764, 'J_inline_fwd': -5.28842534632438e-06, 'J_dipole': -0.006884670259230154}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  26 lat_nom=(-29.08,+2.93)mm rho_nom=29.23mm fwd_nom=-2.50mm | lat_opt=(-28.31,+2.94)mm rho_opt=28.47mm fwd_opt=-2.18mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0005043406942595308 from u0 dx = -0.033270286244648506
+[CURSOR] k=0012 i_ref=  25 i_seg=  25 Δs= +0.000mm d=  0.35mm stall=13 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0012 tip=[+0.8326,-0.7051,-0.0990] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=3.1337e-04
+   path index i_ref=25
+   p_now: x=+0.684 y=-0.719 z=-0.090  rotvec=[-3.096,-0.142,+0.065] |theta|=177.6deg  L=0.026
+   u0: dx=-0.0333 dy=-0.2850 dz=-0.0233  omega_body=[+0.0000,-0.0970,-1.5710]  dL=+0.08183
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8322,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8326,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8326,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.314mm  tan=0.01deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5011864928580266
+max |Δy| per step (mm): 0.042824710014887864
+max |Δz| per step (mm): 0.040187845217671526
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.095e-03
+  wz: 1.261e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.048e-06 +3.431e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -1.205e-06 -2.159e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.860e-05 -5.808e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +6.620e-05 +2.977e-05 -1.665e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -7.042e-05 -1.260e-03 -2.836e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.091e-03 -3.383e-05 +6.373e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.670e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 2.994
+[DBG] svd singular values: [5.000e-03 1.264e-03 1.092e-03 3.683e-20 1.909e-20 4.261e-21]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.134 wz:+0.991 dL:+0.000
+  mode2: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.991 wz:+0.134 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:-0.000 y:-0.017 z:+0.002 tx:+0.030 ty:-0.995 tz:+0.089
+  out_mode2: x:-0.001 y:-0.002 z:-0.017 tx:-0.056 ty:-0.091 tz:-0.994
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  26 d_nom=0.1497 d_opt=0.1494 (d_opt-d0)=-0.0006 e_lin=-0.0006
+[STANDOFF] idx_k: [26]
+[STANDOFF] Ck[0]: [ 0.83217781 -0.7055596  -0.09897078] Ck[-1]: [ 0.83217781 -0.7055596  -0.09897078]
+   [OBJ] total(OSQP) = -0.003967313078072077
+   [OBJ]            J_u =  2.543707e-03
+   [OBJ]   J_wall_slack =  1.232317e-11
+   [OBJ]   J_prog_slack =  2.663766e-07
+   [OBJ]   J_adv_reward = -3.920354e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0163
+   [OBJ] prog_slack_rms_mm =  0.0163
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.998627552669021e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle= 12.14 deg
+  max=12.14 deg  mean=12.14 deg  w_dipole=1
+xbase0 [ 0.83255919 -0.70513856 -0.09898674] xaff0 [ 0.83215103 -0.70516634 -0.09896965]
+[TRACK] pred_ref_rms=0.444mm pred_ref_max=0.444mm rho_rms=0.444mm rho_max=0.444mm clear_min=2.556mm
+[COST_TERMS] {'J_effort': 0.0025437067764146675, 'J_track': 4.185279367893766e-06, 'J_advance': -3.9203538952727935e-09, 'J_standoff': -4.979595269235466e-06, 'J_inline_lat': -0.00013530224353273728, 'J_inline_fwd': -3.5462158814907954e-06, 'J_dipole': -0.006371639535454178}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  26 lat_nom=(-25.60,+2.90)mm rho_nom=25.77mm fwd_nom=-1.95mm | lat_opt=(-25.78,+2.90)mm rho_opt=25.94mm fwd_opt=-2.26mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0004974494115517203 from u0 dx = -0.008051473281878177
+[CURSOR] k=0013 i_ref=  26 i_seg=  26 Δs= +0.000mm d=  0.52mm stall=14 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0013 tip=[+0.8317,-0.7051,-0.0990] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=3.2017e-04
+   path index i_ref=26
+   p_now: x=+0.684 y=-0.721 z=-0.090  rotvec=[-3.095,-0.166,+0.066] |theta|=177.6deg  L=0.027
+   u0: dx=-0.0081 dy=-0.2595 dz=-0.0247  omega_body=[-0.0000,-0.0857,-1.5710]  dL=+0.01775
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8321,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8317,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8317,-0.7051,-0.0990]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.320mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.500922536083764
+max |Δy| per step (mm): 0.040561970377345206
+max |Δz| per step (mm): 0.04064976224151143
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.106e-03
+  wz: 1.170e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.071e-06 +1.599e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -1.305e-06 -2.009e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.891e-05 -6.725e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +6.725e-05 +1.634e-05 -2.220e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -7.562e-05 -1.169e-03 -2.883e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.101e-03 -3.924e-05 +6.269e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.610e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 3.106
+[DBG] svd singular values: [5.000e-03 1.176e-03 1.100e-03 1.062e-19 1.533e-20 1.237e-20]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:+0.000 vy:-0.000 vz:-0.000 wx:+0.000 wy:+0.279 wz:+0.960 dL:+0.000
+  mode2: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:-0.960 wz:+0.279 dL:-0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:-0.000 y:-0.017 z:+0.004 tx:+0.029 ty:-0.973 tz:+0.229
+  out_mode2: x:-0.001 y:-0.004 z:-0.017 tx:-0.055 ty:-0.231 tz:-0.971
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  26 d_nom=0.1498 d_opt=0.1496 (d_opt-d0)=-0.0004 e_lin=-0.0004
+[STANDOFF] idx_k: [26]
+[STANDOFF] Ck[0]: [ 0.83217781 -0.7055596  -0.09897078] Ck[-1]: [ 0.83217781 -0.7055596  -0.09897078]
+   [OBJ] total(OSQP) = -0.003414498851582244
+   [OBJ]            J_u =  2.534196e-03
+   [OBJ]   J_wall_slack =  1.037162e-10
+   [OBJ]   J_prog_slack =  9.971265e-06
+   [OBJ]   J_adv_reward = -1.466169e-08
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0999
+   [OBJ] prog_slack_rms_mm =  0.0999
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9985063334336965e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle= 11.24 deg
+  max=11.24 deg  mean=11.24 deg  w_dipole=1
+xbase0 [ 0.8317416  -0.70512605 -0.09895435] xaff0 [ 0.83165327 -0.70515636 -0.09895027]
+[TRACK] pred_ref_rms=0.944mm pred_ref_max=0.944mm rho_rms=0.625mm rho_max=0.625mm clear_min=2.375mm
+[COST_TERMS] {'J_effort': 0.0025341960518108233, 'J_track': 4.5352270178755455e-05, 'J_advance': -1.4661694783521435e-08, 'J_standoff': -1.8524075852857196e-06, 'J_inline_lat': -0.00011414864703097251, 'J_inline_fwd': -2.0683462542234317e-06, 'J_dipole': -0.005885934375647372}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  26 lat_nom=(-23.30,+2.86)mm rho_nom=23.48mm fwd_nom=-1.74mm | lat_opt=(-23.49,+2.86)mm rho_opt=23.66mm fwd_opt=-1.95mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0003988627077734508 from u0 dx = 0.0074949749686632
+[CURSOR] k=0014 i_ref=  27 i_seg=  26 Δs= +0.000mm d=  0.57mm stall= 0 forced=1Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0014 tip=[+0.8316,-0.7051,-0.0989] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=2.2155e-04
+   path index i_ref=27
+   p_now: x=+0.684 y=-0.723 z=-0.090  rotvec=[-3.093,-0.190,+0.067] |theta|=177.6deg  L=0.027
+   u0: dx=+0.0075 dy=-0.2353 dz=-0.0256  omega_body=[+0.0000,-0.0790,-1.5710]  dL=+0.06210
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8313,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8316,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8316,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.222mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------
+max |Δx| per step (mm): 0.5012303999831157
+max |Δy| per step (mm): 0.04297920694768065
+max |Δz| per step (mm): 0.04437704973175278
+
+[DBG] SQP it=0  B0 shape = (6, 7)
+[DBG] B0 column norms:
+  vx: 0.000e+00
+  vy: 0.000e+00
+  vz: 0.000e+00
+  wx: 0.000e+00
+  wy: 1.278e-03
+  wz: 1.250e-03
+  dL: 5.000e-03
+[DBG] B0 rows (scientific):
+    x: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.016e-06 +3.930e-07 -4.995e-03
+    y: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -7.078e-07 -2.202e-05 +7.644e-05
+    z: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +2.252e-05 -6.381e-07 +1.979e-04
+   tx: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +5.971e-05 +3.264e-05 -1.665e-15
+   ty: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 -3.991e-05 -1.249e-03 -2.706e-13
+   tz: +0.000e+00 +0.000e+00 +0.000e+00 +0.000e+00 +1.276e-03 -3.627e-05 +6.155e-14
+               vx         vy         vz         wx         wy         wz         dL
+[DBG] authority norms:
+  ||B_trans||_F = 0.000e+00
+  ||B_omega||_F = 1.788e-03
+  ||B_dL||_F    = 5.000e-03
+[DBG] ratios:
+  trans/omega = 0.000
+  dL/omega    = 2.797
+[DBG] svd singular values: [5.000e-03 1.278e-03 1.250e-03 6.362e-20 3.521e-20 1.203e-20]
+[DBG] rank≈3/6   cond≈5.000e+13
+[DBG] top input directions (Vt rows, mapped to [vx vy vz wx wy wz dL]):
+  mode0: vx:+0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:+0.000 wz:+0.000 dL:-1.000
+  mode1: vx:-0.000 vy:+0.000 vz:+0.000 wx:+0.000 wy:+0.997 wz:+0.076 dL:+0.000
+  mode2: vx:+0.000 vy:-0.000 vz:+0.000 wx:+0.000 wy:-0.076 wz:+0.997 dL:+0.000
+[DBG] top output directions (U cols -> [x y z tx ty tz]):
+  out_mode0: x:+0.999 y:-0.015 z:-0.040 tx:+0.000 ty:-0.000 tz:+0.000
+  out_mode1: x:+0.001 y:-0.002 z:+0.018 tx:+0.049 ty:-0.105 tz:+0.993
+  out_mode2: x:-0.000 y:-0.018 z:-0.002 tx:+0.022 ty:-0.994 tz:-0.107
+[STANDOFF] target d0 = 0.1500 m
+  k=00 idx=  27 d_nom=0.1489 d_opt=0.1491 (d_opt-d0)=-0.0009 e_lin=-0.0009
+[STANDOFF] idx_k: [27]
+[STANDOFF] Ck[0]: [ 0.83120728 -0.70579617 -0.09893119] Ck[-1]: [ 0.83120728 -0.70579617 -0.09893119]
+   [OBJ] total(OSQP) = -0.0056668327614313235
+   [OBJ]            J_u =  2.588805e-03
+   [OBJ]   J_wall_slack =  4.696409e-12
+   [OBJ]   J_prog_slack =  5.886417e-07
+   [OBJ]   J_adv_reward = -8.463322e-09
+   [OBJ] wall_slack_max_mm =  0.0000
+   [OBJ] wall_slack_rms_mm =  0.0000
+   [OBJ] prog_slack_max_mm =  0.0243
+   [OBJ] prog_slack_rms_mm =  0.0243
+[WEIGHTS] {'w_adv': 5e-05, 'w_adv_eff': 4.9950795488302936e-05, 'w_standoff': 10.0, 'd0': 0.15, 'w_inline': 100.0, 'w_dipole': 1.0, 'w_slack_wall': 100000.0, 'w_slack_prog': 1000.0}
+[DIPOLE] alignment to vessel tangent (nominal, pre-QP):
+  k=00  angle= 15.25 deg
+  max=15.25 deg  mean=15.25 deg  w_dipole=1
+xbase0 [ 0.83156426 -0.70512333 -0.09894732] xaff0 [ 0.83125476 -0.70515324 -0.09893425]
+[TRACK] pred_ref_rms=0.695mm pred_ref_max=0.695mm rho_rms=0.691mm rho_max=0.691mm clear_min=2.309mm
+[COST_TERMS] {'J_effort': 0.0025888054449988247, 'J_track': 6.796435924291597e-06, 'J_advance': -8.463322215392736e-09, 'J_standoff': -1.0861900635510479e-05, 'J_inline_lat': -0.00020714084431633869, 'J_inline_fwd': -8.038322777919391e-06, 'J_dipole': -0.008036973752998656}
+[INLINE] s_ahead=150.00 mm  w_lat=1  w_fwd=1
+  k=00 idx=  27 lat_nom=(-33.21,+2.93)mm rho_nom=33.34mm fwd_nom=-3.67mm | lat_opt=(-32.41,+2.94)mm rho_opt=32.54mm fwd_opt=-3.26mm
+[MPC] mode=unknown status=solved infeas=0 
+predicted world Δx = -0.0005001010850359533 from u0 dx = -0.005614580596259112
+[CURSOR] k=0015 i_ref=  27 i_seg=  27 Δs= +0.000mm d=  0.73mm stall= 1 forced=0Advancement weight = 5e-05
+Δtip (mm) = 0.0
+Δs_proj (mm) = 0.0
+[DBG] centerline_tip type: <class 'numpy.ndarray'>
+[DBG] centerline_tip np.shape: (3, 35) ndim: 2 dtype: float64
+k=0015 tip=[+0.8309,-0.7051,-0.0989] tan=[-0.999,+0.015,+0.040] status=solved infeas=0 pred1_err=1.2032e-04
+   path index i_ref=27
+   p_now: x=+0.684 y=-0.727 z=-0.090  rotvec=[-3.091,-0.215,+0.068] |theta|=177.6deg  L=0.028
+   u0: dx=-0.0056 dy=-0.3258 dz=-0.0229  omega_body=[+0.0000,-0.1141,-1.5709]  dL=+0.03801
+   Horizon: predicted (linear MPC)
+   00: pos=[+0.8311,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   |(X_aff0 + Mc0U) - X_pred[0]| = 0.0
+   Horizon: nominal nonlinear (SQP lin point eval)
+   00: pos=[+0.8309,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   Horizon: NL rollout COMMIT (plant-like along planned U)
+   00: pos=[+0.8309,-0.7051,-0.0989]  tan=[-0.999,+0.015,+0.040]
+   Horizon errors (NL commit rollout vs linear pred):
+   00: pos=0.120mm  tan=0.00deg
+--------------------------------------------------------------------
+END OF STEP ----------------------------------------------------------------

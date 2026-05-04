@@ -362,8 +362,8 @@ def boundary_to_xy_arrays(boundary_points):
     return xs[order], ys[order]
 import cv2
 import numpy as np
-from skimage.morphology import skeletonize
-from skimage.graph import route_through_array
+# from skimage.morphology import skeletonize
+# from skimage.graph import route_through_array
 
 
 def compute_black_beam_length_px(image_gray, base_px, tip_px, threshold=100):
@@ -954,7 +954,7 @@ def compute_tip_wall_distances_general(tip_px, left_boundary_px, right_boundary_
         "closest_distance": float(closest_distance),
     }
 
-def load_calibration_points(path="calibration_points.json"):
+def load_calibration_points(path="/Users/jackhilton-jones/Proper-Research/calibration_points.json"):
     with open(path, "r") as f:
         data = json.load(f)
     return data
@@ -999,7 +999,7 @@ def reconstruct_beam_within_vessel(
     #     max_area=50000,
     #     show_debug=True,
     # )
-    green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
+    green_result = get_saved_2_point_calibration("/Users/jackhilton-jones/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
     mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=15)
@@ -1946,7 +1946,7 @@ if __name__ == "__main__":
     roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
 
     result = reconstruct_beam_within_vessel(
-        image_filename="focused_image.jpg",
+        image_filename="/Users/jackhilton-jones/Proper-Research/focused_image.jpg",
         red_roi_polygon=roi_polygon,
         blue_roi_path="blue_roi_box.json",
         pivot_hint=pivot_hint,

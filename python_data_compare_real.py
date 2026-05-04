@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-CSV_FILE = "/home/jack/Proper-Research/control_run_log_test_run_centreline_track_day2wboc90_inline2_try2_no_boundary.csv"  # <-- change this
+CSV_FILE = "/Users/jackhilton-jones/Proper-Research/control_run_log_test_run_centreline_track_day21stepwbc3.csv"  # <-- change this
 
 
 df = pd.read_csv(CSV_FILE)

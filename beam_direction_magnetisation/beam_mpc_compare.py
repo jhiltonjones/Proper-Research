@@ -31,8 +31,8 @@ BEAM_BASE_POINT_ROBOT_M = np.array([
 # =========================
 # Configuration
 # =========================
-ONE_STEP_FILE = "/home/jack/Proper-Research/control_run_log_test_run_centreline_track_new_bc2.csv"
-THREE_STEP_FILE = "/home/jack/Proper-Research/control_run_log_test_run_centreline_track_new_wbc_3step.csv"
+ONE_STEP_FILE = "/Users/jackhilton-jones/Proper-Research/control_run_log_test_run_centreline_track_new_wbc_3step2.csv"
+THREE_STEP_FILE = "/Users/jackhilton-jones/Proper-Research/control_run_log_test_run_centreline_track_new_wbc_3step2.csv"
 
 SAVE_FIGURES = False
 FIGURE_DIR = Path("mpc_comparison_figures")

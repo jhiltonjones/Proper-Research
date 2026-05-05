@@ -846,8 +846,8 @@ class mpc_controller_tipxy_LTI:
         self.w_dipole_align = 0.2    # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
-        self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.13
+        self.w_mag_center_standoff = 0
+        self.mag_center_standoff_m = 0.14
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1854,7 +1854,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.11))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.12))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -3120,7 +3120,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.01652
+    L0 = 0.01505
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3128,7 +3128,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.13),
+        pivot_point[0] - (L0 + 0.15),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -3279,7 +3279,7 @@ def build_controller(
     ], dtype=float)
 
     p_max = np.array([
-        start_point_pose6[0] + 0.5,
+        0.82,
         1.5,
         start_point_pose6[2],
         np.inf,
@@ -3360,14 +3360,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=6,
+        Np=8,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="ltv",
+        model_mode="lti",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3466,7 +3466,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 6
+    mpc_replan_every = 8
 
 
 
@@ -4171,7 +4171,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=beam_params.r,
+        r_beam=0.0013,
         k=1e8,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -4188,8 +4188,8 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
-        maxiter=30,
+        N_nodes=14,
+        maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
         use_lumen_jac=False,
@@ -4273,7 +4273,7 @@ if __name__ == "__main__":
         xyz_max=(1.20, +1.50, +1.50),
         max_trans_m=0.01,
         max_rot_rad=0.2,
-        z_offset=0.28,
+        z_offset=0.27,
         use_moveL_params=False,
         v=0.10,
         a=0.30,

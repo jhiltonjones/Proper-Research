@@ -519,7 +519,7 @@ def draw_beam_and_vessel_overlay(
         color_map = {
             "base_px": (255, 0, 0),
             "mag_start_px": (0, 255, 255),
-            "tangent_start_px": (255, 0, 255),
+            # "tangent_start_px": (255, 0, 255),
             "tip_px": (0, 0, 255),
         }
         for key, p in markers.items():

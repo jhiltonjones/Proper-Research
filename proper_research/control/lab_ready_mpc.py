@@ -846,7 +846,7 @@ class mpc_controller_tipxy_LTI:
         self.w_dipole_align = 0.2    # start small: 0.1..10
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
-        self.w_mag_center_standoff = 0
+        self.w_mag_center_standoff = 12
         self.mag_center_standoff_m = 0.14
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
@@ -871,6 +871,18 @@ class mpc_controller_tipxy_LTI:
             D1[i, i+1] = +1.0
 
         return np.kron(D1, np.eye(m))
+    def shift_U_guess(self, U_seq, n_shift=1):
+        U_seq = np.asarray(U_seq, float).reshape(self.Np, self.m)
+
+        n_shift = int(n_shift)
+        n_shift = max(1, min(n_shift, self.Np))
+
+        tail = np.repeat(U_seq[-1:, :], n_shift, axis=0)
+
+        self.U_guess = np.vstack([
+            U_seq[n_shift:, :],
+            tail,
+        ])[:self.Np, :]
     def set_measured_params(self, p_meas):
         p_meas = np.asarray(p_meas, float).reshape(self.np,)
         self.p = self._clamp_p(p_meas)
@@ -899,25 +911,33 @@ class mpc_controller_tipxy_LTI:
         p[3:7] = quat_wxyz_normalize(p[3:7])
         return p
 
-    def _p_seq_from_U(self, p0, U_seq):
-        p_running = p0.copy()
-        p_list = []
+    def _p_seq_from_U(self, p0, U_guess):
+        p = np.asarray(p0, float).copy()
+        U_guess = np.asarray(U_guess, float).reshape(self.Np, self.m)
+
+        p_seq = np.zeros((self.Np, p.size), dtype=float)
+
+
         for i in range(self.Np):
-            p_running = integrate_pose8_body(p_running, U_seq[i], self.dt)
-            p_running = self._clamp_p(p_running)
-            p_list.append(p_running.copy())
-        return np.array(p_list)
+            print("[P_SEQ]", i, "L before =", p[7])
+            p_seq[i] = p.copy()
+            p = self.apply_control_to_p(p, U_guess[i])
+            print("[P_SEQ]", i, "L after  =", p[7], "dL =", p[7] - p_seq[i, 7])
+        return p_seq
 
-
-
+    def apply_control_to_p(self, p, u):
+        p = np.asarray(p, dtype=float).reshape(self.np,)
+        u = np.asarray(u, dtype=float).reshape(self.m,)
+        return self._clamp_p(integrate_pose8_body(p, u, self.dt))
     def _build_prediction_mats(self, p0, U_guess):
         n, m, Np = self.n, self.m, self.Np
 
         if U_guess is None:
             U_guess = np.zeros((Np, m), dtype=float)
+            U_guess[:, 6] = 0.0012 / self.dt
         else:
             U_guess = np.asarray(U_guess, float).reshape(Np, m)
-
+            
         if self.model_mode == "lti":
             J0 = np.asarray(self.Jxy_fn(p0), float).copy()
 
@@ -957,9 +977,7 @@ class mpc_controller_tipxy_LTI:
                 Ji = np.asarray(self.Jxy_fn(p_seq[i]), float).copy()
 
                 if Ji.shape != (n, m):
-                    raise ValueError(
-                        f"Jxy_fn returned {Ji.shape}, expected {(n, m)} at i={i}"
-                    )
+                    raise ValueError(f"Jxy_fn returned {Ji.shape}, expected {(n, m)} at i={i}")
 
                 if not np.all(np.isfinite(Ji)):
                     raise ValueError(f"Jxy_fn returned non-finite values at i={i}")
@@ -971,7 +989,10 @@ class mpc_controller_tipxy_LTI:
                     Ji[3:6, :] *= jac_gain_tan
 
                 B_list.append(Ji)
-
+            for i, Bi in enumerate(B_list):
+                print("[LTV]", i, "p_seq xyzL =", p_seq[i, [0, 1, 2, 7]])
+                print("[LTV]", i, "B xy rows =")
+                print(Bi[:2, :])
             Mx, Mc = seq_mat_ltv(self.A, B_list)
 
             return p_seq, Mx, Mc, B_list[0]
@@ -1091,14 +1112,15 @@ class mpc_controller_tipxy_LTI:
         enable_inline_eff = bool(getattr(self, "enable_mag_tangent_inline", True))
         enable_dipole_eff = self.enable_dipole_align
 
-        # warm start
-        if self.U_warm is not None and self.U_warm.size == Np * m:
-            U_opt_vec = self.U_warm.copy()
-            U_guess = U_opt_vec.reshape(Np, m)
+        if getattr(self, "U_guess", None) is not None:
+            U_guess = np.asarray(self.U_guess, float).reshape(Np, m)
+        elif self.U_warm is not None and self.U_warm.size == Np * m:
+            U_guess = np.asarray(self.U_warm, float).reshape(Np, m)
         else:
-            U_guess = np.zeros((Np, m))
-            U_opt_vec = None
+            U_guess = np.zeros((Np, m), dtype=float)
+            U_guess[:, 6] = 0.0012 / self.dt
 
+        U_opt_vec = U_guess.reshape(Np * m, 1)
         status_last = "init"
 
         Mc_last = None
@@ -1476,8 +1498,8 @@ class mpc_controller_tipxy_LTI:
             target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
-            ref_ahead = int(getattr(self, "ref_ahead_pts", 3))
-            ref_stride = int(getattr(self, "ref_stride_pts", 3))
+            ref_ahead = int(getattr(self, "ref_ahead_pts", 6))
+            ref_stride = int(getattr(self, "ref_stride_pts", 6))
 
             idx_ref = np.clip(
                 target_start + ref_ahead + ref_stride * np.arange(Np),
@@ -2607,8 +2629,8 @@ def vision_result_to_x_meas_robot(
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
     p_local = np.array([
-        tip_xy_m[0],
-        -tip_xy_m[1],
+        -tip_xy_m[0],
+        tip_xy_m[1],
         0.0,
     ], dtype=float)
 
@@ -3120,7 +3142,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.01505
+    L0 = 0.01325
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3279,7 +3301,7 @@ def build_controller(
     ], dtype=float)
 
     p_max = np.array([
-        0.82,
+        0.77,
         1.5,
         start_point_pose6[2],
         np.inf,
@@ -3295,7 +3317,7 @@ def build_controller(
         1e-4,   # vz
         5e-1,   # wx
         5e-1,   # wy
-        1e-6,   # wz
+        1e-4,   # wz
         1e-4,   # vL
     ], dtype=float)
 
@@ -3360,14 +3382,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=8,
+        Np=10,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="lti",
+        model_mode="ltv",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3698,7 +3720,7 @@ def run_control(
                 L_source = "model_only_bad_vision"
             else:
                 max_correction_per_frame = 0.0003  # 0.3 mm
-                alpha_L = 0.5
+                alpha_L = 0
 
                 L_err = L_vision_raw - L_model
                 L_err_clipped = np.clip(
@@ -3740,9 +3762,9 @@ def run_control(
 
             U_seq = np.asarray(info["U_seq"], dtype=float)
             X_pred_plan = np.asarray(info["X_pred"], dtype=float)
-
+            
             n_exec = min(mpc_replan_every, U_seq.shape[0], X_pred_plan.shape[0])
-
+            mpc.shift_U_guess(U_seq, n_shift=mpc_replan_every)
             mpc_command_buffer = [U_seq[i].copy() for i in range(n_exec)]
             mpc_pred_buffer = [X_pred_plan[i, :3].copy() for i in range(n_exec)]
 
@@ -4171,7 +4193,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.0013,
+        r_beam=0.0016,
         k=1e8,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -4188,11 +4210,11 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=14,
+        N_nodes=15,
         maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,

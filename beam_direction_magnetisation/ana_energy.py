@@ -460,11 +460,7 @@ def contact_energy_gradient_u(
     # print("most penetrating node =", j_min)
     # print("force at most penetrating node |F| =", np.linalg.norm(F_nodes[:, j_min]))
     # print("force at most penetrating node =", F_nodes[:, j_min])
-    # print("[CONTACT PARAMS]")
-    # print("r_beam =", r_beam)
-    # print("k_contact =", k_contact)
-    # print("pen_switch =", pen_switch)
-    # print("k_hard =", k_hard)
+
     # if active.size > 0:
     #     print("[CONTACT DBG] penetrating nodes:")
     #     for j in active:

@@ -109,6 +109,87 @@ def draw_area_overlay(image_bgr, area, color=(0, 255, 255), thickness=2):
         raise ValueError(f"Unknown area type: {area['type']}")
 
     return vis
+def plot_contact_lumen_debug(
+    lumen_C_m,
+    lumen_R_m,
+    out_path="debug_outputs/contact_lumen_debug.png",
+    beam_points_m=None,
+    beam_radius_m=0.0,
+):
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    C = np.asarray(lumen_C_m, float)
+    R = np.asarray(lumen_R_m, float).reshape(-1)
+
+    if C.ndim != 2 or C.shape[1] != 3:
+        raise ValueError(f"Expected lumen_C_m shape (N,3), got {C.shape}")
+
+    if len(C) != len(R):
+        raise ValueError("lumen_C_m and lumen_R_m must have same length")
+
+    xy = C[:, :2]
+
+    tangents = np.zeros_like(xy)
+    tangents[1:-1] = xy[2:] - xy[:-2]
+    tangents[0] = xy[1] - xy[0]
+    tangents[-1] = xy[-1] - xy[-2]
+
+    tangents /= np.linalg.norm(tangents, axis=1, keepdims=True) + 1e-12
+    normals = np.column_stack([-tangents[:, 1], tangents[:, 0]])
+
+    upper = xy + R[:, None] * normals
+    lower = xy - R[:, None] * normals
+
+    C_mm = 1e3 * xy
+    upper_mm = 1e3 * upper
+    lower_mm = 1e3 * lower
+
+    plt.figure(figsize=(7, 7))
+
+    plt.plot(C_mm[:, 0], C_mm[:, 1], "k-o", markersize=3, label="Contact centerline")
+    plt.plot(upper_mm[:, 0], upper_mm[:, 1], "r--", label="Contact wall +R")
+    plt.plot(lower_mm[:, 0], lower_mm[:, 1], "g--", label="Contact wall -R")
+
+    for i in range(len(C)):
+        plt.plot(
+            [upper_mm[i, 0], lower_mm[i, 0]],
+            [upper_mm[i, 1], lower_mm[i, 1]],
+            "m-",
+            alpha=0.25,
+        )
+
+    if beam_points_m is not None:
+        B = np.asarray(beam_points_m, float)
+        B_mm = 1e3 * B[:, :2]
+        plt.plot(B_mm[:, 0], B_mm[:, 1], "b-o", markersize=3, label="Beam nodes")
+
+        if beam_radius_m > 0:
+            plt.scatter(
+                B_mm[:, 0],
+                B_mm[:, 1],
+                s=(1e3 * beam_radius_m * 12) ** 2,
+                alpha=0.15,
+                label="Beam radius visual",
+            )
+
+    plt.axis("equal")
+    plt.grid(True)
+    plt.xlabel("contact local x [mm]")
+    plt.ylabel("contact local y [mm]")
+    plt.title("What the contact model sees: centerline + radius")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+
+    print(f"[DBG] Saved contact lumen debug plot: {out_path}")
+def unit(v):
+    v = np.asarray(v, float)
+    return v / (np.linalg.norm(v) + 1e-12)
 def build_lumen_from_parametric_boundaries(
     left_boundary_px,
     right_boundary_px,
@@ -118,8 +199,8 @@ def build_lumen_from_parametric_boundaries(
     mm_per_pixel,
     z_mm=0.0,
 ):
-    left = np.asarray(left_boundary_px, dtype=np.float32)
-    right = np.asarray(right_boundary_px, dtype=np.float32)
+    left = np.asarray(left_boundary_px, dtype=float)
+    right = np.asarray(right_boundary_px, dtype=float)
 
     if len(left) != len(right):
         raise ValueError("Left and right boundaries must have same number of samples.")
@@ -127,36 +208,59 @@ def build_lumen_from_parametric_boundaries(
     center = 0.5 * (left + right)
     radius_px = 0.5 * np.linalg.norm(right - left, axis=1)
 
-    base = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
-    ex = np.asarray(ex_ref, dtype=np.float32).reshape(2,)
-    ey = np.asarray(ey_ref, dtype=np.float32).reshape(2,)
+    base = np.asarray(base_px_ref, dtype=float).reshape(2,)
+    ex = unit(np.asarray(ex_ref, dtype=float).reshape(2,))
+    ey = unit(np.asarray(ey_ref, dtype=float).reshape(2,))
 
-    nex = np.linalg.norm(ex)
-    ney = np.linalg.norm(ey)
-    if nex < 1e-12 or ney < 1e-12:
-        raise ValueError("Reference basis vectors must be nonzero.")
+    # IMPORTANT:
+    # Do NOT flip image y here.
+    # ex and ey are already defined in image pixel coordinates.
+    dpx = center - base[None, :]
 
-    ex = ex / nex
-    ey = ey / ney
+    x_mm = dpx @ ex * mm_per_pixel
+    y_mm = dpx @ ey * mm_per_pixel
 
-    v = np.column_stack([
-        center[:, 0] - base[0],
-        -(center[:, 1] - base[1]),
-    ]).astype(np.float32)
-
-    # fixed beam-local convention:
-    # forward along negative local x
-    x_mm = -(v @ ex) * mm_per_pixel
-    y_mm =  (v @ ey) * mm_per_pixel
+    # If your downstream beam model expects forward to be negative x,
+    # apply that convention here only once.
+    x_mm = -x_mm
+    y_mm = -y_mm
     z_mm_arr = np.full_like(x_mm, float(z_mm))
 
-    lumen_C_mm = np.column_stack([x_mm, y_mm, z_mm_arr]).astype(np.float64)
-    lumen_R_mm = (radius_px * mm_per_pixel).astype(np.float64)
+    lumen_C_mm = np.column_stack([x_mm, y_mm, z_mm_arr])
+    lumen_R_mm = radius_px * mm_per_pixel
 
     lumen_C_m = lumen_C_mm / 1000.0
     lumen_R_m = lumen_R_mm / 1000.0
 
     return lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm
+def make_fixed_local_frame(base_px_ref, mag_start_px_ref=None, tangent_start_px_ref=None):
+    if base_px_ref is None:
+        raise ValueError("base_px_ref is None")
+
+    base = np.asarray(base_px_ref, dtype=np.float32).reshape(2,)
+
+    if mag_start_px_ref is not None:
+        ref_pt = np.asarray(mag_start_px_ref, dtype=np.float32).reshape(2,)
+    elif tangent_start_px_ref is not None:
+        ref_pt = np.asarray(tangent_start_px_ref, dtype=np.float32).reshape(2,)
+    else:
+        raise ValueError(
+            "Need either mag_start_px_ref or tangent_start_px_ref to build fixed local frame."
+        )
+
+    ref = np.array([
+        ref_pt[0] - base[0],
+        -(ref_pt[1] - base[1]),
+    ], dtype=np.float32)
+
+    nr = np.linalg.norm(ref)
+    if nr < 1e-12:
+        raise ValueError("Reference base->reference_point vector is zero length.")
+
+    ex_ref = ref / nr
+    ey_ref = np.array([-ex_ref[1], ex_ref[0]], dtype=np.float32)
+
+    return base, ex_ref, ey_ref
 def make_fixed_local_frame(base_px_ref, mag_start_px_ref=None, tangent_start_px_ref=None):
     if base_px_ref is None:
         raise ValueError("base_px_ref is None")
@@ -519,7 +623,7 @@ def draw_beam_and_vessel_overlay(
         color_map = {
             "base_px": (255, 0, 0),
             "mag_start_px": (0, 255, 255),
-            # "tangent_start_px": (255, 0, 255),
+            "tangent_start_px": (255, 0, 255),
             "tip_px": (0, 0, 255),
         }
         for key, p in markers.items():
@@ -1129,6 +1233,17 @@ def reconstruct_beam_within_vessel(
         ey_ref=ey_ref,
         mm_per_pixel=mm_per_pixel,
         z_mm=0.0,
+    )
+    print("[CONTACT LUMEN LOCAL CHECK]")
+    print("C first mm:", lumen_C_m[0])
+    print("C last  mm:", lumen_C_m[-1])
+    print("x range mm:", lumen_C_m[:, 0].min(), lumen_C_m[:, 0].max())
+    print("y range mm:", lumen_C_m[:, 1].min(), lumen_C_m[:, 1].max())
+    print("R range mm:", lumen_R_m.min(), lumen_R_m.max())
+    plot_contact_lumen_debug(
+        lumen_C_m=lumen_C_m,
+        lumen_R_m=lumen_R_m,
+        out_path="debug_outputs/contact_lumen_debug.png",
     )
     # print("lumen_C_m first local =", lumen_C_m[0])
     # print("lumen_C_m last local  =", lumen_C_m[-1])

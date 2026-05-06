@@ -32,7 +32,7 @@ Files:
     result_summary.json
     comparison_overlay.png   (if your vision code saves it)
 """
-
+import cv2
 from proper_research.simulation.boundary_forward_model import ContactParams
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 import copy
@@ -70,7 +70,7 @@ from proper_research.vision.bounds_beam import (
     detect_2_green_calibration_points,
     measure_tip_state_4markers, load_polygon
 )
-from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
+from proper_research.vision.detect_blue import  image_points_to_base_local,load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
 
 MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
 
@@ -274,15 +274,18 @@ def build_initial_lumen_from_vision(
     manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
     pivot_hint=None,
     show=False,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
 ):
     new_capture()
 
     manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
 
-    # Use your clicked base/origin and +x axis
-    base_px_ref = manual["base_px"]
-    ex_ref = manual["ex_img"]
-    ey_ref = manual["ey_img"]
+    if base_px_ref is None or ex_ref is None or ey_ref is None:
+        base_px_ref = manual["base_px"]
+        ex_ref = manual["ex_img"]
+        ey_ref = manual["ey_img"]
 
     print("[DBG lumen manual frame used]")
     print("  base_px_ref =", base_px_ref)
@@ -475,14 +478,16 @@ def build_forward_model_no_lumen_effect(
     )
 
     if lumen:
-        lumen_C, lumen_R ,_= build_initial_lumen_from_vision(
+        lumen_C, lumen_R, _ = build_initial_lumen_from_vision(
             pivot_point=pivot_pose6,
             image_filename=image_filename,
             blue_roi_path=blue_roi_path,
             green_roi_path=green_roi_path,
             pivot_hint=pivot_hint,
             show=False,
-
+            base_px_ref=base_px_ref,
+            ex_ref=ex_ref,
+            ey_ref=ey_ref,
         )
         # print("[DBG] using vision lumen in fixed reference frame")
         # print("[LUMEN LOCAL DEBUG]")
@@ -519,8 +524,8 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0013,   # or 0.001, but use one value everywhere
-        k=1e8,
+        r_beam=0.0016,   # or 0.001, but use one value everywhere
+        k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
         smooth=True,
@@ -536,11 +541,11 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=14,
-        maxiter=50,
+        N_nodes=5,
+        maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
 
         # Use physical full tip length, not current inserted tip length
         L_tip_full=0.04,
@@ -687,10 +692,18 @@ def predicted_tip_to_base_local_from_base_point_robot(
     pred_tip_robot_m: np.ndarray,
     beam_base_point_robot_m: np.ndarray,
     pivot_pose6: np.ndarray,
+    flip_y: bool = False,
 ) -> np.ndarray:
     pred_tip_pivot_local = robot_point_to_pivot_local(pred_tip_robot_m, pivot_pose6)
     beam_base_pivot_local = robot_point_to_pivot_local(beam_base_point_robot_m, pivot_pose6)
-    return pred_tip_pivot_local - beam_base_pivot_local
+
+    p = pred_tip_pivot_local - beam_base_pivot_local
+
+    # Match image/manual vessel base-local convention
+    if flip_y:
+        p[1] *= -1.0
+
+    return p
 def build_reference_beam_frame_from_image(
     image_filename: str,
     red_roi_path: str,
@@ -777,8 +790,8 @@ def measure_tip_from_vision_base_local(
     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
     tip_base_local_m = np.array([
-        -tip_xy_m[0],
-        tip_xy_m[1],
+        tip_xy_m[0],
+        -tip_xy_m[1],
         0.0,
     ], dtype=float)
 
@@ -846,6 +859,72 @@ def beam_tangent_in_robot_from_pose(pose6_robot):
     t_body = np.array([-1.0, 0.0, 0.0], float)
     t_robot = R @ t_body
     return t_robot / (np.linalg.norm(t_robot) + 1e-12)
+def manual_boundary_polygon_local_mm(manual, mm_per_pixel):
+    left_px = np.asarray(manual["left_boundary_px"], float)
+    right_px = np.asarray(manual["right_boundary_px"], float)
+
+    left_mm = image_points_to_base_local(
+        left_px,
+        manual["base_px"],
+        manual["ex_img"],
+        manual["ey_img"],
+        mm_per_pixel,
+    )
+
+    right_mm = image_points_to_base_local(
+        right_px,
+        manual["base_px"],
+        manual["ex_img"],
+        manual["ey_img"],
+        mm_per_pixel,
+    )
+
+    # Match your current model convention
+    left_mm[:, 0] *= -1.0
+    left_mm[:, 1] *= -1.0
+    right_mm[:, 0] *= -1.0
+    right_mm[:, 1] *= -1.0
+
+    polygon_mm = np.vstack([
+        left_mm[:, :2],
+        right_mm[::-1, :2],
+    ])
+
+    return polygon_mm
+
+
+def check_beam_against_manual_polygon_mm(
+    beam_points_local_m,
+    manual,
+    mm_per_pixel,
+    beam_radius_mm=0.0,
+):
+    polygon_mm = manual_boundary_polygon_local_mm(manual, mm_per_pixel)
+    polygon_cv = polygon_mm.astype(np.float32)
+
+    beam_mm = 1e3 * np.asarray(beam_points_local_m, float)
+
+    gaps = []
+
+    for p in beam_mm[:, :2]:
+        # positive = inside polygon, negative = outside polygon
+        signed_dist = cv2.pointPolygonTest(
+            polygon_cv,
+            (float(p[0]), float(p[1])),
+            measureDist=True,
+        )
+
+        surface_gap = signed_dist - beam_radius_mm
+        gaps.append(surface_gap)
+
+    gaps = np.asarray(gaps)
+
+    print("[MANUAL POLYGON CONTACT CHECK]")
+    print("min manual polygon surface gap [mm] =", float(np.min(gaps)))
+    print("active manual polygon penetration nodes =", int(np.sum(gaps < 0.0)))
+    print("most penetrating/manual closest node =", int(np.argmin(gaps)))
+
+    return gaps
 def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     os.makedirs(cfg.results_dir, exist_ok=True)
     print("\n==============================")
@@ -869,19 +948,21 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         print("base_px_ref =", ref_frame["base_px_ref"])
         print("ex_ref      =", ref_frame["ex_ref"])
         print("ey_ref      =", ref_frame["ey_ref"])
-    fwd_no_lumen = build_forward_model_no_lumen_effect(
-        pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
-        L0=float(cfg.L_m),
-        image_filename=cfg.image_filename,
-        red_roi_path=cfg.red_roi_path,
-        blue_roi_path="blue_roi_box.json",
-        green_roi_path=cfg.green_roi_path,
-        pivot_hint=cfg.pivot_hint,
-        lumen=True,
-        base_px_ref=ref_frame["base_px_ref"] if ref_frame is not None else None,
-        ex_ref=ref_frame["ex_ref"] if ref_frame is not None else None,
-        ey_ref=ref_frame["ey_ref"] if ref_frame is not None else None,
-    )
+        manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+
+        fwd_no_lumen = build_forward_model_no_lumen_effect(
+            pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+            L0=float(cfg.L_m),
+            image_filename=cfg.image_filename,
+            red_roi_path=cfg.red_roi_path,
+            blue_roi_path="blue_roi_box.json",
+            green_roi_path=cfg.green_roi_path,
+            pivot_hint=cfg.pivot_hint,
+            lumen=True,
+            base_px_ref=manual["base_px"],
+            ex_ref=manual["ex_img"],
+            ey_ref=manual["ey_img"],
+        )
     p8_test = pose6_and_L_to_pose8_quat(cfg.test_pose6, cfg.L_m)
     debug_raw_forward_position_sensitivity(fwd_no_lumen, p8_test)
     p8_test = pose6_and_L_to_pose8_quat(cfg.test_pose6, cfg.L_m)
@@ -969,14 +1050,26 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         pred_tip_robot_m=pred["tip_robot_m"],
         beam_base_point_robot_m=np.asarray(cfg.beam_base_point_robot_m, dtype=float),
         pivot_pose6=np.asarray(cfg.pivot_pose6, dtype=float),
+        flip_y=False,
     )
+
     pred_centerline_base_local_m = None
     if pred.get("centerline_robot_m", None) is not None:
         pred_centerline_base_local_m = robot_points_to_base_local(
-            pred["centerline_robot_m"].T,   # robot_points_to_base_local expects (N,3)
+            pred["centerline_robot_m"].T,
             pivot_pose6=cfg.pivot_pose6,
             beam_base_point_robot_m=cfg.beam_base_point_robot_m,
         )
+
+        pred_centerline_base_local_m[:, 1] *= 1.0
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+
+    manual_gaps = check_beam_against_manual_polygon_mm(
+        beam_points_local_m=pred_centerline_base_local_m,
+        manual=manual,
+        mm_per_pixel=meas["mm_per_pixel"],
+        beam_radius_mm=1e3 * beam_params.r,
+    )
     pred_tip_angle_deg = compute_tip_angle_from_base_local_deg(pred_base_local_m)
 
     err = compute_position_errors_mm(
@@ -1057,7 +1150,8 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         np.asarray(cfg.test_pose6[:3], dtype=float),
         np.asarray(cfg.pivot_pose6, dtype=float),
     )
-
+    src_base_local_m = src_base_local_m.copy()
+    src_base_local_m[1] *= 1.0
     # if beam base is exactly the pivot, this is already the correct base-local point
     # otherwise subtract the true base point expressed in the same frame:
     base_local_m = robot_point_to_pivot_local(
@@ -1156,7 +1250,18 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         beam_base_point_robot_m=lumen_base_robot_m,
     )
     import time
+    lumen_C_plot_m = lumen_C_base_local_m.copy()
+    lumen_C_plot_m[:, 1] *= 1.0
 
+    pred_centerline_plot_m = None
+    if pred_centerline_base_local_m is not None:
+        pred_centerline_plot_m = pred_centerline_base_local_m.copy()
+        pred_centerline_plot_m[:, 1] *=1.0
+    pred_base_local_m_plot = pred_base_local_m.copy()
+    pred_base_local_m_plot[1] *= 1.0
+
+    meas_base_local_m_plot = meas["tip_base_local_m"].copy()
+    meas_base_local_m_plot[1] *= 1.0
     t = time.perf_counter()
     plot_single_tip_comparison_local(
         pred_local_m=pred_base_local_m_plot,
@@ -1165,10 +1270,12 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
         filename="tip_comparison_base_local.png",
         src_local_m=src_base_local_plot_m,
         src_dir_local=src_dir_local,
-        lumen_C_local_m=lumen_C_base_local_m,
+        lumen_C_local_m=lumen_C_plot_m,
         lumen_R_m=lumen_R_robot_m,
-        beam_centerline_local_m=pred_centerline_base_local_m,
-        beam_radius_m= beam_params.r
+        beam_centerline_local_m=pred_centerline_plot_m,
+        beam_radius_m=beam_params.r,
+        manual_boundary_path=MANUAL_VESSEL_BOUNDARY_FILE,
+        mm_per_pixel=meas["mm_per_pixel"],
     )
     print(f"[TIME] tip plot: {(time.perf_counter()-t):.2f} s")
 
@@ -1234,7 +1341,7 @@ def save_jacobian_tables(J_no, J_yes, results_dir):
 # ============================================================
 # Main
 # ============================================================
-def smooth_lumen_local(lumen_C_m, lumen_R_m, n=300, smooth=1e-7):
+def smooth_lumen_local(lumen_C_m, lumen_R_m, n=300, smooth=0):
     from scipy.interpolate import splprep, splev
 
     C = np.asarray(lumen_C_m, float)
@@ -1279,7 +1386,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.01604
+    L0 = 0.0156
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1343,6 +1450,65 @@ def compute_tip_angle_from_base_local_deg(p_base_local_m: np.ndarray) -> float:
     vy = v[1]
 
     return float(np.degrees(np.arctan2(vy, vx)))
+def offset_walls_from_centerline_sharp(C_m, R_m):
+    """
+    Offset walls while preserving sharp corners better than spline smoothing.
+    This still uses centerline +/- radius, but it does not smooth the path.
+    """
+
+    C = np.asarray(C_m, float)
+    R = np.asarray(R_m, float).reshape(-1)
+
+    if len(C) != len(R):
+        raise ValueError("C_m and R_m must have same length.")
+
+    tangent = np.zeros_like(C)
+
+    # Use segment directions, not spline directions
+    tangent[1:-1] = C[2:] - C[:-2]
+    tangent[0] = C[1] - C[0]
+    tangent[-1] = C[-1] - C[-2]
+
+    normals = np.zeros_like(C)
+
+    for i, t in enumerate(tangent):
+        tx, ty = t[0], t[1]
+        n = np.array([-ty, tx, 0.0], dtype=float)
+        nn = np.linalg.norm(n[:2])
+        if nn > 1e-12:
+            normals[i] = n / nn
+
+    upper = C + normals * R[:, None]
+    lower = C - normals * R[:, None]
+
+    return upper, lower
+def manual_boundaries_to_local_m(manual, mm_per_pixel):
+    left_px = np.asarray(manual["left_boundary_px"], float)
+    right_px = np.asarray(manual["right_boundary_px"], float)
+
+    left_mm = image_points_to_base_local(
+        left_px,
+        manual["base_px"],
+        manual["ex_img"],
+        manual["ey_img"],
+        mm_per_pixel,
+    )
+
+    right_mm = image_points_to_base_local(
+        right_px,
+        manual["base_px"],
+        manual["ex_img"],
+        manual["ey_img"],
+        mm_per_pixel,
+    )
+
+    # Match your current convention in build_lumen_from_parametric_boundaries
+    left_mm[:, 0] *= -1.0
+    left_mm[:, 1] *= -1.0
+    right_mm[:, 0] *= -1.0
+    right_mm[:, 1] *= -1.0
+
+    return left_mm / 1000.0, right_mm / 1000.0
 def plot_single_tip_comparison_local(
     pred_local_m: np.ndarray,
     meas_local_m: np.ndarray,
@@ -1353,7 +1519,9 @@ def plot_single_tip_comparison_local(
     lumen_C_local_m: np.ndarray | None = None,
     lumen_R_m: np.ndarray | None = None,
     beam_centerline_local_m: np.ndarray | None = None,
-    beam_radius_m: float = 1e-3,   # 2 mm diameter beam
+    beam_radius_m: float = 1e-3,
+    manual_boundary_path: str | None = None,
+    mm_per_pixel: float | None = None,
 ):
     pred_local_m = np.asarray(pred_local_m, dtype=float).reshape(3,)
     meas_local_m = np.asarray(meas_local_m, dtype=float).reshape(3,)
@@ -1400,48 +1568,55 @@ def plot_single_tip_comparison_local(
         if lumen_C_local_m.ndim == 1:
             lumen_C_local_m = lumen_C_local_m.reshape(1, 3)
 
-        lumen_C_plot_m, lumen_R_plot_m = smooth_lumen_local(
-            lumen_C_local_m,
-            lumen_R_m,
-            n=500,
-            smooth=0,
-        )
+        lumen_C_plot_m = np.asarray(lumen_C_local_m, dtype=float)
+        lumen_R_plot_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
 
         lumen_mm = 1e3 * lumen_C_plot_m
-        plt.plot(lumen_mm[:, 0], lumen_mm[:, 1], "-", linewidth=2.0, label="Lumen centerline")
+        plt.plot(
+            lumen_mm[:, 0],
+            lumen_mm[:, 1],
+            "-",
+            linewidth=2.0,
+            label="Lumen centerline, unsmoothed",
+        )
+        if manual_boundary_path is not None and mm_per_pixel is not None:
+            manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
 
-        upper, lower = offset_walls_from_centerline(lumen_C_plot_m, lumen_R_plot_m)
+            left_wall_m, right_wall_m = manual_boundaries_to_local_m(
+                manual,
+                mm_per_pixel=mm_per_pixel,
+            )
 
-        upper_mm = 1e3 * upper
-        lower_mm = 1e3 * lower
+            plt.plot(
+                1e3 * left_wall_m[:, 0],
+                1e3 * left_wall_m[:, 1],
+                "g-",
+                linewidth=2.0,
+                label="Manual left wall",
+            )
 
-        plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
-        plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
-
-        plt.plot(lumen_mm[0, 0], lumen_mm[0, 1], "o", markersize=6, label="Lumen start")
-        plt.plot(lumen_mm[-1, 0], lumen_mm[-1, 1], "x", markersize=8, label="Lumen end")
-        if lumen_R_m is not None and len(lumen_R_m) == len(lumen_C_local_m):
-            lumen_R_m = np.asarray(lumen_R_m, dtype=float).reshape(-1)
-
-            # Build approximate normal in the plot plane
-            tangents = np.zeros_like(lumen_C_local_m)
-            tangents[1:-1] = lumen_C_local_m[2:] - lumen_C_local_m[:-2]
-            tangents[0] = lumen_C_local_m[1] - lumen_C_local_m[0]
-            tangents[-1] = lumen_C_local_m[-1] - lumen_C_local_m[-2]
-
-            normals = np.zeros_like(tangents)
-            for i, t in enumerate(tangents):
-                tx, ty = t[0], t[1]
-                n = np.array([-ty, tx, 0.0], dtype=float)
-                nn = np.linalg.norm(n[:2])
-                if nn > 1e-12:
-                    normals[i] = n / nn
-
-            upper = lumen_C_local_m + normals * lumen_R_m[:, None]
-            lower = lumen_C_local_m - normals * lumen_R_m[:, None]
+            plt.plot(
+                1e3 * right_wall_m[:, 0],
+                1e3 * right_wall_m[:, 1],
+                "r-",
+                linewidth=2.0,
+                label="Manual right wall",
+            )
+        else:
+            upper, lower = offset_walls_from_centerline_sharp(
+                lumen_C_plot_m,
+                lumen_R_plot_m,
+            )
 
             upper_mm = 1e3 * upper
             lower_mm = 1e3 * lower
+
+            plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Estimated lumen wall")
+            plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
+
+        plt.plot(lumen_mm[0, 0], lumen_mm[0, 1], "o", markersize=6, label="Lumen start")
+        plt.plot(lumen_mm[-1, 0], lumen_mm[-1, 1], "x", markersize=8, label="Lumen end")
+
 
             # plt.plot(upper_mm[:, 0], upper_mm[:, 1], "--", alpha=0.6, label="Lumen wall")
             # plt.plot(lower_mm[:, 0], lower_mm[:, 1], "--", alpha=0.6)
@@ -1536,18 +1711,18 @@ def plot_single_tip_comparison_local(
                 markersize=5,
                 label="Predicted beam tip",
             )
-        # # predicted beam centerline
-        # if beam_centerline_local_m is not None:
-        #     beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
-        #     if beam_centerline_local_m.ndim == 2 and beam_centerline_local_m.shape[1] == 3:
-        #         beam_mm = 1e3 * beam_centerline_local_m
-        #         plt.plot(
-        #             beam_mm[:, 0],
-        #             beam_mm[:, 1],
-        #             "-b",
-        #             linewidth=2.5,
-        #             label="Predicted beam centerline",
-        #         )
+        # predicted beam centerline
+        if beam_centerline_local_m is not None:
+            beam_centerline_local_m = np.asarray(beam_centerline_local_m, dtype=float)
+            if beam_centerline_local_m.ndim == 2 and beam_centerline_local_m.shape[1] == 3:
+                beam_mm = 1e3 * beam_centerline_local_m
+                plt.plot(
+                    beam_mm[:, 0],
+                    beam_mm[:, 1],
+                    "-b",
+                    linewidth=2.5,
+                    label="Predicted beam centerline",
+                )
 
     # if src_local_m is not None:
     #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)

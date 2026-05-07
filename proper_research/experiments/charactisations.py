@@ -312,7 +312,7 @@ def build_initial_lumen_from_vision(
     lumen_C_m = np.asarray(vision_result["lumen_C_m"], float).copy()
 
     # Force centerline start to local origin
-    lumen_C_m -= lumen_C_m[0:1, :]
+    # lumen_C_m -= lumen_C_m[0:1, :]
 
     lumen_C_robot_m = transform_local_points_to_robot(
         lumen_C_m,
@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0016,   # or 0.001, but use one value everywhere
+        r_beam=0.0013,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -541,11 +541,11 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
+        N_nodes=10,
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
 
         # Use physical full tip length, not current inserted tip length
         L_tip_full=0.04,
@@ -704,6 +704,57 @@ def predicted_tip_to_base_local_from_base_point_robot(
         p[1] *= -1.0
 
     return p
+def measure_tip_from_vision_base_local(
+    cfg: SinglePoseEvalConfig,
+    base_px_ref=None,
+    ex_ref=None,
+    ey_ref=None,
+) -> Dict:
+    image_bgr = cv2.imread(cfg.image_filename)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image: {cfg.image_filename}")
+
+    green_roi_box = load_roi_box(cfg.green_roi_path)
+
+    mm_per_pixel = compute_mm_per_pixel_from_green(
+        image_bgr=image_bgr,
+        green_roi_box=green_roi_box,
+        known_distance_mm=cfg.known_green_distance_mm,
+    )
+
+    tip_result = measure_tip_state_4markers(
+        image_filename=cfg.image_filename,
+        roi_box=None,
+        roi_polygon=load_polygon("/home/jack/Proper-Research/custom_area.json"),
+        unwrap_angle=True,
+        pivot_hint=cfg.pivot_hint,
+        base_px_ref=base_px_ref,
+        ex_ref=ex_ref,
+        ey_ref=ey_ref,
+    )
+
+    tip_px = np.asarray(tip_result["markers"]["tip_px"], dtype=float).reshape(1, 2)
+
+    tip_local_mm = image_points_to_base_local(
+        tip_px,
+        base_px_ref,
+        ex_ref,
+        ey_ref,
+        mm_per_pixel,
+    )[0]
+
+    # Match the same convention used by lumen_C_m.
+    tip_base_local_m = np.array([
+        -tip_local_mm[0],
+        -tip_local_mm[1],
+        0.0,
+    ], dtype=float) / 1000.0
+
+    return {
+        "mm_per_pixel": float(mm_per_pixel),
+        "tip_result": tip_result,
+        "tip_base_local_m": tip_base_local_m.copy(),
+    }
 def build_reference_beam_frame_from_image(
     image_filename: str,
     red_roi_path: str,
@@ -734,72 +785,72 @@ def build_reference_beam_frame_from_image(
         "ey_ref": ey_ref,
         "raw_result": ref_result,
     }
-def measure_tip_from_vision_base_local(
-    cfg: SinglePoseEvalConfig,
-    base_px_ref=None,
-    ex_ref=None,
-    ey_ref=None,
-    ) -> Dict:
-    import cv2
+# def measure_tip_from_vision_base_local(
+#     cfg: SinglePoseEvalConfig,
+#     base_px_ref=None,
+#     ex_ref=None,
+#     ey_ref=None,
+#     ) -> Dict:
+#     import cv2
 
-    image_bgr = cv2.imread(cfg.image_filename)
-    if image_bgr is None:
-        raise FileNotFoundError(f"Could not read image: {cfg.image_filename}")
+#     image_bgr = cv2.imread(cfg.image_filename)
+#     if image_bgr is None:
+#         raise FileNotFoundError(f"Could not read image: {cfg.image_filename}")
 
-    red_roi_box = load_roi_box(cfg.red_roi_path)
-    green_roi_box = load_roi_box(cfg.green_roi_path)
+#     red_roi_box = load_roi_box(cfg.red_roi_path)
+#     green_roi_box = load_roi_box(cfg.green_roi_path)
 
-    mm_per_pixel = compute_mm_per_pixel_from_green(
-        image_bgr=image_bgr,
-        green_roi_box=green_roi_box,
-        known_distance_mm=cfg.known_green_distance_mm,
-    )
-    print(f"MM pixel: {mm_per_pixel} and known distance {cfg.known_green_distance_mm}")
-    roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
-    tip_result = measure_tip_state_4markers(
-        image_filename=cfg.image_filename,
-        roi_box=None,
-        roi_polygon=roi_polygon,
-        unwrap_angle=True,
-        pivot_hint=cfg.pivot_hint,
-        base_px_ref=base_px_ref,
-        ex_ref=ex_ref,
-        ey_ref=ey_ref,
-    )
-    base_px = np.asarray(tip_result["markers"]["base_px"], dtype=float)
-    tip_px = np.asarray(tip_result["markers"]["tip_px"], dtype=float)
-    raw_vec_px = tip_px - base_px
-    raw_dist_px = np.linalg.norm(raw_vec_px)
-    raw_dist_px_x = tip_px[0] - base_px[0]
-    raw_dist_px_y = tip_px[1] - base_px[1]
-    tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float)
-    proj_dist_px = np.linalg.norm(tip_xy_px)
+#     mm_per_pixel = compute_mm_per_pixel_from_green(
+#         image_bgr=image_bgr,
+#         green_roi_box=green_roi_box,
+#         known_distance_mm=cfg.known_green_distance_mm,
+#     )
+#     print(f"MM pixel: {mm_per_pixel} and known distance {cfg.known_green_distance_mm}")
+#     roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
+#     tip_result = measure_tip_state_4markers(
+#         image_filename=cfg.image_filename,
+#         roi_box=None,
+#         roi_polygon=roi_polygon,
+#         unwrap_angle=True,
+#         pivot_hint=cfg.pivot_hint,
+#         base_px_ref=base_px_ref,
+#         ex_ref=ex_ref,
+#         ey_ref=ey_ref,
+#     )
+#     base_px = np.asarray(tip_result["markers"]["base_px"], dtype=float)
+#     tip_px = np.asarray(tip_result["markers"]["tip_px"], dtype=float)
+#     raw_vec_px = tip_px - base_px
+#     raw_dist_px = np.linalg.norm(raw_vec_px)
+#     raw_dist_px_x = tip_px[0] - base_px[0]
+#     raw_dist_px_y = tip_px[1] - base_px[1]
+#     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float)
+#     proj_dist_px = np.linalg.norm(tip_xy_px)
 
 
-    # print("\n--- VISION SANITY CHECK ---")
-    # print("raw base->tip vector [px] =", raw_vec_px)
-    # print("raw base->tip distance [px] =", raw_dist_px)
-    # print("projected tip_xy_from_base [px] =", tip_xy_px)
-    # print("projected tip_xy_from_base [px] in x =", raw_dist_px_x)
-    # print("projected tip_xy_from_base [px] in y =", raw_dist_px_y)
-    # print("projected distance [px] =", proj_dist_px)
-    # print("axial distance [mm] =", tip_xy_px[0] * mm_per_pixel)
-    # print("lateral distance [mm] =", tip_xy_px[1] * mm_per_pixel)
-    # print("euclidean distance [mm] =", np.linalg.norm(tip_xy_px) * mm_per_pixel)
-    tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
-    tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
+#     # print("\n--- VISION SANITY CHECK ---")
+#     # print("raw base->tip vector [px] =", raw_vec_px)
+#     # print("raw base->tip distance [px] =", raw_dist_px)
+#     # print("projected tip_xy_from_base [px] =", tip_xy_px)
+#     # print("projected tip_xy_from_base [px] in x =", raw_dist_px_x)
+#     # print("projected tip_xy_from_base [px] in y =", raw_dist_px_y)
+#     # print("projected distance [px] =", proj_dist_px)
+#     # print("axial distance [mm] =", tip_xy_px[0] * mm_per_pixel)
+#     # print("lateral distance [mm] =", tip_xy_px[1] * mm_per_pixel)
+#     # print("euclidean distance [mm] =", np.linalg.norm(tip_xy_px) * mm_per_pixel)
+#     tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
+#     tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
 
-    tip_base_local_m = np.array([
-        tip_xy_m[0],
-        -tip_xy_m[1],
-        0.0,
-    ], dtype=float)
+#     tip_base_local_m = np.array([
+#         tip_xy_m[0],
+#         tip_xy_m[1],
+#         0.0,
+#     ], dtype=float)
 
-    return {
-        "mm_per_pixel": float(mm_per_pixel),
-        "tip_result": tip_result,
-        "tip_base_local_m": tip_base_local_m.copy(),
-    }
+#     return {
+#         "mm_per_pixel": float(mm_per_pixel),
+#         "tip_result": tip_result,
+#         "tip_base_local_m": tip_base_local_m.copy(),
+#     }
 def plot_jacobian_comparison(J_no, J_yes, results_dir,show=False, filename="jacobian_comparison.png"):
     os.makedirs(results_dir, exist_ok=True)
 
@@ -1029,15 +1080,15 @@ def evaluate_single_pose(cfg: SinglePoseEvalConfig) -> Dict:
     #     results_dir=cfg.results_dir,
     #     name="with_lumen_after_forward_solution",
     # )
-    if ref_frame is not None:
-        meas = measure_tip_from_vision_base_local(
-            cfg,
-            base_px_ref=ref_frame["base_px_ref"],
-            ex_ref=ref_frame["ex_ref"],
-            ey_ref=ref_frame["ey_ref"],
-        )
-    else:
-        meas = measure_tip_from_vision_base_local(cfg)
+    # if ref_frame is not None:
+    #     meas = measure_tip_from_vision_base_local(
+    #         cfg,
+    #         base_px_ref=ref_frame["base_px_ref"],
+    #         ex_ref=ref_frame["ex_ref"],
+    #         ey_ref=ref_frame["ey_ref"],
+    #     )
+    # else:
+    #     meas = measure_tip_from_vision_base_local(cfg)
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
 
     meas = measure_tip_from_vision_base_local(
@@ -1386,7 +1437,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.0156
+    L0 = 0.0252
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1725,35 +1776,35 @@ def plot_single_tip_comparison_local(
                 )
 
     # if src_local_m is not None:
-    #     src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
-    #     src_mm = 1e3 * src_local_m
+        # src_local_m = np.asarray(src_local_m, dtype=float).reshape(3,)
+        # src_mm = 1e3 * src_local_m
 
-    #     plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
+        # plt.plot(src_mm[0], src_mm[1], "md", markersize=10, label="External magnet")
 
-    #     plt.annotate(
-    #         f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
-    #         (src_mm[0], src_mm[1]),
-    #         textcoords="offset points",
-    #         xytext=(8, 8),
-    #     )
+        # plt.annotate(
+        #     f"Mag\n({src_mm[0]:.1f}, {src_mm[1]:.1f}) mm",
+        #     (src_mm[0], src_mm[1]),
+        #     textcoords="offset points",
+        #     xytext=(8, 8),
+        # )
 
-    #     # optional dipole direction arrow
-    #     if src_dir_local is not None:
-    #         src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
-    #         dxy = src_dir_local[:2]
-    #         n = np.linalg.norm(dxy)
-    #         if n > 1e-12:
-    #             dxy = dxy / n
-    #             arrow_len_mm = 25.0
-    #             plt.arrow(
-    #                 src_mm[0],
-    #                 src_mm[1],
-    #                 arrow_len_mm * dxy[0],
-    #                 arrow_len_mm * dxy[1],
-    #                 head_width=3.0,
-    #                 head_length=5.0,
-    #                 length_includes_head=True,
-    #             )
+        # # optional dipole direction arrow
+        # if src_dir_local is not None:
+        #     src_dir_local = np.asarray(src_dir_local, dtype=float).reshape(3,)
+        #     dxy = src_dir_local[:2]
+        #     n = np.linalg.norm(dxy)
+        #     if n > 1e-12:
+        #         dxy = dxy / n
+        #         arrow_len_mm = 25.0
+        #         plt.arrow(
+        #             src_mm[0],
+        #             src_mm[1],
+        #             arrow_len_mm * dxy[0],
+        #             arrow_len_mm * dxy[1],
+        #             head_width=3.0,
+        #             head_length=5.0,
+        #             length_includes_head=True,
+        #         )
 
     plt.xlabel("Local x [mm]")
     plt.ylabel("Local y [mm]")

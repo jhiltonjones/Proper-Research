@@ -485,7 +485,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                 try:
                     preview = resample_polyline_by_arclength_preserve_vertices(
                                 pts,
-                                samples_per_segment=20,
+                                samples_per_segment=30,
                             )
                     for i in range(len(preview) - 1):
                         p1 = preview[i]
@@ -556,8 +556,8 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
 
             left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
                 centerline_clicked_px,
-                radius_px=18.0,
-                samples_per_segment=20,
+                radius_px=21.0,
+                samples_per_segment=30,
             )
 
             live_camera_centerline_overlay(
@@ -565,7 +565,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                 left_boundary_px=left_boundary_px,
                 right_boundary_px=right_boundary_px,
                 camera_index=0,
-                radius_px=18.0,
+                radius_px=21.0,
             )
 
             redraw()
@@ -617,8 +617,8 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
 
             left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
                 centerline_clicked_px,
-                radius_px=18.0,
-                samples_per_segment=20,
+                radius_px=21.0,
+                samples_per_segment=30,
             )
 
             show_boundary_preview(
@@ -779,7 +779,7 @@ def resample_smooth_boundaries_monotonic(
     left_resampled = np.asarray(
         resample_polyline_by_arclength_preserve_vertices(
             left_smooth,
-            samples_per_segment=20,
+            samples_per_segment=30,
         ),
         float,
     )
@@ -787,7 +787,7 @@ def resample_smooth_boundaries_monotonic(
     right_resampled = np.asarray(
         resample_polyline_by_arclength_preserve_vertices(
             right_smooth,
-            samples_per_segment=20,
+            samples_per_segment=30,
         ),
         float,
     )

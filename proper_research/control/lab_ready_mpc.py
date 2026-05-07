@@ -16,14 +16,17 @@ import time
 from proper_research.robot.transformations import get_point
 import csv
 from proper_research.robot.live_hardware_control import LiveHardwareController
-from proper_research.vision.detect_blue import load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
+from proper_research.vision.detect_blue import image_points_to_base_local,load_manual_vessel_boundaries_with_frame, build_lumen_from_manual_boundaries_with_frame
 
 MANUAL_VESSEL_BOUNDARY_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
 
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
 L_MAG = 0.04
-
+def pivot_local_dir_to_robot(v_local, pivot_pose6):
+    v_local = np.asarray(v_local, dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return R_pivot @ v_local
 from dataclasses import dataclass
 def rotate_body_xy(v, yaw_deg):
     """
@@ -503,6 +506,11 @@ def project_to_polyline_s_monotone(C, s_path, x, i_start, window=120):
             best_l  = float(lam)
 
     return best_s, best_i, best_l, best_d2
+def pivot_local_point_to_robot(local_xyz, pivot_pose6):
+    local_xyz = np.asarray(local_xyz, dtype=float).reshape(3,)
+    p_pivot = np.asarray(pivot_pose6[:3], dtype=float).reshape(3,)
+    R_pivot = pivot_rotation_matrix(pivot_pose6)
+    return p_pivot + R_pivot @ local_xyz
 def pick_dipole_axis_forward(d_body_nominal, q_wxyz, t_forward):
     d_body_nominal = np.asarray(d_body_nominal, float).reshape(3,)
     d_body_nominal /= (np.linalg.norm(d_body_nominal) + 1e-12)
@@ -847,8 +855,8 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.14
-        self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
+        self.mag_center_standoff_m = 0.13
+        self.dL_back_max = 0.01      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
 
@@ -934,7 +942,8 @@ class mpc_controller_tipxy_LTI:
 
         if U_guess is None:
             U_guess = np.zeros((Np, m), dtype=float)
-            U_guess[:, 6] = 0.0012 / self.dt
+            U_guess[:, 6] = 0.0005 / self.dt
+            U_guess[:, 1] = 0.01 / self.dt
         else:
             U_guess = np.asarray(U_guess, float).reshape(Np, m)
             
@@ -1118,8 +1127,8 @@ class mpc_controller_tipxy_LTI:
             U_guess = np.asarray(self.U_warm, float).reshape(Np, m)
         else:
             U_guess = np.zeros((Np, m), dtype=float)
-            U_guess[:, 6] = 0.0012 / self.dt
-
+            U_guess[:, 6] = 0.0005 / self.dt
+            U_guess[:, 1] = 0.01 / self.dt
         U_opt_vec = U_guess.reshape(Np * m, 1)
         status_last = "init"
 
@@ -2625,95 +2634,67 @@ def vision_result_to_x_meas_robot(
     markers = tip_result["markers"]
     mm_per_pixel = float(vision_result["mm_per_pixel"])
 
-    tip_xy_px = np.asarray(tip_result["tip_xy_from_base"], dtype=float).reshape(2,)
-    tip_xy_m = (tip_xy_px * mm_per_pixel) / 1000.0
+    base_px_ref = np.asarray(vision_result["base_px_ref"], dtype=float)
+    ex_ref = np.asarray(vision_result["ex_ref"], dtype=float)
+    ey_ref = np.asarray(vision_result["ey_ref"], dtype=float)
+
+    tip_px = np.asarray(markers["tip_px"], dtype=float).reshape(1, 2)
+
+    tip_local_mm = image_points_to_base_local(
+        tip_px,
+        base_px_ref,
+        ex_ref,
+        ey_ref,
+        mm_per_pixel,
+    )[0]
 
     p_local = np.array([
-        -tip_xy_m[0],
-        tip_xy_m[1],
+        -tip_local_mm[0],
+        -tip_local_mm[1],
+        0.0,
+    ], dtype=float) / 1000.0
+
+    p_robot = pivot_local_point_to_robot(
+        p_local,
+        pivot_point_pose6,
+    )
+
+    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float).reshape(1, 2)
+
+    tan_start_local_mm = image_points_to_base_local(
+        tan_start_px,
+        base_px_ref,
+        ex_ref,
+        ey_ref,
+        mm_per_pixel,
+    )[0]
+
+    v_local_2d = tip_local_mm[:2] - tan_start_local_mm[:2]
+
+    nv = np.linalg.norm(v_local_2d)
+    if nv < 1e-12:
+        raise ValueError("Measured tangent from vision is zero-length.")
+
+    v_local_2d /= nv
+
+    t_local = np.array([
+        v_local_2d[0],
+        v_local_2d[1],
         0.0,
     ], dtype=float)
 
-    p_local_wrong = np.array([tip_xy_m[0], tip_xy_m[1], 0.0], dtype=float)
-    p_local_right = np.array([-tip_xy_m[0], tip_xy_m[1], 0.0], dtype=float)
+    t_robot = pivot_local_dir_to_robot(
+        t_local,
+        pivot_point_pose6,
+    )
 
-    p_pivot = np.asarray(pivot_point_pose6[:3], float)
-
-    # print("wrong p_robot =", p_pivot + p_local_wrong)
-    # print("right p_robot =", p_pivot + p_local_right)
-
-    tip_px = np.asarray(markers["tip_px"], dtype=float)
-    tan_start_px = np.asarray(markers["tangent_start_px"], dtype=float)
-    base_px = np.asarray(markers["base_px"], dtype=float)
-
-    mag_start_px_raw = markers.get("mag_start_px", None)
-
-    if mag_start_px_raw is not None:
-        mag_start_px = np.asarray(mag_start_px_raw, dtype=float)
-        ref = np.array([
-            mag_start_px[0] - base_px[0],
-            -(mag_start_px[1] - base_px[1]),
-        ], dtype=float)
-        ref_source = "base->mag_start"
-    else:
-        # fallback convention
-        ref = np.array([
-            tip_px[0] - base_px[0],
-            -(tip_px[1] - base_px[1]),
-        ], dtype=float)
-        ref_source = "base->tip (fallback)"
-
-    nref = np.linalg.norm(ref)
-    if nref < 1e-12:
-        raise ValueError(f"Reference vector is zero length. source={ref_source}")
-    ex = ref / nref
-    ey = np.array([-ex[1], ex[0]], dtype=float)
-
-    v_img = np.array([
-        tip_px[0] - tan_start_px[0],
-        -(tip_px[1] - tan_start_px[1]),
-    ], dtype=float)
-
-    nv = np.linalg.norm(v_img)
-    if nv < 1e-12:
-        raise ValueError("Measured tangent from vision is zero-length.")
-    v_img /= nv
-
-    tx_local = -float(np.dot(v_img, ex))
-    ty_local =  float(np.dot(v_img, ey))
-
-    t_local = np.array([tx_local, ty_local, 0.0], dtype=float)
-
-    nrm = np.linalg.norm(t_local)
-    if nrm < 1e-12:
-        raise ValueError("Measured tangent in local frame is zero-length.")
-    t_local /= nrm
-
-    p_pivot_robot = np.asarray(pivot_point_pose6[:3], dtype=float).reshape(3,)
-    p_robot = p_pivot_robot + p_local
-    t_robot = t_local.copy()
-
-    nrm_t = np.linalg.norm(t_robot)
-    if nrm_t < 1e-12:
-        raise ValueError("Robot-frame tangent became zero-length.")
-    t_robot /= nrm_t
-
-    # print("[DBG TAN]")
-    # print("  tip_xy_m =", tip_xy_m)
-    # print("  p_local =", p_local)
-    # print("  ref_source =", ref_source)
-    # print("  ref =", ref)
-    # print("  v_img =", v_img)
-    # print("  ex =", ex)
-    # print("  ey =", ey)
-    # print("  tx_local, ty_local =", tx_local, ty_local)
-    # print("  t_local =", t_local)
-    # print("  p_robot =", p_robot)
-    # print("  t_robot =", t_robot)
+    t_robot /= np.linalg.norm(t_robot) + 1e-12
 
     lumen_C_robot_m = vision_result.get("lumen_C_robot_m", None)
+
     if align_tangent_with_lumen and (lumen_C_robot_m is not None):
         C = np.asarray(lumen_C_robot_m, dtype=float)
+
         if C.ndim == 2 and C.shape[0] >= 2 and C.shape[1] >= 3:
             d2 = np.sum((C - p_robot.reshape(1, 3)) ** 2, axis=1)
             i = int(np.argmin(d2))
@@ -2727,7 +2708,8 @@ def vision_result_to_x_meas_robot(
 
             nrm_l = np.linalg.norm(t_lumen)
             if nrm_l > 1e-12:
-                t_lumen /= nrm_l
+                t_lumen = t_lumen / nrm_l
+
                 if float(np.dot(t_robot, t_lumen)) < 0.0:
                     t_robot = -t_robot
 
@@ -3142,7 +3124,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.01325
+    L0 = 0.0193
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3150,7 +3132,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     # ], float)
     base_point = np.array([
-        pivot_point[0] - (L0 + 0.15),
+        pivot_point[0] - (L0 + 0.14),
         pivot_point[1],
         -0.1,
         np.pi, 0.001, 0.001
@@ -3297,7 +3279,7 @@ def build_controller(
         -np.inf,
         -np.inf,
         -np.inf,
-        0.01,
+        -0.05,
     ], dtype=float)
 
     p_max = np.array([
@@ -3317,7 +3299,7 @@ def build_controller(
         1e-4,   # vz
         5e-1,   # wx
         5e-1,   # wy
-        1e-4,   # wz
+        5e-3,   # wz
         1e-4,   # vL
     ], dtype=float)
 
@@ -3382,7 +3364,7 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=10,
+        Np=8,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -3511,6 +3493,10 @@ def run_control(
             ex_ref=manual["ex_img"],
             ey_ref=manual["ey_img"],
         )
+
+        vision_result["base_px_ref"] = manual["base_px"]
+        vision_result["ex_ref"] = manual["ex_img"]
+        vision_result["ey_ref"] = manual["ey_img"]
         # vision_result["lumen_C_robot_m"] = transform_local_points_to_robot(
         #     vision_result["lumen_C_m"],
         #     pivot_point
@@ -4100,15 +4086,9 @@ def build_initial_lumen_from_vision(
 
     manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
 
-    # Use your clicked base/origin and +x axis
     base_px_ref = manual["base_px"]
     ex_ref = manual["ex_img"]
     ey_ref = manual["ey_img"]
-
-    # print("[DBG lumen manual frame used]")
-    # print("  base_px_ref =", base_px_ref)
-    # print("  ex_ref =", ex_ref)
-    # print("  ey_ref =", ey_ref)
 
     roi_polygon = load_polygon(roi_polygon_path)
 
@@ -4125,26 +4105,20 @@ def build_initial_lumen_from_vision(
         ey_ref=ey_ref,
     )
 
-    # The lumen_C_m should now already be in the clicked local frame:
-    # base click = (0,0), clicked reference direction = +x
     lumen_C_m = np.asarray(vision_result["lumen_C_m"], float).copy()
-
-    # Force centerline start to local origin
-    lumen_C_m -= lumen_C_m[0:1, :]
+    lumen_R_m = np.asarray(vision_result["lumen_R_m"], float).copy()
 
     lumen_C_robot_m = transform_local_points_to_robot(
         lumen_C_m,
         pivot_point,
     )
 
-    lumen_R_robot_m = np.asarray(vision_result["lumen_R_m"], float)
-
-    lumen_base_robot_m = transform_local_points_to_robot(
+    frame_origin_robot_m = transform_local_points_to_robot(
         np.array([[0.0, 0.0, 0.0]], dtype=float),
         pivot_point,
     )[0]
 
-    return lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m
+    return lumen_C_robot_m, lumen_R_m, frame_origin_robot_m
 def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
@@ -4193,8 +4167,8 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.0016,
-        k=1e8,
+        r_beam=0.0013,
+        k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
         smooth=True,
@@ -4210,11 +4184,11 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=15,
+        N_nodes=10,
         maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,

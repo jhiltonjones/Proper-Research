@@ -3124,7 +3124,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.0193
+    L0 = 0.0168
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3364,14 +3364,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=8,
+        Np=5,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="ltv",
+        model_mode="lti",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3470,7 +3470,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 8
+    mpc_replan_every = 5
 
 
 
@@ -4167,7 +4167,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.0013,
+        r_beam=0.0009,
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -4184,7 +4184,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=12,
         maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
@@ -4254,7 +4254,7 @@ def rod_section_stiffness(r, E, nu):
 if __name__ == "__main__":
 
 
-    pivot_hint = (325, 371)
+    pivot_hint = (318, 329)
 
 
     hw = LiveHardwareController(

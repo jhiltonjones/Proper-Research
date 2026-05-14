@@ -939,7 +939,7 @@ class mpc_controller_tipxy_LTI:
         return self._clamp_p(integrate_pose8_body(p, u, self.dt))
     def _build_prediction_mats(self, p0, U_guess):
         n, m, Np = self.n, self.m, self.Np
-
+        print("Building jac")
         if U_guess is None:
             U_guess = np.zeros((Np, m), dtype=float)
             U_guess[:, 6] = 0.0005 / self.dt
@@ -949,7 +949,7 @@ class mpc_controller_tipxy_LTI:
             
         if self.model_mode == "lti":
             J0 = np.asarray(self.Jxy_fn(p0), float).copy()
-
+            print("inside lti")
             if J0.shape != (n, m):
                 raise ValueError(f"Jxy_fn returned {J0.shape}, expected {(n, m)}")
 
@@ -968,9 +968,9 @@ class mpc_controller_tipxy_LTI:
 
             B0 = J0
             Mx, Mc = seq_mat_lti(self.A, B0, Np)
-
+            print("built lti")
             p_seq = self._p_seq_from_U(p0, U_guess)
-
+            print("built p_seq")
             return p_seq, Mx, Mc, B0
 
         elif self.model_mode == "ltv":
@@ -3124,7 +3124,7 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.0178
+    L0 = 0.0165
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3317,15 +3317,15 @@ def build_controller(
 
     # Prediction model used by MPC rollout.
     forward6d_pred = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
-
+    fwd_analytic = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+    fwd_fd = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
     def J_fn(p8):
         p8 = np.asarray(p8, float).reshape(8,)
 
         # Independent wrappers:
         # - fwd_analytic holds the nominal cache for analytic dx/dy.
         # - fwd_fd is used for finite-difference yaw/L.
-        fwd_analytic = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
-        fwd_fd = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
+
 
         Jred_state = hybrid_J_robot_xy_yaw_dL(
             p8=p8,
@@ -4135,7 +4135,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 5  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -4167,7 +4167,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.0008,
+        r_beam=0.001,
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -4184,11 +4184,11 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=12,
         maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,
@@ -4254,7 +4254,7 @@ def rod_section_stiffness(r, E, nu):
 if __name__ == "__main__":
 
 
-    pivot_hint = (325, 371)
+    pivot_hint = (318, 329)
 
 
     hw = LiveHardwareController(

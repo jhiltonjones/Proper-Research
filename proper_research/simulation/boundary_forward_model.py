@@ -736,8 +736,8 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
         self,
         p7,
         *,
-        eps_theta=1e-3,
-        eps_hess=1e-2,
+        eps_theta=1e-6,
+        eps_hess=1e-4,
         debug_jac=False,
         debug_hessian_terms=False,
     ):
@@ -944,6 +944,7 @@ class EnergyMinForwardWithAnalyticJac(EnergyMinForwardWithLumen):
             N=self.N_nodes,
             theta_builder=theta_builder,
             energy_grad_fun=energy_grad_fun,
+            use_scalar_hessian=False,
             lumen_query=lumen_query,
             contact=self.contact,
             debug_jac=debug_jac,

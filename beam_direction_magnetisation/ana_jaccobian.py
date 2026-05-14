@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.integrate import solve_bvp
 from beam_direction_magnetisation.magnetism.magnetic_methods import magnetic_wrench_density_cosserat_point, magnetic_wrench_density_cosserat_profile_segments
 from beam_direction_magnetisation.quarternions.quarternions_functions import (quat_derivative_body, quat_normalize, 
@@ -12,6 +13,8 @@ from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.post_processing.post_processing import (plot_centerlines_with_lumen_3d, make_lumen_centerline_turning, 
                                                                           plot_error_vs_s, closest_point_on_segment, point_to_polyline_distance)
 from proper_research.robot.transformations import get_point
+from pathlib import Path
+import pandas as pd
 L_tip_full=0.04
 from scipy.integrate import solve_ivp
 import numpy as np
@@ -110,6 +113,160 @@ def normalized_length_column_fd(
     )
 
     return (gp - gm) / (Lp - Lm)
+def solve_tip_sensitivity_source_dipole_length_shooting(
+    sol_nom,
+    *,
+    L,
+    r_src,
+    m_src,
+    dm_src_dphi=None,
+    Kinv_fun,
+    m_moment,
+    u_star=None,
+    n_eval=200,
+    rtol=1e-6,
+    atol=1e-8,
+    method="DOP853",
+    eps_L=1e-5,
+):
+    """
+    Fast shooting sensitivity for:
+
+        J = d p_tip / d [r_src, delta_phi, L]
+
+    where m_src is supplied directly in world coordinates.
+
+    Columns:
+        0:3 -> source translation
+        3:6 -> chosen dipole-rotation perturbation
+        6   -> model length L
+    """
+
+    L = float(L)
+    r_src = np.asarray(r_src, float).reshape(3,)
+    m_src = np.asarray(m_src, float).reshape(3,)
+
+    _, wire_len, _, m_local_fun = params_from_L(L)
+
+    if dm_src_dphi is None:
+        # World-frame infinitesimal rotation:
+        # delta m = delta_phi x m = -[m]_x delta_phi
+        dm_src_dphi = -skew(m_src)
+
+    n_state = 13
+    n_ctrl = 7
+    n_eta = 6
+
+    P0 = np.zeros((n_state, n_ctrl), dtype=float)
+
+    U0 = np.zeros((n_state, n_eta), dtype=float)
+    U0[7:13, :] = np.eye(6)
+
+    W0 = np.concatenate([
+        P0.reshape(-1),
+        U0.reshape(-1),
+    ])
+
+    # then keep the rest of your existing sensitivity integration code,
+    # but use m_src and dm_src_dphi directly.
+
+    def ode_shoot(xi, W_flat):
+        W_flat = np.asarray(W_flat, float)
+
+        P = W_flat[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+        U = W_flat[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+        s = L * float(xi)
+        y_nom = sol_nom.sol(np.array([s], dtype=float))[:, 0]
+
+        A_s = rhs_state_jacobian_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )
+
+        B_pose_s = rhs_control_jacobian_source_pose_analytic(
+            s,
+            y_nom,
+            m_src=m_src,
+            r_src=r_src,
+            dm_src_dphi=dm_src_dphi,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=m_moment,
+            wire_len=wire_len,
+            u_star=u_star,
+        )  # (13,6)
+
+        A_xi = L * A_s
+
+        B_xi = np.zeros((13, 7), dtype=float)
+        B_xi[:, 0:6] = L * B_pose_s
+
+        B_xi[:, 6] = normalized_length_column_fd(
+            xi,
+            y_nom,
+            L=L,
+            r_src=r_src,
+            m_src=m_src,
+            Kinv_fun=Kinv_fun,
+            m_moment=m_moment,
+            u_star=u_star,
+            eps_L=eps_L,
+        )
+
+        dP = A_xi @ P + B_xi
+        dU = A_xi @ U
+
+        return np.concatenate([
+            dP.reshape(-1),
+            dU.reshape(-1),
+        ])
+
+    sol_ivp = solve_ivp(
+        ode_shoot,
+        t_span=(0.0, 1.0),
+        y0=W0,
+        method=method,
+        rtol=rtol,
+        atol=atol,
+        dense_output=True,
+        t_eval=np.linspace(0.0, 1.0, int(n_eval)),
+    )
+
+    if not sol_ivp.success:
+        raise RuntimeError(f"Pose+length shooting sensitivity failed: {sol_ivp.message}")
+
+    W_1 = sol_ivp.y[:, -1]
+
+    P_1 = W_1[:n_state * n_ctrl].reshape(n_state, n_ctrl)
+    U_1 = W_1[n_state * n_ctrl:].reshape(n_state, n_eta)
+
+    C_P = P_1[7:13, :]   # (6,7)
+    C_U = U_1[7:13, :]   # (6,6)
+
+    eta = np.linalg.solve(C_U, -C_P)
+
+    Z_1 = P_1 + U_1 @ eta
+
+    J_tip_pose_length = Z_1[0:3, :]  # (3,7)
+
+    diagnostics = {
+        "sol_ivp": sol_ivp,
+        "P_1": P_1,
+        "U_1": U_1,
+        "eta": eta,
+        "tip_residual_nm": Z_1[7:13, :],
+        "terminal_matrix_cond": np.linalg.cond(C_U),
+    }
+
+    return J_tip_pose_length, diagnostics
 def solve_tip_sensitivity_source_pose_length_shooting(
     sol_nom,
     *,
@@ -2480,7 +2637,97 @@ def benchmark_function(fn, repeats=5, warmup=1, label="function"):
         "max_s": max(times),
         "last_result": last_result,
     }
+def magnetic_net_force_torque_from_solution(
+    sol,
+    *,
+    L,
+    r_src,
+    m_src,
+    m_local_fun,
+    m_moment=0.0,
+    n_eval=300,
+):
+    s_eval = np.linspace(0.0, float(L), int(n_eval))
+    y = sol.sol(s_eval)
 
+    p = y[0:3, :]      # 3 x n
+    q = y[3:7, :]      # 4 x n
+
+    F_net = np.zeros(3)
+    T_net = np.zeros(3)
+
+    ds = float(L) / max(int(n_eval) - 1, 1)
+
+    for k, s_k in enumerate(s_eval):
+        pk = p[:, k]
+        qk = quat_normalize(q[:, k])
+
+        Rk = quat_to_R(qk)
+
+        m_local = np.asarray(m_local_fun(s_k), float).reshape(3,)
+        m_beam_world = Rk @ m_local
+
+        B = dipole_field_from_source(
+            pk.reshape(1, 3),
+            r_src,
+            m_src,
+        )[0]
+
+        # Magnetic torque density: tau = m x B
+        tau = np.cross(m_beam_world, B)
+
+        # Magnetic force density: grad_p(m . B)
+        # If you already have an analytic force-density helper, use it here.
+        # Otherwise use a small finite difference at this point.
+        eps = 1e-6
+        f = np.zeros(3)
+
+        for a in range(3):
+            dp = np.zeros(3)
+            dp[a] = eps
+
+            Bp = dipole_field_from_source(
+                (pk + dp).reshape(1, 3),
+                r_src,
+                m_src,
+            )[0]
+
+            Bm = dipole_field_from_source(
+                (pk - dp).reshape(1, 3),
+                r_src,
+                m_src,
+            )[0]
+
+            wp = np.dot(m_beam_world, Bp)
+            wm = np.dot(m_beam_world, Bm)
+
+            f[a] = (wp - wm) / (2.0 * eps)
+
+        weight = ds
+        if k == 0 or k == len(s_eval) - 1:
+            weight *= 0.5
+
+        F_net += f * weight
+        T_net += tau * weight
+
+    return F_net, T_net
+def make_run_dir(base="results", name=None):
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    run_name = name or f"run_{timestamp}"
+    run_dir = Path(base) / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+def dipole_field_from_source(r_pts, r_src, m_src, r_min=1e-6):
+
+    R = r_pts - r_src[None, :]
+    R2 = np.sum(R*R, axis=1)
+    Rnorm = np.sqrt(np.maximum(R2, r_min**2))
+    Rhat = R / Rnorm[:, None]
+    mdot = Rhat @ m_src  
+    invR3 = 1.0 / (Rnorm**3)
+    MU0_over_4pi = 1e-7
+    B = MU0_over_4pi * invR3[:, None] * (3.0 * mdot[:, None] * Rhat - m_src[None, :])
+    return B    
 def print_benchmark_result(res):
     print(f"\n[{res['label']}]")
     print(f"mean = {res['mean_s']:.6f} s")
@@ -2490,12 +2737,23 @@ def print_benchmark_result(res):
 
 if __name__ == "__main__":
     DEBUG = True
+
+    DO_NOMINAL_CHECK = True
+    DO_ORIENTATION_MAP = True
+    DO_FD_CHECK = False        # keep False for maps; FD over a grid will be very slow
+
     L_cmd = 0.02
     nodes = 10
+    run_dir = make_run_dir(
+        base="results",
+        name=f"no_contact_length_angle_sweep_N{nodes}",
+    )
     beam_params = default_beam_params()
     mag_params = default_magnet_params()
+
     mag_len = beam_params.length_of_mag
-    m_body = np.array([mag_params.mag_epm, 0.0, 0.0])
+    m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
+
     pivot_point = np.array([
         0.7981328220229531, -0.7112731669220016, -0.1,
         np.pi, 0.001, 0.001
@@ -2510,83 +2768,78 @@ if __name__ == "__main__":
 
     start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
-    # start_point[2] -=0.25
+
     L_model, wire_len, tip_len = effective_lengths(
         L_cmd,
         L_tip_full=0.04,
         L_tip_min=0.01,
     )
 
-    m_local_fun = make_m_local_fun_wire_tip(
-        wire_len,
-        len_tip=tip_len,
-        mode="axial",
-        alpha_end=0.0,
-        eps=1e-3,
-    )
-    T_ur_pivot = ur_pose6_to_T(pivot_point)   
+    T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
-    T_ur_mag = ur_pose6_to_T(start_point)      
+    T_ur_mag = ur_pose6_to_T(start_point)
+
+    # ------------------------------------------------------------
+    # This is the fixed source position and nominal orientation.
+    # r_src_ur stays fixed during the map.
+    # q_src_ur is only the nominal external magnet orientation.
+    # ------------------------------------------------------------
     r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+
     wire = rod_section_stiffness(
         r=200e-6,
         E=50e6,
         nu=0.4,
     )
+
     tip = rod_section_stiffness(
         r=beam_params.r,
         E=beam_params.E,
         nu=0.49,
     )
-    EA_wire = wire["EA"]
-    EI_wire = wire["EI"]
-    GJ_wire = wire["GJ"]
-
-    EA_tip = tip["EA"]
-    EI_tip = tip["EI"]
-    GJ_tip = tip["GJ"]
 
     Kinv_fun = make_Kbt_inv_profile(
-        EI_wire=EI_wire,
-        EI_tip=EI_tip,
-        GJ_wire=GJ_wire,
-        GJ_tip=GJ_tip,
+        EI_wire=wire["EI"],
+        EI_tip=tip["EI"],
+        GJ_wire=wire["GJ"],
+        GJ_tip=tip["GJ"],
         bend_soft=1.0,
         tors_soft=1.0,
     )
-    model = CosseratForwardModel(
-        p0=p0_ur,
-        q0=q0_ur,
-        Kinv_fun=Kinv_fun,
-        n_nodes=nodes,
-        m_local_fun=make_m_local_fun_wire_tip(wire_len, len_tip=tip_len, mode="axial", alpha_end=0.0),
-        m_moment=0.0,
-        wire_len=wire_len,
-    )
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, wire_len=wire_len,m_body=m_body)
-    if hasattr(model, "_last_energy_choice"):
-        print(model._last_energy_choice)
-    print("tip in UR:", out["p_tip"])
-    print("tip bending y:", np.rad2deg(out["theta_y"]))
-    print("tip bending z:", np.rad2deg(out["theta_z"]))
-    print("Magnet position:", T_ur_mag)
-    print("Magnetic field", (out["B_tip"]))
-    print("Magnetic force this is the gradient force", (out["F_net"]))
-    print("Magnetic torque is the cross product", (out["T_net"]))
+    def make_m_local():
+        return make_m_local_fun_wire_tip(
+            wire_len,
+            len_tip=tip_len,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        )
 
+    def model_factory():
+        return CosseratForwardModel(
+            p0=p0_ur,
+            q0=q0_ur,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=make_m_local(),
+            m_moment=0.0,
+            wire_len=wire_len,
+            n_nodes=nodes,
+            tol=1e-5,
+            max_nodes=20000,
+        )
 
-    # base tangent direction
-    q = q0_ur
-    R0 = Rot.from_quat([q[1], q[2], q[3], q[0]]).as_matrix()
-    t0 = R0 @ np.array([-1.0, 0.0, 0.0])   # matches your e1
-    global INSERTION_DIR_WORLD
-    INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
-    # lumen centerline starts at pivot base and bends
-    # s_straight = 0.01
+    model = model_factory()
+
+    # ------------------------------------------------------------
+    # Base insertion direction / lumen setup
+    # ------------------------------------------------------------
     Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
     t0 = Rbase @ np.array([-1.0, 0.0, 0.0])
+
+    global INSERTION_DIR_WORLD
+    INSERTION_DIR_WORLD = t0 / (np.linalg.norm(t0) + 1e-12)
 
     lumen_C = make_lumen_centerline_turning(
         p_start=p0_ur,
@@ -2598,193 +2851,72 @@ if __name__ == "__main__":
         bend_start=0.005,
         bend_end=0.03,
     )
+
     lumen_C, _ = resample_polyline(lumen_C, ds_target=1e-3)
     lumen_R = np.full(len(lumen_C), 0.004)
-    # # lumen_C = make_lumen_centerline_turning(
-    #     p_start=p0_ur,
-    #     t0=t0,
-    #     length=0.08 + s_straight,     
-    #     n_pts=130,                      
-    #     bend_axis=np.array([0.0, 0.0, 1.0]),
-    #     bend_angle=np.deg2rad(-40.0),
-    #     bend_start=0.01 + s_straight,    
-    #     bend_end=0.08 + s_straight       
-    # )
 
-    # lumen_R = np.full(len(lumen_C), 0.004)  # 4 mm radius
+    m_src_nom = dipole_from_pose(q_src_ur, m_body)
+    # Beam axis and aligned zero-angle dipole
+    Rbase = Rot.from_quat([q0_ur[1], q0_ur[2], q0_ur[3], q0_ur[0]]).as_matrix()
 
-    # --- your existing setup code here ---
-    # build p0_ur, q0_ur, r_src_ur, q_src_ur, wire_len, tip_len, Kinv_fun, model, ...
+    beam_axis = Rbase @ np.array([-1.0, 0.0, 0.0])
+    beam_axis = beam_axis / (np.linalg.norm(beam_axis) + 1e-12)
 
-    out = model.forward(L=L_cmd, r_src=r_src_ur, q_src=q_src_ur, m_body=m_body, wire_len=wire_len)
-    print("tip in UR:", out["p_tip"])
+    p_tip_straight = p0_ur + L_cmd * beam_axis
 
-    # ------------------------------------------------------------
-    # Nominal source dipole and nominal solve
-    # ------------------------------------------------------------
-    m_src = dipole_from_pose(q_src_ur, m_body)
+    m_src_from_pose = dipole_from_pose(q_src_ur, m_body)
+    m_norm = np.linalg.norm(m_src_from_pose)
+
+    m_src_zero = m_norm * beam_axis
+
+    def source_position_at_axial_distance(distance_from_tip):
+        return p_tip_straight + float(distance_from_tip) * beam_axis
+
+    def rotate_dipole_about_world_z(m0, z_angle):
+        Rz = Rot.from_euler("z", z_angle, degrees=False).as_matrix()
+        return Rz @ np.asarray(m0, float).reshape(3,)
+
+    dist_grid = np.linspace(0.12, 0.18, 21)
+    zrot_grid = np.deg2rad(np.linspace(-90.0, 90.0, 21))
+
+    dist_nom = float(dist_grid[len(dist_grid)//2])
+    r_src_nom = source_position_at_axial_distance(dist_nom)
 
     sol_nom = model.solve(
         L=L_cmd,
-        r_src=r_src_ur,
-        m_src=m_src,
+        r_src=r_src_nom,
+        m_src=m_src_zero,
         wire_len=wire_len,
     )
 
-    # ------------------------------------------------------------
-    # Local B check: translation block only
-    # ------------------------------------------------------------
-    s_test = 0.5 * L_cmd
-    y_test = sol_nom.sol(np.array([s_test]))[:, 0]
+    p_tip_nom = np.asarray(sol_nom.y[0:3, -1], float)
+    B_tip_nom = dipole_field_from_source(
+        p_tip_nom.reshape(1, 3),
+        r_src_nom,
+        m_src_zero,
+    )[0]
 
-    B_fd = rhs_control_jacobian_rsrc_fd(
-        s_test, y_test,
-        m_src=m_src,
-        r_src=r_src_ur,
-        Kinv_fun=Kinv_fun,
-        m_local_fun=model.m_local_fun,
-        m_moment=model.m_moment,
-        wire_len=wire_len,
-        u_star=np.zeros(3),
-    )
-
-    B_an = rhs_control_jacobian_rsrc_analytic(
-        s_test, y_test,
-        m_src=m_src,
-        r_src=r_src_ur,
-        Kinv_fun=Kinv_fun,
-        m_local_fun=model.m_local_fun,
-        m_moment=model.m_moment,
-        wire_len=wire_len,
-        u_star=np.zeros(3),
-    )
-
-    print("\nLocal B translation check")
-    print("Relative local B error:",
-        np.linalg.norm(B_an - B_fd) / max(np.linalg.norm(B_fd), 1e-12))
-
-    # ------------------------------------------------------------
-    # Model factory for FD checks
-    # ------------------------------------------------------------
-    def model_factory():
-        return CosseratForwardModel(
-            p0=p0_ur,
-            q0=q0_ur,
-            Kinv_fun=Kinv_fun,
-            m_local_fun=make_m_local_fun_wire_tip(
-                wire_len,
-                len_tip=tip_len,
-                mode="axial",
-                alpha_end=0.0,
-                eps=1e-3,
-            ),
-            m_moment=0.0,
-            wire_len=wire_len,
-            n_nodes=nodes,
-            tol=1e-5,
-            max_nodes=20000,
-        )
-
-    # ------------------------------------------------------------
-    # Analytic 6-column source-pose sensitivity
-    # columns 0:3 = translation
-    # columns 3:6 = small source rotation delta_phi
-    # ------------------------------------------------------------
-    # J_pose, sol_pose_sens = solve_tip_sensitivity_source_pose(
-    #     sol_nom,
-    #     L=L_cmd,
-    #     r_src=r_src_ur,
-    #     q_src=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     m_local_fun=model.m_local_fun,
-    #     m_moment=model.m_moment,
-    #     wire_len=wire_len,
-    #     u_star=np.zeros(3),
-    #     n_nodes=model.n_nodes,
-    #     tol=model.tol,
-    #     max_nodes=model.max_nodes,
-    #     rotation_convention="world",
-    # )
-    J_pose_L, diag = solve_tip_sensitivity_source_pose_length_shooting(
-        sol_nom,
-        L=L_cmd,
-        r_src=r_src_ur,
-        q_src=q_src_ur,
-        m_body=m_body,
-        Kinv_fun=Kinv_fun,
-        m_moment=model.m_moment,
-        u_star=np.zeros(3),
-        n_eval=200,
-        rtol=1e-6,
-        atol=1e-8,
-        rotation_convention="world",
-    )
-
-    print("\nJ_tip wrt [r_src, delta_phi, L]:")
-    print(J_pose_L)
-
-    print("\ntranslation block:")
-    print(J_pose_L[:, 0:3])
-
-    print("\nrotation block:")
-    print(J_pose_L[:, 3:6])
-
-    print("\nlength column:")
-    print(J_pose_L[:, 6])
-
-    print("\nfree-tip residual:")
-    print(np.linalg.norm(diag["tip_residual_nm"]))
+    print("Beam axis:", beam_axis)
+    print("Straight tip:", p_tip_straight)
+    print("Nominal magnet position:", r_src_nom)
+    print("Nominal tip:", p_tip_nom)
+    print("Nominal B_tip norm [T]:", np.linalg.norm(B_tip_nom))
+    print("Nominal B_tip norm [mT]:", 1e3 * np.linalg.norm(B_tip_nom))
+    print("m_src_zero dot beam_axis:", np.dot(m_src_zero, beam_axis))
 
 
 
     # ------------------------------------------------------------
-    # Full nonlinear FD check for all 6 source-pose columns
+    # Nominal analytic Jacobian
     # ------------------------------------------------------------
-    J_fd_pose_L = tip_jacobian_source_pose_length_fd_full(
-        model_factory_from_length=model_factory_from_length,
-        L=L_cmd,
-        r_src=r_src_ur,
-        q_src=q_src_ur,
-        m_body=m_body,
-        eps_pos=1e-5,
-        eps_rot=1e-5,
-        eps_L=1e-5,
-        rotation_convention="world",
-    )
 
-    print("FD J_tip wrt [r_src, delta_phi, L]:")
-    print(J_fd_pose_L)
-
-    print("\nFD J_tip_source_pose:")
-    print(J_fd_pose_L)
-
-    print("\nDifference analytic - FD:")
-    print(J_pose_L - J_fd_pose_L)
-
-    print("\nRelative pose Jacobian error:")
-    print(np.linalg.norm(J_pose_L - J_fd_pose_L) / max(np.linalg.norm(J_fd_pose_L), 1e-12))
 
     # ------------------------------------------------------------
-    # Optional separate block errors
+    # Optional FD check only at nominal pose
+    # Do not run this inside the orientation map.
     # ------------------------------------------------------------
-    print("\nRelative translation block error:")
-    print(
-        np.linalg.norm(J_pose_L[:, 0:3] - J_fd_pose_L[:, 0:3])
-        / max(np.linalg.norm(J_fd_pose_L[:, 0:3]), 1e-12)
-    )
-
-    print("\nRelative rotation block error:")
-    print(
-        np.linalg.norm(J_pose_L[:, 3:6] - J_fd_pose_L[:, 3:6])
-        / max(np.linalg.norm(J_fd_pose_L[:, 3:6]), 1e-12)
-    )
-
-    # ------------------------------------------------------------
-    # Benchmarks
-    # ------------------------------------------------------------
-    def run_fd_pose_total():
-        return tip_jacobian_source_pose_length_fd_full(
+    if DO_FD_CHECK:
+        J_fd_pose_L = tip_jacobian_source_pose_length_fd_full(
             model_factory_from_length=model_factory_from_length,
             L=L_cmd,
             r_src=r_src_ur,
@@ -2796,41 +2928,534 @@ if __name__ == "__main__":
             rotation_convention="world",
         )
 
-    def run_shooting_pose_sensitivity():
-        J_pose, _ = solve_tip_sensitivity_source_pose_shooting(
-            sol_nom,
-            L=L_cmd,
-            r_src=r_src_ur,
-            q_src=q_src_ur,
-            m_body=m_body,
-            Kinv_fun=Kinv_fun,
-            m_local_fun=model.m_local_fun,
-            m_moment=model.m_moment,
-            wire_len=wire_len,
-            u_star=np.zeros(3),
-            n_eval=200,
-            rtol=1e-6,
-            atol=1e-8,
-            rotation_convention="world",
+        print("\nFD J_tip wrt [r_src, delta_phi, L]:")
+        print(J_fd_pose_L)
+
+        print("\nDifference analytic - FD:")
+        print(J_pose_L - J_fd_pose_L)
+
+        print("\nRelative pose Jacobian error:")
+        print(
+            np.linalg.norm(J_pose_L - J_fd_pose_L)
+            / max(np.linalg.norm(J_fd_pose_L), 1e-12)
         )
-        return J_pose
+
+    # ------------------------------------------------------------
+    # Z-rotation / distance map section
+    # ------------------------------------------------------------
+    if DO_ORIENTATION_MAP:
+
+        def quat_wxyz_to_R(q_wxyz):
+            return Rot.from_quat([
+                q_wxyz[1],
+                q_wxyz[2],
+                q_wxyz[3],
+                q_wxyz[0],
+            ])
+
+        def R_to_quat_wxyz(R):
+            q_xyzw = R.as_quat()
+            return np.array([
+                q_xyzw[3],
+                q_xyzw[0],
+                q_xyzw[1],
+                q_xyzw[2],
+            ], dtype=float)
+
+        def rotate_source_quat_world_z(q_src_wxyz, z_angle):
+            """
+            Apply a world-frame rotation about the global z axis.
+
+            q_new = dq_z_world * q_src
+            """
+            R_src = quat_wxyz_to_R(q_src_wxyz)
+            dR_world = Rot.from_euler("z", z_angle, degrees=False)
+            R_new = dR_world * R_src
+            return R_to_quat_wxyz(R_new)
+
+        def closest_point_on_straight_beam(p, p0, t):
+            """
+            Closest point from p to the nominal straight beam line.
+
+            p0 : beam base
+            t  : beam tangent direction, unit vector
+            """
+            p = np.asarray(p, float).reshape(3,)
+            p0 = np.asarray(p0, float).reshape(3,)
+            t = np.asarray(t, float).reshape(3,)
+            t = t / (np.linalg.norm(t) + 1e-12)
+
+            lam = np.dot(p - p0, t)
+            return p0 + lam * t
+
+        # ------------------------------------------------------------
+        # Define nominal beam-to-magnet radial direction
+        # ------------------------------------------------------------
+        # Beam tangent direction: pivot -> tip
+        # ------------------------------------------------------------
+        # Axial magnet placement and aligned dipole convention
+        # ------------------------------------------------------------
 
 
+        def rotate_dipole_about_world_z(m0, z_angle):
+            Rz = Rot.from_euler("z", z_angle, degrees=False).as_matrix()
+            return Rz @ np.asarray(m0, float).reshape(3,)
+        if DO_NOMINAL_CHECK:
+            J_pose_L_nom, diag_nom = solve_tip_sensitivity_source_dipole_length_shooting(
+                sol_nom,
+                L=L_cmd,
+                r_src=r_src_nom,
+                m_src=m_src_zero,
+                dm_src_dphi=-skew(m_src_zero),
+                Kinv_fun=Kinv_fun,
+                m_moment=model.m_moment,
+                u_star=np.zeros(3),
+                n_eval=200,
+                rtol=1e-6,
+                atol=1e-8,
+            )
 
-    bench_fd_pose = benchmark_function(
-        run_fd_pose_total,
-        repeats=5,
-        warmup=1,
-        label="Full nonlinear FD source-pose Jacobian build",
-    )
-    print_benchmark_result(bench_fd_pose)
+            print("\nNominal J_tip wrt [r_src, delta_phi, L]:")
+            print(J_pose_L_nom)
+        # ------------------------------------------------------------
+        # New grid:
+        #   horizontal axis = z rotation angle
+        #   vertical axis   = magnet distance from beam
+        # ------------------------------------------------------------
+        zrot_grid = np.deg2rad(np.linspace(-90.0, 90.0, 21))
 
-    bench_shoot = benchmark_function(
-        run_shooting_pose_sensitivity,
-        repeats=5,
-        warmup=1,
-        label="Shooting analytic source-pose sensitivity",
-    )
-    print_benchmark_result(bench_shoot)
+        # Example distances: 30 mm to 180 mm.
+        # Adjust these to your physical workspace.
+        dist_grid = np.linspace(0.12, 0.18, 21)
 
-    
+        # Existing maps
+        energy_map = np.full((len(dist_grid), len(zrot_grid)), np.nan)
+        Jnorm_map = np.full_like(energy_map, np.nan)
+        Jtrans_norm_map = np.full_like(energy_map, np.nan)
+        Jrot_norm_map = np.full_like(energy_map, np.nan)
+
+        tip_x_map = np.full_like(energy_map, np.nan)
+        tip_y_map = np.full_like(energy_map, np.nan)
+        tip_z_map = np.full_like(energy_map, np.nan)
+
+        Bnorm_tip_map = np.full_like(energy_map, np.nan)
+        Fnorm_map = np.full_like(energy_map, np.nan)
+        Tnorm_map = np.full_like(energy_map, np.nan)
+
+        # New 3D Jacobian metrics
+        Jcond_xyz_map = np.full_like(energy_map, np.nan)
+        manip_xyz_map = np.full_like(energy_map, np.nan)
+
+        sigma1_xyz_map = np.full_like(energy_map, np.nan)
+        sigma2_xyz_map = np.full_like(energy_map, np.nan)
+        sigma3_xyz_map = np.full_like(energy_map, np.nan)
+
+        weak_dir_xyz_map = np.full((len(dist_grid), len(zrot_grid), 3), np.nan)
+
+        # New planar xy Jacobian metrics
+        Jcond_xy_map = np.full_like(energy_map, np.nan)
+        manip_xy_map = np.full_like(energy_map, np.nan)
+
+        sigma1_xy_map = np.full_like(energy_map, np.nan)
+        sigma2_xy_map = np.full_like(energy_map, np.nan)
+        rows = []
+
+        for i, dist_mag in enumerate(dist_grid):
+            r_src_i = source_position_at_axial_distance(dist_mag)
+
+            for j, zrot in enumerate(zrot_grid):
+                m_src_rot = rotate_dipole_about_world_z(m_src_zero, zrot)
+
+                # Fresh model for this grid point
+                model_ij = model_factory()
+
+                try:
+                    sol_ij = model_ij.solve(
+                        L=L_cmd,
+                        r_src=r_src_i,
+                        m_src=m_src_rot,
+                        wire_len=wire_len,
+                    )
+
+                    p_tip = np.asarray(sol_ij.y[0:3, -1], dtype=float)
+
+                    B_tip = dipole_field_from_source(
+                        p_tip.reshape(1, 3),
+                        r_src_i,
+                        m_src_rot,
+                    )[0]
+
+                    Bnorm_tip_map[i, j] = np.linalg.norm(B_tip)
+
+                    tip_x_map[i, j] = p_tip[0]
+                    tip_y_map[i, j] = p_tip[1]
+                    tip_z_map[i, j] = p_tip[2]
+
+                    W_ij, parts_ij = compute_total_energy(
+                        sol_ij,
+                        L=L_cmd,
+                        r_src=r_src_i,
+                        m_src=m_src_rot,
+                        Kinv_fun=Kinv_fun,
+                        m_local_fun=model_ij.m_local_fun,
+                        m_moment=model_ij.m_moment,
+                        wire_len=wire_len,
+                        u_star=np.zeros(3),
+                        contact_penalty_fun=None,
+                        s_out_n=300,
+                    )
+
+                    energy_map[i, j] = W_ij
+                    F_net, T_net = magnetic_net_force_torque_from_solution(
+
+                        sol_ij,
+
+                        L=L_cmd,
+
+                        r_src=r_src_i,
+
+                        m_src=m_src_rot,
+
+                        m_local_fun=model_ij.m_local_fun,
+
+                        m_moment=model_ij.m_moment,
+
+                        n_eval=300,
+
+                    )
+
+                    Fnorm_map[i, j] = np.linalg.norm(F_net)
+
+                    Tnorm_map[i, j] = np.linalg.norm(T_net)
+
+                    # -------------------------------------------------
+
+                    # Sensitivity / Jacobian
+
+                    # -------------------------------------------------
+
+                    J_pose_L_ij, diag_ij = solve_tip_sensitivity_source_dipole_length_shooting(
+
+                        sol_ij,
+
+                        L=L_cmd,
+
+                        r_src=r_src_i,
+
+                        m_src=m_src_rot,
+
+                        dm_src_dphi=-skew(m_src_rot),
+
+                        Kinv_fun=Kinv_fun,
+
+                        m_moment=model_ij.m_moment,
+
+                        u_star=np.zeros(3),
+
+                        n_eval=200,
+
+                        rtol=1e-6,
+
+                        atol=1e-8,
+
+                    )
+
+                    J = J_pose_L_ij
+
+                    Jnorm_map[i, j] = np.linalg.norm(J)
+
+                    Jtrans_norm_map[i, j] = np.linalg.norm(J[:, 0:3])
+
+                    Jrot_norm_map[i, j] = np.linalg.norm(J[:, 3:6])
+
+                    # -------------------------------------------------
+                    # Full 3D pose Jacobian metrics: x, y, z task space
+                    # -------------------------------------------------
+                    J_pose_xyz = J[:, 0:6]          # shape: 3 x 6
+
+                    U_xyz, s_xyz, Vt_xyz = np.linalg.svd(J_pose_xyz, full_matrices=False)
+
+                    Jcond_xyz_map[i, j] = s_xyz[0] / max(s_xyz[-1], 1e-12)
+                    manip_xyz_map[i, j] = np.prod(s_xyz)
+
+                    sigma1_xyz_map[i, j] = s_xyz[0]
+                    sigma2_xyz_map[i, j] = s_xyz[1]
+                    sigma3_xyz_map[i, j] = s_xyz[2]
+
+                    # Weakest 3D task-space direction
+                    weak_dir_xyz_map[i, j, :] = U_xyz[:, -1]
+
+
+                    # -------------------------------------------------
+                    # Planar xy pose Jacobian metrics: x, y task space
+                    # -------------------------------------------------
+                    J_pose_xy = J_pose_xyz[0:2, :]  # shape: 2 x 6
+
+                    U_xy, s_xy, Vt_xy = np.linalg.svd(J_pose_xy, full_matrices=False)
+
+                    Jcond_xy_map[i, j] = s_xy[0] / max(s_xy[-1], 1e-12)
+                    manip_xy_map[i, j] = np.prod(s_xy)
+
+                    sigma1_xy_map[i, j] = s_xy[0]
+                    sigma2_xy_map[i, j] = s_xy[1]
+                    rows.append({
+
+                        "distance_m": float(dist_mag),
+
+                        "distance_mm": float(1e3 * dist_mag),
+
+                        "zrot_rad": float(zrot),
+
+                        "zrot_deg": float(np.rad2deg(zrot)),
+
+                        "energy": float(energy_map[i, j]),
+
+                        "Bnorm_tip_T": float(Bnorm_tip_map[i, j]),
+
+                        "Fnorm_N": float(Fnorm_map[i, j]),
+
+                        "Tnorm_Nm": float(Tnorm_map[i, j]),
+
+                        "tip_x_m": float(tip_x_map[i, j]),
+
+                        "tip_y_m": float(tip_y_map[i, j]),
+
+                        "tip_z_m": float(tip_z_map[i, j]),
+
+                        "J_norm": float(Jnorm_map[i, j]),
+
+                        "Jtrans_norm": float(Jtrans_norm_map[i, j]),
+
+                        "Jrot_norm": float(Jrot_norm_map[i, j]),
+
+                        "cond_xyz": float(Jcond_xyz_map[i, j]),
+
+                        "manip_xyz": float(manip_xyz_map[i, j]),
+
+                        "sigma1_xyz": float(sigma1_xyz_map[i, j]),
+
+                        "sigma2_xyz": float(sigma2_xyz_map[i, j]),
+
+                        "sigma3_xyz": float(sigma3_xyz_map[i, j]),
+
+                        "weak_dir_x": float(weak_dir_xyz_map[i, j, 0]),
+
+                        "weak_dir_y": float(weak_dir_xyz_map[i, j, 1]),
+
+                        "weak_dir_z": float(weak_dir_xyz_map[i, j, 2]),
+
+                        "cond_xy": float(Jcond_xy_map[i, j]),
+
+                        "manip_xy": float(manip_xy_map[i, j]),
+
+                        "sigma1_xy": float(sigma1_xy_map[i, j]),
+
+                        "sigma2_xy": float(sigma2_xy_map[i, j]),
+
+                    })
+                except Exception as exc:
+                    print(
+                        f"Failed at zrot={np.rad2deg(zrot):.1f} deg, "
+                        f"distance={dist_mag:.4f} m: {exc}"
+                    )
+                    continue
+        
+        
+        df_maps = pd.DataFrame(rows)
+
+        df_maps.to_csv(run_dir / "zrot_distance_maps.csv", index=False)
+        p_tip_nom = np.asarray(sol_nom.y[0:3, -1], float)
+        B_tip_nom = dipole_field_from_source(
+                        p_tip_nom.reshape(1, 3),
+                        r_src_nom,
+                        m_src_zero,
+                    )[0]
+        print("Nominal magnet position:", r_src_nom)
+        print("Nominal magnetic field norm:", np.linalg.norm(B_tip_nom))
+        print("Nominal m_src:", m_src_zero)
+        print("Beam axis:", beam_axis)
+        print("m_src dot beam_axis:", np.dot(m_src_zero, beam_axis))
+        zrot_deg = np.rad2deg(zrot_grid)
+        dist_mm = 1e3 * dist_grid
+        # -------------------------------------------------
+        # Save maps
+        # -------------------------------------------------
+        np.savez(
+            run_dir / "zrot_distance_maps.npz",
+            zrot_grid=zrot_grid,
+            zrot_deg=zrot_deg,
+            dist_grid=dist_grid,
+            dist_mm=dist_mm,
+
+            energy_map=energy_map,
+            Bnorm_tip_map=Bnorm_tip_map,
+            Fnorm_map=Fnorm_map,
+            Tnorm_map=Tnorm_map,
+
+            tip_x_map=tip_x_map,
+            tip_y_map=tip_y_map,
+            tip_z_map=tip_z_map,
+
+            Jnorm_map=Jnorm_map,
+            Jtrans_norm_map=Jtrans_norm_map,
+            Jrot_norm_map=Jrot_norm_map,
+
+            Jcond_xyz_map=Jcond_xyz_map,
+            manip_xyz_map=manip_xyz_map,
+            sigma1_xyz_map=sigma1_xyz_map,
+            sigma2_xyz_map=sigma2_xyz_map,
+            sigma3_xyz_map=sigma3_xyz_map,
+            weak_dir_xyz_map=weak_dir_xyz_map,
+
+            Jcond_xy_map=Jcond_xy_map,
+            manip_xy_map=manip_xy_map,
+            sigma1_xy_map=sigma1_xy_map,
+            sigma2_xy_map=sigma2_xy_map,
+        )
+        def plot_map(Z, title, cbar_label, log=False, save_path=None, vmin=None, vmax=None):
+            Z_plot = np.asarray(Z, dtype=float)
+
+            if log:
+                Z_plot = np.log10(np.maximum(Z_plot, 1e-16))
+
+            if vmin is not None or vmax is not None:
+                Z_plot = np.clip(
+                    Z_plot,
+                    -np.inf if vmin is None else vmin,
+                    np.inf if vmax is None else vmax,
+                )
+
+            plt.figure(figsize=(7, 5))
+            plt.imshow(
+                Z_plot,
+                origin="lower",
+                extent=[
+                    zrot_deg[0],
+                    zrot_deg[-1],
+                    dist_mm[0],
+                    dist_mm[-1],
+                ],
+                aspect="auto",
+                vmin=vmin,
+                vmax=vmax,
+            )
+            plt.xlabel("External magnet rotation about world z [deg]")
+            plt.ylabel("Magnet distance from beam [mm]")
+            plt.title(title)
+            plt.colorbar(label=cbar_label)
+            plt.tight_layout()
+
+            if save_path is not None:
+                plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+            plt.show()
+
+        # -------------------------------------------------
+        # Existing maps
+        # -------------------------------------------------
+        plot_map(
+            energy_map,
+            "Energy over magnet z-rotation and distance",
+            r"$\Pi$",
+            save_path=run_dir / "map_energy.png",
+        )
+
+        plot_map(
+            Bnorm_tip_map,
+            "Magnetic field magnitude at tip",
+            r"$\log_{10}\|B_{tip}\|$ [T]",
+            log=True,
+            save_path=run_dir / "map_Bnorm_tip_log10.png",
+        )
+
+        plot_map(
+            Fnorm_map,
+            "Net magnetic force magnitude",
+            r"$\log_{10}\|F_{net}\|$ [N]",
+            log=True,
+            save_path=run_dir / "map_Fnorm_log10.png",
+        )
+
+        plot_map(
+            Tnorm_map,
+            "Net magnetic torque magnitude",
+            r"$\log_{10}\|T_{net}\|$ [N m]",
+            log=True,
+            vmin=-6,
+            save_path=run_dir / "map_Tnorm_log10.png",
+        )
+
+        plot_map(
+            Jnorm_map,
+            "Full tip Jacobian norm",
+            r"$\|J_{[r,\phi,L]}\|_F$",
+            save_path=run_dir / "map_Jnorm.png",
+        )
+
+        plot_map(
+            Jtrans_norm_map,
+            "Translation sensitivity norm",
+            r"$\|J_r\|_F$",
+            save_path=run_dir / "map_Jtranslation_norm.png",
+        )
+
+        plot_map(
+            Jrot_norm_map,
+            "Rotation sensitivity norm",
+            r"$\|J_\phi\|_F$",
+            save_path=run_dir / "map_Jrotation_norm.png",
+        )
+
+        # -------------------------------------------------
+        # 3D conditioning and manipulability
+        # -------------------------------------------------
+        plot_map(
+            Jcond_xyz_map,
+            "3D pose Jacobian conditioning",
+            r"$\log_{10}\kappa(J_{xyz})$",
+            log=True,
+            save_path=run_dir / "map_cond_xyz_log10.png",
+        )
+
+        plot_map(
+            manip_xyz_map,
+            "3D pose manipulability",
+            r"$\log_{10}(\sigma_1\sigma_2\sigma_3)$",
+            log=True,
+            save_path=run_dir / "map_manip_xyz_log10.png",
+        )
+
+        plot_map(
+            sigma3_xyz_map,
+            "Weakest 3D singular value",
+            r"$\log_{10}\sigma_3(J_{xyz})$",
+            log=True,
+            save_path=run_dir / "map_sigma3_xyz_log10.png",
+        )
+
+        # -------------------------------------------------
+        # Planar xy conditioning and manipulability
+        # -------------------------------------------------
+        plot_map(
+            Jcond_xy_map,
+            "Planar xy pose Jacobian conditioning",
+            r"$\log_{10}\kappa(J_{xy})$",
+            log=True,
+            save_path=run_dir / "map_cond_xy_log10.png",
+        )
+
+        plot_map(
+            manip_xy_map,
+            "Planar xy pose manipulability",
+            r"$\log_{10}(\sigma_1\sigma_2)$",
+            log=True,
+            save_path=run_dir / "map_manip_xy_log10.png",
+        )
+
+        plot_map(
+            sigma2_xy_map,
+            "Weakest planar xy singular value",
+            r"$\log_{10}\sigma_2(J_{xy})$",
+            log=True,
+            save_path=run_dir / "map_sigma2_xy_log10.png",
+        )

@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0009,   # or 0.001, but use one value everywhere
+        r_beam=0.0008,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -545,7 +545,7 @@ def build_forward_model_no_lumen_effect(
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
 
         # Use physical full tip length, not current inserted tip length
         L_tip_full=0.04,
@@ -1437,7 +1437,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.015
+    L0 = 0.0225
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)

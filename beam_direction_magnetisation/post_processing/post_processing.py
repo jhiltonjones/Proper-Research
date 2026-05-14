@@ -746,49 +746,308 @@ def _set_axes_equal_about_data(ax, X):
         ax.set_box_aspect([1, 1, 1])
     except Exception:
         pass
-
-
-def plot_centerlines_with_lumen_3d(p_bvp, p_energy, lumen_C=None, lumen_R=None,
-                                  p0=None, p_straight=None, title="Centerline + Lumen"):
+def plot_centerlines_no_lumen_3d(
+    p_bvp,
+    p_energy,
+    lumen_C=None,
+    lumen_R=None,
+    p0=None,
+    p_straight=None,
+    r_src=None,
+    q_src=None,
+    contact=None,
+    show_beam_tube=True,
+    title="Centerline comparison",
+    save_path=None,
+    show=True,
+):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    # --- plot ---
-    ax.plot(p_bvp[0], p_bvp[1], p_bvp[2], label="Cosserat BVP")
-    ax.plot(p_energy[0], p_energy[1], p_energy[2], "--", label="Energy-min (3D)")
+    # -------------------------------------------------
+    # Beam centreline comparison
+    # -------------------------------------------------
+    if p_bvp is not None:
+        ax.plot(
+            p_bvp[0],
+            p_bvp[1],
+            p_bvp[2],
+            "-",
+            linewidth=2.0,
+            label="Cosserat BVP",
+        )
+
+    if p_energy is not None:
+        ax.plot(
+            p_energy[0],
+            p_energy[1],
+            p_energy[2],
+            "--",
+            linewidth=2.0,
+            label="Energy minimisation",
+        )
 
     if p_straight is not None:
-        ax.plot(p_straight[0], p_straight[1], p_straight[2], ":", label="Straight baseline")
+        ax.plot(
+            p_straight[0],
+            p_straight[1],
+            p_straight[2],
+            ":",
+            linewidth=1.5,
+            label="Straight baseline",
+        )
+
     if p0 is not None:
-        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
+        ax.scatter(
+            [p0[0]],
+            [p0[1]],
+            [p0[2]],
+            marker="o",
+            label="Base",
+        )
 
-    if (lumen_C is not None) and (lumen_R is not None):
-        C = np.asarray(lumen_C, float)
-        ax.plot(C[:,0], C[:,1], C[:,2], label="Lumen centerline")
-        plot_lumen_rings(ax, C, np.asarray(lumen_R, float), n_theta=28, alpha=0.2)
+    # -------------------------------------------------
+    # External magnet
+    # -------------------------------------------------
+    if r_src is not None:
+        r_src = np.asarray(r_src, float).reshape(3,)
 
-        p_tip = p_energy[:, -1]
-        d, i, t, q = point_to_polyline_distance(p_tip, C)
-        ax.scatter([p_tip[0]], [p_tip[1]], [p_tip[2]], marker="^", label="Energy tip")
-        ax.scatter([q[0]], [q[1]], [q[2]], marker="x", label="Closest lumen point")
-        ax.plot([p_tip[0], q[0]], [p_tip[1], q[1]], [p_tip[2], q[2]], linewidth=1.0)
+        ax.scatter(
+            [r_src[0]],
+            [r_src[1]],
+            [r_src[2]],
+            marker="*",
+            s=120,
+            label="External magnet",
+        )
 
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
+        ax.text(
+            r_src[0],
+            r_src[1],
+            r_src[2],
+            f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
+        )
+
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_zlabel("z [m]")
     ax.legend()
     ax.set_title(title)
 
-    # --- set view AFTER plotting, using all data ---
+    # -------------------------------------------------
+    # Axis scaling
+    # -------------------------------------------------
     pts = []
-    pts.append(p_bvp.T)
-    pts.append(p_energy.T)
+
+    if p_energy is not None:
+        pts.append(np.asarray(p_energy, float).T)
+
+
+    if p_bvp is not None:
+        pts.append(np.asarray(p_bvp, float).T)
+
     if p_straight is not None:
-        pts.append(p_straight.T)
+        pts.append(np.asarray(p_straight, float).T)
+
     if p0 is not None:
-        pts.append(np.asarray(p0, float).reshape(1,3))
+        pts.append(np.asarray(p0, float).reshape(1, 3))
+
     if lumen_C is not None:
         pts.append(np.asarray(lumen_C, float))
+
+    if pts:
+        all_pts = np.vstack(pts)
+        _set_axes_equal_about_data(ax, all_pts)
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig, ax
+
+def plot_centerlines_with_lumen_3d(
+    p_bvp,
+    p_energy,
+    lumen_C=None,
+    lumen_R=None,
+    p0=None,
+    p_straight=None,
+    r_src=None,
+    q_src=None,
+    contact=None,
+    show_beam_tube=True,
+    title="Centerline + Lumen",
+):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # -------------------------------------------------
+    # Beam centreline + physical beam diameter
+    # -------------------------------------------------
+    ax.plot(
+        p_energy[0],
+        p_energy[1],
+        p_energy[2],
+        "--",
+        linewidth=1.5,
+        label="Beam centreline",
+    )
+
+    if show_beam_tube and contact is not None:
+        plot_tube_along_centerline(
+            ax,
+            p_energy,
+            radius=float(contact.r_beam),
+            n_theta=28,
+            alpha=0.45,
+            label=f"Beam body, radius={1e3 * contact.r_beam:.1f} mm",
+        )
+
+    if p_straight is not None:
+        ax.plot(
+            p_straight[0],
+            p_straight[1],
+            p_straight[2],
+            ":",
+            linewidth=1.5,
+            label="Straight baseline",
+        )
+
+    if p0 is not None:
+        ax.scatter(
+            [p0[0]],
+            [p0[1]],
+            [p0[2]],
+            marker="o",
+            label="Base",
+        )
+    if p_bvp is not None:
+        ax.plot(
+            p_bvp[0],
+            p_bvp[1],
+            p_bvp[2],
+            "-",
+            linewidth=2.0,
+            label="Cosserat BVP",
+        )
+
+    ax.plot(
+        p_energy[0],
+        p_energy[1],
+        p_energy[2],
+        "--",
+        linewidth=2.0,
+        label="Energy minimisation",
+    )
+    # -------------------------------------------------
+    # Lumen wall
+    # -------------------------------------------------
+    if (lumen_C is not None) and (lumen_R is not None):
+        C = np.asarray(lumen_C, float)
+        R_lum = np.asarray(lumen_R, float)
+
+        ax.plot(
+            C[:, 0],
+            C[:, 1],
+            C[:, 2],
+            label="Lumen centerline",
+        )
+
+        plot_lumen_rings(
+            ax,
+            C,
+            R_lum,
+            n_theta=28,
+            alpha=0.18,
+        )
+
+        # Tip and closest lumen point
+        p_tip = p_energy[:, -1]
+        d, i, t, q = point_to_polyline_distance(p_tip, C)
+
+        ax.scatter(
+            [p_tip[0]],
+            [p_tip[1]],
+            [p_tip[2]],
+            marker="^",
+            label="Energy tip",
+        )
+
+        ax.scatter(
+            [q[0]],
+            [q[1]],
+            [q[2]],
+            marker="x",
+            label="Closest lumen point",
+        )
+
+        ax.plot(
+            [p_tip[0], q[0]],
+            [p_tip[1], q[1]],
+            [p_tip[2], q[2]],
+            linewidth=1.0,
+        )
+
+    # -------------------------------------------------
+    # External magnet
+    # -------------------------------------------------
+    if r_src is not None:
+        r_src = np.asarray(r_src, float).reshape(3,)
+
+        ax.scatter(
+            [r_src[0]],
+            [r_src[1]],
+            [r_src[2]],
+            marker="*",
+            s=120,
+            label="External magnet",
+        )
+
+        ax.text(
+            r_src[0],
+            r_src[1],
+            r_src[2],
+            f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
+        )
+
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_zlabel("z [m]")
+    ax.legend()
+    ax.set_title(title)
+
+    # -------------------------------------------------
+    # Axis scaling
+    # -------------------------------------------------
+    pts = []
+    pts.append(p_energy.T)
+
+    if show_beam_tube and contact is not None:
+        # Include approximate beam tube extent in view limits
+        r = float(contact.r_beam)
+        pts.append(p_energy.T + np.array([[r, 0.0, 0.0]]))
+        pts.append(p_energy.T - np.array([[r, 0.0, 0.0]]))
+        pts.append(p_energy.T + np.array([[0.0, r, 0.0]]))
+        pts.append(p_energy.T - np.array([[0.0, r, 0.0]]))
+        pts.append(p_energy.T + np.array([[0.0, 0.0, r]]))
+        pts.append(p_energy.T - np.array([[0.0, 0.0, r]]))
+
+    if p_straight is not None:
+        pts.append(p_straight.T)
+
+    if p0 is not None:
+        pts.append(np.asarray(p0, float).reshape(1, 3))
+
+    if lumen_C is not None:
+        pts.append(np.asarray(lumen_C, float))
+
+    # Optional: do not include magnet in view if it makes local geometry unreadable.
+    # if r_src is not None:
+    #     pts.append(np.asarray(r_src, float).reshape(1, 3))
 
     all_pts = np.vstack(pts)
     _set_axes_equal_about_data(ax, all_pts)
@@ -817,7 +1076,66 @@ def closest_point_on_segment(p, a, b):
     t = np.clip(t, 0.0, 1.0)
     q = a + t * ab
     return q, t
+def plot_tube_along_centerline(ax, P, radius, *, n_theta=24, alpha=0.45, label=None):
+    """
+    Plot a tube of given radius around a 3 x N centreline P.
+    """
+    P = np.asarray(P, float)
+    assert P.shape[0] == 3
+    N = P.shape[1]
 
+    # Tangents
+    T = np.zeros_like(P)
+    T[:, 1:-1] = P[:, 2:] - P[:, :-2]
+    T[:, 0] = P[:, 1] - P[:, 0]
+    T[:, -1] = P[:, -1] - P[:, -2]
+    T /= np.linalg.norm(T, axis=0, keepdims=True) + 1e-12
+
+    # Build normal/binormal frames
+    Nvec = np.zeros_like(P)
+    Bvec = np.zeros_like(P)
+
+    ref = np.array([0.0, 0.0, 1.0])
+
+    for i in range(N):
+        t = T[:, i]
+
+        # Avoid degeneracy if tangent almost parallel to ref
+        if abs(np.dot(t, ref)) > 0.9:
+            ref_i = np.array([0.0, 1.0, 0.0])
+        else:
+            ref_i = ref
+
+        n = np.cross(t, ref_i)
+        n /= np.linalg.norm(n) + 1e-12
+
+        b = np.cross(t, n)
+        b /= np.linalg.norm(b) + 1e-12
+
+        Nvec[:, i] = n
+        Bvec[:, i] = b
+
+    theta = np.linspace(0.0, 2.0 * np.pi, n_theta)
+
+    X = np.zeros((N, n_theta))
+    Y = np.zeros((N, n_theta))
+    Z = np.zeros((N, n_theta))
+
+    for i in range(N):
+        ring = (
+            P[:, i, None]
+            + radius * np.cos(theta)[None, :] * Nvec[:, i, None]
+            + radius * np.sin(theta)[None, :] * Bvec[:, i, None]
+        )
+        X[i, :] = ring[0]
+        Y[i, :] = ring[1]
+        Z[i, :] = ring[2]
+
+    ax.plot_surface(X, Y, Z, alpha=alpha, linewidth=0, shade=False)
+
+    if label is not None:
+        # Dummy handle for legend
+        ax.plot([], [], [], linewidth=6, alpha=alpha, label=label)
 def maybe_plot_summary(k_hist, pred1_hist, svd_S_hist, svd_cond_hist):
     K = np.asarray(k_hist)
     pred1 = np.asarray(pred1_hist)

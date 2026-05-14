@@ -3382,7 +3382,7 @@ def build_controller(
     mpc.Rd = np.diag([1e-4] * 7)
 
     mpc.enable_mag_center_standoff = True
-    mpc.enable_mag_tangent_inline = True
+    mpc.enable_mag_tangent_inline = False
     mpc.enable_dipole_align = False
     mpc.enable_hard_epm_tip_clearance = True
 

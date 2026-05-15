@@ -1166,7 +1166,7 @@ def reconstruct_beam_within_vessel(
     green_result = get_saved_2_point_calibration("/home/jack/Proper-Research/calibration_points.json")
     green_pt1, green_pt2 = green_result["points_px"]
     
-    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=17)
+    mm_per_pixel = compute_mm_per_pixel(green_pt1, green_pt2, known_distance_mm=15)
     red_area = load_search_area(red_roi_path)
     # --- red markers / beam tip state ---
     red_box = red_area["box"] if (red_area is not None and red_area["type"] == "box") else None
@@ -1587,7 +1587,7 @@ def detect_2_green_calibration_points(
         "mask": mask,
         "mode": mode,
     }
-def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=17):
+def compute_mm_per_pixel(p1_px, p2_px, known_distance_mm=15):
     p1 = np.array(p1_px, dtype=np.float32)
     p2 = np.array(p2_px, dtype=np.float32)
 
@@ -1784,7 +1784,8 @@ def measure_tip_state_4markers(
         pivot_hint=pivot_hint
     )
 
-    base_px = base_c["point"]
+    # base_px = base_c["point"]
+    base_px = (319,322)
     mag_start_px = None if mag_start_c is None else mag_start_c["point"]
     tangent_start_px = tangent_start_c["point"]
     tip_px = tip_c["point"]

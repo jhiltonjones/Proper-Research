@@ -855,7 +855,7 @@ class mpc_controller_tipxy_LTI:
         self.dipole_body_axis = np.array([1.0, 0.0, 0.0])  # or [0,0,1
         self.enable_mag_center_standoff = True
         self.w_mag_center_standoff = 12
-        self.mag_center_standoff_m = 0.13
+        self.mag_center_standoff_m = 0.14
         self.dL_back_max = 0.01      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         from collections import deque
@@ -1508,7 +1508,7 @@ class mpc_controller_tipxy_LTI:
             self.i_ref_progress = target_start
 
             ref_ahead = int(getattr(self, "ref_ahead_pts", 5))
-            ref_stride = int(getattr(self, "ref_stride_pts", 5))
+            ref_stride = int(getattr(self, "ref_stride_pts", 7))
 
             idx_ref = np.clip(
                 target_start + ref_ahead + ref_stride * np.arange(Np),
@@ -3124,9 +3124,9 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.0193
+    L0 = 0.0181
     pivot_point = np.array([
-    0.8481328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     # pivot_point = np.array([
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
@@ -3162,7 +3162,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.01
+    dt = 0.02
     return pivot_point, start_point, L0, dt
 
 
@@ -3294,12 +3294,12 @@ def build_controller(
     ], dtype=float)
 
     w_u = np.array([
-        1e-5,   # vx
-        1e-5,   # vy
+        1e-6,   # vx
+        1e-6,   # vy
         1e-4,   # vz
         5e-1,   # wx
         5e-1,   # wy
-        5e-3,   # wz
+        5e-4,   # wz
         1e-4,   # vL
     ], dtype=float)
 
@@ -3705,7 +3705,7 @@ def run_control(
                 L_est = L_model
                 L_source = "model_only_bad_vision"
             else:
-                max_correction_per_frame = 0.001  # 0.3 mm
+                max_correction_per_frame = 0.0004  # 0.3 mm
                 alpha_L = 1
 
                 L_err = L_vision_raw - L_model

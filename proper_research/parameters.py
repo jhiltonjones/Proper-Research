@@ -60,7 +60,7 @@ def default_beam_params():
     r = 0.001
     # E = 12e5
     # E=7e5
-    E = 5e5
+    E = 7e5
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4
     phi_intit = np.deg2rad(10)

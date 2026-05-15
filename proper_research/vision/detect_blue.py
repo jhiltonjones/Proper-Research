@@ -556,7 +556,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
 
             left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
                 centerline_clicked_px,
-                radius_px=16.0,
+                radius_px=14.0,
                 samples_per_segment=30,
             )
 
@@ -565,7 +565,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                 left_boundary_px=left_boundary_px,
                 right_boundary_px=right_boundary_px,
                 camera_index=0,
-                radius_px=16.0,
+                radius_px=14.0,
             )
 
             redraw()

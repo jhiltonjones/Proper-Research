@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0011,   # or 0.001, but use one value everywhere
+        r_beam=0.001,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -1437,7 +1437,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.03518
+    L0 = 0.034
     pivot_point = np.array([
     0.8481328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -2902,7 +2902,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=17,
+        known_green_distance_mm=15,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

@@ -1507,8 +1507,8 @@ class mpc_controller_tipxy_LTI:
             target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
-            ref_ahead = int(getattr(self, "ref_ahead_pts", 6))
-            ref_stride = int(getattr(self, "ref_stride_pts", 6))
+            ref_ahead = int(getattr(self, "ref_ahead_pts", 5))
+            ref_stride = int(getattr(self, "ref_stride_pts", 5))
 
             idx_ref = np.clip(
                 target_start + ref_ahead + ref_stride * np.arange(Np),
@@ -3124,9 +3124,9 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.0165
+    L0 = 0.0193
     pivot_point = np.array([
-    0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
+    0.8481328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
     # pivot_point = np.array([
     # 0.8081328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
@@ -3364,7 +3364,7 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=1,
+        Np=5,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -3470,7 +3470,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 1
+    mpc_replan_every = 5
 
 
 
@@ -4188,7 +4188,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         maxiter=40,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=False,
+        use_lumen_jac=True,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,

@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
         # robo.go_home_joint()
         # # posy[2]+=0.2
-        new_pose = get_point(0,-70)
+        new_pose = get_point(0,0)
         robo.moveL(new_pose)
         # q0 = np.array([-0.6708453337298792, -2.5134712658324183, -1.0908514261245728, -1.107888327246048, 1.5738656520843506, 4.485052585601807])
         # robo.moveJ(q0)

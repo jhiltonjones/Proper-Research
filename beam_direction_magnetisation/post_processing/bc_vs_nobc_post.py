@@ -1,46 +1,57 @@
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from io import StringIO
 from pathlib import Path
+from io import StringIO
 
 # ------------------------------------------------------------
 # Output folder
 # ------------------------------------------------------------
-out_dir = Path("mpc_boundary_condition_figures")
+out_dir = Path("mpc_boundary_condition_figures_run2")
 out_dir.mkdir(exist_ok=True)
 
 # ------------------------------------------------------------
-# CSV file paths
+# Option A: load from file paths
 # ------------------------------------------------------------
-with_bc_path = Path("/home/jack/Proper-Research/control_run_log_test_run_testing copy 6.csv")
-without_bc_path = Path("/home/jack/Proper-Research/control_run_log_test_run_testing.csv")
+use_file_paths = True
+
+with_bc_path = Path("/home/jack/Proper-Research/control_run_log_test_run_testing copy 12.csv")
+without_bc_path = Path("/home/jack/Proper-Research/control_run_log_test_run_testing copy 9.csv")
 
 # ------------------------------------------------------------
-# Load data from files
+# Option B: paste CSV text directly
 # ------------------------------------------------------------
-with_bc = pd.read_csv(with_bc_path)
-without_bc = pd.read_csv(without_bc_path)
+with_bc_csv = r"""
+PASTE_WITH_BOUNDARY_CONDITIONS_CSV_HERE
+"""
 
-# Clean column names in case there are hidden spaces
+without_bc_csv = r"""
+PASTE_WITHOUT_BOUNDARY_CONDITIONS_CSV_HERE
+"""
+
+# ------------------------------------------------------------
+# Load data
+# ------------------------------------------------------------
+if use_file_paths:
+    with_bc = pd.read_csv(with_bc_path)
+    without_bc = pd.read_csv(without_bc_path)
+else:
+    with_bc = pd.read_csv(StringIO(with_bc_csv.strip()))
+    without_bc = pd.read_csv(StringIO(without_bc_csv.strip()))
+
+# Clean column names
 with_bc.columns = with_bc.columns.str.strip()
 without_bc.columns = without_bc.columns.str.strip()
-
-print("With-BC columns:")
-print(with_bc.columns.tolist())
-
-print("\nWithout-BC columns:")
-print(without_bc.columns.tolist())
 
 with_bc["condition"] = "With boundary conditions"
 without_bc["condition"] = "Without boundary conditions"
 
-df = pd.concat([with_bc, without_bc], ignore_index=True)
-
 # ------------------------------------------------------------
-# Ensure numeric columns are numeric
+# Numeric conversion
 # ------------------------------------------------------------
 numeric_cols = [
+    "step",
     "meas_ref_err_xy",
     "raw_model_err_xy",
     "one_step_pred_err_xy",
@@ -53,99 +64,171 @@ numeric_cols = [
     "i_ref",
 ]
 
-for col in numeric_cols:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+for d in [with_bc, without_bc]:
+    for col in numeric_cols:
+        if col in d.columns:
+            d[col] = pd.to_numeric(d[col], errors="coerce")
+
+df = pd.concat([with_bc, without_bc], ignore_index=True)
 
 # ------------------------------------------------------------
-# Summary statistics
+# Check columns
 # ------------------------------------------------------------
-def summarize_condition(data, condition_name):
-    d = data[data["condition"] == condition_name].copy()
+required_cols = [
+    "step",
+    "pred_meas_err_xy",
+    "one_step_pred_err_xy",
+    "raw_model_err_xy",
+    "closest_distance_mm",
+]
 
-    summary = {
-        "Condition": condition_name,
+missing = [c for c in required_cols if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing required columns: {missing}\nAvailable columns:\n{df.columns.tolist()}")
 
+# ------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------
+def safe_mean(d, col):
+    return pd.to_numeric(d[col], errors="coerce").mean() if col in d.columns else np.nan
+
+def safe_median(d, col):
+    return pd.to_numeric(d[col], errors="coerce").median() if col in d.columns else np.nan
+
+def safe_max(d, col):
+    return pd.to_numeric(d[col], errors="coerce").max() if col in d.columns else np.nan
+
+def safe_min(d, col):
+    return pd.to_numeric(d[col], errors="coerce").min() if col in d.columns else np.nan
+
+def safe_last(d, col):
+    if col not in d.columns:
+        return np.nan
+    s = pd.to_numeric(d[col], errors="coerce").dropna()
+    return s.iloc[-1] if len(s) else np.nan
+
+def summarize(d, label):
+    return {
+        "Condition": label,
         "Steps": len(d),
+        "Step min": safe_min(d, "step"),
+        "Step max": safe_max(d, "step"),
 
-        "Mean measured-reference error [mm]": d["meas_ref_err_xy"].mean(),
-        "Max measured-reference error [mm]": d["meas_ref_err_xy"].max(),
+        "Mean measured-reference error [mm]": safe_mean(d, "meas_ref_err_xy"),
+        "Max measured-reference error [mm]": safe_max(d, "meas_ref_err_xy"),
 
-        "Mean predicted-measured error [mm]": d["pred_meas_err_xy"].mean(),
-        "Max predicted-measured error [mm]": d["pred_meas_err_xy"].max(),
+        "Mean predicted-measured error [mm]": safe_mean(d, "pred_meas_err_xy"),
+        "Median predicted-measured error [mm]": safe_median(d, "pred_meas_err_xy"),
+        "Max predicted-measured error [mm]": safe_max(d, "pred_meas_err_xy"),
 
-        "Mean one-step prediction error [mm]": d["one_step_pred_err_xy"].mean(),
-        "Max one-step prediction error [mm]": d["one_step_pred_err_xy"].max(),
+        "Mean one-step prediction error [mm]": safe_mean(d, "one_step_pred_err_xy"),
+        "Max one-step prediction error [mm]": safe_max(d, "one_step_pred_err_xy"),
 
-        "Mean raw model error [mm]": d["raw_model_err_xy"].mean(),
-        "Max raw model error [mm]": d["raw_model_err_xy"].max(),
+        "Mean raw model error [mm]": safe_mean(d, "raw_model_err_xy"),
+        "Median raw model error [mm]": safe_median(d, "raw_model_err_xy"),
+        "Max raw model error [mm]": safe_max(d, "raw_model_err_xy"),
 
-        "Mean prediction-reference error [mm]": d["pred_ref_err_xy"].mean(),
-        "Max prediction-reference error [mm]": d["pred_ref_err_xy"].max(),
+        "Mean prediction-reference error [mm]": safe_mean(d, "pred_ref_err_xy"),
+        "Max prediction-reference error [mm]": safe_max(d, "pred_ref_err_xy"),
 
-        "Mean wall clearance [mm]": d["closest_distance_mm"].mean(),
-        "Minimum wall clearance [mm]": d["closest_distance_mm"].min(),
+        "Mean wall clearance [mm]": safe_mean(d, "closest_distance_mm"),
+        "Minimum wall clearance [mm]": safe_min(d, "closest_distance_mm"),
 
-        "Mean Jacobian gain": d["jac_gain_real_over_pred"].mean(),
-        "Mean Jacobian directional cosine": d["jac_cos_xy"].mean(),
-        "Mean Jacobian XY error [mm]": d["jac_err_xy_mm"].mean(),
-        "Max Jacobian XY error [mm]": d["jac_err_xy_mm"].max(),
+        "Mean Jacobian gain": safe_mean(d, "jac_gain_real_over_pred"),
+        "Median Jacobian gain": safe_median(d, "jac_gain_real_over_pred"),
+        "Mean Jacobian directional cosine": safe_mean(d, "jac_cos_xy"),
+        "Mean Jacobian XY error [mm]": safe_mean(d, "jac_err_xy_mm"),
+        "Max Jacobian XY error [mm]": safe_max(d, "jac_err_xy_mm"),
 
-        "Final reference index": d["i_ref"].dropna().iloc[-1],
+        "Final reference index": safe_last(d, "i_ref"),
     }
 
-    return summary
-
-summary = pd.DataFrame(
+# ------------------------------------------------------------
+# Full-run summary
+# ------------------------------------------------------------
+summary_full = pd.DataFrame(
     [
-        summarize_condition(df, "With boundary conditions"),
-        summarize_condition(df, "Without boundary conditions"),
+        summarize(with_bc, "With boundary conditions"),
+        summarize(without_bc, "Without boundary conditions"),
     ]
 )
 
 # ------------------------------------------------------------
-# Convert to long comparison table
+# Common-step summary
+# This is the fairest comparison when the runs have different lengths.
 # ------------------------------------------------------------
-comparison_rows = []
+max_common_step = min(
+    safe_max(with_bc, "step"),
+    safe_max(without_bc, "step"),
+)
 
+with_bc_common = with_bc[with_bc["step"] <= max_common_step].copy()
+without_bc_common = without_bc[without_bc["step"] <= max_common_step].copy()
+
+summary_common = pd.DataFrame(
+    [
+        summarize(with_bc_common, "With boundary conditions"),
+        summarize(without_bc_common, "Without boundary conditions"),
+    ]
+)
+
+summary_full.to_csv(out_dir / "run2_summary_full.csv", index=False)
+summary_common.to_csv(out_dir / "run2_summary_common_steps.csv", index=False)
+
+print("\nFull-run summary:")
+print(summary_full.T)
+
+print("\nCommon-step summary:")
+print(summary_common.T)
+
+# ------------------------------------------------------------
+# Long comparison table from common-step summary
+# ------------------------------------------------------------
 metrics_to_compare = [
-    "Mean measured-reference error [mm]",
-    "Max measured-reference error [mm]",
     "Mean predicted-measured error [mm]",
+    "Median predicted-measured error [mm]",
     "Max predicted-measured error [mm]",
     "Mean one-step prediction error [mm]",
     "Max one-step prediction error [mm]",
     "Mean raw model error [mm]",
+    "Median raw model error [mm]",
     "Max raw model error [mm]",
-    "Mean prediction-reference error [mm]",
-    "Max prediction-reference error [mm]",
     "Mean wall clearance [mm]",
     "Minimum wall clearance [mm]",
     "Mean Jacobian gain",
+    "Median Jacobian gain",
     "Mean Jacobian directional cosine",
     "Mean Jacobian XY error [mm]",
     "Max Jacobian XY error [mm]",
 ]
 
-with_row = summary[summary["Condition"] == "With boundary conditions"].iloc[0]
-without_row = summary[summary["Condition"] == "Without boundary conditions"].iloc[0]
+with_row = summary_common[summary_common["Condition"] == "With boundary conditions"].iloc[0]
+without_row = summary_common[summary_common["Condition"] == "Without boundary conditions"].iloc[0]
+
+comparison_rows = []
 
 for metric in metrics_to_compare:
     with_val = with_row[metric]
     without_val = without_row[metric]
 
-    if "clearance" in metric.lower():
+    if pd.isna(with_val) or pd.isna(without_val):
+        change_text = "n/a"
+    elif "clearance" in metric.lower():
         change = with_val - without_val
         change_text = f"{change:+.3f} mm"
     elif "gain" in metric.lower():
-        change = abs(1.0 - without_val) - abs(1.0 - with_val)
-        change_text = "closer to 1" if change > 0 else "not closer to 1"
+        with_dist = abs(1.0 - with_val)
+        without_dist = abs(1.0 - without_val)
+        change_text = "closer to 1" if with_dist < without_dist else "farther from 1"
     elif "cosine" in metric.lower():
         change = with_val - without_val
         change_text = f"{change:+.3f}"
     else:
-        change = without_val / with_val if with_val != 0 else np.nan
-        change_text = f"{change:.2f}x lower" if change > 1 else f"{1/change:.2f}x higher"
+        if with_val == 0:
+            change_text = "n/a"
+        else:
+            ratio = without_val / with_val
+            change_text = f"{ratio:.2f}x lower" if ratio > 1 else f"{1/ratio:.2f}x higher"
 
     comparison_rows.append(
         {
@@ -156,25 +239,23 @@ for metric in metrics_to_compare:
         }
     )
 
-comparison = pd.DataFrame(comparison_rows)
+comparison_common = pd.DataFrame(comparison_rows)
+comparison_common.to_csv(out_dir / "run2_comparison_common_steps.csv", index=False)
 
-# Print summary tables
-pd.set_option("display.max_rows", 100)
-pd.set_option("display.width", 140)
-pd.set_option("display.precision", 4)
-
-print("\nSummary:")
-print(summary.T)
-
-print("\nComparison:")
-print(comparison)
-
-# Save CSV versions
-summary.to_csv(out_dir / "h1_60deg_summary.csv", index=False)
-comparison.to_csv(out_dir / "h1_60deg_comparison.csv", index=False)
+print("\nCommon-step comparison:")
+print(comparison_common)
 
 # ------------------------------------------------------------
-# Figure 1: representative prediction/model errors
+# Plot style helper
+# ------------------------------------------------------------
+def savefig(fig, name):
+    fig.tight_layout()
+    fig.savefig(out_dir / f"{name}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(out_dir / f"{name}.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+# ------------------------------------------------------------
+# Figure 1: selected prediction/model errors, common-step comparison
 # ------------------------------------------------------------
 error_metrics = pd.DataFrame(
     [
@@ -204,7 +285,7 @@ error_metrics = pd.DataFrame(
 x = np.arange(len(error_metrics))
 width = 0.36
 
-fig, ax = plt.subplots(figsize=(7.2, 4.2))
+fig, ax = plt.subplots(figsize=(7.4, 4.2))
 
 ax.bar(
     x - width / 2,
@@ -220,98 +301,19 @@ ax.bar(
     label="Without boundary conditions",
 )
 
-ax.set_title("One-step MPC prediction error in 60-degree vessel")
+ax.set_title("Prediction/model error comparison, common steps")
 ax.set_ylabel("Error [mm]")
 ax.set_xticks(x)
 ax.set_xticklabels(error_metrics["metric"], rotation=20, ha="right")
 ax.legend()
 ax.grid(axis="y", linestyle="--", alpha=0.4)
 
-fig.tight_layout()
-fig.savefig(out_dir / "h1_60deg_prediction_error_comparison.png", dpi=300, bbox_inches="tight")
-fig.savefig(out_dir / "h1_60deg_prediction_error_comparison.pdf", bbox_inches="tight")
-plt.close(fig)
+savefig(fig, "run2_prediction_model_error_common_steps")
 
 # ------------------------------------------------------------
-# Figure 2: wall clearance and Jacobian validity
+# Figure 2: raw model error time-series
 # ------------------------------------------------------------
-safety_metrics = pd.DataFrame(
-    [
-        {
-            "metric": "Mean wall clearance",
-            "with_bc": with_row["Mean wall clearance [mm]"],
-            "without_bc": without_row["Mean wall clearance [mm]"],
-            "ylabel": "Clearance [mm]",
-        },
-        {
-            "metric": "Minimum wall clearance",
-            "with_bc": with_row["Minimum wall clearance [mm]"],
-            "without_bc": without_row["Minimum wall clearance [mm]"],
-            "ylabel": "Clearance [mm]",
-        },
-    ]
-)
-
-x = np.arange(len(safety_metrics))
-width = 0.36
-
-fig, ax = plt.subplots(figsize=(6.5, 4.2))
-
-ax.bar(
-    x - width / 2,
-    safety_metrics["with_bc"],
-    width,
-    label="With boundary conditions",
-)
-
-ax.bar(
-    x + width / 2,
-    safety_metrics["without_bc"],
-    width,
-    label="Without boundary conditions",
-)
-
-ax.set_title("One-step MPC wall clearance in 60-degree vessel")
-ax.set_ylabel("Closest wall/centre distance [mm]")
-ax.set_xticks(x)
-ax.set_xticklabels(safety_metrics["metric"], rotation=15, ha="right")
-ax.legend()
-ax.grid(axis="y", linestyle="--", alpha=0.4)
-
-fig.tight_layout()
-fig.savefig(out_dir / "h1_60deg_wall_clearance_comparison.png", dpi=300, bbox_inches="tight")
-fig.savefig(out_dir / "h1_60deg_wall_clearance_comparison.pdf", bbox_inches="tight")
-plt.close(fig)
-
-# ------------------------------------------------------------
-# Figure 3: time-series prediction error
-# ------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7.0, 4.2))
-
-for condition, d in df.groupby("condition"):
-    ax.plot(
-        d["step"],
-        d["pred_meas_err_xy"],
-        marker="o",
-        linewidth=1.5,
-        label=condition,
-    )
-
-ax.set_title("Predicted-measured error over MPC steps")
-ax.set_xlabel("Step")
-ax.set_ylabel("Predicted-measured error [mm]")
-ax.legend()
-ax.grid(True, linestyle="--", alpha=0.4)
-
-fig.tight_layout()
-fig.savefig(out_dir / "h1_60deg_pred_meas_error_timeseries.png", dpi=300, bbox_inches="tight")
-fig.savefig(out_dir / "h1_60deg_pred_meas_error_timeseries.pdf", bbox_inches="tight")
-plt.close(fig)
-
-# ------------------------------------------------------------
-# Figure 4: raw model error over steps
-# ------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(7.0, 4.2))
+fig, ax = plt.subplots(figsize=(7.4, 4.2))
 
 for condition, d in df.groupby("condition"):
     ax.plot(
@@ -322,15 +324,83 @@ for condition, d in df.groupby("condition"):
         label=condition,
     )
 
+ax.axvline(max_common_step, linestyle="--", linewidth=1, label="End of common range")
 ax.set_title("Raw model error over MPC steps")
 ax.set_xlabel("Step")
 ax.set_ylabel("Raw model error [mm]")
 ax.legend()
 ax.grid(True, linestyle="--", alpha=0.4)
 
-fig.tight_layout()
-fig.savefig(out_dir / "h1_60deg_raw_model_error_timeseries.png", dpi=300, bbox_inches="tight")
-fig.savefig(out_dir / "h1_60deg_raw_model_error_timeseries.pdf", bbox_inches="tight")
-plt.close(fig)
+savefig(fig, "run2_raw_model_error_timeseries")
 
-print("\nSaved figures and tables in:", out_dir.resolve())
+# ------------------------------------------------------------
+# Figure 3: predicted-measured error time-series
+# ------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(7.4, 4.2))
+
+for condition, d in df.groupby("condition"):
+    ax.plot(
+        d["step"],
+        d["pred_meas_err_xy"],
+        marker="o",
+        linewidth=1.5,
+        label=condition,
+    )
+
+ax.axvline(max_common_step, linestyle="--", linewidth=1, label="End of common range")
+ax.set_title("Predicted-measured error over MPC steps")
+ax.set_xlabel("Step")
+ax.set_ylabel("Predicted-measured error [mm]")
+ax.legend()
+ax.grid(True, linestyle="--", alpha=0.4)
+
+savefig(fig, "run2_pred_meas_error_timeseries")
+
+# ------------------------------------------------------------
+# Figure 4: wall clearance time-series
+# ------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(7.4, 4.2))
+
+for condition, d in df.groupby("condition"):
+    ax.plot(
+        d["step"],
+        d["closest_distance_mm"],
+        marker="o",
+        linewidth=1.5,
+        label=condition,
+    )
+
+ax.axvline(max_common_step, linestyle="--", linewidth=1, label="End of common range")
+ax.set_title("Wall clearance over MPC steps")
+ax.set_xlabel("Step")
+ax.set_ylabel("Closest wall/centre distance [mm]")
+ax.legend()
+ax.grid(True, linestyle="--", alpha=0.4)
+
+savefig(fig, "run2_wall_clearance_timeseries")
+
+# ------------------------------------------------------------
+# Figure 5: Jacobian gain time-series
+# ------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(7.4, 4.2))
+
+for condition, d in df.groupby("condition"):
+    ax.plot(
+        d["step"],
+        d["jac_gain_real_over_pred"],
+        marker="o",
+        linewidth=1.5,
+        label=condition,
+    )
+
+ax.axhline(1.0, linestyle="--", linewidth=1, label="Ideal gain")
+ax.axvline(max_common_step, linestyle="--", linewidth=1, label="End of common range")
+ax.set_title("Realised Jacobian gain over MPC steps")
+ax.set_xlabel("Step")
+ax.set_ylabel("Realised/predicted displacement gain")
+ax.legend()
+ax.grid(True, linestyle="--", alpha=0.4)
+
+savefig(fig, "run2_jacobian_gain_timeseries")
+
+print("\nSaved all outputs in:", out_dir.resolve())

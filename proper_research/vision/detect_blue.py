@@ -276,7 +276,87 @@ def centerline_to_offset_boundaries(
         [tuple(map(float, p)) for p in right],
         [tuple(map(float, p)) for p in center],
     )
+def create_vessel_geometry_from_clicks(
+    center_points_roi,
+    left_points_roi,
+    right_points_roi,
+    to_full_px,
+    radius_px=16.0,
+    samples_per_segment=30,
+    boundary_samples=200,
+    smooth_iter=3,
+    mode="auto",
+):
+    """
+    Creates left boundary, right boundary, and centreline from either:
 
+    1. Clicked centreline:
+       - center_points_roi must contain at least 2 points.
+       - left/right boundaries are generated as offsets.
+
+    2. Clicked left and right boundaries:
+       - left_points_roi and right_points_roi must each contain at least 2 points.
+       - centreline is computed from paired wall samples.
+
+    mode:
+        "auto"       : prefer clicked centreline if available, otherwise use boundaries.
+        "centerline" : force centreline-first.
+        "boundaries" : force boundary-first.
+    """
+
+    if mode not in {"auto", "centerline", "boundaries"}:
+        raise ValueError(f"Unknown vessel creation mode: {mode}")
+
+    have_centerline = len(center_points_roi) >= 2
+    have_boundaries = len(left_points_roi) >= 2 and len(right_points_roi) >= 2
+
+    if mode == "centerline":
+        if not have_centerline:
+            raise ValueError("Need at least 2 centreline points for centreline mode.")
+
+    elif mode == "boundaries":
+        if not have_boundaries:
+            raise ValueError("Need at least 2 left and 2 right boundary points for boundary mode.")
+
+    elif mode == "auto":
+        if not have_centerline and not have_boundaries:
+            raise ValueError(
+                "Need either at least 2 centreline points, or at least 2 left and 2 right boundary points."
+            )
+
+    # ------------------------------------------------------------
+    # Mode 1: derive boundaries from clicked centreline
+    # ------------------------------------------------------------
+    if mode == "centerline" or (mode == "auto" and have_centerline):
+        centerline_clicked_px = [to_full_px(p) for p in center_points_roi]
+
+        left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
+            centerline_clicked_px,
+            radius_px=radius_px,
+            samples_per_segment=samples_per_segment,
+        )
+
+        creation_mode = "centerline"
+
+    # ------------------------------------------------------------
+    # Mode 2: derive centreline from clicked left/right boundaries
+    # ------------------------------------------------------------
+    else:
+        left_clicked_px = [to_full_px(p) for p in left_points_roi]
+        right_clicked_px = [to_full_px(p) for p in right_points_roi]
+
+        left_boundary_px, right_boundary_px, centerline_px, width_px = (
+            resample_smooth_boundaries_monotonic(
+                left_clicked_px,
+                right_clicked_px,
+                n_samples=boundary_samples,
+                smooth_iter=smooth_iter,
+            )
+        )
+
+        creation_mode = "boundaries"
+
+    return left_boundary_px, right_boundary_px, centerline_px, creation_mode
 def draw_centerline_radius_overlay(
     image_bgr,
     centerline_px,
@@ -389,8 +469,8 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
     base_point = {"pt": None}
     ref_point = {"pt": None}
 
-    current_mode = {"name": "base"}  # base, ref, left, right
-
+    current_mode = {"name": "base"}  # base, ref, left, right, center
+    vessel_creation_mode = {"name": "auto"}  # auto, centerline, boundaries
     window_name = "Draw vessel boundaries + local frame"
 
     def to_full_px(p_roi):
@@ -411,14 +491,22 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
 
         cv2.putText(
             vis,
-            "b=base | a=axis/ref | l=left wall | r=right wall | m=centerline | z=undo | c=clear | s=save | q=quit",
+            "b=base | a=axis/ref | l=left | r=right | m=center | 1=centerline mode | 2=boundary mode | 0=auto | z=undo | c=clear | s=save | q=quit""b=base | a=axis/ref | l=left | r=right | m=center | 1=centerline mode | 2=boundary mode | 0=auto | z=undo | c=clear | s=save | q=quit",
             (10, 48),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
             (255, 255, 255),
             1,
         )
-
+        cv2.putText(
+            vis,
+            f"Vessel creation: {vessel_creation_mode['name'].upper()}",
+            (10, 72),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (255, 255, 0),
+            1,
+        )
         if base_point["pt"] is not None:
             bx, by = base_point["pt"]
             cv2.circle(vis, (int(bx), int(by)), 6, (255, 0, 255), -1)
@@ -548,17 +636,26 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
             current_mode["name"] = "center"
             redraw()
         elif key == ord("v"):
-            if len(center_points) < 2:
-                print("[WARN] Need at least 2 centerline points before live overlay. Press m and click centerline.")
+            try:
+                left_boundary_px, right_boundary_px, centerline_px, used_creation_mode = (
+                    create_vessel_geometry_from_clicks(
+                        center_points_roi=center_points,
+                        left_points_roi=left_points,
+                        right_points_roi=right_points,
+                        to_full_px=to_full_px,
+                        radius_px=14.0,
+                        samples_per_segment=30,
+                        boundary_samples=200,
+                        smooth_iter=3,
+                        mode=vessel_creation_mode["name"],
+                    )
+                )
+            except ValueError as e:
+                print(f"[WARN] {e}")
+                print("[INFO] Need either centreline clicks or left/right boundary clicks before live overlay.")
                 continue
 
-            centerline_clicked_px = [to_full_px(p) for p in center_points]
-
-            left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
-                centerline_clicked_px,
-                radius_px=14.0,
-                samples_per_segment=30,
-            )
+            print(f"[LIVE] Overlay generated using: {used_creation_mode}")
 
             live_camera_centerline_overlay(
                 centerline_px=centerline_px,
@@ -596,7 +693,20 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
             elif mode == "ref":
                 ref_point["pt"] = None
             redraw()
+        elif key == ord("1"):
+            vessel_creation_mode["name"] = "centerline"
+            print("[INFO] Vessel creation mode: centreline -> offset boundaries")
+            redraw()
 
+        elif key == ord("2"):
+            vessel_creation_mode["name"] = "boundaries"
+            print("[INFO] Vessel creation mode: left/right boundaries -> centreline")
+            redraw()
+
+        elif key == ord("0"):
+            vessel_creation_mode["name"] = "auto"
+            print("[INFO] Vessel creation mode: auto")
+            redraw()
         elif key == ord("s"):
             if base_point["pt"] is None:
                 print("[WARN] Set base/origin first: press b, then click base.")
@@ -606,20 +716,29 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                 print("[WARN] Set reference axis first: press a, then click a point along desired +x.")
                 continue
 
-            if len(center_points) < 2:
-                print("[WARN] Need at least 2 centerline points. Press m and click the centerline.")
-                continue
-
             base_px_clicked = to_full_px(base_point["pt"])
             ref_px_clicked = to_full_px(ref_point["pt"])
 
-            centerline_clicked_px = [to_full_px(p) for p in center_points]
+            try:
+                left_boundary_px, right_boundary_px, centerline_px, used_creation_mode = (
+                    create_vessel_geometry_from_clicks(
+                        center_points_roi=center_points,
+                        left_points_roi=left_points,
+                        right_points_roi=right_points,
+                        to_full_px=to_full_px,
+                        radius_px=16.0,
+                        samples_per_segment=30,
+                        boundary_samples=200,
+                        smooth_iter=3,
+                        mode=vessel_creation_mode["name"],
+                    )
+                )
+            except ValueError as e:
+                print(f"[WARN] {e}")
+                print("[INFO] Either press m and click centreline, or press l/r and click both walls.")
+                continue
 
-            left_boundary_px, right_boundary_px, centerline_px = centerline_to_offset_boundaries(
-                centerline_clicked_px,
-                radius_px=16.0,
-                samples_per_segment=30,
-            )
+            print(f"[INFO] Created vessel geometry using: {used_creation_mode}")
 
             show_boundary_preview(
                 display,

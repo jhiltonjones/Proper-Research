@@ -1350,7 +1350,6 @@ def reconstruct_beam_within_vessel(
         "beam_length_px": beam_length_px,
         "mm_per_pixel": mm_per_pixel,
         "beam_length_mm": beam_length_mm,
-
         "lumen_C_m": lumen_C_m,
         "lumen_R_m": lumen_R_m,
         "lumen_C_mm": lumen_C_mm,
@@ -1785,7 +1784,7 @@ def measure_tip_state_4markers(
     )
 
     # base_px = base_c["point"]
-    base_px = (319,322)
+    base_px = (321,321)
     mag_start_px = None if mag_start_c is None else mag_start_c["point"]
     tangent_start_px = tangent_start_c["point"]
     tip_px = tip_c["point"]

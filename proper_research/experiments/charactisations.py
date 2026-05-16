@@ -440,7 +440,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 5  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 15  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.001,   # or 0.001, but use one value everywhere
+        r_beam=0.0013,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -541,7 +541,7 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=10,
+        N_nodes=12,
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
@@ -1437,7 +1437,7 @@ def offset_walls_from_centerline(C_m, R_m):
 
     return upper, lower
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
-    L0 = 0.034
+    L0 = 0.0175
     pivot_point = np.array([
     0.8481328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -1452,6 +1452,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
     start_point[2] = -0.1
 
+
     pose6=start_point
     # pose6 = hw.get_robot_pose_once()
     # pose6 = np.asarray(get_point(0, 20), dtype=float)
@@ -1462,6 +1463,29 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     p, q_wxyz = T_to_p_quat_wxyz(T)
 
     p_now = np.concatenate([p, q_wxyz, [L0]])
+    image_filename="focused_image.jpg"
+    red_roi_path="/home/jack/Proper-Research/custom_area.json"
+    blue_roi_path="blue_roi_box.json"
+    green_roi_path="green_roi_box.json"
+    pivot_hint=(321,321)
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+    new_capture()
+    roi_polygon = load_polygon(red_roi_path)
+    vision_result = reconstruct_beam_within_vessel(
+        image_filename=image_filename,
+        red_roi_polygon=roi_polygon,
+        blue_roi_path=blue_roi_path,
+        green_roi_path=green_roi_path,
+        pivot_hint=pivot_hint,
+        show=False,
+        save_overlay_path=None,
+        base_px_ref=manual["base_px"],
+        ex_ref=manual["ex_img"],
+        ey_ref=manual["ey_img"],
+    )
+    L0 = float(vision_result["beam_length_mm"])/1000
+
+    print(f"L0 {L0}")
     # ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
 
     # print("original pose6:", pose6)
@@ -2105,7 +2129,7 @@ def build_forward_model(
         ex_ref=ex_ref,
         ey_ref=ey_ref,
     )
-MAG_YAW_CAL_DEG = 5
+MAG_YAW_CAL_DEG = 15
 def clone_warm_forward_model(forward6d):
     """
     Make an independent warm forward model for Jacobian tests.
@@ -2891,7 +2915,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (321.200927734375, 331.6798095703125)
+    pivot_hint = (321.200927734375, 321.6798095703125)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -2902,7 +2926,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=15,
+        known_green_distance_mm=16,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

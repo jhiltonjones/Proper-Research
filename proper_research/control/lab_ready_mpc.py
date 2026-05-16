@@ -1489,7 +1489,7 @@ class mpc_controller_tipxy_LTI:
             # i0 = int(getattr(self, "i_ref_last", 0))
             # look = int(getattr(self, "ref_lookahead_pts", 2))
 
-            i_closest = int(getattr(self, "i_ref_last", 0))
+            i_closest = int(getattr(self, "i_ref_last", 400))
             i_prog = int(getattr(self, "i_ref_progress", i_closest))
 
             # never let progress fall behind closest point
@@ -1502,13 +1502,13 @@ class mpc_controller_tipxy_LTI:
             # if err_to_center > 0.001:
             #     target_start = i_prog
             # else:
-            advance = int(getattr(self, "ref_lookahead_pts", 2))
-            max_adv = int(getattr(self, "max_ref_advance_per_step", 2))
+            advance = int(getattr(self, "ref_lookahead_pts", 60))
+            max_adv = int(getattr(self, "max_ref_advance_per_step", 60))
             target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
-            ref_ahead = int(getattr(self, "ref_ahead_pts", 5))
-            ref_stride = int(getattr(self, "ref_stride_pts", 7))
+            ref_ahead = int(getattr(self, "ref_ahead_pts", 60))
+            ref_stride = int(getattr(self, "ref_stride_pts", 60))
 
             idx_ref = np.clip(
                 target_start + ref_ahead + ref_stride * np.arange(Np),
@@ -1885,7 +1885,7 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
 
             enable_hard_epm_tip_clearance = bool(getattr(self, "enable_hard_epm_tip_clearance", True))
-            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.12))
+            epm_tip_clearance_min_m = float(getattr(self, "epm_tip_clearance_min_m", 0.125))
 
             if enable_hard_epm_tip_clearance:
                 if "Pm" not in locals() or "r_nom" not in locals():
@@ -3124,7 +3124,29 @@ def analytic_J_robot_xy_yaw_dL(
 
 def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, float]:
 
-    L0 = 0.0181
+    image_filename="focused_image.jpg"
+    red_roi_path="/home/jack/Proper-Research/custom_area.json"
+    blue_roi_path="blue_roi_box.json"
+    green_roi_path="green_roi_box.json"
+    pivot_hint=(321,321)
+    manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
+    new_capture()
+    roi_polygon = load_polygon(red_roi_path)
+    vision_result = reconstruct_beam_within_vessel(
+        image_filename=image_filename,
+        red_roi_polygon=roi_polygon,
+        blue_roi_path=blue_roi_path,
+        green_roi_path=green_roi_path,
+        pivot_hint=pivot_hint,
+        show=False,
+        save_overlay_path=None,
+        base_px_ref=manual["base_px"],
+        ex_ref=manual["ex_img"],
+        ey_ref=manual["ey_img"],
+    )
+    L0 = float(vision_result["beam_length_mm"])/1000
+
+    print(f"L0 {L0}")
     pivot_point = np.array([
     0.8281328220229531, -0.6812731669220016, -0.1,  np.pi, 0.001,0.001
     ], float)
@@ -3162,7 +3184,10 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     start_point = robot_pose6
     print(f"START POINT: {start_point}")
     # L0 = 0.065
-    dt = 0.02
+    dt = 0.015
+
+
+    
     return pivot_point, start_point, L0, dt
 
 
@@ -3364,14 +3389,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=5,
+        Np=17,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="lti",
+        model_mode="ltv",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3470,7 +3495,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 5
+    mpc_replan_every = 15
 
 
 
@@ -3676,8 +3701,8 @@ def run_control(
         i_ref = closest_index_in_window_monotone(
             mpc.lumen_C,
             tip_xyz,
-            int(getattr(mpc, "i_ref_last", 0)),
-            window=int(getattr(mpc, "risk_window", 120)),
+            int(getattr(mpc, "i_ref_last", 400)),
+            window=int(getattr(mpc, "risk_window", 600)),
         )
         C = np.asarray(mpc.lumen_C, float)
         d2_all = np.sum((C - tip_xyz[None, :])**2, axis=1)
@@ -3705,7 +3730,7 @@ def run_control(
                 L_est = L_model
                 L_source = "model_only_bad_vision"
             else:
-                max_correction_per_frame = 0.0004  # 0.3 mm
+                max_correction_per_frame = 0.001  # 0.3 mm
                 alpha_L = 1
 
                 L_err = L_vision_raw - L_model
@@ -4135,7 +4160,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 15  # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -4167,7 +4192,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.001,
+        r_beam=0.0013,
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,

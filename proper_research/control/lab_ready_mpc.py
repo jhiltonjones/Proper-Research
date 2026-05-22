@@ -3459,7 +3459,7 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=7,
+        Np=1,
         n_out=6,
         n_u=7,
         n_p=8,
@@ -3571,7 +3571,7 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 5
+    mpc_replan_every = 1
     mpc.using_upgraded_nodes = False
     mpc.N_nodes_active = int(initial_N_nodes)
 
@@ -4345,7 +4345,7 @@ def build_forward_models_from_lumen(
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
-        use_lumen_jac=True,
+        use_lumen_jac=False,
         L_tip_full=0.04,
         L_tip_min=0.01,
         contact_params=contact,

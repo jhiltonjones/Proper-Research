@@ -440,7 +440,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 15  # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = 15 # try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0013,   # or 0.001, but use one value everywhere
+        r_beam=0.0011,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -541,7 +541,7 @@ def build_forward_model_no_lumen_effect(
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=12,
+        N_nodes=13,
         maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
@@ -2915,7 +2915,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (321.200927734375, 321.6798095703125)
+    pivot_hint = (313,321)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -2926,7 +2926,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=16,
+        known_green_distance_mm=15,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

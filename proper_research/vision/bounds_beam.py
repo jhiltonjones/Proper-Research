@@ -618,34 +618,34 @@ def draw_beam_and_vessel_overlay(
     # for i in range(len(beam_int) - 1):
     #     cv2.line(vis, beam_int[i], beam_int[i + 1], (255, 255, 255), 2)
 
-    # draw markers
-    if markers is not None:
-        color_map = {
-            "base_px": (255, 0, 0),
-            "mag_start_px": (0, 255, 255),
-            "tangent_start_px": (255, 0, 255),
-            "tip_px": (0, 0, 255),
-        }
-        for key, p in markers.items():
-            if p is None:
-                continue
-            if key not in color_map:
-                continue
+    # # draw markers
+    # if markers is not None:
+    #     color_map = {
+    #         "base_px": (255, 0, 0),
+    #         "mag_start_px": (0, 255, 255),
+    #         "tangent_start_px": (255, 0, 255),
+    #         "tip_px": (0, 0, 255),
+    #     }
+    #     for key, p in markers.items():
+    #         if p is None:
+    #             continue
+    #         if key not in color_map:
+    #             continue
 
-            x = int(round(p[0]))
-            y = int(round(p[1]))
+    #         x = int(round(p[0]))
+    #         y = int(round(p[1]))
 
-            cv2.circle(vis, (x, y), 6, color_map[key], -1)
-            cv2.putText(
-                vis, key.replace("_px", ""),
-                (x + 5, y - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
-            )
-            cv2.putText(
-                vis, key.replace("_px", ""),
-                (x + 5, y - 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
-            )
+    #         cv2.circle(vis, (x, y), 6, color_map[key], -1)
+    #         cv2.putText(
+    #             vis, key.replace("_px", ""),
+    #             (x + 5, y - 5),
+    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 5
+    #         )
+    #         cv2.putText(
+    #             vis, key.replace("_px", ""),
+    #             (x + 5, y - 5),
+    #             cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1
+    #         )
 
     # # draw closest wall tangent near the tip
     # if tip_wall_angle_info is not None:
@@ -1784,7 +1784,7 @@ def measure_tip_state_4markers(
     )
 
     # base_px = base_c["point"]
-    base_px = (321,321)
+    base_px = (313,318)
     mag_start_px = None if mag_start_c is None else mag_start_c["point"]
     tangent_start_px = tangent_start_c["point"]
     tip_px = tip_c["point"]

@@ -8,7 +8,7 @@ from io import StringIO
 # ------------------------------------------------------------
 # Output folder
 # ------------------------------------------------------------
-out_dir = Path("mpc_boundary_condition_figures_run5np")
+out_dir = Path("mpc_boundary_condition_figures_run_1np_1s")
 out_dir.mkdir(exist_ok=True)
 
 # ------------------------------------------------------------
@@ -16,8 +16,8 @@ out_dir.mkdir(exist_ok=True)
 # ------------------------------------------------------------
 use_file_paths = True
 
-with_bc_path = Path("/home/jack/Proper-Research/lti_60_5np_7s_bc.csv")
-without_bc_path = Path("/home/jack/Proper-Research/lti_60_5np_7s_nobc.csv")
+with_bc_path = Path("/home/jack/Proper-Research/lti_1np_3s_bc_60.csv")
+without_bc_path = Path("/home/jack/Proper-Research/control_run_log_test_run_testing.csv")
 
 # ------------------------------------------------------------
 # Option B: paste CSV text directly

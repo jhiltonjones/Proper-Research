@@ -1489,7 +1489,7 @@ class mpc_controller_tipxy_LTI:
             # i0 = int(getattr(self, "i_ref_last", 0))
             # look = int(getattr(self, "ref_lookahead_pts", 2))
 
-            i_closest = int(getattr(self, "i_ref_last", 400))
+            i_closest = int(getattr(self, "i_ref_last", 90))
             i_prog = int(getattr(self, "i_ref_progress", i_closest))
 
             # never let progress fall behind closest point
@@ -1502,13 +1502,13 @@ class mpc_controller_tipxy_LTI:
             # if err_to_center > 0.001:
             #     target_start = i_prog
             # else:
-            advance = int(getattr(self, "ref_lookahead_pts", 60))
-            max_adv = int(getattr(self, "max_ref_advance_per_step", 60))
+            advance = int(getattr(self, "ref_lookahead_pts", 3))
+            max_adv = int(getattr(self, "max_ref_advance_per_step", 4))
             target_start = min(i_prog + min(advance, max_adv), M - 1)
             self.i_ref_progress = target_start
 
-            ref_ahead = int(getattr(self, "ref_ahead_pts", 60))
-            ref_stride = int(getattr(self, "ref_stride_pts", 60))
+            ref_ahead = int(getattr(self, "ref_ahead_pts", 3))
+            ref_stride = int(getattr(self, "ref_stride_pts", 2))
 
             idx_ref = np.clip(
                 target_start + ref_ahead + ref_stride * np.arange(Np),
@@ -2537,7 +2537,7 @@ class mpc_controller_tipxy_LTI:
         info = dict(
             status=status_last,
             infeasible=int(infeas_final),
-
+            err_to_center = err_to_center.copy(),
             u0=u0.copy(),
             p_now=self.p.copy(),
             x_now=self.x.copy(),
@@ -3192,7 +3192,77 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
 
 
 
+def rebuild_controller_with_new_node_count(
+    old_mpc,
+    pivot_point,
+    current_robot_pose6,
+    current_L,
+    dt,
+    lumen_C_robot_m,
+    lumen_R_robot_m,
+    N_nodes_new,
+):
+    """
+    Rebuild the forward model and MPC controller with a new beam discretisation.
 
+    This is safer than changing old_mpc.forward_tip_fn.fwd.N_nodes in-place,
+    because the forward model and MPC wrappers may allocate internal arrays
+    based on N_nodes during construction.
+    """
+
+    print("[MODEL REBUILD] Rebuilding forward model and MPC")
+    print("[MODEL REBUILD] New N_nodes =", N_nodes_new)
+    print("[MODEL REBUILD] Current L [mm] =", 1000.0 * float(current_L))
+    print("[MODEL REBUILD] Current robot pose6 =", current_robot_pose6)
+
+    # Build new forward model using the same lumen but a new node count.
+    _, _, new_forward_model = build_forward_models_from_lumen(
+        pivot_point=pivot_point,
+        L0=float(current_L),
+        lumen_C=lumen_C_robot_m,
+        lumen_R=lumen_R_robot_m,
+        N_nodes=N_nodes_new,
+    )
+    current_robot_pose6[2]=-0.1
+    # Build a new MPC around the new forward model.
+    new_mpc, new_p0, new_p_min, new_p_max, new_u_max, new_forward6d = build_controller(
+        start_point=current_robot_pose6,
+        L0=float(current_L),
+        dt=dt,
+        forward_model=new_forward_model,
+        lumen_C=lumen_C_robot_m,
+        lumen_R=lumen_R_robot_m,
+    )
+
+    # Carry across the current actuator estimate if available.
+    # This prevents the rebuilt controller from jumping back to its initial state.
+    if hasattr(old_mpc, "p"):
+        try:
+            old_p = np.asarray(old_mpc.p, dtype=float).reshape(8,)
+            old_p = old_p.copy()
+            old_p[7] = float(current_L)
+
+            new_mpc.set_initial_params(old_p)
+
+            if hasattr(new_mpc, "set_measured_params"):
+                new_mpc.set_measured_params(old_p)
+
+            print("[MODEL REBUILD] Transferred old MPC p state.")
+        except Exception as e:
+            print(f"[MODEL REBUILD WARN] Could not transfer old MPC p state: {e}")
+
+    # Carry across reference-search memory.
+    if hasattr(old_mpc, "i_ref_last"):
+        new_mpc.i_ref_last = int(old_mpc.i_ref_last)
+
+    if hasattr(old_mpc, "risk_window"):
+        new_mpc.risk_window = int(old_mpc.risk_window)
+
+    # Mark the controller as upgraded.
+    new_mpc.using_upgraded_nodes = True
+    new_mpc.N_nodes_active = int(N_nodes_new)
+
+    return new_mpc, new_forward6d, new_p_min, new_p_max, new_u_max
 def hybrid_J_robot_xy_yaw_dL(
     *,
     p8,
@@ -3389,14 +3459,14 @@ def build_controller(
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d_pred,
         dt=dt,
-        Np=17,
+        Np=7,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(1000.0, 1000.0, 0.0, 0.0, 0.0, 0.0),
         w_u=w_u,
         w_du=w_du,
-        model_mode="ltv",
+        model_mode="lti",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
@@ -3484,6 +3554,12 @@ def run_control(
     lumen_C_robot_m=None,
     lumen_R_robot_m=None,
     csv_log_path="control_run_log_test_run_testing.csv",
+
+    # Dynamic forward-model resolution upgrade
+    enable_node_upgrade=True,
+    node_upgrade_ref_idx=130,
+    initial_N_nodes=12,
+    upgraded_N_nodes=24,
 ):
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     history = []
@@ -3495,8 +3571,9 @@ def run_control(
     prev_jac_test = None
     mpc_command_buffer = []
     mpc_pred_buffer = []
-    mpc_replan_every = 15
-
+    mpc_replan_every = 5
+    mpc.using_upgraded_nodes = False
+    mpc.N_nodes_active = int(initial_N_nodes)
 
 
     for k in range(max_steps):
@@ -3696,13 +3773,15 @@ def run_control(
         # print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
         # print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
         # print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
-
+        current_robot_pose6 = None
+        if hw is not None:
+            current_robot_pose6 = hw.get_robot_pose_once()
         tip_xyz = x_meas[:3]
         i_ref = closest_index_in_window_monotone(
             mpc.lumen_C,
             tip_xyz,
-            int(getattr(mpc, "i_ref_last", 400)),
-            window=int(getattr(mpc, "risk_window", 600)),
+            int(getattr(mpc, "i_ref_last", 70)),
+            window=int(getattr(mpc, "risk_window", 200)),
         )
         C = np.asarray(mpc.lumen_C, float)
         d2_all = np.sum((C - tip_xyz[None, :])**2, axis=1)
@@ -3710,8 +3789,52 @@ def run_control(
         print("[DBG] global closest index =", i_ref_global)
         print("[DBG] global closest dist [mm] =", 1000*np.sqrt(d2_all[i_ref_global]))
         # if k == 0:
+        # ------------------------------------------------------------
+        # Optional dynamic model-resolution upgrade
+        # ------------------------------------------------------------
+        if (
+            enable_node_upgrade
+            and int(i_ref_global) >= int(node_upgrade_ref_idx)
+            and getattr(mpc, "using_upgraded_nodes", False) is False
+        ):
+            if hw is None or current_robot_pose6 is None:
+                raise RuntimeError(
+                    "Cannot dynamically rebuild MPC without hardware robot pose. "
+                    "Pass hw, or disable enable_node_upgrade."
+                )
 
-        mpc.i_ref_last = int(i_ref)
+            # Use current MPC length estimate if available.
+            current_L_for_rebuild = float(np.asarray(mpc.p, dtype=float).reshape(8,)[7])
+
+            print(
+                f"[MODEL] i_ref_global={i_ref_global} >= {node_upgrade_ref_idx}. "
+                f"Upgrading forward model from N_nodes={getattr(mpc, 'N_nodes_active', 'unknown')} "
+                f"to N_nodes={upgraded_N_nodes}."
+            )
+
+            mpc, forward6d_pred_new, p_min_new, p_max_new, u_max_new = (
+                rebuild_controller_with_new_node_count(
+                    old_mpc=mpc,
+                    pivot_point=pivot_point,
+                    current_robot_pose6=current_robot_pose6,
+                    current_L=current_L_for_rebuild,
+                    dt=dt,
+                    lumen_C_robot_m=lumen_C_robot_m,
+                    lumen_R_robot_m=lumen_R_robot_m,
+                    N_nodes_new=upgraded_N_nodes,
+                )
+            )
+
+            # Clear open-loop plans and Jacobian diagnostics because the model changed.
+            mpc_command_buffer.clear()
+            mpc_pred_buffer.clear()
+            prev_jac_test = None
+
+            # Keep the reference memory at the detected location.
+            mpc.i_ref_last = int(i_ref_global)
+
+            print("[MODEL] Upgrade complete. Cleared buffered MPC commands.")
+        mpc.i_ref_last = int(i_ref_global)
         # print("[VISION] i_ref =", i_ref)
         # print("[VISION] lumen point at i_ref =", mpc.lumen_C[i_ref])
         print("[VISION] tip-to-reference distance [mm] =",
@@ -3720,7 +3843,7 @@ def run_control(
         mag_pos_current = np.array([np.nan, np.nan, np.nan], dtype=float)
         mag_dir_current = np.array([np.nan, np.nan, np.nan], dtype=float)
         if hw is not None:
-            robot_pose6 = hw.get_robot_pose_once()
+            robot_pose6 = current_robot_pose6
 
             L_model = float(mpc.p[7])
             L_vision_raw = float(vision_result["beam_length_mm"]) / 1000.0
@@ -3730,7 +3853,7 @@ def run_control(
                 L_est = L_model
                 L_source = "model_only_bad_vision"
             else:
-                max_correction_per_frame = 0.001  # 0.3 mm
+                max_correction_per_frame = 0.01  # 0.3 mm
                 alpha_L = 1
 
                 L_err = L_vision_raw - L_model
@@ -3827,6 +3950,7 @@ def run_control(
                 info.get("mpc_debug", {})
                     .get("penalties", {})
                     .get("track", None)
+
             )
         else:
             track_dbg = None
@@ -3839,7 +3963,7 @@ def run_control(
         ):
             X_pred_arr = np.asarray(info["X_pred"], float)
             n_pred = X_pred_arr.shape[1]
-
+            err_to_center = info["err_to_center"]
             X_ref_used = np.asarray(track_dbg["X_ref"], float).reshape(-1, n_pred)
             X_aff_stack = np.asarray(info["X_aff_last"], float).reshape(-1, n_pred)
 
@@ -4000,7 +4124,8 @@ def run_control(
             "model_bias_z": float(model_bias_xyz[2]),
 
             "i_ref": int(mpc.i_ref_last),
-
+            "N_nodes_active": int(getattr(mpc, "N_nodes_active", -1)),
+            "using_upgraded_nodes": bool(getattr(mpc, "using_upgraded_nodes", False)),
             "left_wall_tan_x": float(left_tan[0]),
             "left_wall_tan_y": float(left_tan[1]),
             "right_wall_tan_x": float(right_tan[0]),
@@ -4014,6 +4139,7 @@ def run_control(
 
             "beam_left_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"]),
             "beam_right_wall_angle_deg": float(vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"]),
+            "err_to_center": err_to_center,
         }
         row.update(jac_row)
         csv_rows.append(row)
@@ -4144,7 +4270,13 @@ def build_initial_lumen_from_vision(
     )[0]
 
     return lumen_C_robot_m, lumen_R_m, frame_origin_robot_m
-def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
+def build_forward_models_from_lumen(
+    pivot_point,
+    L0,
+    lumen_C,
+    lumen_R,
+    N_nodes=12,
+):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
 
@@ -4192,7 +4324,7 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         tors_soft=1.0,
     )
     contact = ContactParams(
-        r_beam=0.0013,
+        r_beam=0.0011,
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -4209,8 +4341,8 @@ def build_forward_models_from_lumen(pivot_point, L0, lumen_C, lumen_R):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=12,
-        maxiter=40,
+        N_nodes=N_nodes,
+        maxiter=30,
         L0_init=0.01,
         dL_internal=0.04,
         use_lumen_jac=True,
@@ -4320,6 +4452,7 @@ if __name__ == "__main__":
         L0=L0,
         lumen_C=lumen_C_robot_m,
         lumen_R=lumen_R_robot_m,
+        N_nodes=8,
     )
 
 
@@ -4351,6 +4484,11 @@ if __name__ == "__main__":
             hw=hw,
             save_plots=True,
             plot_dir="mpc_run_track_testing",
+
+            enable_node_upgrade=True,
+            node_upgrade_ref_idx=130,
+            initial_N_nodes=8,
+            upgraded_N_nodes=13,
         )
 
     finally:

@@ -4,7 +4,27 @@ import os
 import json
 
 MANUAL_VESSEL_BOUNDARY_FILE = "manual_vessel_boundaries.json"
+def resample_polyline_by_arclength(points, n_samples=200):
+    pts = np.asarray(points, dtype=float)
 
+    if len(pts) < 2:
+        raise ValueError("Need at least 2 points.")
+
+    seg = pts[1:] - pts[:-1]
+    seg_len = np.linalg.norm(seg, axis=1)
+
+    s = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = s[-1]
+
+    if total < 1e-12:
+        raise ValueError("Polyline length is too small.")
+
+    s_new = np.linspace(0.0, total, n_samples)
+
+    x_new = np.interp(s_new, s, pts[:, 0])
+    y_new = np.interp(s_new, s, pts[:, 1])
+
+    return [tuple(map(float, p)) for p in np.column_stack([x_new, y_new])]
 
 def unit(v):
     v = np.asarray(v, float)
@@ -877,6 +897,9 @@ def resample_smooth_boundaries_monotonic(
     left_raw = np.asarray(left_points_px, float)
     right_raw = np.asarray(right_points_px, float)
 
+    if len(left_raw) < 2 or len(right_raw) < 2:
+        raise ValueError("Need at least 2 points on each boundary.")
+
     # Make sure both walls run in the same physical direction.
     same_dir_cost = (
         np.linalg.norm(left_raw[0] - right_raw[0])
@@ -895,21 +918,22 @@ def resample_smooth_boundaries_monotonic(
     left_smooth = chaikin_smooth(left_raw, n_iter=smooth_iter)
     right_smooth = chaikin_smooth(right_raw, n_iter=smooth_iter)
 
+    # Fixed-count resampling: both walls now have exactly n_samples points.
     left_resampled = np.asarray(
-        resample_polyline_by_arclength_preserve_vertices(
-            left_smooth,
-            samples_per_segment=30,
-        ),
+        resample_polyline_by_arclength(left_smooth, n_samples=n_samples),
         float,
     )
 
     right_resampled = np.asarray(
-        resample_polyline_by_arclength_preserve_vertices(
-            right_smooth,
-            samples_per_segment=30,
-        ),
+        resample_polyline_by_arclength(right_smooth, n_samples=n_samples),
         float,
     )
+
+    if left_resampled.shape != right_resampled.shape:
+        raise RuntimeError(
+            f"Boundary resampling failed: left={left_resampled.shape}, "
+            f"right={right_resampled.shape}"
+        )
 
     center = 0.5 * (left_resampled + right_resampled)
     width = np.linalg.norm(right_resampled - left_resampled, axis=1)

@@ -57,10 +57,10 @@ class AlphaControllerParams:
     alpha_max: float
 def default_beam_params():
     mag = 128e3
-    r = 0.0013
+    r = 0.001
     # E = 12e5
-    # E=7e5
-    E = 5e5
+    E=2e6
+    # E = 86e4
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4
     phi_intit = np.deg2rad(10)
@@ -87,7 +87,7 @@ def default_beam_params():
 
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
-    B_r = 1.15
+    B_r = 1.45
     r_epm = 0.03
     p_epm = 0.09
     m_hat = (1.0, 0.0, 0.0)

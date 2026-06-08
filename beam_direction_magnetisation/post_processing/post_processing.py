@@ -888,14 +888,14 @@ def plot_centerlines_with_lumen_3d(
     # -------------------------------------------------
     # Beam centreline + physical beam diameter
     # -------------------------------------------------
-    ax.plot(
-        p_energy[0],
-        p_energy[1],
-        p_energy[2],
-        "--",
-        linewidth=1.5,
-        label="Beam centreline",
-    )
+    # ax.plot(
+    #     p_energy[0],
+    #     p_energy[1],
+    #     p_energy[2],
+    #     "--",
+    #     linewidth=1.5,
+    #     label="Beam centreline",
+    # )
 
     if show_beam_tube and contact is not None:
         plot_tube_along_centerline(
@@ -906,16 +906,24 @@ def plot_centerlines_with_lumen_3d(
             alpha=0.45,
             label=f"Beam body, radius={1e3 * contact.r_beam:.1f} mm",
         )
-
-    if p_straight is not None:
-        ax.plot(
-            p_straight[0],
-            p_straight[1],
-            p_straight[2],
-            ":",
-            linewidth=1.5,
-            label="Straight baseline",
+    if show_beam_tube and contact is not None:
+        plot_tube_along_centerline(
+            ax,
+            p_bvp,
+            radius=float(contact.r_beam),
+            n_theta=28,
+            alpha=0.45,
+            label=f"Beam body, radius={1e3 * contact.r_beam:.1f} mm",
         )
+    # if p_straight is not None:
+    #     ax.plot(
+    #         p_straight[0],
+    #         p_straight[1],
+    #         p_straight[2],
+    #         ":",
+    #         linewidth=1.5,
+    #         label="Straight baseline",
+        # )
 
     if p0 is not None:
         ax.scatter(
@@ -925,24 +933,24 @@ def plot_centerlines_with_lumen_3d(
             marker="o",
             label="Base",
         )
-    if p_bvp is not None:
-        ax.plot(
-            p_bvp[0],
-            p_bvp[1],
-            p_bvp[2],
-            "-",
-            linewidth=2.0,
-            label="Cosserat BVP",
-        )
+    # if p_bvp is not None:
+    #     ax.plot(
+    #         p_bvp[0],
+    #         p_bvp[1],
+    #         p_bvp[2],
+    #         "-",
+    #         linewidth=2.0,
+    #         label="Non Contact Aware",
+    #     )
 
-    ax.plot(
-        p_energy[0],
-        p_energy[1],
-        p_energy[2],
-        "--",
-        linewidth=2.0,
-        label="Energy minimisation",
-    )
+    # ax.plot(
+    #     p_energy[0],
+    #     p_energy[1],
+    #     p_energy[2],
+    #     "--",
+    #     linewidth=2.0,
+    #     label="Energy minimisation",
+    # )
     # -------------------------------------------------
     # Lumen wall
     # -------------------------------------------------
@@ -950,69 +958,69 @@ def plot_centerlines_with_lumen_3d(
         C = np.asarray(lumen_C, float)
         R_lum = np.asarray(lumen_R, float)
 
-        ax.plot(
-            C[:, 0],
-            C[:, 1],
-            C[:, 2],
-            label="Lumen centerline",
-        )
+        # ax.plot(
+        #     C[:, 0],
+        #     C[:, 1],
+        #     C[:, 2],
+        #     label="Lumen centerline",
+        # )
 
         plot_lumen_rings(
             ax,
             C,
             R_lum,
             n_theta=28,
-            alpha=0.18,
+            alpha=0.3,
         )
 
         # Tip and closest lumen point
         p_tip = p_energy[:, -1]
         d, i, t, q = point_to_polyline_distance(p_tip, C)
 
-        ax.scatter(
-            [p_tip[0]],
-            [p_tip[1]],
-            [p_tip[2]],
-            marker="^",
-            label="Energy tip",
-        )
+        # ax.scatter(
+        #     [p_tip[0]],
+        #     [p_tip[1]],
+        #     [p_tip[2]],
+        #     marker="^",
+        #     label="Energy tip",
+        # )
 
-        ax.scatter(
-            [q[0]],
-            [q[1]],
-            [q[2]],
-            marker="x",
-            label="Closest lumen point",
-        )
+        # ax.scatter(
+        #     [q[0]],
+        #     [q[1]],
+        #     [q[2]],
+        #     marker="x",
+        #     label="Closest lumen point",
+        # )
 
-        ax.plot(
-            [p_tip[0], q[0]],
-            [p_tip[1], q[1]],
-            [p_tip[2], q[2]],
-            linewidth=1.0,
-        )
+        # ax.plot(
+        #     [p_tip[0], q[0]],
+        #     [p_tip[1], q[1]],
+        #     [p_tip[2], q[2]],
+        #     linewidth=1.0,
+        # )
 
-    # -------------------------------------------------
-    # External magnet
-    # -------------------------------------------------
-    if r_src is not None:
-        r_src = np.asarray(r_src, float).reshape(3,)
+    # # -------------------------------------------------
+    # # External magnet
+    # # -------------------------------------------------
+    # if r_src is not None:
+    #     r_src = np.asarray(r_src, float).reshape(3,)
 
-        ax.scatter(
-            [r_src[0]],
-            [r_src[1]],
-            [r_src[2]],
-            marker="*",
-            s=120,
-            label="External magnet",
-        )
+    #     ax.scatter(
+    #         [r_src[0]],
+    #         [r_src[1]],
+    #         [r_src[2]],
+    #         marker="*",
+    #         s=120,
+    #         label="External magnet",
+    #     )
 
-        ax.text(
-            r_src[0],
-            r_src[1],
-            r_src[2],
-            f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
-        )
+    #     ax.text(
+    #         r_src[0],
+    #         r_src[1],
+    #         r_src[2],
+    #         f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
+    #     )
 
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
@@ -1046,8 +1054,8 @@ def plot_centerlines_with_lumen_3d(
         pts.append(np.asarray(lumen_C, float))
 
     # Optional: do not include magnet in view if it makes local geometry unreadable.
-    # if r_src is not None:
-    #     pts.append(np.asarray(r_src, float).reshape(1, 3))
+    if r_src is not None:
+        pts.append(np.asarray(r_src, float).reshape(1, 3))
 
     all_pts = np.vstack(pts)
     _set_axes_equal_about_data(ax, all_pts)

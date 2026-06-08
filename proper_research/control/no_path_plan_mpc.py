@@ -17,7 +17,7 @@ from beam_direction_magnetisation.post_processing.post_processing import plot_en
 from beam_direction_magnetisation.post_processing.results_sim_paper import analyze_run 
 from scipy.spatial.transform import Rotation as Rot
 from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
-from proper_research.simulation.boundary_forward_model import EnergyMinForwardWithLumen, effective_lengths, WarmForwardP8TipTangent, EnergyMinForwardWithAnalyticJac
+from proper_research.simulation.boundary_forward_model import ContactParams,EnergyMinForwardWithAnalyticJac ,EnergyMinForwardWithLumen, WarmForwardP8TipTangent, DeterministicForward6D
 from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_centerline_turning
 from scipy.stats import skew
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
@@ -851,7 +851,7 @@ class mpc_controller_tipxy_LTI:
 
         self.enable_mag_center_standoff = False
         self.w_mag_center_standoff = 0
-        self.mag_center_standoff_m = 0.1
+        self.mag_center_standoff_m = 0.13
         self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         self.enable_mag_inline_centerline = False
@@ -860,6 +860,8 @@ class mpc_controller_tipxy_LTI:
         self._epm_hist_W = 15
         self._epm_aligned_hist = deque(maxlen=self._epm_hist_W)
         self._epm_bad_hist     = deque(maxlen=self._epm_hist_W)
+        self.ref_stride_pts = 1
+        self.ref_stage_weights = np.array([2.0, 1.0, 0.5])
     def _rebuild_S(self):
         self.S_np = np.tril(np.ones((self.Np, self.Np))) * self.dt
 
@@ -990,60 +992,108 @@ class mpc_controller_tipxy_LTI:
         return p
 
 
-
-    def _p_seq_from_U(self, p0, U_seq):
+    def _p_nodes_from_U(self, p0, U_seq):
+        """
+        Returns pose nodes [p0, p1, ..., p_Np].
+        p_nodes[i] is the pre-control pose for u_i.
+        p_nodes[i+1] is after applying u_i.
+        """
         p_running = p0.copy()
-        p_list = []
+        p_nodes = [p_running.copy()]
+
         for i in range(self.Np):
             p_running = integrate_pose8_body(p_running, U_seq[i], self.dt)
             p_running = self._clamp_p(p_running)
-            p_list.append(p_running.copy())
-        return np.array(p_list)
+            p_nodes.append(p_running.copy())
 
+        return np.asarray(p_nodes)
+    def _p_seq_from_U(self, p0, U_seq):
+        """
+        Returns post-control poses [p1, ..., p_Np].
+        """
+        p_nodes = self._p_nodes_from_U(p0, U_seq)
+        return p_nodes[1:]
+    def _make_initial_U_guess(self):
+        """
+        Initial nominal sequence for SQP/LTV.
 
+        Uses small positive insertion so the LTV nominal rollout is not stationary.
+        """
+        Np, m = int(self.Np), int(self.m)
+        U = np.zeros((Np, m), float)
+
+        dL_idx = int(getattr(self, "dL_index", 6))
+
+        dL_seed = float(getattr(self, "dL_guess", 0.0))
+
+        if dL_seed == 0.0:
+            if hasattr(self, "u_max"):
+                umax = np.asarray(self.u_max, float).reshape(-1)
+                if umax.size > dL_idx and np.isfinite(umax[dL_idx]):
+                    dL_seed = 0.25 * float(umax[dL_idx])
+                else:
+                    dL_seed = 1e-3
+            else:
+                dL_seed = 1e-3
+
+        if hasattr(self, "u_max"):
+            umax = np.asarray(self.u_max, float).reshape(-1)
+            if umax.size > dL_idx and np.isfinite(umax[dL_idx]):
+                dL_seed = float(np.clip(dL_seed, -umax[dL_idx], umax[dL_idx]))
+
+        U[:, dL_idx] = dL_seed
+
+        return U
     def _build_prediction_mats(self, p0, U_guess):
         """
         Returns: p_seq, Mx, Mc, B0
-        - p_seq: (Np,m) predicted p (only meaningful in LTV; in LTI it's still returned for convenience)
-        - Mx, Mc: stacked prediction matrices
-        - B0: first-step input matrix (for terminal cost DARE)
+
+        p_seq: post-control pose sequence [p1, ..., p_Np]
+        Mx, Mc: stacked prediction matrices
+        B0: first-step input matrix
         """
         n, m, Np = self.n, self.m, self.Np
 
-        if self.model_mode == "lti":
-            # J0 = np.asarray(self.Jxy_fn(p0), dtype=float)
-            # if J0.shape != (n, m):
-            #     raise ValueError(f"Jacobian must be {(n,m)} but got {J0.shape}")
-            # B0 = self.dt * J0
-            J0 = np.asarray(self.Jxy_fn(p0), float)   # now returns B directly (n x 7)
-            B0 = J0
-            Mx, Mc = seq_mat_lti(self.A, B0, Np)
-            # col_names = ["vx","vy","vz","wx","wy","wz","dL"]
-            # row_names = ["x","y","z"]  # only if n_out==3 and it's xyz
+        if U_guess is None:
+            U_guess = self._make_initial_U_guess()
 
-            # for r in range(B0.shape[0]):
-            #     row_label = row_names[r] if r < len(row_names) else f"y{r}"
-            #     vals = " ".join([f"{B0[r,c]:+10.3e}" for c in range(B0.shape[1])])
-            #     print(f"  {row_label}: {vals}")
-            # print("      cols:", " ".join([f"{n:>10s}" for n in col_names]))
-            if U_guess is None:
-                U_guess = np.zeros((Np, m))
+        U_guess = np.asarray(U_guess, float).reshape(Np, m)
+
+        if self.model_mode == "lti":
+            B0 = np.asarray(self.Jxy_fn(p0), float)
+
+            if B0.shape != (n, m):
+                raise ValueError(f"Jxy_fn returned {B0.shape}, expected {(n, m)}")
+
+            Mx, Mc = seq_mat_lti(self.A, B0, Np)
             p_seq = self._p_seq_from_U(p0, U_guess)
 
             return p_seq, Mx, Mc, B0
 
-        # if U_guess is None:
-        #     U_guess = np.zeros((Np, m))
+        elif self.model_mode == "ltv":
+            p_nodes = self._p_nodes_from_U(p0, U_guess)
+            p_seq = p_nodes[1:]
 
-        # p_seq = self._p_seq_from_U(p0, U_guess)  
-        # B_list = []
-        # for i in range(Np):
-        #     Ji = np.asarray(self.Jxy_fn(p_seq[i]), float)  # Ji is B_i directly
-        #     B_list.append(Ji)
+            B_list = []
 
-        # Mx, Mc = seq_mat_ltv(self.A, B_list)
-        # B0 = B_list[0]
-        # return p_seq, Mx, Mc, B0
+            for i in range(Np):
+                # Important: B_i should correspond to transition from p_i under u_i.
+                Ji = np.asarray(self.Jxy_fn(p_nodes[i]), float)
+
+                if Ji.shape != (n, m):
+                    raise ValueError(
+                        f"Jxy_fn at stage {i} returned {Ji.shape}, expected {(n, m)}"
+                    )
+
+                B_list.append(Ji)
+
+            Mx, Mc = seq_mat_ltv(self.A, B_list)
+            B0 = B_list[0]
+
+            return p_seq, Mx, Mc, B0
+
+        else:
+            raise ValueError(f"Unknown model_mode: {self.model_mode!r}")
 
     def _compute_tracking_and_centerline_debug(self, *, X_pred, X_ref, X_nom, n, Np, Cc, idx_ref, x_now=None):
         """
@@ -1170,7 +1220,7 @@ class mpc_controller_tipxy_LTI:
             out["prog_slack_rms_mm"] = 1e3 * float(np.sqrt(np.mean(s_prog**2)))
 
         return out
-    def step(self, x_meas=None):
+    def step(self, x_meas=None, rollout_steps=1):
         """
         MPC step with Option A (soft lumen constraints via slacks).
 
@@ -1235,12 +1285,12 @@ class mpc_controller_tipxy_LTI:
 
 
         # Warm start / SQP init
-        if self.U_warm is not None and self.U_warm.size == Np*m:
+        if self.U_warm is not None and self.U_warm.size == Np * m:
+            U_guess = self.U_warm.reshape(Np, m).copy()
             U_opt_vec = self.U_warm.copy()
-            U_guess = U_opt_vec.reshape(Np, m)
         else:
-            U_guess = np.zeros((Np, m))
-            U_opt_vec = None
+            U_guess = self._make_initial_U_guess()
+            U_opt_vec = U_guess.reshape(-1).copy()
 
         status_last = "init"
 
@@ -1253,15 +1303,93 @@ class mpc_controller_tipxy_LTI:
         p_lin = None
         p_first = None
         dbg_terms = {} if self.debug else None
-        # -----------------------
-        # SQP loop
-        # -----------------------
+
+        # ------------------------------------------------------------
+        # Reference selection ONCE per outer MPC step
+        # ------------------------------------------------------------
+        Cc_ref = np.asarray(self.lumen_C, float)
+        M_ref = Cc_ref.shape[0]
+
+        if x_meas is not None:
+            y_meas_for_ref = np.asarray(x_meas, float).reshape(-1)
+        elif self.x is not None:
+            y_meas_for_ref = np.asarray(self.x, float).reshape(-1)
+        else:
+            y_meas_for_ref = np.asarray(self.forward_tip_fn(self.p, commit=False), float).reshape(-1)
+
+        tip_meas_ref = y_meas_for_ref[:3].reshape(3,)
+
+        use_xy_ref_distance = bool(getattr(self, "use_xy_ref_distance", True))
+
+        if use_xy_ref_distance:
+            d_all_ref = np.linalg.norm(Cc_ref[:, :2] - tip_meas_ref[:2].reshape(1, 2), axis=1)
+        else:
+            d_all_ref = np.linalg.norm(Cc_ref[:, :3] - tip_meas_ref[:3].reshape(1, 3), axis=1)
+
+        i_closest_ref = int(np.argmin(d_all_ref))
+
+        lookahead = int(getattr(self, "ref_lookahead_pts", 0))
+        i_ref_new = int(np.clip(i_closest_ref + lookahead, 0, M_ref - 1))
+
+        allow_backward = bool(getattr(self, "allow_ref_backward", False))
+        i_ref_prev_outer = int(getattr(self, "i_ref_last", 0))
+
+        if not allow_backward:
+            i_ref_new = max(i_ref_new, i_ref_prev_outer)
+
+        i_ref_new = int(np.clip(i_ref_new, 0, M_ref - 1))
+
+        stride = int(getattr(self, "ref_stride_pts", 1))
+
+        idx_ref_outer = np.clip(
+            i_ref_new + stride * np.arange(Np),
+            0,
+            M_ref - 1,
+        ).astype(int)
+
+        dist_to_ref_outer = float(d_all_ref[i_ref_new])
+        ref_advanced_outer = int(i_ref_new - i_ref_prev_outer)
+
+        self.i_ref_last = int(i_ref_new)
+        self.idx_ref_last = idx_ref_outer.copy()
+        self.ref_advanced_last = int(ref_advanced_outer)
+        self.dist_to_ref_last = float(dist_to_ref_outer)
+
+        print(
+            f"[REF CLOSEST OUTER] i_ref={i_ref_new}, "
+            f"i_closest={i_closest_ref}, "
+            f"dist_to_ref={1e3 * dist_to_ref_outer:.3f} mm, "
+            f"advanced={ref_advanced_outer}, "
+            f"idx_ref={idx_ref_outer}"
+        )
+        sqp_du_hist = []
+        sqp_du_rel_hist = []
+        sqp_converged = False
+        sqp_iters_done = 0
+
+        sqp_tol_u = float(getattr(self, "sqp_tol_u", 1e-4))
+        sqp_tol_rel_u = float(getattr(self, "sqp_tol_rel_u", 1e-3))
+
+
+        U_best_vec = None
+        Z_best = None
+        best_it = -1
+        sqp_failed_after_feasible = False
+        Mc_best = None
+        X_aff_best = None
+        X_nom_best = None
+        p_seq_best = None
+        B_best = None
         for it in range(int(self.N_sqp)):
 
             # ---- linearization / prediction matrices ----
             p0 = self.p.copy()
             p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
-            
+
+            if it == 0:
+                B_first = np.asarray(B0, float).copy()
+
+            B_last = np.asarray(B0, float).copy()            
             if it % 1 == 0:
                 # ---- DEBUG: print Jacobian / B0 ----
                 B = np.asarray(B0, float)
@@ -1356,12 +1484,13 @@ class mpc_controller_tipxy_LTI:
             M  = Cc.shape[0]
 
             idx_k_risk = np.asarray(risk.get("idx_k", np.zeros(Np, dtype=int)), dtype=int).reshape(-1)
-            if idx_k_risk.size != Np:
-                i_ref0 = int(getattr(self, "i_ref_last", 0))
-                idx_k_risk = i_ref0 + np.arange(Np)
-            idx_k_risk = np.clip(idx_k_risk, 0, M-1)
 
-            idx_shift = int(getattr(self, "idx_ahead", 3))
+            if idx_k_risk.size != Np:
+                idx_k_risk = i_ref_new + np.arange(Np)
+
+            idx_k_risk = np.clip(idx_k_risk, 0, M - 1)
+
+            idx_shift = int(getattr(self, "idx_ahead", 1))
             idx_k_epm = np.clip(idx_k_risk + idx_shift, 0, M-1)
 
             theta_seq = np.asarray(risk["theta_deg_k"], float)     # (Np,)
@@ -1390,60 +1519,59 @@ class mpc_controller_tipxy_LTI:
             # ---- base objective: effort only ----
             H_effort = 2.0 * Rtil
             H_smooth = 2.0 * H_du if not np.isscalar(H_du) else None
+
             H = H_effort.copy()
-            # if H_smooth is not None:
-            #     H = H + H_smooth
-            f = np.zeros((Np*m, 1), float)
+            f = np.zeros((Np * m, 1), float)
+
             if dbg_terms is not None:
-                zero_f = np.zeros((Np*m, 1), float)
+                zero_f = np.zeros((Np * m, 1), float)
                 dbg_terms["effort"] = (H_effort.copy(), zero_f.copy())
                 if H_smooth is not None:
                     dbg_terms["smooth"] = (H_smooth.copy(), zero_f.copy())
 
-
-            # # affine so linear model matches nominal at U_guess
-            # U_guess_vec = U_guess.reshape(-1, 1)  # (Np*m,1)
-            # # X_aff = X_nom - Mc @ U_guess_vec
-
-            # X_aff = (Mx @ xk).reshape(Np*n, 1)
-
-            U_guess_vec = U_guess.reshape(-1, 1)  # (Np*m,1)
+            # ---- affine model ----
+            U_guess_vec = U_guess.reshape(-1, 1)
 
             use_affine_matching = bool(getattr(self, "use_affine_matching", True))
 
             if use_affine_matching:
-                # local first-order model matched to nonlinear rollout at U_guess
+                # Local first-order model matched to nonlinear rollout at U_guess:
+                # X ≈ X_nom + Mc (U - U_guess)
+                #   = (X_nom - Mc U_guess) + Mc U
                 X_aff = X_nom - Mc @ U_guess_vec
             else:
-                # pure Jacobian-based prediction from current state, no nonlinear offset matching
-                X_aff = (Mx @ xk).reshape(Np*n, 1)
+                # Pure linear prediction from current measured state
+                X_aff = (Mx @ xk).reshape(Np * n, 1)
+            # ---- Frozen reference for this outer MPC step ----
+            Cc = np.asarray(self.lumen_C, float)
+            M = Cc.shape[0]
 
-            # ---- Centerline tracking reference (stacked) ----
-            # Choose which centerline index sequence you want to track:
-            # - idx_k_risk: “closest / risk-mapped” centerline station per stage
-            # - or monotone: i_ref_last + k
-            Cc = np.asarray(self.lumen_C, float)  # (M,3) assumed
-            M  = Cc.shape[0]
-            # if centerline_only:
-            i0 = int(getattr(self, "i_ref_last", 0))
-            look = int(getattr(self, "ref_lookahead_pts", 2))
-            idx_ref = np.clip(i0 + look + np.arange(Np), 0, M-1)
-            # else:
-            #     idx_ref = idx_k_risk
-            print(f"REFERENCE {idx_ref}")
+            i_ref = int(i_ref_new)
+            idx_ref = idx_ref_outer.copy()
 
-            # Build stacked X_ref (Np*n,1). Track only position; leave other outputs (e.g. tangent) unchanged.
-            X_ref = np.zeros((Np*n, 1), float)
-            for k in range(Np):
-                X_ref[k*n + 0, 0] = Cc[idx_ref[k], 0]
-                X_ref[k*n + 1, 0] = Cc[idx_ref[k], 1]
-                X_ref[k*n + 2, 0] = Cc[idx_ref[k], 2]
+            # ---- Build stacked reference ----
+            X_ref = np.zeros((Np * n, 1), float)
+            for j in range(Np):
+                X_ref[j * n + 0, 0] = Cc[idx_ref[j], 0]
+                X_ref[j * n + 1, 0] = Cc[idx_ref[j], 1]
+                X_ref[j * n + 2, 0] = Cc[idx_ref[j], 2]
 
-            # ---- Tracking cost: sum_k ||x_k - xref_k||_Q ----
-            # Use your existing Q (n x n). If you only want position tracking, ensure Q only weights xyz.
-            Qtil = np.kron(np.eye(Np), self.Q)  # (Np*n, Np*n)
+            # ---- Position-only, stage-weighted tracking cost ----
+            stage_weights = np.asarray(
+                getattr(self, "ref_stage_weights", np.ones(Np)),
+                float
+            ).reshape(-1)
 
-            # keep for outputs/debug
+            if stage_weights.size != Np:
+                stage_weights = np.ones(Np)
+
+            Qtil = np.zeros((Np * n, Np * n), float)
+
+            for j in range(Np):
+                Qj = np.zeros((n, n), float)
+                Qj[0:3, 0:3] = stage_weights[j] * self.Q[0:3, 0:3]
+                Qtil[j*n:(j+1)*n, j*n:(j+1)*n] = Qj
+
             Mc_last = Mc
             X_aff_last = X_aff
             X_nom_last = X_nom
@@ -1451,6 +1579,7 @@ class mpc_controller_tipxy_LTI:
 
             H_track = 2.0 * (Mc.T @ Qtil @ Mc)
             f_track = 2.0 * (Mc.T @ Qtil @ (X_aff - X_ref))
+
             H += H_track
             f += f_track
 
@@ -1461,13 +1590,11 @@ class mpc_controller_tipxy_LTI:
                     X_aff=X_aff.copy(),
                     X_ref=X_ref.copy(),
                     Qtil=Qtil.copy(),
-                    Q_diag=np.diag(self.Q).copy(),
                     idx_ref=np.asarray(idx_ref, int).copy(),
                 )
 
-            # ---- base stacked open-loop (no control) for band constraints ----
-            X0_stack = (Mx @ xk).reshape(Np*n, 1)
-
+            # Use the same nominal rollout for later constraint linearisation
+            X0_stack = X_nom.copy()
             # ---- advancement reward (linear term) ----
             if t_vessel is not None and enable_adv_eff:
                 t_v = np.asarray(t_vessel, float).copy()
@@ -1527,7 +1654,15 @@ class mpc_controller_tipxy_LTI:
 
             # ---- tangent alignment penalty with clearance-dependent weight ----
             enable_tangent_pen = bool(getattr(self, "enable_tangent_penalty", False)) and (t_vessel is not None)
+            w_adv_eff = 0.0
+            w_tan_min = 0.0
+            w_tan_max = 0.0
+            theta_ref_deg = np.nan
+            theta_max_deg = float(getattr(self, "theta_max_deg", 40.0))
 
+            # w_slack_standoff = 0.0
+            w_slack_inline = 0.0
+            w_slack_dipole = 0.0
             if enable_tangent_pen and (self.lumen_R is not None):
                 # clearance at each stage for weighting
                 clearance_m_obj = np.full(Np, np.inf, float)
@@ -1785,73 +1920,91 @@ class mpc_controller_tipxy_LTI:
                 hard_theta_mask = np.zeros(Np, dtype=bool)
             # (3) hard minimum distance between external magnet and tip
             enable_hard_epm_tip_clearance = bool(
-                getattr(self, "enable_hard_epm_tip_clearance", False)
-            )
-            epm_tip_clearance_min_m = float(
-                getattr(self, "epm_tip_clearance_min_m", 0.06)
+                getattr(self, "enable_hard_epm_tip_clearance", True)
             )
 
-            if enable_hard_epm_tip_clearance:
-                # Need magnet position model. Build it if not already available.
+            enable_epm_tip_soft = bool(
+                getattr(self, "enable_epm_tip_soft", True)
+            )
+
+            epm_tip_preferred_m = float(
+                getattr(self, "epm_tip_preferred_m", 0.13)
+            )
+
+            epm_tip_hard_min_m = float(
+                getattr(self, "epm_tip_hard_min_m", 0.011)
+            )
+            need_epm_tip_model = enable_hard_epm_tip_clearance or enable_epm_tip_soft
+
+            if need_epm_tip_model:
                 if "Pm" not in locals() or "r_nom" not in locals():
-                    Pm = build_Pm_world(self.dt, Np, m=m)          # (3Np, Nu)
-                    U_guess_vec = U_guess.reshape(-1, 1)           # (Nu,1)
+                    Pm = build_Pm_world(self.dt, Np, m=m)
+                    U_guess_vec = U_guess.reshape(-1, 1)
                     r0 = p0[:3].copy().reshape(3, 1)
-                    r0_stack = np.tile(r0, (Np, 1))               # (3Np,1)
-                    r_nom = r0_stack + Pm @ U_guess_vec           # (3Np,1)
+                    r0_stack = np.tile(r0, (Np, 1))
+                    r_nom = r0_stack + Pm @ U_guess_vec
 
                 A_epm_tip = np.zeros((Np, Nu), float)
-                l_epm_tip = np.full(Np, -np.inf, float)
-                u_epm_tip = np.full(Np,  np.inf, float)
+                b_epm_tip = np.zeros(Np, float)
 
                 eps_dist = 1e-9
 
                 for k in range(Np):
-                    # nominal magnet position at stage k
                     r_nom_k = r_nom[3*k:3*k+3, 0].reshape(3,)
-                    Pm_k = Pm[3*k:3*k+3, :]                      # (3,Nu)
+                    Pm_k = Pm[3*k:3*k+3, :]
 
-                    # nominal tip position affine model at stage k
                     rows_x = np.array([k*n + 0, k*n + 1, k*n + 2], dtype=int)
-                    Mc_xk = Mc[rows_x, :]                        # (3,Nu)
-                    x_nom_k = X_aff[rows_x, 0].reshape(3,) + (Mc_xk @ U_guess_vec).reshape(3,)
+                    Mc_xk = Mc[rows_x, :]
 
-                    # nominal separation
+                    x_nom_k = X_aff[rows_x, 0].reshape(3,) + (
+                        Mc_xk @ U_guess_vec
+                    ).reshape(3,)
+
                     v_nom = r_nom_k - x_nom_k
                     d_nom = float(np.linalg.norm(v_nom))
 
                     if d_nom < eps_dist:
-                        # fallback direction if nominal positions coincide
                         uhat = np.array([1.0, 0.0, 0.0], float)
                         d_nom = eps_dist
                     else:
                         uhat = v_nom / d_nom
 
-                    # linearized distance:
-                    # d(U) ≈ d_nom + uhat^T[(Pm_k - Mc_xk)(U - U_guess)]
-                    #      = [uhat^T (Pm_k - Mc_xk)] U + const
                     a_k = (uhat.reshape(1, 3) @ (Pm_k - Mc_xk)).reshape(Nu,)
                     b_k = d_nom - float(a_k @ U_guess_vec[:, 0])
 
-                    # impose: a_k U + b_k >= d_min
                     A_epm_tip[k, :] = a_k
-                    l_epm_tip[k] = epm_tip_clearance_min_m - b_k
-                    u_epm_tip[k] = np.inf
+                    b_epm_tip[k] = b_k
+            else:
+                A_epm_tip = None
+                b_epm_tip = None
+            if enable_hard_epm_tip_clearance and need_epm_tip_model:
+                A_epm_hard = np.zeros((Np, Nu), float)
+                l_epm_hard = np.full(Np, -np.inf, float)
+                u_epm_hard = np.full(Np, np.inf, float)
 
-                A_list.append(A_epm_tip)
-                l_list.append(l_epm_tip)
-                u_list.append(u_epm_tip)
+                for k in range(Np):
+                    A_epm_hard[k, :] = A_epm_tip[k, :]
+
+                    # Hard absolute minimum, not preferred clearance
+                    l_epm_hard[k] = epm_tip_hard_min_m - b_epm_tip[k]
+                    u_epm_hard[k] = np.inf
+
+                A_list.append(A_epm_hard)
+                l_list.append(l_epm_hard)
+                u_list.append(u_epm_hard)
             Nu = Np * m
 
             ns_standoff = Np if enable_standoff_soft else 0
             ns_inline   = Np if enable_inline_soft else 0
             ns_dipole   = Np if enable_dipole_soft else 0
+            ns_epm_tip  = Np if enable_epm_tip_soft else 0
 
             off_standoff = Nu
             off_inline   = off_standoff + ns_standoff
             off_dipole   = off_inline + ns_inline
+            off_epm_tip  = off_dipole + ns_dipole
 
-            ns = ns_standoff + ns_inline + ns_dipole
+            ns = ns_standoff + ns_inline + ns_dipole + ns_epm_tip
             nz = Nu + ns
 
             # objective
@@ -1865,6 +2018,12 @@ class mpc_controller_tipxy_LTI:
             eps_inline_lat = float(getattr(self, "eps_inline_lat_m", 0.02))
             eps_dipole     = float(getattr(self, "eps_dipole", 1e-2))
 
+            if ns_epm_tip > 0:
+                w_slack_epm_tip = float(getattr(self, "w_slack_epm_tip", 1e5))
+                i0 = off_epm_tip
+                H_z[i0:i0+ns_epm_tip, i0:i0+ns_epm_tip] = (
+                    2.0 * w_slack_epm_tip * np.eye(ns_epm_tip)
+                )
 
             if ns_standoff > 0:
                 w_slack_standoff = float(getattr(self, "w_slack_standoff", self.w_mag_center_standoff))
@@ -1883,7 +2042,6 @@ class mpc_controller_tipxy_LTI:
                 i0 = off_dipole
                 H_z[i0:i0+ns_dipole, i0:i0+ns_dipole] = 2.0 * w_slack_dipole * np.eye(ns_dipole)
             
-            # existing hard constraints
             if A_list:
                 A_osqp = np.vstack([_pad_A(Ai, nz, Nu) for Ai in A_list])
                 l_osqp = np.concatenate(l_list).astype(float)
@@ -1892,6 +2050,7 @@ class mpc_controller_tipxy_LTI:
                 A_osqp = np.zeros((0, nz), float)
                 l_osqp = np.zeros(0, float)
                 u_osqp = np.zeros(0, float)
+
             if ns > 0:
                 A_s_nonneg = np.zeros((ns, nz), float)
                 A_s_nonneg[:, Nu:] = np.eye(ns)
@@ -1900,89 +2059,6 @@ class mpc_controller_tipxy_LTI:
                 u_osqp = np.concatenate([u_osqp, np.full(ns, np.inf)])
 
 
-            if ns_standoff > 0:
-                A_st = np.zeros((2*Np, nz), float)
-                l_st = np.full(2*Np, -np.inf, float)
-                u_st = np.full(2*Np,  np.inf, float)
-
-                for k in range(Np):
-                    col_s = off_standoff + k
-
-                    #  A_s[k] U + b_s[k] <= eps + s_k
-                    A_st[2*k, :Nu] = A_s[k, :]
-                    A_st[2*k, col_s] = -1.0
-                    u_st[2*k] = eps_standoff - b_s[k, 0]
-
-                    # -A_s[k] U - b_s[k] <= eps + s_k
-                    A_st[2*k+1, :Nu] = -A_s[k, :]
-                    A_st[2*k+1, col_s] = -1.0
-                    u_st[2*k+1] = eps_standoff + b_s[k, 0]
-
-                A_osqp = np.vstack([A_osqp, A_st])
-                l_osqp = np.concatenate([l_osqp, l_st])
-                u_osqp = np.concatenate([u_osqp, u_st])
-
-            if ns_inline > 0:
-                A_inl = np.zeros((4*Np, nz), float)
-                l_inl = np.full(4*Np, -np.inf, float)
-                u_inl = np.full(4*Np,  np.inf, float)
-
-                for k in range(Np):
-                    col_s = off_inline + k
-
-                    a_n = A_lat[2*k + 0, :]
-                    b_n = b_lat[2*k + 0, 0]
-
-                    a_b = A_lat[2*k + 1, :]
-                    b_bv = b_lat[2*k + 1, 0]
-
-                    #  e_n <= eps + s_k
-                    A_inl[4*k + 0, :Nu] = a_n
-                    A_inl[4*k + 0, col_s] = -1.0
-                    u_inl[4*k + 0] = eps_inline_lat - b_n
-
-                    # -e_n <= eps + s_k
-                    A_inl[4*k + 1, :Nu] = -a_n
-                    A_inl[4*k + 1, col_s] = -1.0
-                    u_inl[4*k + 1] = eps_inline_lat + b_n
-
-                    #  e_b <= eps + s_k
-                    A_inl[4*k + 2, :Nu] = a_b
-                    A_inl[4*k + 2, col_s] = -1.0
-                    u_inl[4*k + 2] = eps_inline_lat - b_bv
-
-                    # -e_b <= eps + s_k
-                    A_inl[4*k + 3, :Nu] = -a_b
-                    A_inl[4*k + 3, col_s] = -1.0
-                    u_inl[4*k + 3] = eps_inline_lat + b_bv
-
-                A_osqp = np.vstack([A_osqp, A_inl])
-                l_osqp = np.concatenate([l_osqp, l_inl])
-                u_osqp = np.concatenate([u_osqp, u_inl])
-
-
-            if ns_dipole > 0:
-                A_dip_soft = np.zeros((6*Np, nz), float)
-                l_dip_soft = np.full(6*Np, -np.inf, float)
-                u_dip_soft = np.full(6*Np,  np.inf, float)
-
-                for k in range(Np):
-                    col_s = off_dipole + k
-                    for j in range(3):
-                        a = A_align[3*k + j, :]
-                        b = b_align[3*k + j, 0]
-
-                        A_dip_soft[6*k + 2*j, :Nu] = a
-                        A_dip_soft[6*k + 2*j, col_s] = -1.0
-                        u_dip_soft[6*k + 2*j] = eps_dipole - b
-
-                        A_dip_soft[6*k + 2*j + 1, :Nu] = -a
-                        A_dip_soft[6*k + 2*j + 1, col_s] = -1.0
-                        u_dip_soft[6*k + 2*j + 1] = eps_dipole + b
-
-                A_osqp = np.vstack([A_osqp, A_dip_soft])
-                l_osqp = np.concatenate([l_osqp, l_dip_soft])
-                u_osqp = np.concatenate([u_osqp, u_dip_soft])
             # -----------------------
             # HARD angle constraint only when clearance < 0.8 mm
             # -----------------------
@@ -2013,7 +2089,25 @@ class mpc_controller_tipxy_LTI:
                 A_osqp = np.vstack([A_osqp, A_theta])
                 l_osqp = np.concatenate([l_osqp, l_theta])
                 u_osqp = np.concatenate([u_osqp, u_theta])
+            if enable_epm_tip_soft and need_epm_tip_model:
+                A_epm_soft = np.zeros((Np, nz), float)
+                l_epm_soft = np.full(Np, -np.inf, float)
+                u_epm_soft = np.full(Np, np.inf, float)
 
+                for k in range(Np):
+                    col_s = off_epm_tip + k
+
+                    A_epm_soft[k, :Nu] = A_epm_tip[k, :]
+                    A_epm_soft[k, col_s] = 1.0
+
+                    # a_k U + b_k + s_k >= preferred distance
+                    # => a_k U + s_k >= preferred distance - b_k
+                    l_epm_soft[k] = epm_tip_preferred_m - b_epm_tip[k]
+                    u_epm_soft[k] = np.inf
+
+                A_osqp = np.vstack([A_osqp, A_epm_soft])
+                l_osqp = np.concatenate([l_osqp, l_epm_soft])
+                u_osqp = np.concatenate([u_osqp, u_epm_soft])
 
             if dbg_terms is not None and enable_standoff_soft:
                 dbg_terms["standoff_model"] = dict(A=A_s.copy(), b=b_s.copy(), eps=float(eps_standoff), d0=float(d0))
@@ -2038,24 +2132,104 @@ class mpc_controller_tipxy_LTI:
                 Z_warm = np.zeros(nz, float)
                 Z_warm[:Nu] = U_opt_vec.copy()
 
-            Z_opt, _, status = solve_qp_osqp(H_z, f_z.ravel(), A_osqp, l_osqp, u_osqp, U_warm=Z_warm)
+            Z_opt, _, status = solve_qp_osqp(
+                H_z,
+                f_z.ravel(),
+                A_osqp,
+                l_osqp,
+                u_osqp,
+                U_warm=Z_warm,
+            )
+
             status_last = status
 
-            U_opt_vec = None
+            U_candidate_vec = None
 
             if status in ("solved", "solved inaccurate") and (Z_opt is not None):
                 if ns > 0:
-                    U_opt_vec = Z_opt[:Nu].copy()
-                    self._slack_last = Z_opt[Nu:].copy()
+                    U_candidate_vec = np.asarray(Z_opt[:Nu], float).copy()
+                    self._slack_last = np.asarray(Z_opt[Nu:], float).copy()
                 else:
-                    U_opt_vec = np.asarray(Z_opt, float).copy()
+                    U_candidate_vec = np.asarray(Z_opt, float).copy()
 
-            if U_opt_vec is None:
+            if U_candidate_vec is None:
+                sqp_iters_done = it + 1
+
+                z_ref = np.zeros(nz, float)
+                z_ref[:Nu] = U_guess.reshape(-1)
+
+                if ns > 0:
+                    z_ref[Nu:] = 0.0
+
+                report_qp_infeasibility(
+                    A_osqp,
+                    l_osqp,
+                    u_osqp,
+                    z_ref,
+                    namestr=f"SQP it={it} failed candidate",
+                )
+
+                if Z_best is not None:
+                    report_qp_infeasibility(
+                        A_osqp,
+                        l_osqp,
+                        u_osqp,
+                        Z_best,
+                        namestr=f"SQP it={it} previous feasible candidate",
+                    )
+
+                if U_best_vec is not None:
+                    sqp_failed_after_feasible = True
+                    U_opt_vec = U_best_vec.copy()
+                    status_last = f"{status}; using_last_feasible_it_{best_it}"
+                    infeas = False
+
+                    Mc_last = Mc_best.copy()
+                    X_aff_last = X_aff_best.copy()
+                    X_nom_last = X_nom_best.copy()
+                    p_seq_last = p_seq_best.copy()
+                    B_last = B_best.copy()
+
+                    break
+
+                U_opt_vec = None
                 infeas = True
                 break
-            else:
-                infeas = False
-                U_guess = U_opt_vec.reshape(Np, m)
+
+            # Current SQP iterate is feasible.
+            U_opt_vec = U_candidate_vec.copy()
+            U_best_vec = U_candidate_vec.copy()
+            Z_best = np.asarray(Z_opt, float).copy()
+            best_it = it
+            infeas = False
+
+            Mc_best = Mc.copy()
+            X_aff_best = X_aff.copy()
+            X_nom_best = X_nom.copy()
+            p_seq_best = p_seq.copy()
+            B_best = np.asarray(B0, float).copy()
+
+            U_new = U_opt_vec.reshape(Np, m)
+
+            du_abs = float(np.linalg.norm(U_new - U_guess))
+            du_rel = float(du_abs / (np.linalg.norm(U_guess) + 1e-12))
+
+            sqp_du_hist.append(du_abs)
+            sqp_du_rel_hist.append(du_rel)
+            sqp_iters_done = it + 1
+
+            U_guess = U_new
+
+            print(
+                f"[SQP] it={it:02d} "
+                f"du_abs={du_abs:.3e} "
+                f"du_rel={du_rel:.3e} "
+                f"status={status}"
+            )
+
+            if du_abs < sqp_tol_u or du_rel < sqp_tol_rel_u:
+                sqp_converged = True
+                break
 
         # -----------------------
         # Apply first control
@@ -2069,50 +2243,199 @@ class mpc_controller_tipxy_LTI:
             U_seq = U_opt_vec.reshape(Np, m)
             u0 = U_seq[0, :].copy()
 
-        # predicted horizon (linear) for debug
+        # one-step state for diagnostics
+        p_one = self._clamp_p(integrate_pose8_body(p_prev, u0, self.dt))
+        try:
+            x_one = np.asarray(self.forward_tip_fn(p_one, commit=False), float).reshape(n,)
+        except TypeError:
+            x_one = np.asarray(self.forward_tip_fn(p_one), float).reshape(n,)
+
+        # actual committed rollout
+        rollout_steps = int(np.clip(rollout_steps, 1, Np))
+
+        p_roll = p_prev.copy()
+        x_roll = x_prev.copy()
+        p_roll_hist = []
+        x_roll_hist = []
+        u_applied = []
+
+        for j in range(rollout_steps):
+            uj = U_seq[j, :].copy()
+            p_roll = self._clamp_p(integrate_pose8_body(p_roll, uj, self.dt))
+
+            try:
+                x_roll = np.asarray(self.forward_tip_fn(p_roll, commit=False), float).reshape(n,)
+            except TypeError:
+                x_roll = np.asarray(self.forward_tip_fn(p_roll), float).reshape(n,)
+
+            u_applied.append(uj)
+            p_roll_hist.append(p_roll.copy())
+            x_roll_hist.append(x_roll.copy())
+
+        p_next_true = p_roll.copy()
+        x_next_true = x_roll.copy()
         X_pred = np.full((Np, n), np.nan)
         if (not infeas_final) and (Mc_last is not None) and (X_aff_last is not None):
             U_vec = U_opt_vec.reshape(-1, 1)
             X_pred_stack = X_aff_last + Mc_last @ U_vec
             X_pred = X_pred_stack.reshape(Np, n)
 
-        # plant update (one step)
-        p_next_true = self._clamp_p(integrate_pose8_body(p_prev, u0, self.dt))
+
+        def _safe_unit(v, eps=1e-12):
+            v = np.asarray(v, float).reshape(-1)
+            nv = float(np.linalg.norm(v))
+            if nv < eps:
+                return np.zeros_like(v), nv
+            return v / nv, nv
+
+        # ------------------------------------------------------------
+        # Jacobian prediction diagnostic: expected vs actual movement
+        # ------------------------------------------------------------
+        jac_move_dbg = {}
+
         try:
-            x_next_true = np.asarray(self.forward_tip_fn(p_next_true, commit=False), float).reshape(n,)
-        except TypeError:
-            x_next_true = np.asarray(self.forward_tip_fn(p_next_true), float).reshape(n,)
+            B_dbg = np.asarray(B0, float)          # local one-step output Jacobian, shape (n, m)
+            u0_dbg = np.asarray(u0, float).reshape(m, 1)
 
+            # Local Jacobian-predicted one-step output change
+            dy_jac = (B_dbg @ u0_dbg).reshape(n,)
 
+            # MPC affine model predicted first-stage output change
+            if X_pred is not None and X_pred.shape[0] > 0 and np.all(np.isfinite(X_pred[0])):
+                dy_mpc = np.asarray(X_pred[0], float).reshape(n,) - np.asarray(x_prev, float).reshape(n,)
+            else:
+                dy_mpc = np.full(n, np.nan)
 
+            # Actual plant/model movement after applying u0
+            dy_actual = np.asarray(x_one, float).reshape(n,) - np.asarray(x_prev, float).reshape(n,)
+
+            # Position components only
+            dp_jac = dy_jac[:3]
+            dp_mpc = dy_mpc[:3]
+            dp_actual = dy_actual[:3]
+
+            dir_jac, norm_jac = _safe_unit(dp_jac)
+            dir_mpc, norm_mpc = _safe_unit(dp_mpc)
+            dir_actual, norm_actual = _safe_unit(dp_actual)
+
+            cos_jac_actual = float(np.clip(np.dot(dir_jac, dir_actual), -1.0, 1.0)) if norm_jac > 1e-12 and norm_actual > 1e-12 else np.nan
+            angle_jac_actual_deg = float(np.degrees(np.arccos(cos_jac_actual))) if np.isfinite(cos_jac_actual) else np.nan
+
+            cos_mpc_actual = float(np.clip(np.dot(dir_mpc, dir_actual), -1.0, 1.0)) if norm_mpc > 1e-12 and norm_actual > 1e-12 else np.nan
+            angle_mpc_actual_deg = float(np.degrees(np.arccos(cos_mpc_actual))) if np.isfinite(cos_mpc_actual) else np.nan
+
+            gain_actual_over_jac = float(norm_actual / norm_jac) if norm_jac > 1e-12 else np.nan
+            gain_actual_over_mpc = float(norm_actual / norm_mpc) if norm_mpc > 1e-12 else np.nan
+
+            # Component of actual motion along predicted Jacobian direction
+            actual_along_jac = float(np.dot(dp_actual, dir_jac)) if norm_jac > 1e-12 else np.nan
+
+            jac_move_dbg = dict(
+                dy_jac=dy_jac.copy(),
+                dy_mpc=dy_mpc.copy(),
+                dy_actual=dy_actual.copy(),
+                dy_jac_first=(
+                    (B_first @ u0_dbg).reshape(n,)
+                    if B_first is not None
+                    else np.full(n, np.nan)
+                ),
+
+                dy_jac_last=(
+                    (B_last @ u0_dbg).reshape(n,)
+                    if B_last is not None
+                    else np.full(n, np.nan)
+                ),
+                dp_jac=dp_jac.copy(),
+                dp_mpc=dp_mpc.copy(),
+                dp_actual=dp_actual.copy(),
+
+                dir_jac=dir_jac.copy(),
+                dir_mpc=dir_mpc.copy(),
+                dir_actual=dir_actual.copy(),
+
+                norm_jac=float(norm_jac),
+                norm_mpc=float(norm_mpc),
+                norm_actual=float(norm_actual),
+
+                norm_jac_mm=float(1e3 * norm_jac),
+                norm_mpc_mm=float(1e3 * norm_mpc),
+                norm_actual_mm=float(1e3 * norm_actual),
+
+                cos_jac_actual=cos_jac_actual,
+                angle_jac_actual_deg=angle_jac_actual_deg,
+                gain_actual_over_jac=gain_actual_over_jac,
+                actual_along_jac_mm=float(1e3 * actual_along_jac) if np.isfinite(actual_along_jac) else np.nan,
+
+                cos_mpc_actual=cos_mpc_actual,
+                angle_mpc_actual_deg=angle_mpc_actual_deg,
+                gain_actual_over_mpc=gain_actual_over_mpc,
+                sqp_iters_done=int(sqp_iters_done),
+                sqp_converged=bool(sqp_converged),
+                sqp_du_hist=np.asarray(sqp_du_hist, float).copy(),
+                sqp_failed_after_feasible=bool(sqp_failed_after_feasible),
+                sqp_best_it=int(best_it),
+            )
+
+        except Exception as e:
+            jac_move_dbg = dict(error=str(e))
         # commit internal state
         self.p = p_next_true.copy()
         self.x = x_next_true.copy()
 
-        # warm start
-        if not infeas_final:
-            U_seq = U_opt_vec.reshape(Np, m)
-            U_shift = np.vstack([U_seq[1:], np.zeros((1, m))])
-            self.U_warm = U_shift.reshape(-1)
-        else:
-            self.U_warm = None
 
         # one-step prediction error
         pred1_err_xy = np.nan
         pred1_err_xyz = np.nan
+        pred_rollout_err_xy = np.nan
+        pred_rollout_err_xyz = np.nan
+
+        rollout_err_xy_seq = np.full((rollout_steps,), np.nan)
+        rollout_err_xyz_seq = np.full((rollout_steps,), np.nan)
 
         if (X_pred is not None) and (X_pred.shape[0] > 0) and np.all(np.isfinite(X_pred[0])):
-            e = x_next_true[:3] - X_pred[0][:3]
-            pred1_err_xy  = float(np.linalg.norm(e[:2]))   # XY only
-            pred1_err_xyz = float(np.linalg.norm(e))       # full XYZ (optional)
-            tan1_err = float(np.linalg.norm(x_next_true[3:6] - X_pred[0][3:6])) if (n >= 6 and X_pred.shape[1] >= 6) else np.nan
-         # -----------------------
-        # Detailed debug breakdown
-        # -----------------------
+            e = x_one[:3] - X_pred[0][:3]
+            pred1_err_xy  = float(np.linalg.norm(e[:2]))
+            pred1_err_xyz = float(np.linalg.norm(e))
 
+            j_pred = int(rollout_steps) - 1
+            er = x_next_true[:3] - X_pred[j_pred][:3]
+            pred_rollout_err_xy  = float(np.linalg.norm(er[:2]))
+            pred_rollout_err_xyz = float(np.linalg.norm(er))
+
+            x_rollout_arr = np.asarray(x_roll_hist, float)
+
+            if (
+                X_pred.ndim == 2
+                and x_rollout_arr.ndim == 2
+                and X_pred.shape[0] > 0
+                and x_rollout_arr.shape[0] > 0
+            ):
+                K = min(int(rollout_steps), X_pred.shape[0], x_rollout_arr.shape[0])
+
+                rollout_err_xy_seq[:K] = np.linalg.norm(
+                    x_rollout_arr[:K, :2] - X_pred[:K, :2],
+                    axis=1
+                )
+
+                rollout_err_xyz_seq[:K] = np.linalg.norm(
+                    x_rollout_arr[:K, :3] - X_pred[:K, :3],
+                    axis=1
+                )
+        if not infeas_final:
+            if rollout_steps < Np:
+                U_shift = np.vstack([
+                    U_seq[rollout_steps:],
+                    self._make_initial_U_guess()[:rollout_steps]
+                ])
+            else:
+                U_shift = self._make_initial_U_guess()
+
+            self.U_warm = U_shift.reshape(-1)
+        else:
+            self.U_warm = None   
         
-        
-        
+        Z_dbg = Z_best if Z_best is not None else Z_opt
+
         
         if self.debug and (U_opt_vec is not None):
             U_dbg = U_opt_vec.reshape(Nu, 1)
@@ -2180,11 +2503,14 @@ class mpc_controller_tipxy_LTI:
                 s_off += ns_dipole
             else:
                 dbg_costs["slack_dipole"] = 0.0
-
-            dbg_costs["total_objective"] = float(
-                0.5 * (np.asarray(Z_opt, float).reshape(-1,1).T @ H_z @ np.asarray(Z_opt, float).reshape(-1,1))[0,0]
-                + (f_z.T @ np.asarray(Z_opt, float).reshape(-1,1))[0,0]
-            )
+            if Z_dbg is not None:
+                Z_dbg_col = np.asarray(Z_dbg, float).reshape(-1, 1)
+                dbg_costs["total_objective"] = float(
+                    0.5 * (Z_dbg_col.T @ H_z @ Z_dbg_col)[0, 0]
+                    + (f_z.T @ Z_dbg_col)[0, 0]
+                )
+            else:
+                dbg_costs["total_objective"] = np.nan
 
             # advancement diagnostics
             dbg_pen = {}
@@ -2315,7 +2641,6 @@ class mpc_controller_tipxy_LTI:
                     tan_err_norm = np.full(Np, np.nan)
 
                 dbg_pen["track"] = dict(
-                    Q_diag=np.asarray(trk["Q_diag"], float).copy(),
                     idx_ref=np.asarray(trk["idx_ref"], int).copy(),
                     X_ref=trk["X_ref"].reshape(Np, n).copy(),
                     X_pred=X_pred_dbg.reshape(Np, n).copy(),
@@ -2325,10 +2650,19 @@ class mpc_controller_tipxy_LTI:
                     tan_err=e_tan.copy(),
                     tan_err_norm=tan_err_norm.copy(),
                     cost=float(0.5 * (U_dbg.T @ H_track @ U_dbg)[0, 0] + (f_track.T @ U_dbg)[0, 0]),
+
+                    # add these
+                    Q_diag=np.diag(self.Q).copy(),
+                    Q_pos_diag=np.diag(self.Q[0:3, 0:3]).copy(),
+                    ref_stage_weights=np.asarray(
+                        getattr(self, "ref_stage_weights", np.ones(Np)),
+                        float
+                    ).copy(),
+
                     pos_err_norm_min=float(np.min(pos_err_norm)) if pos_err_norm.size else np.nan,
                     pos_err_norm_mean=float(np.mean(pos_err_norm)) if pos_err_norm.size else np.nan,
                     pos_err_norm_max=float(np.max(pos_err_norm)) if pos_err_norm.size else np.nan,
-                )  
+                )
             # hard theta diagnostics
             if np.any(hard_theta_mask):
                 cos_vals = []
@@ -2414,12 +2748,14 @@ class mpc_controller_tipxy_LTI:
             p_now=self.p.copy(),
             x_now=self.x.copy(),
             d=self.d.copy(),
+            jac_move=jac_move_dbg,
             X_pred=X_pred.copy(),
             U_seq=U_seq.copy(),
             N_sqp=int(self.N_sqp),
             p_prev=p_prev.copy(),
             x_prev=x_prev.copy(),
             B_first=B_first.copy() if B_first is not None else None,
+            B_last=B_last.copy() if B_last is not None else None,
             p_lin=p_lin.copy() if isinstance(p_lin, np.ndarray) else p_lin,
             p_first=p_first.copy() if isinstance(p_first, np.ndarray) else p_first,
             X_aff_last=X_aff_last.copy() if X_aff_last is not None else None,
@@ -2428,11 +2764,47 @@ class mpc_controller_tipxy_LTI:
             p_seq_last=p_seq_last.copy() if p_seq_last is not None else None,
             pred1_err_xy=float(pred1_err_xy),
             pred1_err_xyz=float(pred1_err_xyz),
+            sqp_failed_after_feasible=bool(sqp_failed_after_feasible),
+            sqp_best_it=int(best_it),
+            sqp_recovered_from_infeas=int(sqp_failed_after_feasible),
             # tan1_err=float(tan1_err) if np.isfinite(tan1_err) else np.nan,
             mpc_debug=self._mpc_dbg_last.copy() if hasattr(self, "_mpc_dbg_last") else None,
+            rollout_steps=int(rollout_steps),
+            U_applied=np.asarray(u_applied).copy(),
+            p_rollout=np.asarray(p_roll_hist).copy(),
+            x_rollout=np.asarray(x_roll_hist).copy(),
+            pred_rollout_err_xy=float(pred_rollout_err_xy),
+            pred_rollout_err_xyz=float(pred_rollout_err_xyz),
+            rollout_err_xy_seq=rollout_err_xy_seq.copy(),
+            rollout_err_xyz_seq=rollout_err_xyz_seq.copy(),
+            sqp_iters_done=int(sqp_iters_done),
+            sqp_converged=bool(sqp_converged),
+            sqp_du_hist=np.asarray(sqp_du_hist, float).copy(),
+            sqp_du_rel_hist=np.asarray(sqp_du_rel_hist, float).copy(),
+            sqp_du_final=float(sqp_du_hist[-1]) if len(sqp_du_hist) else np.nan,
+            sqp_du_rel_final=float(sqp_du_rel_hist[-1]) if len(sqp_du_rel_hist) else np.nan,
+            sqp_tol_u=float(sqp_tol_u),
+            sqp_tol_rel_u=float(sqp_tol_rel_u),
+
+            i_closest=int(i_closest_ref),
+            i_ref=int(i_ref_new),
+            idx_ref=idx_ref_outer.copy(),
+            ref_advanced=int(ref_advanced_outer),
+            dist_to_ref=float(dist_to_ref_outer),
         )
 
         return self.p.copy(), self.x.copy(), info
+def report_qp_infeasibility(A, l, u, z_ref, namestr="QP"):
+    Az = A @ z_ref
+    low_viol = np.maximum(l - Az, 0.0)
+    upp_viol = np.maximum(Az - u, 0.0)
+    viol = np.maximum(low_viol, upp_viol)
+
+    print(f"[{namestr} INFEAS CHECK]")
+    print(f"  max lower violation = {np.nanmax(low_viol):.6e}")
+    print(f"  max upper violation = {np.nanmax(upp_viol):.6e}")
+    print(f"  max total violation = {np.nanmax(viol):.6e}")
+    print(f"  worst row = {int(np.nanargmax(viol))}")
 def _print_osqp_constraints(A, l, u, Nu, ns_theta, ns_prog, m, Np, max_rows=80):
     import numpy as np
 
@@ -2861,6 +3233,8 @@ def debug_step_pose7_no_targets(
             trk = penalties["track"]
             _print_section("   MPC DEBUG: tracking penalty")
             print(f"   {'Q_diag':>24s}: {np.asarray(trk.get('Q_diag', []), float)}")
+            print(f"   {'Q_pos_diag':>24s}: {np.asarray(trk.get('Q_pos_diag', []), float)}")
+            print(f"   {'stage_weights':>24s}: {np.asarray(trk.get('ref_stage_weights', []), float)}")
             print(f"   {'idx_ref':>24s}: {np.asarray(trk.get('idx_ref', []), int)}")
             print(f"   {'cost':>24s}: {float(trk.get('cost', np.nan)): .6e}")
             _fmt_stats("pos_err_norm", trk.get("pos_err_norm", []), scale=1e3, unit="mm", prec=3, indent="   ")
@@ -3080,35 +3454,43 @@ def save_step_artifacts(
     tip_pos, tip_tan, fixed_limits,
     tip_from_centerline=None,
 ):
+    import csv
+    from pathlib import Path
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    frames_dir = Path(frames_dir)
+    log_csv_path = Path(log_csv_path)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    log_csv_path.parent.mkdir(parents=True, exist_ok=True)
+
     u0 = np.asarray(u0, float).ravel()
+    p_now = np.asarray(p_now, float).ravel()
+    y_now = np.asarray(y_now, float).ravel()
 
-    title = (f"k={k:04d} i_ref={i_ref} "
-             f"u0=[{u0[0]:+.3f},{u0[1]:+.3f},{u0[2]:+.3f},"
-             f"{u0[3]:+.2f},{u0[4]:+.2f},{u0[5]:+.2f},{u0[6]:+.3f}] "
-             f"status={info.get('status','?')} infeas={info.get('infeasible',-1)}")
+    # Make sure lengths are robust
+    if u0.size < 7:
+        u0 = np.pad(u0, (0, 7 - u0.size), constant_values=np.nan)
 
-    # ---------- 1) save plot frame ----------
-    # plot_energy_only_3d(
-    #     centerline_tip,
-    #     lumen_C=lumen_C, lumen_R=lumen_R, p0=p0_ur,
-    #     tip=tip_pos,
-    #     tip_from_centerline=tip_from_centerline,
-    #     p_mag=p_now,              # <-- FIXED
-    #     mag_axis="x",
-    #     mag_arrow_len=0.02,
-    #     title=title,              # <-- USE IT
-    #     show=False,
-    #     fixed_limits=fixed_limits,
-    #     zoom_out=1.5,
-    # )
+    if p_now.size < 8:
+        p_now = np.pad(p_now, (0, 8 - p_now.size), constant_values=np.nan)
 
-    # ---------- compute contact-angle metrics ----------
+    if y_now.size < 6:
+        y_now = np.pad(y_now, (0, 6 - y_now.size), constant_values=np.nan)
+
+    title = (
+        f"k={k:04d} i_ref={i_ref} "
+        f"u0=[{u0[0]:+.3f},{u0[1]:+.3f},{u0[2]:+.3f},"
+        f"{u0[3]:+.2f},{u0[4]:+.2f},{u0[5]:+.2f},{u0[6]:+.3f}] "
+        f"status={info.get('status','?')} infeas={info.get('infeasible',-1)}"
+    )
+
+    # ---------- contact / centreline metrics ----------
     Cc = np.asarray(lumen_C, float)
     tip_pos = np.asarray(tip_pos, float).reshape(3,)
     tip_tan = np.asarray(tip_tan, float).reshape(3,)
 
     i_seg, u_seg, c_cl, t_v = _closest_centerline_tangent(Cc, tip_pos)
-   
     tip_vessel_angle_deg = _angle_deg(tip_tan, t_v)
 
     r = tip_pos - c_cl
@@ -3122,32 +3504,235 @@ def save_step_artifacts(
         idx_v = int(np.clip(i_seg + (u_seg >= 0.5), 0, Rr.size - 1))
         clearance = float(Rr[idx_v] - rho)
 
-    # ---------- save frame ----------
+    # ---------- save current figure if one exists ----------
     fig = plt.gcf()
-    fig_path = frames_dir / f"frame_{k:06d}.png"
-    fig.savefig(fig_path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
+    if fig is not None and len(fig.axes) > 0:
+        fig_path = frames_dir / f"frame_{k:06d}.png"
+        fig.savefig(fig_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        fig_path = ""
 
-    # ---------- 2) append one row to CSV ----------
-    p_now = np.asarray(p_now, float).ravel()
-    y_now = np.asarray(y_now, float).ravel()
+    # ---------- Jacobian movement diagnostics ----------
+    jm = info.get("jac_move", {})
+    if not isinstance(jm, dict):
+        jm = {}
 
-    row = [
-        int(k), int(i_ref),
-        *u0.tolist(),
-        *p_now.tolist(),
-        *y_now.tolist(),
-        str(info.get("status","")),
-        int(info.get("infeasible", -1)),
-        float(info.get("pred1_err_xy", np.nan)),
-        float(tip_vessel_angle_deg),
-        int(i_seg),
-        float(u_seg),
-        float(rho),
-        float(clearance),
-    ]
+    def _get_float(name, default=np.nan):
+        try:
+            return float(jm.get(name, info.get(name, default)))
+        except Exception:
+            return float(default)
+
+    def _vec3_from_jm(name):
+        v = jm.get(name, None)
+        if v is None:
+            return np.array([np.nan, np.nan, np.nan], float)
+        try:
+            v = np.asarray(v, float).reshape(-1)
+            if v.size < 3:
+                v = np.pad(v, (0, 3 - v.size), constant_values=np.nan)
+            return v[:3]
+        except Exception:
+            return np.array([np.nan, np.nan, np.nan], float)
+
+    dp_jac = _vec3_from_jm("dp_jac")
+    dp_mpc = _vec3_from_jm("dp_mpc")
+    dp_actual = _vec3_from_jm("dp_actual")
+
+    dir_jac = _vec3_from_jm("dir_jac")
+    dir_mpc = _vec3_from_jm("dir_mpc")
+    dir_actual = _vec3_from_jm("dir_actual")
+    # ---------- rollout diagnostics ----------
+    U_applied = np.asarray(info.get("U_applied", []), float)
+    x_rollout = np.asarray(info.get("x_rollout", []), float)
+    p_rollout = np.asarray(info.get("p_rollout", []), float)
+    X_pred = np.asarray(info.get("X_pred", []), float)
+
+    rollout_err_xy_seq = np.asarray(info.get("rollout_err_xy_seq", []), float).reshape(-1)
+    rollout_err_xyz_seq = np.asarray(info.get("rollout_err_xyz_seq", []), float).reshape(-1)
+
+    rollout_steps_logged = int(info.get("rollout_steps", 0))
+
+    if U_applied.ndim != 2:
+        U_applied = np.empty((0, 7))
+
+    if x_rollout.ndim != 2:
+        x_rollout = np.empty((0, 6))
+
+    if p_rollout.ndim != 2:
+        p_rollout = np.empty((0, 8))
+
+    if X_pred.ndim != 2:
+        X_pred = np.empty((0, 6))
+
+    K_roll = min(
+        rollout_steps_logged,
+        U_applied.shape[0],
+        x_rollout.shape[0],
+        X_pred.shape[0],
+    )
+    # ---------- row dictionary ----------
+    row = {
+        "k": int(k),
+        "i_ref": int(i_ref),
+        "i_ref_mpc": int(info.get("i_ref", i_ref)),
+        "ref_advanced": int(info.get("ref_advanced", 0)),
+        "dist_to_ref_m": float(info.get("dist_to_ref", np.nan)),
+        "dist_to_ref_mm": 1e3 * float(info.get("dist_to_ref", np.nan)),
+
+        "u0_vx": float(u0[0]),
+        "u0_vy": float(u0[1]),
+        "u0_vz": float(u0[2]),
+        "u0_wx": float(u0[3]),
+        "u0_wy": float(u0[4]),
+        "u0_wz": float(u0[5]),
+        "u0_dL": float(u0[6]),
+
+        "p_now_0": float(p_now[0]),
+        "p_now_1": float(p_now[1]),
+        "p_now_2": float(p_now[2]),
+        "p_now_3": float(p_now[3]),
+        "p_now_4": float(p_now[4]),
+        "p_now_5": float(p_now[5]),
+        "p_now_6": float(p_now[6]),
+        "p_now_7": float(p_now[7]),
+
+        "tip_x": float(y_now[0]),
+        "tip_y": float(y_now[1]),
+        "tip_z": float(y_now[2]),
+        "tip_tx": float(y_now[3]),
+        "tip_ty": float(y_now[4]),
+        "tip_tz": float(y_now[5]),
+
+        "status": str(info.get("status", "")),
+        "infeasible": int(info.get("infeasible", -1)),
+        "pred1_err_xy_m": float(info.get("pred1_err_xy", np.nan)),
+        "pred1_err_xy_mm": 1e3 * float(info.get("pred1_err_xy", np.nan)),
+        "pred1_err_xyz_m": float(info.get("pred1_err_xyz", np.nan)),
+        "pred1_err_xyz_mm": 1e3 * float(info.get("pred1_err_xyz", np.nan)),
+
+        "tip_vessel_angle_deg": float(tip_vessel_angle_deg),
+        "i_seg": int(i_seg),
+        "u_seg": float(u_seg),
+        "rho_m": float(rho),
+        "rho_mm": 1e3 * float(rho),
+        "clearance_m": float(clearance),
+        "clearance_mm": 1e3 * float(clearance),
+
+        # Jacobian scalar diagnostics
+        "jac_pred_mm": _get_float("norm_jac_mm"),
+        "jac_mpc_pred_mm": _get_float("norm_mpc_mm"),
+        "jac_actual_mm": _get_float("norm_actual_mm"),
+        "jac_gain_actual_over_jac": _get_float("gain_actual_over_jac"),
+        "jac_gain_actual_over_mpc": _get_float("gain_actual_over_mpc"),
+        "jac_angle_actual_deg": _get_float("angle_jac_actual_deg"),
+        "jac_cos_actual": _get_float("cos_jac_actual"),
+        "jac_actual_along_pred_mm": _get_float("actual_along_jac_mm"),
+
+        # Raw predicted movement from B0 @ u0
+        "jac_dp_pred_x_mm": 1e3 * float(dp_jac[0]),
+        "jac_dp_pred_y_mm": 1e3 * float(dp_jac[1]),
+        "jac_dp_pred_z_mm": 1e3 * float(dp_jac[2]),
+
+        # Full affine MPC first-stage prediction
+        "mpc_dp_pred_x_mm": 1e3 * float(dp_mpc[0]),
+        "mpc_dp_pred_y_mm": 1e3 * float(dp_mpc[1]),
+        "mpc_dp_pred_z_mm": 1e3 * float(dp_mpc[2]),
+
+        # Actual plant/model movement
+        "actual_dp_x_mm": 1e3 * float(dp_actual[0]),
+        "actual_dp_y_mm": 1e3 * float(dp_actual[1]),
+        "actual_dp_z_mm": 1e3 * float(dp_actual[2]),
+
+        # Direction vectors
+        "jac_dir_pred_x": float(dir_jac[0]),
+        "jac_dir_pred_y": float(dir_jac[1]),
+        "jac_dir_pred_z": float(dir_jac[2]),
+
+        "mpc_dir_pred_x": float(dir_mpc[0]),
+        "mpc_dir_pred_y": float(dir_mpc[1]),
+        "mpc_dir_pred_z": float(dir_mpc[2]),
+
+        "actual_dir_x": float(dir_actual[0]),
+        "actual_dir_y": float(dir_actual[1]),
+        "actual_dir_z": float(dir_actual[2]),
+        "sqp_iters_done": int(info.get("sqp_iters_done", -1)),
+        "sqp_converged": int(bool(info.get("sqp_converged", False))),
+        "sqp_du_final": float(info.get("sqp_du_final", np.nan)),
+        "sqp_du_rel_final": float(info.get("sqp_du_rel_final", np.nan)),
+        "sqp_tol_u": float(info.get("sqp_tol_u", np.nan)),
+        "sqp_tol_rel_u": float(info.get("sqp_tol_rel_u", np.nan)),
+        "sqp_failed_after_feasible": int(bool(info.get("sqp_failed_after_feasible", False))),
+        "sqp_best_it": int(info.get("sqp_best_it", -1)),
+        "sqp_recovered_from_infeas": int(info.get("sqp_recovered_from_infeas", 0)),
+        "i_closest": int(info.get("i_closest", -1)),
+        "frame_path": str(fig_path),
+    }
+    sqp_du_hist = np.asarray(info.get("sqp_du_hist", []), float).reshape(-1)
+    sqp_du_rel_hist = np.asarray(info.get("sqp_du_rel_hist", []), float).reshape(-1)
+
+    max_sqp_log = int(info.get("N_sqp", len(sqp_du_hist)))
+
+    for j in range(max_sqp_log):
+        row[f"sqp_du_{j}"] = float(sqp_du_hist[j]) if j < sqp_du_hist.size else np.nan
+        row[f"sqp_du_rel_{j}"] = float(sqp_du_rel_hist[j]) if j < sqp_du_rel_hist.size else np.nan
+    # ---------- add rollout columns ----------
+    for j in range(K_roll):
+        uj = U_applied[j]
+        xj = x_rollout[j]
+        xpj = X_pred[j]
+
+        if uj.size < 7:
+            uj = np.pad(uj, (0, 7 - uj.size), constant_values=np.nan)
+
+        if xj.size < 6:
+            xj = np.pad(xj, (0, 6 - xj.size), constant_values=np.nan)
+
+        if xpj.size < 6:
+            xpj = np.pad(xpj, (0, 6 - xpj.size), constant_values=np.nan)
+
+        err_xy = rollout_err_xy_seq[j] if j < rollout_err_xy_seq.size else np.nan
+        err_xyz = rollout_err_xyz_seq[j] if j < rollout_err_xyz_seq.size else np.nan
+
+        row.update({
+            f"u_applied_{j}_vx": float(uj[0]),
+            f"u_applied_{j}_vy": float(uj[1]),
+            f"u_applied_{j}_vz": float(uj[2]),
+            f"u_applied_{j}_wx": float(uj[3]),
+            f"u_applied_{j}_wy": float(uj[4]),
+            f"u_applied_{j}_wz": float(uj[5]),
+            f"u_applied_{j}_dL": float(uj[6]),
+
+            f"x_rollout_{j}_x": float(xj[0]),
+            f"x_rollout_{j}_y": float(xj[1]),
+            f"x_rollout_{j}_z": float(xj[2]),
+            f"x_rollout_{j}_tx": float(xj[3]),
+            f"x_rollout_{j}_ty": float(xj[4]),
+            f"x_rollout_{j}_tz": float(xj[5]),
+
+            f"x_pred_{j}_x": float(xpj[0]),
+            f"x_pred_{j}_y": float(xpj[1]),
+            f"x_pred_{j}_z": float(xpj[2]),
+            f"x_pred_{j}_tx": float(xpj[3]),
+            f"x_pred_{j}_ty": float(xpj[4]),
+            f"x_pred_{j}_tz": float(xpj[5]),
+
+            f"rollout_err_xy_{j}_m": float(err_xy),
+            f"rollout_err_xy_{j}_mm": 1e3 * float(err_xy),
+            f"rollout_err_xyz_{j}_m": float(err_xyz),
+            f"rollout_err_xyz_{j}_mm": 1e3 * float(err_xyz),
+        })
+    # ---------- append to CSV with header ----------
+    file_exists = log_csv_path.exists()
+
     with open(log_csv_path, "a", newline="") as f:
-        csv.writer(f).writerow(row)
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+
+        if not file_exists or log_csv_path.stat().st_size == 0:
+            writer.writeheader()
+
+        writer.writerow(row)
 
 
         
@@ -3213,7 +3798,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     L_cmd = 0.016
 
     pivot_point = np.array([
-        0.7981328220229531, -0.7112731669220016, -0.1,
+        0.7981328220229531, -0.70992731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
@@ -3223,17 +3808,48 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
         -0.1,
         np.pi, 0.001, 0.001
     ], float)
-
+    # start_point = np.array([
+    #     0.7981328220229531-(L_cmd), -0.70992731669220016, -0.1+0.2,
+    #     np.pi, 0.001, 0.001
+    # ], float)
     start_point = np.asarray(get_point(0, 0, base_point, pivot_point), dtype=float)
-
-    dt = 0.05
+    print(f"Start point {start_point}")
+    dt = 0.02
     return pivot_point, start_point, L_cmd, dt
 
+def effective_lengths(L_ins, *, L_tip_full=0.04, L_tip_min=0.01):
+    """
+    L_ins      : commanded insertion (what MPC tracks)
+    L_tip_full : physical magnetic tip length (4 cm)
+    L_tip_min  : minimum model length so solver has something to solve (e.g. 1 cm)
 
+    Returns (L_model, wire_len, tip_len)
+    """
+    L_ins = float(L_ins)
+
+    # Magnetised tip inside grows with insertion until full tip is inside
+    tip_len = min(L_ins, L_tip_full)
+
+    # Wire is everything beyond the physical tip length
+    wire_len = max(L_ins - L_tip_full, 0.0)
+
+    # Total model length is the inserted length, but don't go below minimum model length
+    L_model = max(L_ins, L_tip_min)
+
+    # If we are below L_tip_min, we still model a minimum rod,
+    # but magnetisation should NOT exceed what's actually inserted:
+    tip_len = min(tip_len, L_model)
+
+    return L_model, wire_len, tip_len
 def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
     T_ur_pivot = ur_pose6_to_T(pivot_point)
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
-
+    pivot_point_lumen = np.array([
+        0.7981328220229531, -0.7112731669220016, -0.1,
+        np.pi, 0.001, 0.001
+    ], float)
+    T_ur_pivot_lumen = ur_pose6_to_T(pivot_point_lumen)   
+    p0_ur_lumen, q0_ur_lumen = T_to_p_quat_wxyz(T_ur_pivot_lumen)   
     L_model, wire_len_model, tip_len_model = effective_lengths(L0)
     print(
         f"[INIT] L_ins={L0:.3f} -> "
@@ -3247,16 +3863,15 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
     t0 = R0 @ np.array([-1.0, 0.0, 0.0])
 
 
-    s_straight = 0.01
     lumen_C = make_lumen_centerline_turning(
-        p_start=p0_ur,
+        p_start=p0_ur_lumen,
         t0=t0,
-        length=0.04 + s_straight,
+        length=0.045,
         n_pts=130,
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(60.0),
-        bend_start=0.0 + s_straight,
-        bend_end=0.03 + s_straight,
+        bend_angle=np.deg2rad(-60.0),
+        bend_start=0.015,
+        bend_end=0.025,
     )
     lumen_C, s_path = resample_polyline(lumen_C, ds_target=1e-3)
     lumen_R = np.full(len(lumen_C), 0.004)
@@ -3291,6 +3906,15 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
         bend_soft=1.0,
         tors_soft=1.0,
     )
+    contact = ContactParams(
+        r_beam=0.001,
+        k=1e5,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        smooth=True,
+        smooth_eps=1e-5,
+        window=None,
+    )
     forward_model = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
         q0_ur=q0_ur,
@@ -3299,13 +3923,15 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
-        maxiter=30,
+        N_nodes=10,
+        maxiter=40,
         L0_init=0.01,
-        dL_internal=0.005,
-        use_lumen_jac=False,
+        dL_internal=0.04,
+        use_lumen_jac=True,
         L_tip_full=0.04,
         L_tip_min=0.01,
+        contact_params=contact,
+        use_fast_contact_grad=False,
     )
     forward_model_wrong = EnergyMinForwardWithAnalyticJac(
         p0_ur=p0_ur,
@@ -3315,13 +3941,15 @@ def build_lumen_and_forward_models(pivot_point: np.ndarray, L0: float):
         m_body=m_body,
         lumen_C=np.asarray(lumen_C, float),
         lumen_R=np.asarray(lumen_R, float),
-        N_nodes=5,
-        maxiter=30,
+        N_nodes=10,
+        maxiter=40,
         L0_init=0.01,
-        dL_internal=0.005,
+        dL_internal=0.04,
         use_lumen_jac=False,
         L_tip_full=0.04,
         L_tip_min=0.01,
+        contact_params=None,
+        use_fast_contact_grad=False,
     )
     # forward_model = EnergyMinForwardWithLumen(
     #     p0_ur=p0_ur,
@@ -3499,11 +4127,11 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
     p0 = pose7_rotvec_to_pose8_quat(p0_pose7)
 
     p_min = np.array([0.2, -1, start_point[2], -np.inf, -np.inf, -np.inf, -np.inf, 0.01])
-    p_max = np.array([start_point[0] + 0.5, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.05])
+    p_max = np.array([0.8, 1.5, start_point[2], +np.inf, +np.inf, +np.inf, +np.inf, 0.05])
 
     w_u = np.array([
-        1e-8, 1e-8, 1e-4,
-        5e-1, 5e-1, 1e-8,
+        1e-12, 1e-12, 1e-4,
+        5e-1, 5e-1, 1e-12,
         1e-4
     ], dtype=float)
 
@@ -3529,7 +4157,7 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
     # forward6d_wrong = WarmForwardP8TipTangent(forward_model_wrong)
 
     # forward6d = DeterministicForward6D(forward_model)
-    forward6d_wrong = DeterministicForward6D(forward_model_wrong)
+    forward6d_wrong = WarmForwardP8TipTangent(copy.deepcopy(forward_model_wrong))
     forward6d = WarmForwardP8TipTangent(copy.deepcopy(forward_model))
 
     def J_fn(p8):
@@ -3548,6 +4176,7 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
             Jred_control,
             n_out_full=6,
         )
+    
     # def J_fn(p8):
     #     Jred_state = numerical_J_robot_xy_yaw_dL_warm_branch(
     #         p8,
@@ -3569,8 +4198,8 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
     #     p8, forward6d, dt=dt, eps_u=eps_u, n_out=6
     # )
 
-    w_pos_x = 100.0
-    w_pos_y = 100.0
+    w_pos_x = 1000.0
+    w_pos_y = 1000.0
     w_pos_z = 0.0
     w_tan = 0
 
@@ -3578,18 +4207,18 @@ def build_controller(start_point: np.ndarray, L0: float, dt: float, forward_mode
         Jxy_fn=J_fn,
         forward_tip_fn=forward6d,
         dt=dt,
-        Np=1,
+        Np=12,
         n_out=6,
         n_u=7,
         n_p=8,
         w_xy=(w_pos_x, w_pos_y, w_pos_z, w_tan, w_tan, w_tan),
         w_u=w_u,
         w_du=w_du,
-        model_mode="lti",
+        model_mode="ltv",
         u_max=u_max,
         p_min=p_min,
         p_max=p_max,
-        N_sqp=1,
+        N_sqp=8,
     )
 
     mpc.lumen_C = lumen_C
@@ -3623,15 +4252,6 @@ def setup_output_dirs(out_root: Path, lumen_C: np.ndarray, lumen_R: np.ndarray, 
     with open(log_meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    with open(log_csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow([
-            "k", "i_ref",
-            "u0_vx", "u0_vy", "u0_vz", "u0_wx", "u0_wy", "u0_wz", "u0_dL",
-            "p_x", "p_y", "p_z", "p_qw", "p_qx", "p_qy", "p_qz", "p_L",
-            "y_x", "y_y", "y_z", "y_tx", "y_ty", "y_tz",
-            "status", "infeasible", "pred1_err", "vessel_tip alignment", "i_seg", "u_seg", "rho", "clearance"
-        ])
 
     return frames_dir, log_csv_path
 
@@ -3692,9 +4312,9 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
     Np = mpc.Np
     M = lumen_path.shape[0]
 
-    max_steps = 500
+    max_steps = 200
     window = 20
-
+    rollout_steps = 10
     cursor_state = {"stall": 0}
     cur_dbg = {"prog": 0.0, "d_now": 0.0, "i_seg_now": 0, "forced": False}
     i_ref = 0
@@ -3709,14 +4329,39 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
     theta0_hist = []
     thetaMax_hist = []
     trans_hist, omega_hist, dL_hist = [], [], []
-
+    jac_pred_mm_hist = []
+    jac_actual_mm_hist = []
+    jac_gain_hist = []
+    jac_angle_hist = []
+    jac_cos_hist = []
+    pred_rollout_hist = []
+    rollout_err_xy_seq_hist = []
+    rollout_err_xyz_seq_hist = []
+    U_applied_hist = []
+    sqp_iters_hist = []
+    sqp_converged_hist = []
+    sqp_du_final_hist = []
+    sqp_du_rel_final_hist = []
+    sqp_du_hist_all = []
+    sqp_du_rel_hist_all = []
     for k in range(max_steps):
-        mpc.mode = "lti"
-        mpc.enable_soft_progress = True
+        mpc.model_mode = "ltv"
+        mpc.enable_soft_progress = False
         mpc.enable_mag_center_standoff = True
-        mpc.enable_mag_tangent_inline = True
-        mpc.enable_dipole_align = True
+        mpc.enable_mag_tangent_inline = False
+        mpc.enable_dipole_align = False
+        mpc.ref_stage_weights = np.array([10.0, 6.0, 3.0, 1.5, 1.0])
+        mpc.dL_guess = 0.002
+        mpc.N_sqp = 8       # maximum iterations
+        mpc.sqp_tol_u = 1e-5
+        mpc.sqp_tol_rel_u = 2e-3
+        mpc.enable_hard_epm_tip_clearance = True
+        mpc.enable_epm_tip_soft = True
 
+        mpc.epm_tip_preferred_m = 0.14
+        mpc.epm_tip_hard_min_m = 0.11
+
+        mpc.w_slack_epm_tip = 1e5
         p_pre = mpc.p.copy()
         tip_pre, tan_pre, C_pre, y_pre = snapshot_forward(forward6d, p_pre, commit=False)
 
@@ -3730,12 +4375,52 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         # force_ok = stalling and (theta0_last < 40.0)
 
         w_adv_base = mpc.w_adv_base
-        # scale = (1.0 + 2.0 * max(0, stall_cnt - 3)) if force_ok else 1.0
-        # mpc.w_adv_eff = w_adv_base * scale
-        # mpc.w_adv = w_adv_base
-        mpc.i_ref_last = int(i_ref)
 
-        p_post, y_post, info = mpc.step(x_meas=None)
+        # Do not overwrite mpc.i_ref_last every step.
+        # Only initialise it once before the loop or at k == 0.
+        if k == 0:
+            mpc.i_ref_last = int(i_ref)
+
+        p_post, y_post, info = mpc.step(x_meas=None, rollout_steps=rollout_steps)
+        sqp_iters_hist.append(int(info.get("sqp_iters_done", -1)))
+        sqp_converged_hist.append(bool(info.get("sqp_converged", False)))
+        sqp_du_final_hist.append(float(info.get("sqp_du_final", np.nan)))
+        sqp_du_rel_final_hist.append(float(info.get("sqp_du_rel_final", np.nan)))
+        sqp_du_hist_all.append(np.asarray(info.get("sqp_du_hist", []), float).copy())
+        sqp_du_rel_hist_all.append(np.asarray(info.get("sqp_du_rel_hist", []), float).copy())
+        jm = info.get("jac_move", {})
+
+        U_applied = np.asarray(info.get("U_applied", []), float)
+
+        X_pred = np.asarray(info.get("X_pred", []), float)
+        x_rollout = np.asarray(info.get("x_rollout", []), float)
+
+        if X_pred.ndim == 2 and x_rollout.ndim == 2:
+            K = min(x_rollout.shape[0], X_pred.shape[0])
+
+            info["rollout_err_xy_seq"] = np.linalg.norm(
+                x_rollout[:K, :2] - X_pred[:K, :2],
+                axis=1
+            )
+
+            info["rollout_err_xyz_seq"] = np.linalg.norm(
+                x_rollout[:K, :3] - X_pred[:K, :3],
+                axis=1
+            )
+        else:
+            info["rollout_err_xy_seq"] = np.full((0,), np.nan)
+            info["rollout_err_xyz_seq"] = np.full((0,), np.nan)
+
+        rollout_err_xy_seq_hist.append(np.asarray(info["rollout_err_xy_seq"], float).copy())
+        rollout_err_xyz_seq_hist.append(np.asarray(info["rollout_err_xyz_seq"], float).copy())
+        U_applied_hist.append(U_applied.copy())
+        jac_pred_mm_hist.append(float(jm.get("norm_jac_mm", np.nan)))
+        jac_actual_mm_hist.append(float(jm.get("norm_actual_mm", np.nan)))
+        jac_gain_hist.append(float(jm.get("gain_actual_over_jac", np.nan)))
+        jac_angle_hist.append(float(jm.get("angle_jac_actual_deg", np.nan)))
+        jac_cos_hist.append(float(jm.get("cos_jac_actual", np.nan)))
+        # Use the gated reference index returned by the MPC
+        i_ref = int(info.get("i_ref", getattr(mpc, "i_ref_last", i_ref)))
 
         theta0_last = float(info.get("theta0_deg", np.inf))
         theta0_hist.append(float(info.get("theta0_deg", np.nan)))
@@ -3743,11 +4428,13 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
 
         tip_post = mpc.x[:3].copy()
 
-        i_ref, cursor_state, cur_dbg = update_progress_cursor_s(
+        i_ref_mpc = int(info.get("i_ref", getattr(mpc, "i_ref_last", i_ref)))
+
+        i_ref_2, cursor_state, cur_dbg = update_progress_cursor_s(
             lumen_C, s_path,
             x_prev=tip_pre,
             x_now=tip_post,
-            i_ref=i_ref,
+            i_ref=i_ref_mpc,
             window=120,
             s_advance=1e-4,
             stall_steps=15,
@@ -3756,10 +4443,12 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
             state=cursor_state,
         )
 
+        # Diagnostic only. Do not overwrite the MPC gated reference with i_ref_2.
+        i_ref = i_ref_mpc
         if (k % DBG.every) == 0:
             dbg_print(
                 1,
-                f"[CURSOR] k={k:04d} i_ref={i_ref:4d} i_seg={cur_dbg['i_seg_now']:4d} "
+                f"[CURSOR] k={k:04d} i_ref={i_ref_mpc:4d} i_seg={cur_dbg['i_seg_now']:4d} "
                 f"Δs={cur_dbg['prog']*1e3:+7.3f}mm d={cur_dbg['d_now']*1e3:6.2f}mm "
                 f"stall={cursor_state['stall']:2d} forced={int(cur_dbg['forced'])} "
                 f"Advancement weight={mpc.w_adv_eff:.6g}"
@@ -3770,7 +4459,7 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         # histories
         k_hist.append(k)
         pred1_hist.append(float(info.get("pred1_err_xy", np.nan)))
-
+        pred_rollout_hist.append(float(info.get("pred_rollout_err_xy", np.nan)))
         S = info.get("jac_svd_S", None)
         if S is None:
             svd_S_hist.append(np.full((6,), np.nan))
@@ -3800,7 +4489,51 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         )
 
         u0 = info["u0"]
+        U_applied = info.get("U_applied", None)
+        X_pred = np.asarray(info.get("X_pred", []), float)
+        x_rollout = np.asarray(info.get("x_rollout", []), float)
+        U_applied = np.asarray(info.get("U_applied", []), float)
 
+        if X_pred.ndim == 2 and x_rollout.ndim == 2:
+            K = min(x_rollout.shape[0], X_pred.shape[0])
+
+            rollout_err_xyz = np.linalg.norm(
+                x_rollout[:K, :3] - X_pred[:K, :3],
+                axis=1
+            )
+
+            rollout_err_xy = np.linalg.norm(
+                x_rollout[:K, :2] - X_pred[:K, :2],
+                axis=1
+            )
+
+            info["rollout_err_xy_seq"] = rollout_err_xy.copy()
+            info["rollout_err_xyz_seq"] = rollout_err_xyz.copy()
+        else:
+            info["rollout_err_xy_seq"] = np.full((0,), np.nan)
+            info["rollout_err_xyz_seq"] = np.full((0,), np.nan)
+        jm = info.get("jac_move", {})
+
+        info["jac_pred_mm"] = float(jm.get("norm_jac_mm", np.nan))
+        info["jac_mpc_pred_mm"] = float(jm.get("norm_mpc_mm", np.nan))
+        info["jac_actual_mm"] = float(jm.get("norm_actual_mm", np.nan))
+        info["jac_gain_actual_over_jac"] = float(jm.get("gain_actual_over_jac", np.nan))
+        info["jac_gain_actual_over_mpc"] = float(jm.get("gain_actual_over_mpc", np.nan))
+        info["jac_angle_actual_deg"] = float(jm.get("angle_jac_actual_deg", np.nan))
+        info["jac_cos_actual"] = float(jm.get("cos_jac_actual", np.nan))
+        info["jac_actual_along_pred_mm"] = float(jm.get("actual_along_jac_mm", np.nan))
+
+        if jm and "error" not in jm:
+            print(
+                "[JAC MOVE] "
+                f"pred_jac={jm['norm_jac_mm']:.6f} mm, "
+                f"pred_mpc={jm['norm_mpc_mm']:.6f} mm, "
+                f"actual={jm['norm_actual_mm']:.6f} mm, "
+                f"gain_actual/jac={jm['gain_actual_over_jac']:.3f}, "
+                f"angle_jac_actual={jm['angle_jac_actual_deg']:.2f} deg"
+            )
+        else:
+            print("[JAC MOVE] unavailable:", jm.get("error", "unknown"))
         fixed_limits = plot_energy_only_3d(
             C_pre,
             lumen_C=lumen_C,
@@ -3888,11 +4621,20 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         trans_hist=trans_hist,
         omega_hist=omega_hist,
         dL_hist=dL_hist,
+        jac_pred_mm_hist=jac_pred_mm_hist,
+        jac_actual_mm_hist=jac_actual_mm_hist,
+        jac_gain_hist=jac_gain_hist,
+        jac_angle_hist=jac_angle_hist,
+        jac_cos_hist=jac_cos_hist,
+        pred_rollout_hist=pred_rollout_hist,
+        rollout_err_xy_seq_hist=rollout_err_xy_seq_hist,
+        rollout_err_xyz_seq_hist=rollout_err_xyz_seq_hist,
+        U_applied_hist=U_applied_hist,
     )
 
 
 if __name__ == "__main__":
-    out_root = Path("mpc_run_testing_centreline_1step")
+    out_root = Path("rollout_10_60_ltv_sqp")
 
     pivot_point, start_point, L0, dt = make_initial_poses()
 
@@ -3935,7 +4677,8 @@ if __name__ == "__main__":
         p_min=p_min,
         p_max=p_max,
     )
-
+    if log_csv_path.exists():
+        log_csv_path.unlink()
     run_stats = run_simulation(
         mpc=mpc,
         forward6d=forward6d,

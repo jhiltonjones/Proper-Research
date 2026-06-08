@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 # =========================
 # EDIT THESE PATHS
 # =========================
-CSV_FILE_1 = r"/Users/jackhilton-jones/Proper-Research/mpc_run_testing_centreline_1step/log.csv"
-CSV_FILE_2 = r"mpc_run_testing_centreline_3step/log.csv"
+CSV_FILE_1 = r"/Users/jackhilton-jones/Proper-Research/mpc_1np1s_bc_90/log.csv"
+CSV_FILE_2 = r"/Users/jackhilton-jones/Proper-Research/mpc_3np1s_bc_90/log.csv"
 
 # Choose x-axis column. If not found, row index will be used instead.
 X_AXIS_COLUMN = "k"
@@ -101,8 +101,8 @@ def main() -> None:
     df1 = df1[(df1[x_col] >= 1) & (df1[x_col] <=24)].copy()
     df2 = df2[(df2[x_col] >= 1) & (df2[x_col] <= 24)].copy()
 
-    label1="1 step",
-    label2="3 step",
+    label1="bc",
+    label2="no bc",
 
     combined_save_path = None
     if SAVE_DIR is not None:

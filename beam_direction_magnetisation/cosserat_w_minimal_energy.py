@@ -232,7 +232,6 @@ def contact_barrier_energy_and_force_fast(
         x = p[:, j]
 
         delta, Rloc, q_closest = lumen_query.closest(x, window=window)
-
         if delta > eps:
             n = (x - q_closest) / delta
         else:
@@ -1624,7 +1623,7 @@ def run_no_contact_length_angle_case(
     # Base and source magnet pose
     # ------------------------------------------------------------
     base_point = np.array([
-        pivot_point[0] - (L_cmd + 0.12),
+        pivot_point[0] - (L_cmd + 0.13),
         pivot_point[1],
         -0.1,
         np.pi,
@@ -1996,213 +1995,213 @@ def save_json(path, data):
         json.dump(to_serializable(data), f, indent=2)
 
 
-if __name__ == "__main__":
-    DEBUG = True
-
-    # ------------------------------------------------------------
-    # Sweep settings
-    # ------------------------------------------------------------
-    length_values = np.array([0.015, 0.020, 0.025, 0.030, 0.035], dtype=float)
-    angle_values_deg = np.array([0, 20, 40, 60, 80], dtype=float)
-    # length_values = np.array([0.015, 0.020], dtype=float)
-    # angle_values_deg = np.array([0, 20], dtype=float)
-    nodes_energy = 35
-    MAG_YAW_CAL_DEG = 0
-
-    run_dir = make_run_dir(
-        base="results",
-        name=f"no_contact_length_angle_sweep_N{nodes_energy}",
-    )
-    print("Saving sweep results to:", run_dir)
-
-    # ------------------------------------------------------------
-    # Parameters
-    # ------------------------------------------------------------
-    beam_params = default_beam_params()
-    mag_params = default_magnet_params()
-
-    pivot_point = np.array([
-        0.8281328220229531,
-        -0.6812560048066458,
-        -0.1,
-        3.1374639959012303,
-        0.13796054585074355,
-        0.0009377017734513666,
-    ], float)
-
-    wire = rod_section_stiffness(
-        r=200e-6,
-        E=50e6,
-        nu=0.4,
-    )
-
-    tip = rod_section_stiffness(
-        r=beam_params.r,
-        E=beam_params.E,
-        nu=0.49,
-    )
-
-    Kinv_fun = make_Kbt_inv_profile(
-        EI_wire=wire["EI"],
-        EI_tip=tip["EI"],
-        GJ_wire=wire["GJ"],
-        GJ_tip=tip["GJ"],
-        bend_soft=1.0,
-        tors_soft=1.0,
-    )
-
-    config = {
-        "length_values": length_values.tolist(),
-        "angle_values_deg": angle_values_deg.tolist(),
-        "nodes_energy": int(nodes_energy),
-        "MAG_YAW_CAL_DEG": float(MAG_YAW_CAL_DEG),
-        "pivot_point": pivot_point.tolist(),
-        "wire": wire,
-        "tip": tip,
-        "use_lumen": False,
-        "use_contact": False,
-    }
-
-    save_json(run_dir / "config.json", config)
-
-    # ------------------------------------------------------------
-    # Run sweep
-    # ------------------------------------------------------------
-    rows = []
-
-    for L_cmd in length_values:
-        for angle_deg in angle_values_deg:
-            print("\n" + "=" * 70)
-            print(f"Running L={L_cmd:.4f} m, angle={angle_deg:.1f} deg")
-            print("=" * 70)
-
-            case_name = f"L{1e3*L_cmd:05.1f}mm_angle{angle_deg:+05.1f}deg"
-            case_name = case_name.replace("+", "p").replace("-", "m").replace(".", "p")
-
-            plot_path = run_dir / f"{case_name}_centerline.png"
-            arrays_path = run_dir / f"{case_name}_arrays.npz"
-
-            try:
-                row, arrays = run_no_contact_length_angle_case(
-                    L_cmd=float(L_cmd),
-                    angle_deg=float(angle_deg),
-                    pivot_point=pivot_point,
-                    MAG_YAW_CAL_DEG=MAG_YAW_CAL_DEG,
-                    beam_params=beam_params,
-                    mag_params=mag_params,
-                    Kinv_fun=Kinv_fun,
-                    nodes_energy=nodes_energy,
-                    L0_insert=0.001,
-                    dL_insert=0.001,
-                    maxiter_energy=100,
-                    save_plot_path=plot_path,
-                    show_plot=False,
-                )
-
-                row["case_name"] = case_name
-                row["plot_file"] = str(plot_path.name)
-                row["arrays_file"] = str(arrays_path.name)
-
-                np.savez(arrays_path, **arrays)
-
-                rows.append(row)
-
-                print("tip error BVP-energy [mm] =", row["tip_error_bvp_energy_mm"])
-                print("energy deflection [mm]    =", row["energy_deflection_mm"])
-                print("success                   =", row["energy_success"])
-                print("grad_norm_scaled          =", row["grad_norm_scaled"])
-
-            except Exception as exc:
-                print(f"FAILED L={L_cmd:.4f}, angle={angle_deg:.1f}: {exc}")
-
-                rows.append({
-                    "case_name": case_name,
-                    "L_cmd": float(L_cmd),
-                    "angle_deg": float(angle_deg),
-                    "failed": True,
-                    "error": str(exc),
-                })
-
-    # ------------------------------------------------------------
-    # Save CSV and JSON summary
-    # ------------------------------------------------------------
-    import pandas as pd
-
-    df = pd.DataFrame(rows)
-    df.to_csv(run_dir / "length_angle_sweep_results.csv", index=False)
-
-    save_json(
-        run_dir / "length_angle_sweep_results.json",
-        {
-            "config": config,
-            "rows": rows,
-        },
-    )
-
-
-    print("\nDataFrame columns:")
-    print(df.columns.tolist())
-
-    print("\nSweep table:")
-    print(df)
-
-    print("\nFailed counts:")
-    print(df["failed"].value_counts(dropna=False) if "failed" in df.columns else "no failed column")
-    if "failed" not in df.columns:
-        df["failed"] = False
-
-    df_ok = df[df["failed"] != True].copy()
-
-    def safe_plot_sweep_heatmap(df, *, value_col, title, cbar_label, save_path=None, show=True):
-        if df.empty:
-            print(f"Skipping {value_col}: no successful rows.")
-            return
-
-        if value_col not in df.columns:
-            print(f"Skipping {value_col}: column not found.")
-            print("Available columns:", df.columns.tolist())
-            return
-
-        plot_sweep_heatmap(
-            df,
-            value_col=value_col,
-            title=title,
-            cbar_label=cbar_label,
-            save_path=save_path,
-            show=show,
-        )
-        safe_plot_sweep_heatmap(
-            df_ok,
-            value_col="tip_error_bvp_energy_mm",
-            title="BVP vs energy-min tip error",
-            cbar_label="Tip error [mm]",
-            save_path=run_dir / "heatmap_bvp_energy_tip_error_mm.png",
-            show=False,
-        )
-
-        safe_plot_sweep_heatmap(
-            df_ok,
-            value_col="energy_deflection_mm",
-            title="Energy-min tip deflection from straight baseline",
-            cbar_label="Deflection [mm]",
-            save_path=run_dir / "heatmap_energy_deflection_mm.png",
-            show=False,
-        )
-
-        safe_plot_sweep_heatmap(
-            df_ok,
-            value_col="grad_norm_scaled",
-            title="Energy-min stationarity",
-            cbar_label="Scaled gradient norm",
-            save_path=run_dir / "heatmap_grad_norm_scaled.png",
-            show=False,
-        )
 # if __name__ == "__main__":
 #     DEBUG = True
-#     L_cmd = 0.0293
+
+#     # ------------------------------------------------------------
+#     # Sweep settings
+#     # ------------------------------------------------------------
+#     length_values = np.array([0.015, 0.020, 0.025, 0.030, 0.035], dtype=float)
+#     angle_values_deg = np.array([0, 20, 40, 60, 80], dtype=float)
+#     # length_values = np.array([0.015, 0.020], dtype=float)
+#     # angle_values_deg = np.array([0, 20], dtype=float)
+#     nodes_energy = 35
+#     MAG_YAW_CAL_DEG = 0
+
+#     run_dir = make_run_dir(
+#         base="results",
+#         name=f"no_contact_length_angle_sweep_N{nodes_energy}",
+#     )
+#     print("Saving sweep results to:", run_dir)
+
+#     # ------------------------------------------------------------
+#     # Parameters
+#     # ------------------------------------------------------------
+#     beam_params = default_beam_params()
+#     mag_params = default_magnet_params()
+
+#     pivot_point = np.array([
+#         0.8281328220229531,
+#         -0.6812560048066458,
+#         -0.1,
+#         3.1374639959012303,
+#         0.13796054585074355,
+#         0.0009377017734513666,
+#     ], float)
+
+#     wire = rod_section_stiffness(
+#         r=200e-6,
+#         E=50e6,
+#         nu=0.4,
+#     )
+
+#     tip = rod_section_stiffness(
+#         r=beam_params.r,
+#         E=beam_params.E,
+#         nu=0.49,
+#     )
+
+#     Kinv_fun = make_Kbt_inv_profile(
+#         EI_wire=wire["EI"],
+#         EI_tip=tip["EI"],
+#         GJ_wire=wire["GJ"],
+#         GJ_tip=tip["GJ"],
+#         bend_soft=1.0,
+#         tors_soft=1.0,
+#     )
+
+#     config = {
+#         "length_values": length_values.tolist(),
+#         "angle_values_deg": angle_values_deg.tolist(),
+#         "nodes_energy": int(nodes_energy),
+#         "MAG_YAW_CAL_DEG": float(MAG_YAW_CAL_DEG),
+#         "pivot_point": pivot_point.tolist(),
+#         "wire": wire,
+#         "tip": tip,
+#         "use_lumen": False,
+#         "use_contact": False,
+#     }
+
+#     save_json(run_dir / "config.json", config)
+
+#     # ------------------------------------------------------------
+#     # Run sweep
+#     # ------------------------------------------------------------
+#     rows = []
+
+#     for L_cmd in length_values:
+#         for angle_deg in angle_values_deg:
+#             print("\n" + "=" * 70)
+#             print(f"Running L={L_cmd:.4f} m, angle={angle_deg:.1f} deg")
+#             print("=" * 70)
+
+#             case_name = f"L{1e3*L_cmd:05.1f}mm_angle{angle_deg:+05.1f}deg"
+#             case_name = case_name.replace("+", "p").replace("-", "m").replace(".", "p")
+
+#             plot_path = run_dir / f"{case_name}_centerline.png"
+#             arrays_path = run_dir / f"{case_name}_arrays.npz"
+
+#             try:
+#                 row, arrays = run_no_contact_length_angle_case(
+#                     L_cmd=float(L_cmd),
+#                     angle_deg=float(angle_deg),
+#                     pivot_point=pivot_point,
+#                     MAG_YAW_CAL_DEG=MAG_YAW_CAL_DEG,
+#                     beam_params=beam_params,
+#                     mag_params=mag_params,
+#                     Kinv_fun=Kinv_fun,
+#                     nodes_energy=nodes_energy,
+#                     L0_insert=0.001,
+#                     dL_insert=0.001,
+#                     maxiter_energy=100,
+#                     save_plot_path=plot_path,
+#                     show_plot=False,
+#                 )
+
+#                 row["case_name"] = case_name
+#                 row["plot_file"] = str(plot_path.name)
+#                 row["arrays_file"] = str(arrays_path.name)
+
+#                 np.savez(arrays_path, **arrays)
+
+#                 rows.append(row)
+
+#                 print("tip error BVP-energy [mm] =", row["tip_error_bvp_energy_mm"])
+#                 print("energy deflection [mm]    =", row["energy_deflection_mm"])
+#                 print("success                   =", row["energy_success"])
+#                 print("grad_norm_scaled          =", row["grad_norm_scaled"])
+
+#             except Exception as exc:
+#                 print(f"FAILED L={L_cmd:.4f}, angle={angle_deg:.1f}: {exc}")
+
+#                 rows.append({
+#                     "case_name": case_name,
+#                     "L_cmd": float(L_cmd),
+#                     "angle_deg": float(angle_deg),
+#                     "failed": True,
+#                     "error": str(exc),
+#                 })
+
+#     # ------------------------------------------------------------
+#     # Save CSV and JSON summary
+#     # ------------------------------------------------------------
+#     import pandas as pd
+
+#     df = pd.DataFrame(rows)
+#     df.to_csv(run_dir / "length_angle_sweep_results.csv", index=False)
+
+#     save_json(
+#         run_dir / "length_angle_sweep_results.json",
+#         {
+#             "config": config,
+#             "rows": rows,
+#         },
+#     )
+
+
+#     print("\nDataFrame columns:")
+#     print(df.columns.tolist())
+
+#     print("\nSweep table:")
+#     print(df)
+
+#     print("\nFailed counts:")
+#     print(df["failed"].value_counts(dropna=False) if "failed" in df.columns else "no failed column")
+#     if "failed" not in df.columns:
+#         df["failed"] = False
+
+#     df_ok = df[df["failed"] != True].copy()
+
+#     def safe_plot_sweep_heatmap(df, *, value_col, title, cbar_label, save_path=None, show=True):
+#         if df.empty:
+#             print(f"Skipping {value_col}: no successful rows.")
+#             return
+
+#         if value_col not in df.columns:
+#             print(f"Skipping {value_col}: column not found.")
+#             print("Available columns:", df.columns.tolist())
+#             return
+
+#         plot_sweep_heatmap(
+#             df,
+#             value_col=value_col,
+#             title=title,
+#             cbar_label=cbar_label,
+#             save_path=save_path,
+#             show=show,
+#         )
+#         safe_plot_sweep_heatmap(
+#             df_ok,
+#             value_col="tip_error_bvp_energy_mm",
+#             title="BVP vs energy-min tip error",
+#             cbar_label="Tip error [mm]",
+#             save_path=run_dir / "heatmap_bvp_energy_tip_error_mm.png",
+#             show=False,
+#         )
+
+#         safe_plot_sweep_heatmap(
+#             df_ok,
+#             value_col="energy_deflection_mm",
+#             title="Energy-min tip deflection from straight baseline",
+#             cbar_label="Deflection [mm]",
+#             save_path=run_dir / "heatmap_energy_deflection_mm.png",
+#             show=False,
+#         )
+
+#         safe_plot_sweep_heatmap(
+#             df_ok,
+#             value_col="grad_norm_scaled",
+#             title="Energy-min stationarity",
+#             cbar_label="Scaled gradient norm",
+#             save_path=run_dir / "heatmap_grad_norm_scaled.png",
+#             show=False,
+#         )
+# if __name__ == "__main__":
+#     DEBUG = True
+#     L_cmd = 0.02
 
 #     mag_len = beam_params.length_of_mag
-#     MAG_YAW_CAL_DEG = 12.4  # try -5 first because physically subtracting joint 5 fixed it
+#     MAG_YAW_CAL_DEG = 0  # try -5 first because physically subtracting joint 5 fixed it
 
 #     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
 #     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -2381,14 +2380,14 @@ if __name__ == "__main__":
 #     # for n in n_values:
 #     hist = solve_quasistatic_insertion(
 #         p0=p0_ur, q0=q0_ur,
-#         L0=0.002, Lf=L_cmd, dL=0.002,
+#         L0=0.01, Lf=L_cmd, dL=0.04,
 #         wire_len_fun=wire_len_fun,
 #         tip_len_fun=tip_len_fun,
 #         Kinv_fun=Kinv_fun, u_star=np.zeros(3),
 #         r_src=r_src_ur, m_src=m_src,
 #         m_local_fun=m_local_fun, m_moment=0.0,
 #         lumen_C=lumen_C, lumen_R=lumen_R,
-#         N=35, maxiter=30,
+#         N=10, maxiter=50,
 #         use_lumen=False,
 #         u_init=u_init,
 #         debug=True
@@ -2421,31 +2420,425 @@ if __name__ == "__main__":
 #         title="Cosserat vs Energy-min + Lumen constraint"
 #     )
 
-    # plot_error_vs_s(s_cmp, p_bvp, p_energy)
-    # s_cmp = info["s"]                 # energy-min node grid
-    # p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
+#     plot_error_vs_s(s_cmp, p_bvp, p_energy)
+#     s_cmp = info["s"]                 # energy-min node grid
+#     p_bvp = get_centerline_bvp(sol_bvp, s_cmp)
 
-    # Y_bvp = sol_bvp.sol(s_cmp)
-    # q_bvp = quat_normalize(Y_bvp[3:7, :])
+#     Y_bvp = sol_bvp.sol(s_cmp)
+#     q_bvp = quat_normalize(Y_bvp[3:7, :])
 
-    # p_energy = pE
-    # q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
-    # metrics = compare_common_metrics(
-    # s_cmp,
-    # p_bvp, q_bvp,
-    # p_energy, q_energy,
-    # m_src=m_src,
-    # r_src=r_src_ur,
-    # m_local_fun=m_local_fun,
-    # m_moment=0.0,
-    # )
-    # print_comparison_setup(
-    #     L_model=L_model,
-    #     wire_len=wire_len,
-    #     tip_len=tip_len,
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     r_src=r_src_ur,
-    #     q_src=q_src_ur,
-    #     m_src=m_src,
-    # )
+#     p_energy = pE
+#     q_energy = qE   # from solve_energy_min_3d / hist[-1]["q"]
+#     metrics = compare_common_metrics(
+#     s_cmp,
+#     p_bvp, q_bvp,
+#     p_energy, q_energy,
+#     m_src=m_src,
+#     r_src=r_src_ur,
+#     m_local_fun=m_local_fun,
+#     m_moment=0.0,
+#     )
+#     print_comparison_setup(
+#         L_model=L_model,
+#         wire_len=wire_len,
+#         tip_len=tip_len,
+#         p0=p0_ur,
+#         q0=q0_ur,
+#         r_src=r_src_ur,
+#         q_src=q_src_ur,
+#         m_src=m_src,
+#     )
+
+if __name__ == "__main__":
+    # ============================================================
+    # Lab-vs-simulation validation sweep
+    # ============================================================
+
+    CSV_PATH = Path(
+        "/Users/jackhilton-jones/Proper-Research/results_wo_lumen_no_drawing_28/sweep_results.csv"
+    )
+
+    OUT_DIR = Path(
+        "/Users/jackhilton-jones/Proper-Research/lab_vs_sim_bending_validation"
+    )
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Your lab data uses j_idx = 0, -5, -10, ..., -90.
+    # For a 0 to 80 degree EPM arc sweep, use 0 to -80.
+    J_VALUES = list(range(0, -81, -5))
+
+    I_IDX = 0
+    ERROR_THRESHOLD_MM = 1.0
+
+    MAG_YAW_CAL_DEG = 0.0
+
+    # ============================================================
+    # Parameters
+    # ============================================================
+
+    beam_params = default_beam_params()
+    mag_params = default_magnet_params()
+
+    pivot_point = np.array([
+        0.8281328220229531,
+        -0.6812560048066458,
+        -0.1,
+        np.pi,
+        0.001,
+        0.001,
+    ], dtype=float)
+
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=wire["EI"],
+        EI_tip=tip["EI"],
+        GJ_wire=wire["GJ"],
+        GJ_tip=tip["GJ"],
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
+
+    m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
+    m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
+
+    # ============================================================
+    # Load lab data
+    # ============================================================
+
+    df_lab = pd.read_csv(CSV_PATH)
+    df_lab.columns = [c.strip() for c in df_lab.columns]
+
+    df_lab = df_lab[
+        (df_lab["i_idx"] == I_IDX) &
+        (df_lab["j_idx"].isin(J_VALUES))
+    ].copy()
+
+    if df_lab.empty:
+        raise ValueError(
+            f"No lab rows found for i_idx={I_IDX} and j_values={J_VALUES}"
+        )
+
+    df_lab = df_lab.sort_values("j_idx", ascending=False).reset_index(drop=True)
+
+    rows = []
+
+    # ============================================================
+    # Sweep lab angles and recompute simulation prediction
+    # ============================================================
+
+    for _, lab_row in df_lab.iterrows():
+        i_idx = int(lab_row["i_idx"])
+        j_idx = int(lab_row["j_idx"])
+
+        L_cmd = 0.03
+
+        print("\n" + "=" * 80)
+        print(f"Validating i_idx={i_idx}, j_idx={j_idx}, L={1e3 * L_cmd:.1f} mm")
+        print("=" * 80)
+
+        # --------------------------------------------------------
+        # Base and EPM pose
+        # --------------------------------------------------------
+
+        base_point = np.array([
+            pivot_point[0] - (L_cmd + 0.18),
+            pivot_point[1],
+            -0.1,
+            np.pi,
+            0.001,
+            0.001,
+        ], dtype=float)
+
+        start_point = np.asarray(
+
+            get_point(i_idx, j_idx, base_point, pivot_point),
+
+            dtype=float,
+
+        )
+        start_point[2] = -0.1
+
+        T_ur_pivot = ur_pose6_to_T(pivot_point)
+        p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+
+        T_ur_mag = ur_pose6_to_T(start_point)
+        r_src_ur, q_src_ur = T_to_p_quat_wxyz(T_ur_mag)
+
+        # --------------------------------------------------------
+        # Effective MCR length and magnetisation
+        # --------------------------------------------------------
+
+        L_model, wire_len, tip_len = effective_lengths(
+            L_cmd,
+            L_tip_full=0.04,
+            L_tip_min=0.01,
+        )
+
+        m_local_fun = make_m_local_fun_wire_tip(
+            wire_len,
+            len_tip=tip_len,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        )
+
+        # --------------------------------------------------------
+        # Create model for this length
+        # --------------------------------------------------------
+
+        model = CosseratForwardModel(
+            p0=p0_ur,
+            q0=q0_ur,
+            Kinv_fun=Kinv_fun,
+            m_local_fun=m_local_fun,
+            m_moment=0.0,
+            wire_len=wire_len,
+            n_nodes=120,
+            tol=1e-5,
+            max_nodes=20000,
+        )
+
+        out = model.forward(
+            L=L_cmd,
+            r_src=r_src_ur,
+            q_src=q_src_ur,
+            wire_len=wire_len,
+            m_body=m_body,
+            s_out_n=300,
+        )
+
+        pred_tip_robot_m = np.asarray(out["p_tip"], dtype=float).reshape(3)
+
+        # --------------------------------------------------------
+        # Convert simulated tip into the same base-local frame
+        # as the lab measurements
+        # --------------------------------------------------------
+
+        beam_base_robot_m = np.asarray(p0_ur, dtype=float).reshape(3)
+
+        pred_tip_base_mm = predicted_centerline_robot_to_base_local_mm(
+            pred_tip_robot_m.reshape(1, 3),
+            beam_base_robot_m,
+            pivot_point,
+        )[0]
+
+        meas_tip_base_mm = np.array([
+            lab_row["meas_base_x_mm"],
+            lab_row["meas_base_y_mm"],
+            lab_row["meas_base_z_mm"],
+        ], dtype=float)
+
+        csv_pred_tip_base_mm = np.array([
+            lab_row["pred_base_x_mm"],
+            lab_row["pred_base_y_mm"],
+            lab_row["pred_base_z_mm"],
+        ], dtype=float)
+
+        # --------------------------------------------------------
+        # Errors
+        # --------------------------------------------------------
+
+        err_vec_mm = pred_tip_base_mm - meas_tip_base_mm
+        err_xy_mm = float(np.linalg.norm(err_vec_mm[:2]))
+        err_xyz_mm = float(np.linalg.norm(err_vec_mm))
+
+        csv_err_vec_mm = csv_pred_tip_base_mm - meas_tip_base_mm
+        csv_err_xy_mm = float(np.linalg.norm(csv_err_vec_mm[:2]))
+        csv_err_xyz_mm = float(np.linalg.norm(csv_err_vec_mm))
+
+        passed_1mm = bool(err_xyz_mm <= ERROR_THRESHOLD_MM)
+
+        status = "PASS" if passed_1mm else "FAIL"
+
+        print(
+            f"[{status}] arc={abs(j_idx):3d} deg | "
+            f"err_xyz={err_xyz_mm:.3f} mm | "
+            f"err_xy={err_xy_mm:.3f} mm"
+        )
+
+        print(
+            f"    sim pred  = "
+            f"({pred_tip_base_mm[0]: .3f}, "
+            f"{pred_tip_base_mm[1]: .3f}, "
+            f"{pred_tip_base_mm[2]: .3f}) mm"
+        )
+
+        print(
+            f"    lab meas  = "
+            f"({meas_tip_base_mm[0]: .3f}, "
+            f"{meas_tip_base_mm[1]: .3f}, "
+            f"{meas_tip_base_mm[2]: .3f}) mm"
+        )
+
+        print(
+            f"    csv pred  = "
+            f"({csv_pred_tip_base_mm[0]: .3f}, "
+            f"{csv_pred_tip_base_mm[1]: .3f}, "
+            f"{csv_pred_tip_base_mm[2]: .3f}) mm | "
+            f"csv_err_xyz={csv_err_xyz_mm:.3f} mm"
+        )
+
+        rows.append({
+            "i_idx": i_idx,
+            "j_idx": j_idx,
+            "arc_deg_abs": abs(j_idx),
+            "L_m": L_cmd,
+
+            "sim_pred_base_x_mm": float(pred_tip_base_mm[0]),
+            "sim_pred_base_y_mm": float(pred_tip_base_mm[1]),
+            "sim_pred_base_z_mm": float(pred_tip_base_mm[2]),
+
+            "csv_pred_base_x_mm": float(csv_pred_tip_base_mm[0]),
+            "csv_pred_base_y_mm": float(csv_pred_tip_base_mm[1]),
+            "csv_pred_base_z_mm": float(csv_pred_tip_base_mm[2]),
+
+            "meas_base_x_mm": float(meas_tip_base_mm[0]),
+            "meas_base_y_mm": float(meas_tip_base_mm[1]),
+            "meas_base_z_mm": float(meas_tip_base_mm[2]),
+
+            "sim_err_x_mm": float(err_vec_mm[0]),
+            "sim_err_y_mm": float(err_vec_mm[1]),
+            "sim_err_z_mm": float(err_vec_mm[2]),
+            "sim_err_xy_mm": err_xy_mm,
+            "sim_err_xyz_mm": err_xyz_mm,
+
+            "csv_err_xy_mm": csv_err_xy_mm,
+            "csv_err_xyz_mm": csv_err_xyz_mm,
+
+            "passed_1mm": passed_1mm,
+
+            "theta_y_deg": float(np.rad2deg(out["theta_y"])),
+            "theta_z_deg": float(np.rad2deg(out["theta_z"])),
+            "theta_total_deg": float(np.rad2deg(out["theta_total"])),
+            "B_tip": float(out["B_tip"]),
+            "F_net_x": float(out["F_net"][0]),
+            "F_net_y": float(out["F_net"][1]),
+            "F_net_z": float(out["F_net"][2]),
+            "T_net_x": float(out["T_net"][0]),
+            "T_net_y": float(out["T_net"][1]),
+            "T_net_z": float(out["T_net"][2]),
+        })
+
+    # ============================================================
+    # Save and summarise
+    # ============================================================
+
+    results_df = pd.DataFrame(rows)
+    results_csv = OUT_DIR / "lab_vs_sim_bending_validation.csv"
+    results_df.to_csv(results_csv, index=False)
+
+    print("\n" + "=" * 80)
+    print("VALIDATION SUMMARY")
+    print("=" * 80)
+
+    n_total = len(results_df)
+    n_pass = int(results_df["passed_1mm"].sum())
+    n_fail = n_total - n_pass
+
+    print(f"Total tested arc positions: {n_total}")
+    print(f"Passed <= {ERROR_THRESHOLD_MM:.1f} mm XYZ error: {n_pass}")
+    print(f"Failed >  {ERROR_THRESHOLD_MM:.1f} mm XYZ error: {n_fail}")
+
+    print("\nError statistics for recomputed simulation:")
+    print(f"Mean XYZ error [mm]   = {results_df['sim_err_xyz_mm'].mean():.3f}")
+    print(f"Median XYZ error [mm] = {results_df['sim_err_xyz_mm'].median():.3f}")
+    print(f"Max XYZ error [mm]    = {results_df['sim_err_xyz_mm'].max():.3f}")
+    print(f"Mean XY error [mm]    = {results_df['sim_err_xy_mm'].mean():.3f}")
+    print(f"Max XY error [mm]     = {results_df['sim_err_xy_mm'].max():.3f}")
+
+    print("\nSaved:")
+    print(results_csv)
+
+    failed_df = results_df[~results_df["passed_1mm"]].copy()
+
+    if failed_df.empty:
+        print("\nAll predictions are under 1 mm XYZ error.")
+    else:
+        print("\nThe following predictions are NOT under 1 mm XYZ error:")
+        print(
+            failed_df[
+                [
+                    "arc_deg_abs",
+                    "j_idx",
+                    "sim_err_x_mm",
+                    "sim_err_y_mm",
+                    "sim_err_z_mm",
+                    "sim_err_xy_mm",
+                    "sim_err_xyz_mm",
+                ]
+            ].to_string(index=False)
+        )
+
+    # ============================================================
+    # Plot validation error versus EPM arc angle
+    # ============================================================
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(
+        results_df["arc_deg_abs"],
+        results_df["sim_err_xyz_mm"],
+        marker="o",
+        linewidth=1.8,
+        label="XYZ error",
+    )
+    plt.plot(
+        results_df["arc_deg_abs"],
+        results_df["sim_err_xy_mm"],
+        marker="s",
+        linewidth=1.8,
+        label="XY error",
+    )
+    plt.axhline(
+        ERROR_THRESHOLD_MM,
+        linestyle="--",
+        linewidth=1.2,
+        label="1 mm threshold",
+    )
+    plt.xlabel("EPM arc angle [deg]")
+    plt.ylabel("Prediction error [mm]")
+    plt.title("Simulation prediction error against laboratory bending data")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "lab_vs_sim_error_vs_epm_arc.png", dpi=300)
+    plt.close()
+
+    # ============================================================
+    # Plot predicted and measured base-frame tip positions
+    # ============================================================
+
+    plt.figure(figsize=(6, 6))
+    plt.plot(
+        results_df["meas_base_x_mm"],
+        results_df["meas_base_y_mm"],
+        marker="o",
+        linewidth=1.8,
+        label="Measured lab tip",
+    )
+    plt.plot(
+        results_df["sim_pred_base_x_mm"],
+        results_df["sim_pred_base_y_mm"],
+        marker="s",
+        linewidth=1.8,
+        label="Simulated tip",
+    )
+    plt.xlabel("Base-frame x [mm]")
+    plt.ylabel("Base-frame y [mm]")
+    plt.title("Measured versus simulated MCR tip trajectory")
+    plt.axis("equal")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "lab_vs_sim_tip_trajectory_xy.png", dpi=300)
+    plt.close()

@@ -6,14 +6,294 @@ from proper_research.simulation.simulations.scenario import make_curvature_jacob
 from proper_research.hardware.hierarchical_policy import (
     HierarchicalMPCPolicyConfig,
 )
-from proper_research.control.lab_ready_mpc import build_initial_lumen_from_vision
+from proper_research.control.lab_ready_mpc import rotate_body_xy,build_initial_lumen_from_vision, pose8_quat_to_pose7_rotvec
 from .hardware_hierarchical_runner import run_control
 from proper_research.robot.live_hardware_control import LiveHardwareController
 from proper_research.hardware.hardware_model_factory import build_hardware_model_bundle
-from proper_research.robot.live_hardware_control import LiveHardwareController
 from proper_research.parameters import default_magnet_params, default_beam_params
-from beam_direction_magnetisation.magnetism.beam_geometry import Kbt_inv_profile
+from proper_research.simulation.magnetic_beam.config import ContactParams
+from proper_research.simulation_controller.sim_mpc_control import make_Kbt_inv_profile
+import argparse
+from beam_direction_magnetisation.quarternions.rotations import ur_pose6_to_T
+from proper_research.simulation.minimal_energy import rod_section_stiffness
+from beam_direction_magnetisation.quarternions.quarternions_functions import T_to_p_quat_wxyz
+                                                                              
+def smoke_test_hardware_setup(
+    *,
+    hw,
+    mpc,
+    model_bundle,
+    robot_pose6,
+    lumen_C_robot_m,
+    lumen_R_robot_m,
+    L0,
+):
+    print("\n" + "=" * 80)
+    print("[SMOKE] Hardware/model setup test")
+    print("=" * 80)
 
+    print("[SMOKE] robot_pose6 =", np.asarray(robot_pose6, float))
+    print("[SMOKE] lumen_C shape =", np.asarray(lumen_C_robot_m).shape)
+    print("[SMOKE] lumen_R shape =", np.asarray(lumen_R_robot_m).shape)
+    print("[SMOKE] lumen_R min/max [mm] =",
+          1e3 * float(np.nanmin(lumen_R_robot_m)),
+          1e3 * float(np.nanmax(lumen_R_robot_m)))
+
+    p0 = np.asarray(mpc.p, float).reshape(-1) if getattr(mpc, "p", None) is not None else None
+    print("[SMOKE] mpc.p exists:", p0 is not None)
+
+    if p0 is None:
+        print("[SMOKE] mpc.p is None; using controller initial p0 from controller_pack may be required.")
+        return
+
+    # Test prediction model forward call.
+    p7 = np.asarray(p0[:7], float) if p0.size == 7 else None
+
+    # If controller uses p8 quaternion internally, adapt to p7.
+    if p0.size == 8:
+        p7 = pose8_quat_to_pose7_rotvec(p0)
+    elif p0.size == 7:
+        p7 = p0.copy()
+    else:
+        raise ValueError(f"Unexpected mpc.p shape: {p0.shape}")
+
+    y = np.asarray(model_bundle.plant_model(p7), float).reshape(-1)
+    print("[SMOKE] forward output shape =", y.shape)
+    print("[SMOKE] forward tip =", y[:3])
+
+    J = np.asarray(
+        model_bundle.jacobian_model.jacobian_tip_pose7(
+            p7,
+            solve_if_needed=True,
+        ),
+        float,
+    )
+    print("[SMOKE] J shape =", J.shape)
+    print("[SMOKE] J finite =", bool(np.all(np.isfinite(J))))
+
+    diag = model_bundle.jacobian_model.get_last_diag()
+    print("[SMOKE] cond_H_beam =", diag.get("cond_H_beam", np.nan))
+    print("[SMOKE] H_beam shape =",
+          diag.get("H_beam_shape_0", None),
+          diag.get("H_beam_shape_1", None))
+
+    print("[SMOKE] PASS")
+def run_hardware_test(
+    *,
+    mode: str,
+    max_steps: int = 5,
+    robot_ip: str = "192.168.56.101",
+    pivot_hint=None,
+    z_offset: float = 0.0,
+    send_commands: bool = False,
+):
+    if mode.endswith("_live") and not send_commands:
+        raise ValueError("Live mode requested but --send was not passed.")
+
+    if mode.endswith("_shadow"):
+        send_commands = False
+
+    if mode in ("smoke", "lti_contact_shadow", "lti_contact_live"):
+        jacobian_variant = "contact"
+    elif mode in ("lti_no_contact_shadow", "lti_no_contact_live"):
+        jacobian_variant = "no_contact"
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
+    is_live_mode = mode in ("lti_contact_live", "lti_no_contact_live")
+
+    if is_live_mode and not send_commands:
+        raise ValueError("Live mode requested, but --send was not passed.")
+
+    # Smoke and shadow modes still need robot pose, so dry_run must be False.
+    # But they should not open/use the advancer because they are not sending commands.
+    hw = LiveHardwareController(
+        robot_ip=robot_ip,
+        dry_run=False,
+        use_advancer=bool(is_live_mode and send_commands),
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=float(z_offset),
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
+    )
+
+    robot_pose6 = hw.get_robot_pose_once()
+
+    if robot_pose6 is None:
+        raise RuntimeError(
+            "Robot pose is None. This happens when LiveHardwareController.dry_run=True. "
+            "For hardware smoke/shadow tests you need dry_run=False so the script can read "
+            "the current UR pose."
+        )
+
+    robot_pose6 = hw.get_robot_pose_once()
+    robot_pose6 = np.asarray(robot_pose6, dtype=float).reshape(6,)
+
+    pivot_point = np.array([
+        0.84813282,
+        -0.68127317,
+        -0.10000000,
+        np.pi,
+        1.0e-3,
+        1.0e-3,
+    ], dtype=float)
+
+    lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m = build_initial_lumen_from_vision(
+        pivot_point=pivot_point,
+        image_filename="focused_image.jpg",
+        roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path="green_roi_box.json",
+        pivot_hint = (309,330),
+        show=False,
+    )
+
+    mag_params = default_magnet_params()
+    beam_params = default_beam_params()
+
+
+    T_ur_pivot = ur_pose6_to_T(np.asarray(pivot_point, dtype=float).reshape(6,))
+    p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
+    MAG_YAW_CAL_DEG = -10.0
+
+    m_body_nominal = np.array(
+        [-float(mag_params.mag_epm), 0.0, 0.0],
+        dtype=float,
+    )
+
+    m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
+
+    wire = rod_section_stiffness(
+        r=200e-6,
+        E=50e6,
+        nu=0.4,
+    )
+    # tip = rod_section_stiffness(
+    #     r=2e-3,
+    #     E=3e6,
+    #     nu=0.49,
+    # )
+    tip = rod_section_stiffness(
+        r=beam_params.r,
+        E=beam_params.E,
+        nu=0.49,
+    )
+    EA_wire = wire["EA"]
+    EI_wire = wire["EI"]
+    GJ_wire = wire["GJ"]
+
+    EA_tip = tip["EA"]
+    EI_tip = tip["EI"]
+    GJ_tip = tip["GJ"]
+
+    Kinv_fun = make_Kbt_inv_profile(
+        EI_wire=EI_wire,
+        EI_tip=EI_tip,
+        GJ_wire=GJ_wire,
+        GJ_tip=GJ_tip,
+        bend_soft=1.0,
+        tors_soft=1.0,
+    )
+    contact_params = ContactParams(
+        r_beam=0.001,
+        k=1e5,
+        pen_switch=5e-5,
+        k_hard=1e10,
+        smooth=True,
+        smooth_eps=1e-5,
+        window=3,
+    )
+
+    model_bundle = build_hardware_model_bundle(
+        p0_ur=p0_ur,
+        q0_ur=q0_ur,
+        Kinv_fun=Kinv_fun,
+        m_body=m_body,
+        lumen_C_robot_m=lumen_C_robot_m,
+        lumen_R_robot_m=lumen_R_robot_m,
+        contact_params=contact_params,
+        jacobian_variant=jacobian_variant,
+    )
+
+    L0 = 0.027
+    dt = 0.01
+
+    run_cfg = make_hardware_controller_config(
+        Np=1,
+        N_sqp=1,
+        max_steps=max_steps,
+        rollout_steps=1,
+        solver_mode="lti",
+    )
+
+    controller_pack = build_controller(
+        start_point=robot_pose6,
+        L0=L0,
+        dt=dt,
+        plant_model=model_bundle.plant_model,
+        jacobian_model=model_bundle.jacobian_model,
+        lumen_C=model_bundle.lumen_C,
+        lumen_R=model_bundle.lumen_R,
+        run_cfg=run_cfg,
+    )
+
+    mpc = controller_pack["mpc"]
+
+    if mode == "smoke":
+        smoke_test_hardware_setup(
+            hw=hw,
+            mpc=mpc,
+            model_bundle=model_bundle,
+            robot_pose6=robot_pose6,
+            lumen_C_robot_m=lumen_C_robot_m,
+            lumen_R_robot_m=lumen_R_robot_m,
+            L0=L0,
+        )
+        return
+
+    history = run_control(
+        mpc=mpc,
+        pivot_point=pivot_point,
+
+        image_filename="focused_image.jpg",
+        red_roi_path="/home/jack/Proper-Research/custom_area.json",
+        blue_roi_path="blue_roi_box.json",
+        green_roi_path="green_roi_box.json",
+
+        max_steps=max_steps,
+        show=False,
+
+        send_commands=send_commands,
+        hw=hw,
+
+        save_plots=True,
+        plot_dir=f"hardware_debug_{mode}",
+
+        lumen_C_robot_m=model_bundle.lumen_C,
+        lumen_R_robot_m=model_bundle.lumen_R,
+
+        csv_log_path=f"hardware_{mode}.csv",
+
+        hierarchical_mpc_enabled=False,
+        hierarchical_policy_config=None,
+        rollout_steps_max=1,
+        solver_mode="lti",
+        pivot_hint = (309,330),
+        enable_node_upgrade=False,
+        node_upgrade_ref_idx=130,
+        initial_N_nodes=10,
+        upgraded_N_nodes=24,
+    )
+
+    print(f"[DONE] {mode}: {len(history)} steps")
 def make_hardware_run_cfg(
     *,
     Np=5,
@@ -99,142 +379,63 @@ def make_hardware_controller_config(
     return exp_cfg.controller
 
 def main():
-    hw = LiveHardwareController()
+    parser = argparse.ArgumentParser()
 
-    robot_pose6 = hw.get_robot_pose_once()
-    pivot_point = robot_pose6.copy()
-
-    lumen_C_robot_m, lumen_R_robot_m, lumen_base_robot_m = build_initial_lumen_from_vision(
-        pivot_point=pivot_point,
-        image_filename="focused_image.jpg",
-        roi_polygon_path="/home/jack/Proper-Research/custom_area.json",
-        blue_roi_path="blue_roi_box.json",
-        green_roi_path="green_roi_box.json",
-        pivot_hint=None,
-        show=False,
+    parser.add_argument(
+        "--mode",
+        choices=[
+            "smoke",
+            "lti_contact_shadow",
+            "lti_no_contact_shadow",
+            "lti_contact_live",
+            "lti_no_contact_live",
+        ],
+        default="smoke",
     )
 
-    mag_params = default_magnet_params()
-    beam_params = default_beam_params()
+    parser.add_argument("--max-steps", type=int, default=5)
 
-    # Match your simulator convention.
-    p0_ur = np.asarray(lumen_base_robot_m, float).reshape(3)
-
-    # Use the same q0_ur convention as simulation.
-    # Replace this with your actual base quaternion if you already compute it.
-    q0_ur = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
-
-    m_body = np.asarray(mag_params.m_body, float).reshape(3)
-
-    Kinv_fun = Kbt_inv_profile(
-        beam_params,
-        # Use the same arguments you use in simulation.
+    parser.add_argument(
+        "--robot-ip",
+        type=str,
+        default="192.168.56.101",
+        help="UR robot IP address.",
     )
 
-    contact_params = ContactParams(
-        # Use the exact same contact values as your simulator.
-        # Example placeholders:
-        # k_wall=...,
-        # delta=...,
-        # ...
+    parser.add_argument(
+        "--pivot-hint-x",
+        type=int,
+        default=318,
     )
 
-    model_bundle = build_hardware_model_bundle(
-        p0_ur=p0_ur,
-        q0_ur=q0_ur,
-        Kinv_fun=Kinv_fun,
-        m_body=m_body,
-        lumen_C_robot_m=lumen_C_robot_m,
-        lumen_R_robot_m=lumen_R_robot_m,
-        contact_params=contact_params,
-        jacobian_variant="contact",
+    parser.add_argument(
+        "--pivot-hint-y",
+        type=int,
+        default=329,
     )
 
-    run_cfg = make_hardware_controller_config(
-        Np=5,
-        N_sqp=5,
-        max_steps=100,
-        rollout_steps=2,
-        solver_mode="lti",
+    parser.add_argument(
+        "--z-offset",
+        type=float,
+        default=0.27,
     )
 
-    L0 = 0.02
-    dt = 0.05
-
-    controller_pack = build_controller(
-        start_point=robot_pose6,
-        L0=L0,
-        dt=dt,
-        plant_model=model_bundle.plant_model,
-        jacobian_model=model_bundle.jacobian_model,
-        lumen_C=model_bundle.lumen_C,
-        lumen_R=model_bundle.lumen_R,
-        run_cfg=run_cfg,
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        help="Actually send robot/advancer commands. Shadow tests ignore this.",
     )
 
-    mpc = controller_pack["mpc"]
+    args = parser.parse_args()
 
-    hierarchy_cfg = HierarchicalMPCPolicyConfig(
-        enabled=True,
-
-        rollout_min=1,
-        rollout_max=2,
-        ltv_rollout_cap=2,
-        sqp_full_iters=3,
-
-        curvature_warn_1pm=90.0,
-        curvature_bad_1pm=190.0,
-
-        sqp_du_rel_warn=0.5,
-        sqp_du_rel_bad=2.0,
-
-        clearance_warn_mm=2.0,
-        clearance_bad_mm=1.2,
-
-        beam_cond_warn=5e3,
-        beam_cond_bad=1e5,
-
-        mpc_cond_warn=5e7,
-        mpc_cond_bad=1e8,
-
-        downgrade_patience=2,
+    run_hardware_test(
+        mode=args.mode,
+        max_steps=args.max_steps,
+        robot_ip=args.robot_ip,
+        pivot_hint=(args.pivot_hint_x, args.pivot_hint_y),
+        z_offset=args.z_offset,
+        send_commands=bool(args.send),
     )
-
-    history = run_control(
-        mpc=mpc,
-        pivot_point=pivot_point,
-
-        image_filename="focused_image.jpg",
-        red_roi_path="/home/jack/Proper-Research/custom_area_w_wall.json",
-        blue_roi_path="blue_roi_box.json",
-        green_roi_path="green_roi_box.json",
-
-        max_steps=100,
-        show=False,
-
-        send_commands=False,
-        hw=hw,
-
-        save_plots=True,
-        plot_dir="hardware_hierarchy_debug_plots",
-
-        lumen_C_robot_m=model_bundle.lumen_C,
-        lumen_R_robot_m=model_bundle.lumen_R,
-
-        csv_log_path="hardware_hierarchy_log.csv",
-
-        hierarchical_mpc_enabled=True,
-        hierarchical_policy_config=hierarchy_cfg,
-        rollout_steps_max=2,
-        solver_mode="lti",
-
-        enable_node_upgrade=True,
-        node_upgrade_ref_idx=130,
-        initial_N_nodes=10,
-        upgraded_N_nodes=24,
-    )
-
-    print(f"Finished hardware run with {len(history)} steps.")
 
 
 if __name__ == "__main__":

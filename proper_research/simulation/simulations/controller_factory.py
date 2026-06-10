@@ -65,7 +65,7 @@ class ControllerDesignConfig:
     u_max: tuple[float, float, float, float, float, float, float] = (
         3.0,
         3.0,
-        3.0,
+        0.0,
         np.deg2rad(60.0),
         np.deg2rad(60.0),
         np.deg2rad(360.0),

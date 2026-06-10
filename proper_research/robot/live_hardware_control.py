@@ -89,6 +89,7 @@ class LiveHardwareController:
             self.close_robot()
 
     def send_step(self, p_now, u0, dt):
+        print(f"[DBG] Pose recieved {p_now}")
         ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
         ur_pose6_send = ur_pose6_next.copy()
         ur_pose6_send[2] += self.z_offset

@@ -71,7 +71,7 @@ def run_control(
     red_roi_path="/home/jack/Proper-Research/custom_area_w_wall.json",
     blue_roi_path="blue_roi_box.json",
     green_roi_path="green_roi_box.json",
-    pivot_hint=None,
+    pivot_hint=(309,330),
     max_steps=100,
     show=False,
     send_commands=False,
@@ -171,15 +171,14 @@ def run_control(
         print(f"\n================ CONTROL STEP {k} ================")
 
         new_capture()
-        overlay_path = f"debug_outputs_easter/reconstruction_step_{k:04d}.png"
-        roi_polygon = load_polygon(red_roi_path)
+        roi_polygon = load_polygon("/home/jack/Proper-Research/custom_area.json")
 
         vision_result = reconstruct_beam_within_vessel(
             image_filename=image_filename,
             red_roi_polygon=roi_polygon,
             blue_roi_path=blue_roi_path,
             green_roi_path=green_roi_path,
-            pivot_hint=pivot_hint,
+            pivot_hint=(309,330),
             show=show,
             save_overlay_path=f"debug_outputs_run_track_dtesting/reconstruction_overlay_step_{k:04d}.png",
             base_px_ref=manual["base_px"],
@@ -324,7 +323,15 @@ def run_control(
         if prev_ref_xyz is not None:
             actual_err_to_prev_ref_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
             pred_err_to_prev_ref_xy = np.linalg.norm(prev_pred_xyz[:2] - prev_ref_xyz[:2])
+            prev_actual_err_xy = np.linalg.norm(x_prev[:2] - prev_ref_xyz[:2]) if "x_prev" in locals() else np.nan
+            current_actual_err_xy = np.linalg.norm(x_meas[:2] - prev_ref_xyz[:2])
 
+            print("[CAMERA TRACKING]")
+            print("actual error to previous ref before/after [mm] =",
+                1000.0 * prev_actual_err_xy,
+                1000.0 * current_actual_err_xy)
+            print("actual error improvement [mm] =",
+                1000.0 * (prev_actual_err_xy - current_actual_err_xy))
             print("[ACTUAL VS PREVIOUS REF]")
             print("prev_i_ref =", prev_i_ref)
             print("prev_ref_xyz =", prev_ref_xyz)
@@ -348,17 +355,6 @@ def run_control(
         print("distance from pivot [m]:", np.linalg.norm(x_meas[:3] - pivot_point[:3]))
         print("measured tangent robot:", x_meas[3:6])
 
-        # print("[VISION] x_meas =", x_meas)
-        # print("[VISION] tip position norm [m] =", np.linalg.norm(x_meas[:3]))
-        # print("[VISION] tangent norm =", np.linalg.norm(x_meas[3:6]))
-        # print("[VISION] lumen_C shape =", mpc.lumen_C.shape)
-        # print("[VISION] lumen_R shape =", mpc.lumen_R.shape)
-        # print("[VISION] closest wall distance [mm] =", vision_result["tip_distance_info_mm"]["closest_distance_mm"])
-        # print("[VISION] left beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_left_wall_tangent_angle_deg"])
-        # print("[VISION] right beam-wall angle [deg] =", vision_result["tip_wall_angle_info"]["beam_right_wall_tangent_angle_deg"])
-        # print("[DBG] i_ref_last before search =", getattr(mpc, "i_ref_last", None))
-        # print("[DBG] risk_window =", getattr(mpc, "risk_window", None))
-        # print("[DBG] len(lumen_C) =", len(mpc.lumen_C))
         current_robot_pose6 = None
         if hw is not None:
             current_robot_pose6 = hw.get_robot_pose_once()
@@ -366,8 +362,8 @@ def run_control(
         i_ref = closest_index_in_window_monotone(
             mpc.lumen_C,
             tip_xyz,
-            int(getattr(mpc, "i_ref_last", 70)),
-            window=int(getattr(mpc, "risk_window", 200)),
+            int(getattr(mpc, "i_ref_last", 10)),
+            window=int(getattr(mpc, "risk_window", 30)),
         )
         C = np.asarray(mpc.lumen_C, float)
         d2_all = np.sum((C - tip_xyz[None, :])**2, axis=1)
@@ -462,6 +458,21 @@ def run_control(
 
             mpc.set_measured_params(p_meas8)
 
+            # ------------------------------------------------------------
+            # Hardware-frame safety patch:
+            # p_meas8 is in the MPC/model frame after z_offset.
+            # Therefore p_min/p_max must also be in that same frame.
+            # ------------------------------------------------------------
+            z_margin = 0.003  # 3 mm
+
+            mpc.p_min[2] = float(p_meas8[2]) - z_margin
+            mpc.p_max[2] = float(p_meas8[2]) + z_margin
+
+            # Keep z translation disabled for now.
+            if hasattr(mpc, "u_max"):
+                mpc.u_max = np.asarray(mpc.u_max, dtype=float).reshape(-1)
+                mpc.u_max[2] = 0.0
+
             mag_pos_current = np.asarray(p_meas8[:3], dtype=float)
             mag_dir_current = np.asarray(dipole_dir_from_p8(p_meas8), dtype=float)
 
@@ -536,18 +547,110 @@ def run_control(
             old_N_sqp = int(getattr(mpc, "N_sqp", N_sqp_current))
             mpc.N_sqp = int(N_sqp_current)
 
+            x_mpc = np.asarray(x_meas, dtype=float).reshape(-1)[: int(mpc.n)]
+            p_plan0 = np.asarray(mpc.p, dtype=float).copy()
+            x_mpc = np.asarray(x_meas, dtype=float).reshape(-1)[: int(mpc.n)]
+
+            try:
+                x_model0 = np.asarray(
+                    mpc.forward_tip_fn(p_plan0, commit=False),
+                    dtype=float,
+                ).reshape(-1)[: int(mpc.n)]
+            except TypeError:
+                x_model0 = np.asarray(
+                    mpc.forward_tip_fn(p_plan0),
+                    dtype=float,
+                ).reshape(-1)[: int(mpc.n)]
+
+            print("\n[FRAME DEBUG BEFORE MPC]")
+            print("robot_pose6 xyz          =", np.asarray(robot_pose6, dtype=float)[:3])
+            print("pivot xyz                =", np.asarray(pivot_point, dtype=float)[:3])
+            print("hw.z_offset              =", getattr(hw, "z_offset", np.nan) if hw is not None else np.nan)
+            print("p_plan0 xyz              =", p_plan0[:3])
+            print("x_meas tip xyz           =", x_mpc[:3])
+            print("x_model0 tip xyz         =", x_model0[:3])
+            print("model-current err xyz mm =", 1000.0 * (x_model0[:3] - x_mpc[:3]))
+            print("model-current err xy mm  =", 1000.0 * np.linalg.norm(x_model0[:2] - x_mpc[:2]))
+            print("p_min xyz                =", np.asarray(getattr(mpc, 'p_min', np.full_like(p_plan0, np.nan)))[:3])
+            print("p_max xyz                =", np.asarray(getattr(mpc, 'p_max', np.full_like(p_plan0, np.nan)))[:3])
+            camera_bias = x_mpc[: int(mpc.n)] - x_model0[: int(mpc.n)]
+            print("[CAMERA BIAS] xyz [mm] =", 1000.0 * camera_bias)
+
+            if hasattr(mpc, "set_output_bias"):
+                mpc.set_output_bias(camera_bias)
+            # ------------------------------------------------------------
+            # Conservative live hardware MPC limits.
+            # These are velocity-like controls because p_next = p + dt * u.
+            # ------------------------------------------------------------
+            dt_mpc = float(mpc.dt)
+
+            max_trans_step_mm = 4
+            max_rot_step_rad = 0.04
+            max_dL_step_mm = 1.2
+            u_hw_max = np.array([
+                (max_trans_step_mm / 1000.0) / dt_mpc,  # vx
+                (max_trans_step_mm / 1000.0) / dt_mpc,  # vy
+                0.0,                                    # vz disabled
+                0.0,                                    # wx disabled
+                0.0,                                    # wy disabled
+                max_rot_step_rad / dt_mpc,              # wz
+                (max_dL_step_mm / 1000.0) / dt_mpc,     # dL
+            ], dtype=float)
+
+            mpc.u_max = u_hw_max.copy()
+
+            print("[LIMITS] mpc.u_max =", mpc.u_max)
+            print("[LIMITS] max trans step [mm] =", max_trans_step_mm)
+            print("[LIMITS] max rot step [rad] =", max_rot_step_rad)
+            print("[LIMITS] max dL step [mm] =", max_dL_step_mm)
             try:
                 p_now, x_now, info = mpc.step(
-                    x_meas=x_meas,
-                    rollout_steps=1,  # hardware applies rollout through command buffer
+                    x_meas=x_mpc,
+                    rollout_steps=1,
                     solver_mode=solver_mode_current,
                 )
             finally:
                 mpc.N_sqp = old_N_sqp
 
+            u_debug = np.asarray(info.get("u0", np.zeros(int(mpc.m))), dtype=float).reshape(-1)
+
+            try:
+                p_next_dbg = mpc._apply_control_to_p(p_plan0, u_debug)
+            except AttributeError:
+                p_next_dbg = np.asarray(info.get("p_now", mpc.p), dtype=float).copy()
+
+            try:
+                x_next_nl = np.asarray(
+                    mpc.forward_tip_fn(p_next_dbg, commit=False),
+                    dtype=float,
+                ).reshape(-1)[: int(mpc.n)]
+            except TypeError:
+                x_next_nl = np.asarray(
+                    mpc.forward_tip_fn(p_next_dbg),
+                    dtype=float,
+                ).reshape(-1)[: int(mpc.n)]
+
+            X_pred_raw = info.get("X_pred", None)
+            if X_pred_raw is None:
+                x_pred0 = np.full(int(mpc.n), np.nan)
+            else:
+                x_pred0 = np.asarray(X_pred_raw, dtype=float).reshape(-1, int(mpc.n))[0]
+
+            print("\n[PREDICTION DEBUG AFTER MPC]")
+            print("u_debug                  =", u_debug)
+            print("dt                       =", float(mpc.dt))
+            print("p_plan0 xyz              =", p_plan0[:3])
+            print("p_next_dbg xyz           =", np.asarray(p_next_dbg)[:3])
+            print("p_step xyz mm            =", 1000.0 * (np.asarray(p_next_dbg)[:3] - p_plan0[:3]))
+            print("x_model0 xyz             =", x_model0[:3])
+            print("x_next_nl xyz            =", x_next_nl[:3])
+            print("x_pred0 xyz              =", x_pred0[:3])
+            print("nonlinear dx mm          =", 1000.0 * (x_next_nl[:3] - x_model0[:3]))
+            print("linear pred dx mm        =", 1000.0 * (x_pred0[:3] - x_model0[:3]))
+            print("pred-vs-nonlinear err mm =", 1000.0 * (x_pred0[:3] - x_next_nl[:3]))
             if int(info.get("infeasible", 0)):
                 U_seq = np.zeros((1, int(mpc.m)), dtype=float)
-                X_pred_plan = np.asarray(x_meas, dtype=float).reshape(1, -1)
+                X_pred_plan = np.asarray(x_meas, dtype=float).reshape(-1)[: int(mpc.n)].reshape(1, int(mpc.n))
             else:
                 U_seq = np.asarray(info["U_seq"], dtype=float)
                 X_pred_plan = np.asarray(info["X_pred"], dtype=float)
@@ -619,7 +722,7 @@ def run_control(
         else:
             # For buffered commands, manually propagate internal actuator estimate
             p_now = mpc.apply_open_loop_control(u_cmd)
-            x_now = x_meas.copy()
+            x_now = np.asarray(x_meas, dtype=float).reshape(-1)[: int(mpc.n)].copy()
 
         hardware_stop = False
         hardware_stop_reason = ""
@@ -632,7 +735,7 @@ def run_control(
             hardware_stop = True
             hardware_stop_reason = "mpc_infeasible"
 
-        clearance_stop_mm = 0.8
+        clearance_stop_mm = -0.5
         clearance_now_mm = float(info_pre.get("clearance_mm", np.nan))
 
         if np.isfinite(clearance_now_mm) and clearance_now_mm < clearance_stop_mm:
@@ -647,9 +750,53 @@ def run_control(
                     hw.stop()
                 except Exception:
                     pass
+        # ------------------------------------------------------------
+        # Final live command-size safety gate.
+        # This catches any bad bounds/config before hardware motion.
+        # ------------------------------------------------------------
+        u_cmd_arr = np.asarray(u_cmd, dtype=float).reshape(-1)
+        dt_cmd = float(mpc.dt)
 
+        trans_step_mm = 1000.0 * float(np.linalg.norm(u_cmd_arr[:3] * dt_cmd))
+        rot_step_rad = float(np.linalg.norm(u_cmd_arr[3:6] * dt_cmd))
+        dL_step_mm = 1000.0 * float(u_cmd_arr[6] * dt_cmd) if u_cmd_arr.size > 6 else np.nan
+
+        max_live_trans_step_mm = 6
+        max_live_rot_step_rad = 0.06
+        max_live_dL_step_mm = 1.8
+
+        print("[SAFETY] trans_step_mm =", trans_step_mm)
+        print("[SAFETY] rot_step_rad =", rot_step_rad)
+        print("[SAFETY] dL_step_mm =", dL_step_mm)
+
+        if trans_step_mm > max_live_trans_step_mm:
+            hardware_stop = True
+            hardware_stop_reason = "trans_step_too_large"
+
+        if rot_step_rad > max_live_rot_step_rad:
+            hardware_stop = True
+            hardware_stop_reason = "rot_step_too_large"
+
+        if np.isfinite(dL_step_mm) and abs(dL_step_mm) > max_live_dL_step_mm:
+            hardware_stop = True
+            hardware_stop_reason = "dL_step_too_large"
+
+        if hardware_stop:
+            print("[HARDWARE STOP]", hardware_stop_reason)
+            if hw is not None:
+                try:
+                    hw.stop()
+                except Exception:
+                    pass
         if send_commands and not hardware_stop:
-            print("[DBG] before hw.send_step")
+            print("[LIVE TEST] p_now =", np.asarray(p_now, float))
+            print("[LIVE TEST] u_cmd =", np.asarray(u_cmd, float))
+            print("[LIVE TEST] dt =", float(mpc.dt))
+            print("[LIVE TEST] dL step [mm] =", 1000.0 * float(u_cmd[6]) * float(mpc.dt))
+            print("[LIVE TEST] trans step norm [mm] =",
+                1000.0 * float(np.linalg.norm(np.asarray(u_cmd[:3], float) * float(mpc.dt))))
+            print("[LIVE TEST] rot step norm [rad] =",
+                float(np.linalg.norm(np.asarray(u_cmd[3:6], float) * float(mpc.dt))))
             hw.send_step(p_now=p_now, u0=u_cmd, dt=mpc.dt)
             print("[DBG] after hw.send_step")
         if info is not None and info.get("B_first", None) is not None:
@@ -683,48 +830,30 @@ def run_control(
         else:
             track_dbg = None
         err_to_center = np.nan
-        if (
-            track_dbg is not None
-            and "X_ref" in track_dbg
-            and info.get("X_pred", None) is not None
-            and info.get("X_aff_last", None) is not None
-        ):
-            X_pred_arr = np.asarray(info["X_pred"], float)
-            n_pred = X_pred_arr.shape[1]
-            err_to_center = float(info.get("err_to_center", np.nan))
-            X_ref_used = np.asarray(track_dbg["X_ref"], float).reshape(-1, n_pred)
-            X_aff_stack = np.asarray(info["X_aff_last"], float).reshape(-1, n_pred)
 
-            ref = X_ref_used[0, :3]
-            pred = X_pred_arr[0, :3]
-            aff = X_aff_stack[0, :3]
-            meas = np.asarray(x_meas, float)[:3]
+        if info is not None:
+            idx_ref_arr = np.asarray(info.get("idx_ref", []), dtype=int).reshape(-1)
+            X_pred_raw = info.get("X_pred", None)
 
-            # print("[Y FLIP CHECK]")
-            # print("robot-frame dy meas-ref [mm] =", 1000.0 * (meas[1] - ref[1]))
-            # print("plot/image-style dy ref-meas [mm] =", 1000.0 * (ref[1] - meas[1]))
-            # print("robot-frame dx meas-ref [mm] =", 1000.0 * (meas[0] - ref[0]))
-            # print("pred-ref xy [mm] =", 1000.0 * (pred[:2] - ref[:2]))
+            if idx_ref_arr.size > 0 and X_pred_raw is not None:
+                X_pred_arr = np.asarray(X_pred_raw, dtype=float).reshape(-1, int(mpc.n))
 
-            # print("[Y SIGN CHECK]")
-            # print("ref_y - aff_y [mm] =", 1000.0 * (ref[1] - aff[1]))
-            # print("pred_y - aff_y [mm] =", 1000.0 * (pred[1] - aff[1]))
-            # print("u0 vy =", np.asarray(info["u0"], float)[1])
+                ref_idx0 = int(idx_ref_arr[0])
+                ref = np.asarray(mpc.lumen_C[ref_idx0, :3], dtype=float)
+                pred = np.full(3, np.nan, dtype=float)
+                pred[: int(mpc.n)] = X_pred_arr[0, : int(mpc.n)]
 
-            prev_ref_xyz = ref.copy()
-            prev_pred_xyz = pred.copy()
-            prev_i_ref = int(np.asarray(track_dbg["idx_ref"]).reshape(-1)[0])
+                meas = np.asarray(x_meas, dtype=float)[:3]
 
-        else:
-            print("[Y FLIP CHECK] Missing track debug data")
-            print("track_dbg is None:", track_dbg is None)
-            print("has X_ref:", track_dbg is not None and "X_ref" in track_dbg)
+                err_to_center = float(np.linalg.norm(meas[:2] - ref[:2]))
 
-            if info is not None:
-                print("X_pred is None:", info.get("X_pred", None) is None)
-                print("X_aff_last is None:", info.get("X_aff_last", None) is None)
+                prev_ref_xyz = ref.copy()
+                prev_pred_xyz = pred.copy()
+                prev_i_ref = ref_idx0
             else:
-                print("[TRACK DBG] skipped on open-loop buffered step")
+                print("[TRACK DBG] missing idx_ref or X_pred")
+        else:
+            print("[TRACK DBG] skipped on open-loop buffered step")
     
     
 
@@ -773,19 +902,73 @@ def run_control(
         if info is not None:
             u0_log = np.asarray(info["u0"], dtype=float).copy()
 
-            print("[MPC] jac cond =", info.get("jac_svd_cond", np.nan))
-            print("[MPC] jac rank =", info.get("jac_svd_rank", np.nan))
-            print("Previous one-step prediction error xy [mm] =",
-                1000.0 * float(info.get("one_step_pred_err_xy", np.nan)))
-            print("u0_proposed =", info["u0"])
-            print("status =", info.get("status"))
-            print("infeasible =", info.get("infeasible"))
+            status = str(info.get("status", "unknown"))
+            infeasible = int(info.get("infeasible", 0))
 
-            X_pred = np.asarray(info["X_pred"], dtype=float)
-            X_nom = np.asarray(info["X_nom"], dtype=float).reshape(-1)
+            u0 = np.asarray(info.get("u0", np.full(int(mpc.m), np.nan)), dtype=float).reshape(-1)
+            idx_ref = np.asarray(info.get("idx_ref", []), dtype=int).reshape(-1)
 
-            # pred_tip = np.asarray(X_pred[0, :3], dtype=float)
-            nom_tip = np.asarray(X_nom[:3], dtype=float)
+            cond_H_mpc = float(info.get("cond_H_mpc", np.nan))
+            cond_H_beam = float(info.get("cond_H_beam", np.nan))
+            mpc_eig_cond = float(info.get("mpc_eig_cond", np.nan))
+
+            weak_channel = info.get("mpc_weak_channel_name", "")
+            weak_energy = info.get("mpc_weak_channel_energy", np.nan)
+            strong_channel = info.get("mpc_strong_channel_name", "")
+            strong_energy = info.get("mpc_strong_channel_energy", np.nan)
+
+            rollout_used = info.get("rollout_steps_used", info.get("rollout_steps", ""))
+            solver_used = info.get("solver_mode_used", info.get("solver_mode", ""))
+
+            print("[MPC] status =", status)
+            print("[MPC] infeasible =", infeasible)
+            print("[MPC] solver_mode_used =", solver_used)
+            print("[MPC] rollout_steps_used =", rollout_used)
+
+            if idx_ref.size > 0:
+                print("[MPC] idx_ref[0] =", int(idx_ref[0]))
+                print("[MPC] idx_ref =", idx_ref.tolist())
+            else:
+                print("[MPC] idx_ref = []")
+
+            print("[MPC] cond_H_mpc =", cond_H_mpc)
+            print("[MPC] cond_H_beam =", cond_H_beam)
+            print("[MPC] mpc_eig_cond =", mpc_eig_cond)
+
+            print(
+                "[MPC] weak_channel =",
+                weak_channel,
+                "energy =",
+                weak_energy,
+            )
+            print(
+                "[MPC] strong_channel =",
+                strong_channel,
+                "energy =",
+                strong_energy,
+            )
+
+            print("[MPC] u0_proposed =", u0)
+            print("[MPC] u0_trans_norm =", float(np.linalg.norm(u0[:3])))
+            print("[MPC] u0_rot_norm =", float(np.linalg.norm(u0[3:6])))
+            print("[MPC] u0_dL =", float(u0[6]) if u0.size > 6 else np.nan)
+            print("[MPC] predicted dL step [mm] =",
+                1000.0 * float(u0[6]) * float(mpc.dt) if u0.size > 6 else np.nan)
+
+            X_pred_raw = info.get("X_pred", None)
+
+            if X_pred_raw is None:
+                X_pred = np.full((0, int(mpc.n)), np.nan, dtype=float)
+            else:
+                X_pred = np.asarray(X_pred_raw, dtype=float).reshape(-1, int(mpc.n))
+
+            X_nom_raw = info.get("X_nom", None)
+            if X_nom_raw is None:
+                nom_tip = np.full(3, np.nan, dtype=float)
+            else:
+                X_nom = np.asarray(X_nom_raw, dtype=float).reshape(-1)
+                nom_tip = np.full(3, np.nan, dtype=float)
+                nom_tip[: min(3, X_nom.size)] = X_nom[: min(3, X_nom.size)]
 
             raw_model_err_xy = float(info.get("raw_model_err_xy", np.nan))
             nom_corr_resid_xy = float(info.get("nom_corr_resid_xy", np.nan))
@@ -793,11 +976,18 @@ def run_control(
             nom_ref_err_xy = float(info.get("nom_ref_err_xy", np.nan))
             pred_ref_err_xy = float(info.get("pred_ref_err_xy", np.nan))
             one_step_pred_err_xy = float(info.get("one_step_pred_err_xy", np.nan))
-            meas_ref_err_xy = float(info.get("meas_ref_err_xy", np.nan))
-            meas_ref_idx = int(info.get("meas_ref_idx", -1))
-            meas_ref_xyz = np.asarray(info.get("meas_ref_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
-            model_bias_xyz = np.asarray(info.get("model_bias_xyz", np.full(3, np.nan)), dtype=float).reshape(3,)
 
+            idx_ref_arr = np.asarray(info.get("idx_ref", []), dtype=int).reshape(-1)
+            if idx_ref_arr.size > 0:
+                meas_ref_idx = int(idx_ref_arr[0])
+                meas_ref_xyz = np.asarray(mpc.lumen_C[meas_ref_idx, :3], dtype=float).reshape(3,)
+                meas_ref_err_xy = float(np.linalg.norm(meas_tip[:2] - meas_ref_xyz[:2]))
+            else:
+                meas_ref_idx = -1
+                meas_ref_xyz = np.full(3, np.nan, dtype=float)
+                meas_ref_err_xy = np.nan
+
+            model_bias_xyz = np.full(3, np.nan, dtype=float)
         else:
             u0_log = u_cmd.copy()
 

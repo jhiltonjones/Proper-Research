@@ -440,7 +440,7 @@ def build_forward_model_no_lumen_effect(
         f"[INIT] L_ins={L0:.3f} -> "
         f"L_model={L_model:.3f}, wire_len={wire_len_model:.3f}, tip_len={tip_len_model:.3f}"
     )
-    MAG_YAW_CAL_DEG = 15 # try -5 first because physically subtracting joint 5 fixed it
+    MAG_YAW_CAL_DEG = -10# try -5 first because physically subtracting joint 5 fixed it
 
     m_body_nominal = np.array([-mag_params.mag_epm, 0.0, 0.0], dtype=float)
     m_body = rotate_body_xy(m_body_nominal, MAG_YAW_CAL_DEG)
@@ -524,7 +524,7 @@ def build_forward_model_no_lumen_effect(
     #     L_tip_min=0.01,
     # )
     contact = ContactParams(
-        r_beam=0.0011,   # or 0.001, but use one value everywhere
+        r_beam=0.001,   # or 0.001, but use one value everywhere
         k=1e5,
         pen_switch=5e-5,
         k_hard=1e10,
@@ -1467,7 +1467,7 @@ def make_initial_poses_single_use(hw) -> tuple[np.ndarray, np.ndarray, float, fl
     red_roi_path="/home/jack/Proper-Research/custom_area.json"
     blue_roi_path="blue_roi_box.json"
     green_roi_path="green_roi_box.json"
-    pivot_hint=(321,321)
+    pivot_hint=(309,330)
     manual = load_manual_vessel_boundaries_with_frame(MANUAL_VESSEL_BOUNDARY_FILE)
     new_capture()
     roi_polygon = load_polygon(red_roi_path)
@@ -1835,7 +1835,7 @@ def plot_single_tip_comparison_local(
     plt.title("Predicted vs measured tip with external magnet")
     plt.axis("equal")
     plt.grid(True)
-    plt.legend()
+    # plt.legend()
     plt.tight_layout()
 
     out_path = os.path.join(results_dir, filename)
@@ -2915,7 +2915,7 @@ if __name__ == "__main__":
     # Replace this with the real beam base point in robot coordinates.
     # This is a 3D point, not a pose6.
     beam_base_point_robot_m = pivot_point2[:3]
-    pivot_hint = (313,321)
+    pivot_hint = (309, 330)
     cfg = SinglePoseEvalConfig(
         pivot_pose6=np.asarray(pivot_point2, dtype=float),
         test_pose6=test_pose6,
@@ -2926,7 +2926,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=15,
+        known_green_distance_mm=20,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

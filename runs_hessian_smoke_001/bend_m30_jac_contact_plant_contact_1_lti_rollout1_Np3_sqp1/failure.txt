@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 320, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 156, in run_experiment
+    adaptive_rollout_enabled=exp_cfg.adaptive_rollout_enabled,
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ExperimentConfig' object has no attribute 'adaptive_rollout_enabled'

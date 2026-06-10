@@ -1,0 +1,24 @@
+{
+  "run_name": "bend_m30_jac_contact_plant_contact_1_sqp_full_rollout1_Np12_sqp5",
+  "log_csv_path": "runs_curvature_jacobian/bend_m30_jac_contact_plant_contact_1_sqp_full_rollout1_Np12_sqp5/log.csv",
+  "bend_angle_deg": -30.0,
+  "plant_contact": true,
+  "jacobian_variant": "contact",
+  "solver_mode": "sqp_full",
+  "rollout_steps": 1,
+  "Np": 12,
+  "N_sqp": 5,
+  "n_steps": 16,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 40,
+  "final_tip": [
+    0.7616533748441138,
+    -0.7001797956024978,
+    -0.10000676609960917
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 5.0,
+  "mean_jac_cond": 200869297984230.88,
+  "max_jac_cond": 207234587405486.97
+}

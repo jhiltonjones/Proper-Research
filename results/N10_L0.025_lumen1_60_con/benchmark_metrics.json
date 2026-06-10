@@ -1,0 +1,12 @@
+{
+  "analytic_mean_s": 4.073268889139096,
+  "analytic_std_s": 0.03909707598379494,
+  "analytic_min_s": 4.043413958512247,
+  "analytic_max_s": 4.117523708380759,
+  "fd_mean_s": 77.81737233325839,
+  "fd_std_s": 0.7436791322659305,
+  "fd_min_s": 77.18704566638917,
+  "fd_max_s": 78.63758504204452,
+  "speedup_fd_over_analytic": 19.104403478186644,
+  "benchmark_relative_error": 0.03860221602168066
+}

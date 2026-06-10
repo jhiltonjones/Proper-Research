@@ -1,0 +1,20 @@
+{
+  "W_contact_reconstructed": 3.95581812875133e-11,
+  "W_cf_from_energy_from_u": 3.95581812875133e-11,
+  "W_contact_ratio": 1.0,
+  "contact_grad_norm": 2.4336933686665445e-11,
+  "contact_grad_max_abs": 1.6050090508431794e-11,
+  "contact_min_gap": 0.00013891235256644906,
+  "contact_active_nodes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ]
+}

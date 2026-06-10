@@ -1,0 +1,12 @@
+{
+  "relative_full_error": 0.16349599541819343,
+  "relative_translation_error": 0.3244459218935243,
+  "relative_rotation_error": 0.30715447266360263,
+  "relative_length_error": 0.16347999492024798,
+  "norm_J_an": 1.1387110281419397,
+  "norm_J_fd": 1.1106547594323397,
+  "norm_diff": 0.18158760545934455,
+  "norm_translation_fd": 0.009058172732964422,
+  "norm_rotation_fd": 0.00037445252722563153,
+  "norm_length_fd": 1.1106177578004743
+}

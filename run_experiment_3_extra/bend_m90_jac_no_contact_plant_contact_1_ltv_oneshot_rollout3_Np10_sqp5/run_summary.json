@@ -1,0 +1,24 @@
+{
+  "run_name": "bend_m90_jac_no_contact_plant_contact_1_ltv_oneshot_rollout3_Np10_sqp5",
+  "log_csv_path": "run_experiment_3_extra/bend_m90_jac_no_contact_plant_contact_1_ltv_oneshot_rollout3_Np10_sqp5/log.csv",
+  "bend_angle_deg": -90.0,
+  "plant_contact": true,
+  "jacobian_variant": "no_contact",
+  "solver_mode": "ltv_oneshot",
+  "rollout_steps": 3,
+  "Np": 10,
+  "N_sqp": 5,
+  "n_steps": 100,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 23,
+  "final_tip": [
+    0.7769086610117629,
+    -0.709944355280844,
+    -0.10001351440875476
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 1.0,
+  "mean_jac_cond": 302940209.43674356,
+  "max_jac_cond": 508259400.16403884
+}

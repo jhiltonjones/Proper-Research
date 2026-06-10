@@ -1,0 +1,24 @@
+{
+  "run_name": "bend_m30_jac_contact_plant_contact_1_ltv_oneshot_rollout5_Np5_sqp1",
+  "log_csv_path": "runs_hessian_adaptive_debug_001/bend_m30_jac_contact_plant_contact_1_ltv_oneshot_rollout5_Np5_sqp1/log.csv",
+  "bend_angle_deg": -30.0,
+  "plant_contact": true,
+  "jacobian_variant": "contact",
+  "solver_mode": "ltv_oneshot",
+  "rollout_steps": 5,
+  "Np": 5,
+  "N_sqp": 1,
+  "n_steps": 10,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 35,
+  "final_tip": [
+    0.7640914360703266,
+    -0.706821793837645,
+    -0.10001265932796431
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 1.0,
+  "mean_jac_cond": 9754.710853544504,
+  "max_jac_cond": 13504.78293254997
+}

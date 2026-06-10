@@ -1,0 +1,24 @@
+{
+  "run_name": "bend_m60_jac_contact_plant_contact_1_lti_rollout5_Np5_sqp5",
+  "log_csv_path": "run_experiment_4/bend_m60_jac_contact_plant_contact_1_lti_rollout5_Np5_sqp5/log.csv",
+  "bend_angle_deg": -60.0,
+  "plant_contact": true,
+  "jacobian_variant": "contact",
+  "solver_mode": "lti",
+  "rollout_steps": 5,
+  "Np": 5,
+  "N_sqp": 5,
+  "n_steps": 23,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 40,
+  "final_tip": [
+    0.7649023661207025,
+    -0.6953917925072843,
+    -0.10002479845307026
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 1.0,
+  "mean_jac_cond": 14092.96618971303,
+  "max_jac_cond": 60109.06448763176
+}

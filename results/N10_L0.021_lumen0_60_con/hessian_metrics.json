@@ -1,0 +1,10 @@
+{
+  "H_norm": 1.31852186883026e-08,
+  "H_asymmetry": 0.0,
+  "H_condition": 7.695807336410784,
+  "H_eig_min": 8.331344592685783e-10,
+  "H_eig_max": 7.081223017496838e-09,
+  "use_scalar_hessian": true,
+  "eps_hess": 1e-05,
+  "eps_theta": 1e-06
+}

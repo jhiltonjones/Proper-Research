@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 335, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 145, in run_experiment
+    stats = run_simulation(
+            ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/runner.py", line 188, in run_simulation
+    hierarchy_state = HierarchicalMPCState(
+                      ^^^^^^^^^^^^^^^^^^^^^
+TypeError: HierarchicalMPCState.__init__() got an unexpected keyword argument 'previous_solver_mode'

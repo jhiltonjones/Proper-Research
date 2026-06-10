@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 317, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 97, in run_experiment
+    controller_pack = build_controller(
+                      ^^^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/controller_factory.py", line 356, in build_controller
+    mpc.set_initial_params(p0)
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation_controller/controller.py", line 162, in set_initial_params
+    ).reshape(self.n)
+      ^^^^^^^^^^^^^^^
+ValueError: cannot reshape array of size 6 into shape (3,)

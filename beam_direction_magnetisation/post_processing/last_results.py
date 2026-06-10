@@ -31,25 +31,36 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# ============================================================
+# Plot style
+# ============================================================
 
+plt.rcParams.update({
+    "font.size": 18,          # Default text size
+    "axes.labelsize": 22,     # X/Y axis label size
+    "axes.titlesize": 24,     # Title size
+    "xtick.labelsize": 18,    # X tick number size
+    "ytick.labelsize": 18,    # Y tick number size
+    "legend.fontsize": 16,    # Legend size
+})
 # ============================================================
 # Edit these paths
 # ============================================================
 
 BC_CSV_PATHS = [
-    Path("/Users/jackhilton-jones/Proper-Research/lti_10np_12s_bc_60_2.csv"),
-    Path("/Users/jackhilton-jones/Proper-Research/lti_10np_12s_bc_60.csv"),
+    Path("/Users/jackhilton-jones/Proper-Research/lti_1np_1s_bc_60_2.csv"),
+    Path("/Users/jackhilton-jones/Proper-Research/lti_1np_1s_bc_60_3.csv"),
     # Path("/Users/jackhilton-jones/Proper-Research/lti_1np_1s_bc_60.csv"),
 ]
 
 NOBC_CSV_PATHS = [
-    Path("/Users/jackhilton-jones/Proper-Research/lti_10_12s_nobc_60_2.csv"),
-    Path("/Users/jackhilton-jones/Proper-Research/lti_10_12s_nobc_60.csv"),
+    Path("/Users/jackhilton-jones/Proper-Research/lti_1np_1s_nobc_60_2.csv"),
+    Path("/Users/jackhilton-jones/Proper-Research/lti_1np_1s_nobc_60.csv"),
     # Path("/Users/jackhilton-jones/Proper-Research/lti_1np_3s_bc_60.csv"),
 ]
 
 OUT_DIR = Path(
-    "/Users/jackhilton-jones/Proper-Research/bc_vs_nobc_jacobian_comparison_12np"
+    "/Users/jackhilton-jones/Proper-Research/bc_vs_nobc_jacobian_comparison_1np"
 )
 
 K_MIN = 0

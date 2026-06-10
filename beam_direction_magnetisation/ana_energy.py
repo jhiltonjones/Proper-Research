@@ -23,7 +23,18 @@ import csv
 import time
 import numpy as np
 from dataclasses import dataclass
-
+# ============================================================
+# Plot style
+# ============================================================
+import matplotlib.pyplot as plt
+plt.rcParams.update({
+    "font.size": 12,          # Default text size
+    "axes.labelsize": 12,     # X/Y axis label size
+    "axes.titlesize": 24,     # Title size
+    "xtick.labelsize": 12,    # X tick number size
+    "ytick.labelsize": 12,    # Y tick number size
+    "legend.fontsize": 16,    # Legend size
+})
 @dataclass(frozen=True)
 class ContactParams:
     r_beam: float = 0.001
@@ -1094,10 +1105,29 @@ def energy_min_tip_jacobian_implicit(
 
     return J_tip_theta, dict(
         H=H,
+        H_sym=H_sym,
+        H_reg=H_sym_reg,
         Gtheta=Gtheta,
         du_dtheta=du_dtheta,
+        du_dtheta_raw=du_dtheta_raw,
+        du_dtheta_sym=du_dtheta_sym,
         P_u=P_u,
+        J_direct=J_direct,
+        J_implicit=J_implicit,
+        J_tip=J_tip_theta,
+        J_raw=J_raw,
+        J_sym=J_sym,
+        J_implicit_raw=J_implicit_raw,
+        J_implicit_sym=J_implicit_sym,
         p_tip_base=p_tip_base,
+        stationarity_norm=float(np.linalg.norm(g0)),
+        H_condition=float(np.linalg.cond(H_sym_reg)),
+        Gtheta_norm=float(np.linalg.norm(Gtheta)),
+        du_dtheta_norm=float(np.linalg.norm(du_dtheta)),
+        P_u_norm=float(np.linalg.norm(P_u)),
+        J_direct_norm=float(np.linalg.norm(J_direct)),
+        J_implicit_norm=float(np.linalg.norm(J_implicit)),
+        J_tip_norm=float(np.linalg.norm(J_tip_theta)),
     )
 def hessian_diagnostic_for_grad(name, grad_fun, u_ref, eps=1e-5):
     u_ref = np.asarray(u_ref, float).reshape(-1)
@@ -3457,48 +3487,118 @@ def singular_value_diagnostics_scaled(J, name, theta_scale):
         "singular_values_scaled": svals_scaled,
         "condition_scaled": float(svals_scaled[0] / max(svals_scaled[-1], 1e-30)),
     }
-
-def plot_scaled_jacobian_singular_values(
+def plot_jacobian_column_norms(
     J_no_bc,
     J_with_bc,
     *,
-    theta_scale,
     run_dir=None,
-    title="Scaled analytical tip Jacobian singular values",
-    filename="scaled_jacobian_singular_values_with_without_bc.png",
+    title="Tip Jacobian column norms",
+    filename="jacobian_column_norms_with_without_bc.png",
+    print_table=True,
+    use_log_scale=False,
 ):
-    J_no_bc_scaled = scale_jacobian_columns(J_no_bc, theta_scale)
-    J_with_bc_scaled = scale_jacobian_columns(J_with_bc, theta_scale)
+    """
+    Compare column norms of tip Jacobians.
 
-    sv_no = np.linalg.svd(J_no_bc_scaled, compute_uv=False)
-    sv_bc = np.linalg.svd(J_with_bc_scaled, compute_uv=False)
+    Columns:
+        x_src, y_src, z_src, rx, ry, rz, L
 
-    k_no = np.arange(1, len(sv_no) + 1)
-    k_bc = np.arange(1, len(sv_bc) + 1)
+    J_no_bc:
+        Tip Jacobian without contact-aware modelling, shape (3, 7).
 
-    plt.figure(figsize=(6.0, 4.0))
-    plt.semilogy(k_no, sv_no, "o-", label="Without Contact Conditioning")
-    plt.semilogy(k_bc, sv_bc, "s-", label="With Contact Conditioning")
-    plt.xlabel("Singular value index")
-    plt.ylabel("Singular value [m per scaled parameter step]")
+    J_with_bc:
+        Tip Jacobian with contact-aware modelling, shape (3, 7).
+    """
+    labels = ["x", "y", "z", "rx", "ry", "rz", "L"]
+
+    J_no_bc = np.asarray(J_no_bc, float)
+    J_with_bc = np.asarray(J_with_bc, float)
+
+    if J_no_bc.shape != (3, 7):
+        raise ValueError(f"J_no_bc must have shape (3, 7), got {J_no_bc.shape}.")
+
+    if J_with_bc.shape != (3, 7):
+        raise ValueError(f"J_with_bc must have shape (3, 7), got {J_with_bc.shape}.")
+
+    col_no = np.linalg.norm(J_no_bc, axis=0)
+    col_bc = np.linalg.norm(J_with_bc, axis=0)
+
+    ratio = col_bc / (col_no + 1e-12)
+
+    if print_table:
+        print("\n--- JACOBIAN COLUMN NORMS ---")
+        print(f"{'col':>4s} {'no_contact':>14s} {'contact':>14s} {'contact/no':>14s}")
+        for lab, a, b, r in zip(labels, col_no, col_bc, ratio):
+            print(f"{lab:>4s} {a:14.6e} {b:14.6e} {r:14.6e}")
+
+        print("\nL columns:")
+        print("  no_contact J[:, L] =", J_no_bc[:, 6])
+        print("  contact    J[:, L] =", J_with_bc[:, 6])
+        print("  ||no_contact L||   =", col_no[6])
+        print("  ||contact L||      =", col_bc[6])
+
+    x = np.arange(len(labels))
+    width = 0.35
+
+    plt.figure(figsize=(7.0, 4.0))
+    plt.bar(x - width / 2, col_no, width, label="Without Contact-aware Modelling")
+    plt.bar(x + width / 2, col_bc, width, label="With Contact-aware Modelling")
+    plt.xticks(x, labels)
+    plt.ylabel("Column norm")
     plt.title(title)
-    plt.grid(True, which="both", alpha=0.3)
+    plt.grid(True, axis="y", alpha=0.3)
+
+    if use_log_scale:
+        plt.yscale("log")
+        plt.ylabel("Column norm, log scale")
+
     plt.legend()
     plt.tight_layout()
 
     if run_dir is not None:
         out_path = run_dir / filename
         plt.savefig(out_path, dpi=300)
-        print("Saved scaled singular-value plot to:", out_path)
+        print("Saved column-norm plot to:", out_path)
 
     plt.show()
 
-    return sv_no, sv_bc
+    return col_no, col_bc
+def print_L_column_decomposition(
+    *,
+    J_direct,
+    J_implicit,
+    label="contact",
+):
+    J_direct = np.asarray(J_direct, float)
+    J_implicit = np.asarray(J_implicit, float)
+
+    if J_direct.shape != (3, 7):
+        raise ValueError(f"J_direct must have shape (3, 7), got {J_direct.shape}.")
+
+    if J_implicit.shape != (3, 7):
+        raise ValueError(
+            f"J_implicit must have shape (3, 7), got {J_implicit.shape}."
+        )
+
+    d = J_direct[:, 6]
+    i = J_implicit[:, 6]
+    t = d + i
+
+    cos_di = float(np.dot(d, i) / ((np.linalg.norm(d) * np.linalg.norm(i)) + 1e-12))
+
+    print(f"\n--- L COLUMN DECOMPOSITION: {label} ---")
+    print("direct L term:  ", d)
+    print("implicit L term:", i)
+    print("total L term:   ", t)
+    print("||direct||      =", np.linalg.norm(d))
+    print("||implicit||    =", np.linalg.norm(i))
+    print("||total||       =", np.linalg.norm(t))
+    print("cos(direct, implicit) =", cos_di)
 def make_benchmark_case():
     DEBUG = False
     lumen_used = True   # IMPORTANT: must be True to test contact
 
-    L_cmd = 0.0215
+    L_cmd = 0.023
     nodes = 20
     dL = 0.04
 
@@ -3508,7 +3608,7 @@ def make_benchmark_case():
     m_body = np.array([-mag_params.mag_epm, 0.0, 0.0])
 
     pivot_point_lumen = np.array([
-        0.7981328220229531, -0.7112731669220016, -0.1,
+        0.7981328220229531, -0.7212731669220016, -0.1,
         np.pi, 0.001, 0.001
     ], float)
 
@@ -3524,7 +3624,7 @@ def make_benchmark_case():
         np.pi, 0.001, 0.001
     ], float)
 
-    start_point = np.asarray(get_point(0, -90, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, -60, base_point, pivot_point), dtype=float)
 
     L_model, wire_len, tip_len = effective_lengths(
         L_cmd,
@@ -3543,7 +3643,7 @@ def make_benchmark_case():
     )
 
     T_ur_pivot_lumen = ur_pose6_to_T(pivot_point_lumen)
-    T_ur_pivot = ur_pose6_to_T(pivot_point)
+    T_ur_pivot = ur_pose6_to_T(pivot_point_lumen)
 
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
     p0_ur_lumen, q0_ur_lumen = T_to_p_quat_wxyz(T_ur_pivot_lumen)
@@ -3587,7 +3687,7 @@ def make_benchmark_case():
         length=0.041,
         n_pts=130,
         bend_axis=np.array([0.0, 0.0, 1.0]),
-        bend_angle=np.deg2rad(-90.0),
+        bend_angle=np.deg2rad(-60.0),
         bend_start=0.015,
         bend_end=0.021,
     )
@@ -3637,46 +3737,42 @@ def make_benchmark_case():
         ),
     }
 
-def plot_jacobian_column_norms(
+def plot_scaled_jacobian_singular_values(
     J_no_bc,
     J_with_bc,
     *,
+    theta_scale,
     run_dir=None,
-    title="Tip Jacobian column norms",
-    filename="jacobian_column_norms_with_without_bc.png",
+    title="Scaled analytical tip Jacobian singular values",
+    filename="scaled_jacobian_singular_values_with_without_bc.png",
 ):
-    """
-    Optional companion plot.
+    J_no_bc_scaled = scale_jacobian_columns(J_no_bc, theta_scale)
+    J_with_bc_scaled = scale_jacobian_columns(J_with_bc, theta_scale)
 
-    This helps identify which parameter directions changed:
-        x_src, y_src, z_src, rx, ry, rz, L
-    """
-    labels = ["x", "y", "z", "rx", "ry", "rz", "L"]
+    sv_no = np.linalg.svd(J_no_bc_scaled, compute_uv=False)
+    sv_bc = np.linalg.svd(J_with_bc_scaled, compute_uv=False)
 
-    col_no = np.linalg.norm(J_no_bc, axis=0)
-    col_bc = np.linalg.norm(J_with_bc, axis=0)
+    k_no = np.arange(1, len(sv_no) + 1)
+    k_bc = np.arange(1, len(sv_bc) + 1)
 
-    x = np.arange(len(labels))
-    width = 0.35
-
-    plt.figure(figsize=(7.0, 4.0))
-    plt.bar(x - width / 2, col_no, width, label="Without Contact Conditioning")
-    plt.bar(x + width / 2, col_bc, width, label="With Contact Conditioning")
-    plt.xticks(x, labels)
-    plt.ylabel("Column norm")
+    plt.figure(figsize=(6.0, 4.0))
+    plt.semilogy(k_no, sv_no, "o-", label="Without Contact-aware Modelling")
+    plt.semilogy(k_bc, sv_bc, "s-", label="With Contact-aware Modelling")
+    plt.xlabel("Singular value index")
+    plt.ylabel("Singular value [m per scaled parameter step]")
     plt.title(title)
-    plt.grid(True, axis="y", alpha=0.3)
+    plt.grid(True, which="both", alpha=0.3)
     plt.legend()
     plt.tight_layout()
 
     if run_dir is not None:
         out_path = run_dir / filename
         plt.savefig(out_path, dpi=300)
-        print("Saved column-norm plot to:", out_path)
+        print("Saved scaled singular-value plot to:", out_path)
 
     plt.show()
 
-    return col_no, col_bc
+    return sv_no, sv_bc
 import time
 
 def benchmark_contact_gradient_methods(
@@ -3743,7 +3839,7 @@ if __name__ == "__main__":
     DEBUG = True
     lumen_used = True
 
-    L_cmd = 0.0215
+    L_cmd = 0.026
     nodes = 20
     dL = 0.04
     beam_params = default_beam_params()
@@ -3769,7 +3865,7 @@ if __name__ == "__main__":
     #     0.7981328220229531, -0.70992731669220016, -0.1+0.15,
     #     np.pi, 0.001, 0.001
     # ], float)
-    start_point = np.asarray(get_point(0, -90, base_point, pivot_point), dtype=float)
+    start_point = np.asarray(get_point(0, -60, base_point, pivot_point), dtype=float)
     # start_point[2] = -0.1
     # start_point[2] -=0.25
     L_model, wire_len, tip_len = effective_lengths(
@@ -3793,7 +3889,7 @@ if __name__ == "__main__":
         alpha_end=0.0,
         eps=1e-3,
     )
-    T_ur_pivot_lumen = ur_pose6_to_T(pivot_point)   
+    T_ur_pivot_lumen = ur_pose6_to_T(pivot_point_lumen)   
     T_ur_pivot = ur_pose6_to_T(pivot_point)  
     p0_ur, q0_ur = T_to_p_quat_wxyz(T_ur_pivot)
     p0_ur_lumen, q0_ur_lumen = T_to_p_quat_wxyz(T_ur_pivot_lumen)
@@ -3930,41 +4026,41 @@ if __name__ == "__main__":
     u_ref = info["u_flat_opt"]
     s_nodes = info["s"]
 
-    # centerline_data = np.column_stack([
-    #     s_nodes,
-    #     pE.T,
-    #     qE.T,
-    # ])
+    centerline_data = np.column_stack([
+        s_nodes,
+        pE.T,
+        qE.T,
+    ])
 
-    # np.savetxt(
-    #     run_dir / "centerline.csv",
-    #     centerline_data,
-    #     delimiter=",",
-    #     header="s,px,py,pz,qw,qx,qy,qz",
-    #     comments="",
-    # )
-    # np.savetxt(
-    # run_dir / "lumen_centerline.csv",
-    # lumen_C,
-    # delimiter=",",
-    # header="x,y,z",
-    # comments="",
-    # )
+    np.savetxt(
+        run_dir / "centerline.csv",
+        centerline_data,
+        delimiter=",",
+        header="s,px,py,pz,qw,qx,qy,qz",
+        comments="",
+    )
+    np.savetxt(
+    run_dir / "lumen_centerline.csv",
+    lumen_C,
+    delimiter=",",
+    header="x,y,z",
+    comments="",
+    )
 
-    # np.savetxt(
-    #     run_dir / "lumen_radius.csv",
-    #     lumen_R.reshape(-1, 1),
-    #     delimiter=",",
-    #     header="radius",
-    #     comments="",
-    # )
-    # theta0 = np.hstack([r_src_ur, np.zeros(3), L_ref])
-    # viol = lumen_violation_profile(pE, lumen_C, lumen_R)
-    # print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
-    # print("mean positive violation [m] =", np.maximum(viol,0).mean())
-    # print(info["parts"])
-    # print("energy-min tip:", pE[:, -1])
-    # parts = info["parts"]
+    np.savetxt(
+        run_dir / "lumen_radius.csv",
+        lumen_R.reshape(-1, 1),
+        delimiter=",",
+        header="radius",
+        comments="",
+    )
+    theta0 = np.hstack([r_src_ur, np.zeros(3), L_ref])
+    viol = lumen_violation_profile(pE, lumen_C, lumen_R)
+    print("max lumen violation [m] =", viol.max(), "at node", np.argmax(viol))
+    print("mean positive violation [m] =", np.maximum(viol,0).mean())
+    print(info["parts"])
+    print("energy-min tip:", pE[:, -1])
+    parts = info["parts"]
 
     # forward_metrics = {
     #     "tip_position": pE[:, -1],
@@ -4089,7 +4185,7 @@ if __name__ == "__main__":
     p_bvp = pE_2
 
     plot_centerlines_with_lumen_3d(
-        p_bvp=p_bvp,
+        p_bvp=p_energy,
         p_energy=p_energy,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
@@ -4139,289 +4235,305 @@ if __name__ == "__main__":
     # # ------------------------------------------------------------
     # # Analytical Jacobian WITHOUT lumen/contact boundary condition
     # # ------------------------------------------------------------
-    # energy_grad_fun_no_bc = make_energy_grad_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=False,
-    #     lumen_query=None,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
+    energy_grad_fun_no_bc = make_energy_grad_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=False,
+        lumen_query=None,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
 
-    # energy_fun_no_bc = make_energy_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=False,
-    #     lumen_query=None,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
+    energy_fun_no_bc = make_energy_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=False,
+        lumen_query=None,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
 
-    # J_no_bc, sens_no_bc = energy_min_tip_jacobian_implicit(
-    #     u_opt=u_ref,
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     L=L_ref,
-    #     wire_len=wire_len_ref,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     r_src=r_src_ur,
-    #     m_src=m_src,
-    #     m_local_fun=make_m_local_fun_wire_tip(
-    #         wire_len_ref,
-    #         len_tip=tip_len_ref,
-    #         mode="axial",
-    #         alpha_end=0.0,
-    #         eps=1e-3,
-    #     ),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     lumen_query=None,
-    #     contact=contact,
-    #     theta_builder=theta_builder,
-    #     energy_grad_fun=energy_grad_fun_no_bc,
-    #     energy_fun=energy_fun_no_bc,
-    #     use_scalar_hessian=True,
-    #     debug_jac=True,
-    #     debug_hessian_terms=False,
-    #     eps_theta=1e-6,
-    #     eps_hess=1e-4,
-    # )
+    J_no_bc, sens_no_bc = energy_min_tip_jacobian_implicit(
+        u_opt=u_ref,
+        p0=p0_ur,
+        q0=q0_ur,
+        L=L_ref,
+        wire_len=wire_len_ref,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        r_src=r_src_ur,
+        m_src=m_src,
+        m_local_fun=make_m_local_fun_wire_tip(
+            wire_len_ref,
+            len_tip=tip_len_ref,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        ),
+        m_moment=0.0,
+        N=nodes,
+        lumen_query=None,
+        contact=contact,
+        theta_builder=theta_builder,
+        energy_grad_fun=energy_grad_fun_no_bc,
+        energy_fun=energy_fun_no_bc,
+        use_scalar_hessian=True,
+        debug_jac=True,
+        debug_hessian_terms=False,
+        eps_theta=1e-6,
+        eps_hess=1e-4,
+    )
 
 
     # # ------------------------------------------------------------
     # # Analytical Jacobian WITH lumen/contact boundary condition
     # # ------------------------------------------------------------
-    # energy_grad_fun_with_bc = make_energy_grad_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=True,
-    #     lumen_query=lumen_query,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
+    energy_grad_fun_with_bc = make_energy_grad_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=True,
+        lumen_query=lumen_query,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
 
-    # energy_fun_with_bc = make_energy_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=True,
-    #     lumen_query=lumen_query,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
+    energy_fun_with_bc = make_energy_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=True,
+        lumen_query=lumen_query,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
 
-    # J_with_bc, sens_with_bc = energy_min_tip_jacobian_implicit(
-    #     u_opt=u_ref,
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     L=L_ref,
-    #     wire_len=wire_len_ref,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     r_src=r_src_ur,
-    #     m_src=m_src,
-    #     m_local_fun=make_m_local_fun_wire_tip(
-    #         wire_len_ref,
-    #         len_tip=tip_len_ref,
-    #         mode="axial",
-    #         alpha_end=0.0,
-    #         eps=1e-3,
-    #     ),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     lumen_query=lumen_query,
-    #     contact=contact,
-    #     theta_builder=theta_builder,
-    #     energy_grad_fun=energy_grad_fun_with_bc,
-    #     energy_fun=energy_fun_with_bc,
-    #     use_scalar_hessian=True,
-    #     debug_jac=True,
-    #     debug_hessian_terms=False,
-    #     eps_theta=1e-6,
-    #     eps_hess=1e-4,
-    # )
-    # sv_no_bc_info = singular_value_diagnostics(J_no_bc, "analytic no boundary/contact")
-    # sv_with_bc_info = singular_value_diagnostics(J_with_bc, "analytic with boundary/contact")
-    # theta_scale = np.array([
-    #     1e-3, 1e-3, 1e-3,      # x_src, y_src, z_src: 1 mm
-    #     1e-2, 1e-2, 1e-2,      # rx, ry, rz: 0.01 rad
-    #     1e-3,                  # L: 1 mm
-    # ])
-    # diag_no_bc = singular_value_diagnostics_scaled(
-    #     J_no_bc,
-    #     "Analytic No Contact Conditioning",
-    #     theta_scale,
-    # )
+    J_with_bc, sens_with_bc = energy_min_tip_jacobian_implicit(
+        u_opt=u_ref,
+        p0=p0_ur,
+        q0=q0_ur,
+        L=L_ref,
+        wire_len=wire_len_ref,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        r_src=r_src_ur,
+        m_src=m_src,
+        m_local_fun=make_m_local_fun_wire_tip(
+            wire_len_ref,
+            len_tip=tip_len_ref,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        ),
+        m_moment=0.0,
+        N=nodes,
+        lumen_query=lumen_query,
+        contact=contact,
+        theta_builder=theta_builder,
+        energy_grad_fun=energy_grad_fun_with_bc,
+        energy_fun=energy_fun_with_bc,
+        use_scalar_hessian=True,
+        debug_jac=True,
+        debug_hessian_terms=False,
+        eps_theta=1e-6,
+        eps_hess=1e-4,
+    )
+    sv_no_bc_info = singular_value_diagnostics(J_no_bc, "analytic no boundary/contact")
+    sv_with_bc_info = singular_value_diagnostics(J_with_bc, "analytic with boundary/contact")
+    theta_scale = np.array([
+        1e-3, 1e-3, 1e-3,      # x_src, y_src, z_src: 1 mm
+        1e-2, 1e-2, 1e-2,      # rx, ry, rz: 0.01 rad
+        1e-3,                  # L: 1 mm
+    ])
+    diag_no_bc = singular_value_diagnostics_scaled(
+        J_no_bc,
+        "Analytic No Contact-aware Modelling",
+        theta_scale,
+    )
 
-    # diag_with_bc = singular_value_diagnostics_scaled(
-    #     J_with_bc,
-    #     "Analytic with Contact Conditioning",
-    #     theta_scale,
-    # )
+    diag_with_bc = singular_value_diagnostics_scaled(
+        J_with_bc,
+        "Analytic with Contact-aware Modelling",
+        theta_scale,
+    )
 
-    # sv_no_bc = diag_no_bc["singular_values_scaled"]
-    # sv_with_bc = diag_with_bc["singular_values_scaled"]
+    sv_no_bc = diag_no_bc["singular_values_scaled"]
+    sv_with_bc = diag_with_bc["singular_values_scaled"]
 
-    # col_no_bc, col_with_bc = plot_jacobian_column_norms(
-    #     J_no_bc,
-    #     J_with_bc,
-    #     run_dir=run_dir,
-    #     title="Analytical tip Jacobian column norms"
-    # )
-    # sv_no_bc_scaled, sv_with_bc_scaled = plot_scaled_jacobian_singular_values(
-    #     J_no_bc,
-    #     J_with_bc,
-    #     theta_scale=theta_scale,
-    #     run_dir=run_dir,
-    # )
-    # # np.savez(
-    #     run_dir / "jacobian_singular_values_with_without_bc.npz",
-    #     J_no_bc=J_no_bc,
-    #     J_with_bc=J_with_bc,
-    #     singular_values_no_bc=sv_no_bc,
-    #     singular_values_with_bc=sv_with_bc,
-    #     column_norms_no_bc=col_no_bc,
-    #     column_norms_with_bc=col_with_bc,
-    #     H_no_bc=sens_no_bc["H"],
-    #     H_with_bc=sens_with_bc["H"],
-    #     Gtheta_no_bc=sens_no_bc["Gtheta"],
-    #     Gtheta_with_bc=sens_with_bc["Gtheta"],
-    #     du_dtheta_no_bc=sens_no_bc["du_dtheta"],
-    #     du_dtheta_with_bc=sens_with_bc["du_dtheta"],
-    #     P_u_no_bc=sens_no_bc["P_u"],
-    #     P_u_with_bc=sens_with_bc["P_u"],
-    # )
-    # energy_grad_fun = make_energy_grad_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=lumen_used,
-    #     lumen_query=lumen_query if lumen_used else None,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
-    # energy_fun = make_energy_fun_for_pose(
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     q_src0=q_src_ur,
-    #     m_body=m_body,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     rotation_convention="world",
-    #     use_magnetic=True,
-    #     use_contact=lumen_used,
-    #     lumen_query=lumen_query if lumen_used else None,
-    #     contact=contact,
-    #     L_tip_full=0.04,
-    #     L_tip_min=0.01,
-    # )
-    # def theta_builder(theta):
-    #     if theta is None:
-    #         return {"theta0": theta0}
-    #     theta = np.asarray(theta, float).reshape(7,)
-    #     return {"theta0": theta0, "theta": theta}
-    # g_ref = energy_grad_fun(u_ref, theta0)
-    # print("stationarity ||grad E||:", np.linalg.norm(g_ref))
-    # print("L_ref:", L_ref, "L_cmd:", L_cmd)
-    # stationarity_metrics = {
-    #     "grad_norm": float(np.linalg.norm(g_ref)),
-    #     "grad_inf": float(np.max(np.abs(g_ref))),
-    #     "grad_mean_abs": float(np.mean(np.abs(g_ref))),
-    # }
+    col_no_bc, col_with_bc = plot_jacobian_column_norms(
+        J_no_bc,
+        J_with_bc,
+        run_dir=run_dir,
+        title="Analytical tip Jacobian column norms"
+    )
+    def sens_get(sens, key):
+        if isinstance(sens, dict):
+            return sens[key]
+        return getattr(sens, key)
+    print_L_column_decomposition(
+        J_direct=sens_get(sens_with_bc, "J_direct"),
+        J_implicit=sens_get(sens_with_bc, "J_implicit"),
+        label="contact",
+    )
 
-    # save_json(run_dir / "stationarity_metrics.json", stationarity_metrics)
-    # np.save(run_dir / "g_ref.npy", g_ref)
-    # check_Gtheta_columns(
-    #     u_opt=u_ref,
-    #     theta0=theta0,
-    #     energy_grad_fun=energy_grad_fun,
-    #     eps_theta=1e-6,
-    # )
+    print_L_column_decomposition(
+        J_direct=sens_get(sens_no_bc, "J_direct"),
+        J_implicit=sens_get(sens_no_bc, "J_implicit"),
+        label="no contact",
+    )
 
-    # J_tip_theta, sens_info = energy_min_tip_jacobian_implicit(
-    #     u_opt=u_ref,
-    #     p0=p0_ur,
-    #     q0=q0_ur,
-    #     L=L_ref,
-    #     wire_len=wire_len_ref,
-    #     Kinv_fun=Kinv_fun,
-    #     u_star=np.zeros(3),
-    #     r_src=r_src_ur,
-    #     m_src=m_src,
-    #     m_local_fun=make_m_local_fun_wire_tip(
-    #         wire_len_ref,
-    #         len_tip=tip_len_ref,
-    #         mode="axial",
-    #         alpha_end=0.0,
-    #         eps=1e-3,
-    #     ),
-    #     m_moment=0.0,
-    #     N=nodes,
-    #     lumen_query=lumen_query if lumen_used else None,
-    #     contact=contact,
-    #     theta_builder=theta_builder,
-    #     energy_grad_fun=energy_grad_fun,
-    #     energy_fun=energy_fun,
-    #     use_scalar_hessian=True,
-    #     debug_jac=True,
-    #     debug_hessian_terms=False,
-    #     eps_theta=1e-6,
-    #     eps_hess=1e-4,
-    # )
-    # print("Energy-min implicit J_tip wrt [dr_src, dphi, L]:")
-    # print(J_tip_theta)
-    # print("translation block:")
-    # print(J_tip_theta[:, 0:3])
-    # print("rotation block:")
-    # print(J_tip_theta[:, 3:6])
-    # print("length column:")
-    # print(J_tip_theta[:, 6])
+    sv_no_bc_scaled, sv_with_bc_scaled = plot_scaled_jacobian_singular_values(
+        J_no_bc,
+        J_with_bc,
+        theta_scale=theta_scale,
+        run_dir=run_dir,
+    )
+    np.savez(
+        run_dir / "jacobian_singular_values_with_without_bc.npz",
+        J_no_bc=J_no_bc,
+        J_with_bc=J_with_bc,
+        singular_values_no_bc=sv_no_bc,
+        singular_values_with_bc=sv_with_bc,
+        column_norms_no_bc=col_no_bc,
+        column_norms_with_bc=col_with_bc,
+        H_no_bc=sens_no_bc["H"],
+        H_with_bc=sens_with_bc["H"],
+        Gtheta_no_bc=sens_no_bc["Gtheta"],
+        Gtheta_with_bc=sens_with_bc["Gtheta"],
+        du_dtheta_no_bc=sens_no_bc["du_dtheta"],
+        du_dtheta_with_bc=sens_with_bc["du_dtheta"],
+        P_u_no_bc=sens_no_bc["P_u"],
+        P_u_with_bc=sens_with_bc["P_u"],
+    )
+    energy_grad_fun = make_energy_grad_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=lumen_used,
+        lumen_query=lumen_query if lumen_used else None,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
+    energy_fun = make_energy_fun_for_pose(
+        p0=p0_ur,
+        q0=q0_ur,
+        q_src0=q_src_ur,
+        m_body=m_body,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        m_moment=0.0,
+        N=nodes,
+        rotation_convention="world",
+        use_magnetic=True,
+        use_contact=lumen_used,
+        lumen_query=lumen_query if lumen_used else None,
+        contact=contact,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+    )
+    def theta_builder(theta):
+        if theta is None:
+            return {"theta0": theta0}
+        theta = np.asarray(theta, float).reshape(7,)
+        return {"theta0": theta0, "theta": theta}
+    g_ref = energy_grad_fun(u_ref, theta0)
+    print("stationarity ||grad E||:", np.linalg.norm(g_ref))
+    print("L_ref:", L_ref, "L_cmd:", L_cmd)
+    stationarity_metrics = {
+        "grad_norm": float(np.linalg.norm(g_ref)),
+        "grad_inf": float(np.max(np.abs(g_ref))),
+        "grad_mean_abs": float(np.mean(np.abs(g_ref))),
+    }
+
+    save_json(run_dir / "stationarity_metrics.json", stationarity_metrics)
+    np.save(run_dir / "g_ref.npy", g_ref)
+    check_Gtheta_columns(
+        u_opt=u_ref,
+        theta0=theta0,
+        energy_grad_fun=energy_grad_fun,
+        eps_theta=1e-6,
+    )
+
+    J_tip_theta, sens_info = energy_min_tip_jacobian_implicit(
+        u_opt=u_ref,
+        p0=p0_ur,
+        q0=q0_ur,
+        L=L_ref,
+        wire_len=wire_len_ref,
+        Kinv_fun=Kinv_fun,
+        u_star=np.zeros(3),
+        r_src=r_src_ur,
+        m_src=m_src,
+        m_local_fun=make_m_local_fun_wire_tip(
+            wire_len_ref,
+            len_tip=tip_len_ref,
+            mode="axial",
+            alpha_end=0.0,
+            eps=1e-3,
+        ),
+        m_moment=0.0,
+        N=nodes,
+        lumen_query=lumen_query if lumen_used else None,
+        contact=contact,
+        theta_builder=theta_builder,
+        energy_grad_fun=energy_grad_fun,
+        energy_fun=energy_fun,
+        use_scalar_hessian=True,
+        debug_jac=True,
+        debug_hessian_terms=False,
+        eps_theta=1e-6,
+        eps_hess=1e-4,
+    )
+    print("Energy-min implicit J_tip wrt [dr_src, dphi, L]:")
+    print(J_tip_theta)
+    print("translation block:")
+    print(J_tip_theta[:, 0:3])
+    print("rotation block:")
+    print(J_tip_theta[:, 3:6])
+    print("length column:")
+    print(J_tip_theta[:, 6])
 
     # J_fd_energy, fd_info = energy_min_tip_jacobian_fd_pose_length_robust(
     #     theta0=theta0,

@@ -187,10 +187,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run scrap",
+            "name": "Simualtion Controller",
             "type": "debugpy",
             "request": "launch",
-            "module": "scrap",
+            "module": "proper_research.simulation.simulations.run_experiment_grid",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
@@ -203,10 +203,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run beam compare",
+            "name": "Test Energy Minimisation",
             "type": "debugpy",
             "request": "launch",
-            "module": "beam_direction_magnetisation.beam_mpc_compare",
+            "module": "proper_research.simulation.magnetic_beam.run_solver_smoke_test",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
@@ -215,6 +215,14 @@
             "type": "debugpy",
             "request": "launch",
             "module": "beam_direction_magnetisation.ana_jaccobian",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run ana jac2",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "beam_direction_magnetisation.model_speed_up",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },

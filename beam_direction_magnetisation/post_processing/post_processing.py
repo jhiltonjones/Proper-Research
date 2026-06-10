@@ -970,7 +970,7 @@ def plot_centerlines_with_lumen_3d(
             C,
             R_lum,
             n_theta=28,
-            alpha=0.3,
+            alpha=1,
         )
 
         # Tip and closest lumen point
@@ -1003,29 +1003,29 @@ def plot_centerlines_with_lumen_3d(
     # # -------------------------------------------------
     # # External magnet
     # # -------------------------------------------------
-    # if r_src is not None:
-    #     r_src = np.asarray(r_src, float).reshape(3,)
+    if r_src is not None:
+        r_src = np.asarray(r_src, float).reshape(3,)
 
-    #     ax.scatter(
-    #         [r_src[0]],
-    #         [r_src[1]],
-    #         [r_src[2]],
-    #         marker="*",
-    #         s=120,
-    #         label="External magnet",
-    #     )
+        ax.scatter(
+            [r_src[0]],
+            [r_src[1]],
+            [r_src[2]],
+            marker="*",
+            s=120,
+            label="External magnet",
+        )
 
-    #     ax.text(
-    #         r_src[0],
-    #         r_src[1],
-    #         r_src[2],
-    #         f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
-    #     )
+        ax.text(
+            r_src[0],
+            r_src[1],
+            r_src[2],
+            f"  Magnet\n  ({r_src[0]:.4f}, {r_src[1]:.4f}, {r_src[2]:.4f})",
+        )
 
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
     ax.set_zlabel("z [m]")
-    ax.legend()
+    # ax.legend()
     ax.set_title(title)
 
     # -------------------------------------------------

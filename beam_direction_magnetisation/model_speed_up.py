@@ -2992,7 +2992,7 @@ if __name__ == "__main__":
     DO_FD_CHECK = False        # keep False for maps; FD over a grid will be very slow
     run_dir = make_run_dir(
         base="results",
-        name=f"snapping_investigation_backward",
+        name=f"Comparison Magnetic field",
     )
     L_cmd = 0.025
     nodes = 10
@@ -3176,7 +3176,7 @@ if __name__ == "__main__":
     # ============================================================
     # Placement option C: same plane, 90 degrees from beam axis
     # ============================================================
-    side_distance = 0.16 # 20 cm to the side of the beam tip
+    side_distance = 0.2 # 20 cm to the side of the beam tip
 
     # Use the beam direction projected into the world xy plane
     beam_axis_xy = beam_axis.copy()
@@ -3198,12 +3198,12 @@ if __name__ == "__main__":
     # Fixed-distance placement definitions
     # ============================================================
     placement_specs = {
-        "above": {
-            "label": "Above tip",
-            "distance_m": above_distance,
-            "source_position_fun": source_position_above_tip,
-            "m_src_base": -m_mag * beam_axis,
-        },
+        # "above": {
+        #     "label": "Above tip",
+        #     "distance_m": above_distance,
+        #     "source_position_fun": source_position_above_tip,
+        #     "m_src_base": -m_mag * beam_axis,
+        # },
         "front": {
             "label": "In front",
             "distance_m": front_distance,

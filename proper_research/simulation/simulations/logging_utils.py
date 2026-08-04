@@ -4,8 +4,103 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
+from proper_research.simulation.simulations.rollout_diagnostics import (
+    build_rollout_stage_rows,
+    append_rollout_stage_csv,
+    save_rollout_npz,
+)
 
 
+def save_controller_diagnostics_npz(
+    *,
+    output_dir: Path,
+    k: int,
+    info: dict,
+) -> Path:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    keys = (
+        "p_start",
+        "x_start",
+        "U_seq",
+        "idx_ref",
+        "X_ref_plan",
+        "reference_s_plan_m",
+        "X_pred",
+        "X_lin_candidate",
+        "X_nl_candidate",
+        "X_nl_plan",
+        "x_rollout",
+        "u_applied",
+
+        "linerr_stage_vector_m",
+        "linerr_stage_norm_m",
+
+        "B_sequence_linearisation",
+        "B_pose_nodes_linearisation",
+        "B_sequence_solution",
+        "B_pose_nodes_solution",
+        "B_drift_relative_stage",
+
+        "jacobian_diag_input_scale",
+
+        "jac_solution_column_norm_xyz",
+        "jac_solution_column_norm_xy",
+        "jac_solution_scaled_authority",
+        "jac_solution_weighted_scaled_authority",
+        "jac_solution_contribution_vectors",
+        "jac_solution_contribution_norm",
+        "jac_solution_predicted_increment",
+        "jac_solution_matrix_change_relative",
+        "jac_solution_column_gain_ratio",
+        "jac_solution_column_direction_change_deg",
+
+        "jac_linearisation_column_norm_xyz",
+        "jac_linearisation_column_norm_xy",
+        "jac_linearisation_scaled_authority",
+        "jac_linearisation_weighted_scaled_authority",
+        "jac_linearisation_contribution_vectors",
+        "jac_linearisation_contribution_norm",
+        "jac_linearisation_predicted_increment",
+        "jac_linearisation_matrix_change_relative",
+        "jac_linearisation_column_gain_ratio",
+        "jac_linearisation_column_direction_change_deg",
+    )
+
+    payload = {
+        "k": np.asarray(int(k)),
+    }
+
+    for key in keys:
+        value = info.get(key, None)
+
+        if value is None:
+            continue
+
+        try:
+            arr = np.asarray(value)
+
+            if arr.size > 0:
+                payload[key] = arr.copy()
+
+        except Exception:
+            continue
+
+    path = (
+        output_dir
+        / f"controller_diag_{k:05d}.npz"
+    )
+
+    np.savez_compressed(
+        path,
+        **payload,
+    )
+
+    return path
 def setup_output_dirs(
     *,
     out_root: Path,
@@ -645,7 +740,52 @@ def save_step_artifacts(
     )
 
     K_BEAM_DIR_LOG = 20
+    stage_rows = build_rollout_stage_rows(
+        k=k,
+        info=info,
+        lumen_C=lumen_C,
+        controller_name=str(
+            info.get(
+                "controller_type",
+                info.get("solver_mode", ""),
+            )
+        ),
+    )
 
+    stage_csv_path = (
+        log_csv_path.parent
+        / "rollout_stages.csv"
+    )
+
+    append_rollout_stage_csv(
+        stage_csv_path,
+        stage_rows,
+    )
+
+    rollout_frame_dir = (
+        log_csv_path.parent
+        / "rollout_frames"
+    )
+    for key in (
+        "U_seq",
+        "B_sequence",
+        "B_sequence_linearisation",
+        "B_sequence_solution",
+        "B_drift_relative_stage",
+    ):
+        value = info.get(key, None)
+
+        print(
+            f"[BEFORE NPZ] {key:32s}: "
+            f"{None if value is None else np.asarray(value).shape}"
+        )
+    save_rollout_npz(
+        rollout_frame_dir
+        / f"rollout_{k:04d}.npz",
+        k=k,
+        info=info,
+        lumen_C=lumen_C,
+    )
     for j in range(K_BEAM_DIR_LOG):
         row[f"beam_soft_dir_{j}"] = info.get(f"beam_soft_dir_{j}", "")
         row[f"beam_stiff_dir_{j}"] = info.get(f"beam_stiff_dir_{j}", "")

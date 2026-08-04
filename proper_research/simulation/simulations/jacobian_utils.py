@@ -1,6 +1,6 @@
 import numpy as np
-from proper_research.simulation_controller.geometry import pose8_quat_to_pose7_rotvec
-from proper_research.simulation_controller.diagnostics import symmetric_matrix_diagnostics
+from proper_research.simulation_controller.geometry import pose8_quat_to_pose7_rotvec, quat_to_R
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize
 def J_full_from_robot_reduced_tip_tangent(J_red, n_out_full=5):
     """
     J_red shape: (5,4)
@@ -49,27 +49,65 @@ def analytic_J_robot_xy_yaw_dL(
     J[0:3, 3] = J_tip_7[:, 6]   # length
 
     return J
-def analytic_J_robot_xy_yaw_dL_with_diag(
+
+
+def analytic_J_robot_full_with_diag(
     p8,
     forward_model,
-    n_out=3,
+    n_out: int = 3,
 ):
     """
-    Reduced Jacobian for MPC plus beam Hessian diagnostics.
+    Full control-to-tip-position Jacobian plus beam diagnostics.
 
-    Input p8:
+    Pose
+    ----
+    p8:
         [x, y, z, qw, qx, qy, qz, L]
 
-    Reduced control columns:
-        [vx, vy, yaw_rate, dL_rate]
+    Controller input
+    ----------------
+    u:
+        [
+            vx_world,
+            vy_world,
+            vz_world,
+            wx_body,
+            wy_body,
+            wz_body,
+            dL_rate,
+        ]
 
-    Returns:
-        J:    shape (n_out, 4)
-        diag: dict, including cond_H_beam etc.
+    Returns
+    -------
+    J_control_state:
+        Shape (3, 7). This is the instantaneous sensitivity
+
+            d p_tip / d [
+                r_src_world,
+                phi_src_body_increment,
+                L,
+            ]
+
+        It has not yet been multiplied by dt.
+
+    diag:
+        Beam-Hessian and sensitivity diagnostics.
     """
-    p8 = np.asarray(p8, float).reshape(8)
+    p8 = np.asarray(
+        p8,
+        float,
+    ).reshape(8)
 
-    # Adapter case: ControllerForwardAdapter has .model.
+    if n_out != 3:
+        raise ValueError(
+            "analytic_J_robot_full_with_diag currently "
+            "provides the 3D tip-position Jacobian only, "
+            f"so n_out must be 3; got {n_out}."
+        )
+
+    # ------------------------------------------------------------
+    # Resolve adapter versus raw forward model
+    # ------------------------------------------------------------
     if hasattr(forward_model, "model"):
         wrapper = forward_model
         fm = forward_model.model
@@ -79,32 +117,107 @@ def analytic_J_robot_xy_yaw_dL_with_diag(
 
     p7 = pose8_quat_to_pose7_rotvec(p8)
 
-    # Commit nominal solve so jacobian_tip_pose7 can use cache.
+    # ------------------------------------------------------------
+    # Commit the nominal equilibrium solution
+    # ------------------------------------------------------------
     if wrapper is not None:
-        _ = wrapper(p8, commit=True)
+        _ = wrapper(
+            p8,
+            commit=True,
+        )
     else:
-        _ = fm.solve(p7, commit=True)
-
-    J_tip_7 = fm.jacobian_tip_pose7(p7)
-    J_tip_7 = np.asarray(J_tip_7, float)
-
-    if J_tip_7.shape != (3, 7):
-        raise ValueError(
-            f"Expected J_tip_7 shape (3, 7), got {J_tip_7.shape}."
+        _ = fm.solve(
+            p7,
+            commit=True,
         )
 
-    if n_out < 3:
-        raise ValueError("n_out must be at least 3 for tip position tracking.")
+    # ------------------------------------------------------------
+    # Complete beam sensitivity
+    #
+    # Column convention:
+    #   0:3 -> source translation in world coordinates
+    #   3:6 -> incremental source rotation in world coordinates
+    #   6   -> insertion length
+    # ------------------------------------------------------------
+    J_tip_theta_world = np.asarray(
+        fm.jacobian_tip_pose7(p7),
+        float,
+    )
 
-    J = np.zeros((n_out, 4), dtype=float)
+    if J_tip_theta_world.shape != (3, 7):
+        raise ValueError(
+            "Expected the beam model to return a full "
+            "tip Jacobian with shape (3, 7), but got "
+            f"{J_tip_theta_world.shape}."
+        )
 
-    J[:3, 0] = J_tip_7[:, 0]   # source x translation
-    J[:3, 1] = J_tip_7[:, 1]   # source y translation
-    J[:3, 2] = J_tip_7[:, 5]   # source yaw / rz
-    J[:3, 3] = J_tip_7[:, 6]   # insertion length
+    J_translation_world = (
+        J_tip_theta_world[:, 0:3]
+    )
+
+    J_rotation_world = (
+        J_tip_theta_world[:, 3:6]
+    )
+
+    J_length = (
+        J_tip_theta_world[:, 6:7]
+    )
+
+    # ------------------------------------------------------------
+    # Convert controller angular velocity convention
+    #
+    # Controller:
+    #   q_next = q ⊗ dq(dt * omega_body)
+    #
+    # Beam sensitivity:
+    #   q_perturbed = dq(delta_phi_world) ⊗ q
+    #
+    # First-order relationship:
+    #   delta_phi_world = R_src delta_phi_body
+    # ------------------------------------------------------------
+    q_src = quat_wxyz_normalize(
+        p8[3:7]
+    )
+
+    R_src = quat_to_R(q_src)
+
+    J_rotation_body = (
+        J_rotation_world @ R_src
+    )
+
+    # ------------------------------------------------------------
+    # Full controller-coordinate state Jacobian
+    # ------------------------------------------------------------
+    J_control_state = np.concatenate(
+        (
+            J_translation_world,
+            J_rotation_body,
+            J_length,
+        ),
+        axis=1,
+    )
+
+    if J_control_state.shape != (3, 7):
+        raise RuntimeError(
+            "Internal full-Jacobian construction produced "
+            f"shape {J_control_state.shape}; expected (3, 7)."
+        )
+
+    if not np.all(
+        np.isfinite(J_control_state)
+    ):
+        raise FloatingPointError(
+            "Full tip Jacobian contains non-finite values."
+        )
 
     diag = {}
-    if hasattr(fm, "get_last_jacobian_diag"):
-        diag.update(fm.get_last_jacobian_diag())
 
-    return J, diag
+    if hasattr(
+        fm,
+        "get_last_jacobian_diag",
+    ):
+        diag.update(
+            fm.get_last_jacobian_diag()
+        )
+
+    return J_control_state, diag

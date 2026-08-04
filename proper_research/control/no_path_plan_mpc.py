@@ -852,7 +852,7 @@ class mpc_controller_tipxy_LTI:
         self.enable_mag_center_standoff = False
         self.w_mag_center_standoff = 0
         self.mag_center_standoff_m = 0.13
-        self.dL_back_max = 0.002      # or 0.001 if small pullback allowed
+        self.dL_back_max = 1      # or 0.001 if small pullback allowed
         self.dL_fwd_max  = np.inf   # or some finite cap (per-step dL rate)
         self.enable_mag_inline_centerline = False
         self.w_mag_inline_centerline = 1e2  # start here; tune 1e-4..1e-2
@@ -1880,6 +1880,7 @@ class mpc_controller_tipxy_LTI:
 
             # (2) dL lower bound
             dL_back_max = float(getattr(self, "dL_back_max", 0.03))
+            print(f"dL max is {dL_back_max}")
             A_dL = np.zeros((Np, Np*m), float)
             for k in range(Np):
                 A_dL[k, k*m + 6] = 1.0
@@ -4359,7 +4360,7 @@ def run_simulation(mpc, forward6d, p0_ur, p0, lumen_C, lumen_R, lumen_path, s_pa
         mpc.enable_epm_tip_soft = True
 
         mpc.epm_tip_preferred_m = 0.14
-        mpc.epm_tip_hard_min_m = 0.11
+        mpc.epm_tip_hard_min_m = 0.05
 
         mpc.w_slack_epm_tip = 1e5
         p_pre = mpc.p.copy()

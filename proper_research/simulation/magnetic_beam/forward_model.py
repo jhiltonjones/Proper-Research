@@ -7,7 +7,12 @@ import numpy as np
 from .config import BeamModelConfig, ContactConfig
 from .state import ForwardCache, SolveResult, cache_from_result
 from .problem import BaseFrameConfig, BeamSolveProblem
-from .kinematics import effective_lengths, quat_from_rotvec_ur
+from .kinematics import (
+    effective_lengths,
+    quat_from_rotvec_ur,
+    quat_to_R,
+    so3_left_jacobian,
+)
 from .sensitivity import (
     implicit_tip_jacobian,
     SensitivityOptions,
@@ -22,6 +27,23 @@ from beam_direction_magnetisation.magnetism.beam_geometry import (
 )
 
 
+def default_m_local_factory(
+    *,
+    L_model: float,
+    wire_len: float,
+    tip_len: float,
+):
+    """Build the legacy wire/tip magnetization profile."""
+    del L_model
+    return make_m_local_fun_wire_tip(
+        wire_len,
+        len_tip=tip_len,
+        mode="axial",
+        alpha_end=0.0,
+        eps=1e-3,
+    )
+
+
 class MagneticBeamForwardModel:
     """
     Controller-compatible magnetic-beam forward model.
@@ -29,11 +51,13 @@ class MagneticBeamForwardModel:
     Public API:
         tip = model(p7)
         J_tip = model.jacobian_tip_pose7(p7)
+        fig, ax = model.plot_solution(p7)
 
     p7 convention:
         [magnet_x, magnet_y, magnet_z, rx, ry, rz, L_inserted]
     """
 
+class MagneticBeamForwardModel:
     def __init__(
         self,
         *,
@@ -43,6 +67,9 @@ class MagneticBeamForwardModel:
         Kinv_fun,
         m_body: np.ndarray,
         lumen_query: LumenQuery | None,
+
+        # New, optional argument.
+        m_local_factory=None,
     ):
         beam.validate()
         contact.validate()
@@ -51,18 +78,37 @@ class MagneticBeamForwardModel:
         self.beam = beam
         self.contact_cfg = contact
         self.Kinv_fun = Kinv_fun
-        self.m_body = np.asarray(m_body, float).reshape(3)
+
+        # External source-magnet dipole in its body frame.
+        self.m_body = np.asarray(
+            m_body,
+            float,
+        ).reshape(3)
+
         self.lumen_query = lumen_query
 
-        if self.contact_cfg.enabled and self.lumen_query is None:
-            raise ValueError("Contact is enabled, but lumen_query is None.")
+        # None preserves the existing behaviour.
+        self.m_local_factory = m_local_factory
+
+        if (
+            self.contact_cfg.enabled
+            and self.lumen_query is None
+        ):
+            raise ValueError(
+                "Contact is enabled, but lumen_query is None."
+            )
 
         self.cache = ForwardCache()
 
-        self.last_J_tip_pose7: np.ndarray | None = None
-        self.last_sens_info: dict | None = None
+        self.last_J_tip_pose7 = None
+        self.last_sens_info = None
         self.last_jacobian_diag = {}
         self.last_sensitivity_H = None
+        self.last_sensitivity_H_p7: np.ndarray | None = None
+        self.last_sensitivity_H_eps: float | None = None
+        self.last_sensitivity_contact_mask: np.ndarray | None = None
+        self._last_tangent_key: tuple | None = None
+        self._last_pose7_key: tuple | None = None
     @property
     def last_info(self):
         return self.cache.info
@@ -220,6 +266,69 @@ class MagneticBeamForwardModel:
             out[f"beam_stiff_dir_{j}"] = float(v_stiff[j])
 
         return out
+    def _make_m_local_fun(
+        self,
+        *,
+        L_model: float,
+        wire_len: float,
+        tip_len: float,
+    ):
+        """
+        Build the distributed local beam magnetic moment function.
+
+        The returned function must return magnetic dipole moment per
+        unit beam length, with shape (3, N), in A m.
+        """
+        if self.m_local_factory is None:
+            # Existing model behaviour.
+            return make_m_local_fun_wire_tip(
+                wire_len,
+                len_tip=tip_len,
+                mode="axial",
+                alpha_end=0.0,
+                eps=1e-3,
+            )
+
+        m_local_fun = self.m_local_factory(
+            L_model=float(L_model),
+            wire_len=float(wire_len),
+            tip_len=float(tip_len),
+        )
+
+        if not callable(m_local_fun):
+            raise TypeError(
+                "m_local_factory must return a callable "
+                "m_local_fun(s_mid, parameter)."
+            )
+
+        # Early shape and finite-value validation.
+        s_test = np.array(
+            [0.25, 0.75],
+            dtype=float,
+        ) * float(L_model)
+
+        m_test = np.asarray(
+            m_local_fun(
+                s_test,
+                float(wire_len),
+            ),
+            float,
+        )
+
+        expected_shape = (3, s_test.size)
+
+        if m_test.shape != expected_shape:
+            raise ValueError(
+                "m_local_fun returned shape "
+                f"{m_test.shape}; expected {expected_shape}."
+            )
+
+        if not np.all(np.isfinite(m_test)):
+            raise ValueError(
+                "m_local_fun returned non-finite values."
+            )
+
+        return m_local_fun
     def get_last_jacobian_diag(self) -> dict:
         return dict(getattr(self, "last_jacobian_diag", {}) or {})
 
@@ -256,6 +365,16 @@ class MagneticBeamForwardModel:
             if value is not None:
                 diag[key] = float(np.linalg.norm(value))
 
+        for key in (
+            "gradient_evaluations",
+            "gradient_time_s",
+            "sensitivity_time_s",
+            "hessian_reused",
+            "difference_scheme",
+        ):
+            if key in info:
+                diag[key] = info[key]
+
         H_copy = None if H is None else np.asarray(H, float).copy()
 
         beam_eig_diag = self._beam_eigen_direction_diagnostics(
@@ -277,8 +396,25 @@ class MagneticBeamForwardModel:
         result = self.solve(p7, commit=True)
         return result.tip.copy()
 
-    def solve(self, p7: np.ndarray, *, commit: bool = True) -> SolveResult:
+    def solve(
+        self,
+        p7: np.ndarray,
+        *,
+        commit: bool = True,
+        reuse_cache: bool = True,
+    ) -> SolveResult:
         p7 = self._validate_p7(p7)
+        self._validate_source_magnet_clearance(p7)
+
+        if reuse_cache and self._cache_matches(
+            p7,
+            atol=self.beam.exact_cache_atol,
+        ):
+            cached = self.cache_as_solution()
+            cached.info["cache_hit"] = True
+            cached.info["solve_path"] = "exact_cache"
+            return cached
+
         problem = self.build_problem(p7)
 
         u0 = self.select_warm_start(problem)
@@ -288,8 +424,10 @@ class MagneticBeamForwardModel:
             u0_flat=u0,
             options=self.beam,
         )
+        result.info["cache_hit"] = False
 
         if commit:
+            self._invalidate_jacobian_values()
             self.cache = cache_from_result(
                 p7=p7,
                 result=result,
@@ -298,7 +436,7 @@ class MagneticBeamForwardModel:
 
         return result
 
-    def jacobian_tip_pose7(
+    def jacobian_tip_actuation_tangent(
         self,
         p7: np.ndarray,
         *,
@@ -307,14 +445,46 @@ class MagneticBeamForwardModel:
         eps_hess: float = 1e-4,
         debug_jac: bool = False,
         debug_hessian_terms: bool = False,
+        mode: str = "fast",
+        reuse_cached: bool = True,
     ) -> np.ndarray:
+        """
+        Tip Jacobian in robot-compatible tangent coordinates.
+
+        Columns map
+
+            [source linear velocity in world,
+             source angular velocity in world,
+             insertion-length rate]
+
+        to tip linear velocity.  Use this method when chaining a robot spatial
+        Jacobian.  Use :meth:`jacobian_tip_pose7` when differentiating the
+        additive SciPy/UR rotation-vector entries in ``p7``.
+        """
         p7 = self._validate_p7(p7)
+        if mode not in {"fast", "accurate"}:
+            raise ValueError("mode must be 'fast' or 'accurate'.")
+
+        tangent_key = self._jacobian_key(
+            p7,
+            mode=mode,
+            eps_theta=eps_theta,
+            eps_hess=eps_hess,
+            debug_jac=debug_jac,
+            debug_hessian_terms=debug_hessian_terms,
+        )
+        if (
+            reuse_cached
+            and self.last_J_tip_actuation_tangent is not None
+            and tangent_key == self._last_tangent_key
+        ):
+            return self.last_J_tip_actuation_tangent.copy()
 
         if self.cache.u_flat_opt is None:
             if not solve_if_needed:
                 raise RuntimeError(
                     "No cached forward solve. Call model(p7) before requesting "
-                    "jacobian_tip_pose7(p7), or pass solve_if_needed=True."
+                    "a Jacobian, or pass solve_if_needed=True."
                 )
             self.solve(p7, commit=True)
 
@@ -323,6 +493,13 @@ class MagneticBeamForwardModel:
         problem = self.build_problem(p7)
         solution = self.cache_as_solution()
         theta_model = self.build_theta_model(p7)
+
+        H_override = None
+        if mode == "fast" and self._can_reuse_sensitivity_hessian(
+            p7,
+            eps_hess=eps_hess,
+        ):
+            H_override = self.last_sensitivity_H
 
         sens = implicit_tip_jacobian(
             solution=solution,
@@ -333,17 +510,133 @@ class MagneticBeamForwardModel:
                 eps_hess=eps_hess,
                 debug_jac=debug_jac,
                 debug_hessian_terms=debug_hessian_terms,
+                difference_scheme="forward" if mode == "fast" else "central",
             ),
+            H_override=H_override,
         )
-        self.last_J_tip_pose7 = sens.J_tip.copy()
+        self.last_J_tip_actuation_tangent = sens.J_tip.copy()
+        self._last_tangent_key = tangent_key
+        self.last_J_tip_pose7 = None
+        self._last_pose7_key = None
         self.last_sens_info = sens.info
         diag, H = self._build_last_jacobian_diag_from_sensitivity(sens)
 
         self.last_jacobian_diag = diag
         self.last_sensitivity_H = H
-
+        if not bool(sens.info.get("hessian_reused", False)):
+            self.last_sensitivity_H_p7 = p7.copy()
+            self.last_sensitivity_H_eps = float(eps_hess)
+            self.last_sensitivity_contact_mask = self._contact_active_mask()
 
         return sens.J_tip.copy()
+
+    def jacobian_tip_pose7(
+        self,
+        p7: np.ndarray,
+        *,
+        solve_if_needed: bool = False,
+        eps_theta: float = 1e-6,
+        eps_hess: float = 1e-4,
+        debug_jac: bool = False,
+        debug_hessian_terms: bool = False,
+        mode: str = "fast",
+        reuse_cached: bool = True,
+    ) -> np.ndarray:
+        """
+        Differentiate tip position with respect to the public ``p7`` vector.
+
+        The implicit sensitivity is naturally computed against a left,
+        world-frame rotation perturbation.  ``p7[3:6]`` is instead an additive
+        SciPy/UR rotation vector, so its columns are converted using the SO(3)
+        left Jacobian.
+        """
+        p7 = self._validate_p7(p7)
+        pose_key = self._jacobian_key(
+            p7,
+            mode=mode,
+            eps_theta=eps_theta,
+            eps_hess=eps_hess,
+            debug_jac=debug_jac,
+            debug_hessian_terms=debug_hessian_terms,
+        )
+        if (
+            reuse_cached
+            and self.last_J_tip_pose7 is not None
+            and pose_key == self._last_pose7_key
+        ):
+            return self.last_J_tip_pose7.copy()
+
+        J_tangent = self.jacobian_tip_actuation_tangent(
+            p7,
+            solve_if_needed=solve_if_needed,
+            eps_theta=eps_theta,
+            eps_hess=eps_hess,
+            debug_jac=debug_jac,
+            debug_hessian_terms=debug_hessian_terms,
+            mode=mode,
+            reuse_cached=reuse_cached,
+        )
+
+        tangent_from_pose7_rate = np.eye(7, dtype=float)
+        tangent_from_pose7_rate[3:6, 3:6] = so3_left_jacobian(p7[3:6])
+
+        J_pose7 = J_tangent @ tangent_from_pose7_rate
+        self.last_J_tip_pose7 = J_pose7.copy()
+        self._last_pose7_key = pose_key
+        return J_pose7.copy()
+
+    def plot_solution(
+        self,
+        p7: np.ndarray | None = None,
+        *,
+        result: SolveResult | None = None,
+        solve_if_needed: bool = True,
+        show: bool = True,
+        save_path=None,
+        **plot_kwargs,
+    ):
+        """
+        Plot the source magnet, solved beam, and configured lumen in 3D.
+
+        If ``result`` is omitted, a matching cached solution is reused. When
+        no matching solution exists, ``solve_if_needed=True`` performs and
+        caches the forward solve before plotting.
+        """
+        if p7 is None:
+            if self.cache.p7_last is None:
+                raise RuntimeError(
+                    "p7 is required because the model has no cached solution."
+                )
+            p7 = self.cache.p7_last.copy()
+        p7 = self._validate_p7(p7)
+
+        if result is None:
+            cache_matches = (
+                self.cache.p7_last is not None
+                and self.cache.u_flat_opt is not None
+                and np.linalg.norm(p7 - self.cache.p7_last) <= 1e-9
+            )
+            if cache_matches:
+                result = self.cache_as_solution()
+            elif solve_if_needed:
+                result = self.solve(p7, commit=True)
+            else:
+                raise RuntimeError(
+                    "No matching cached forward solution. Call model.solve(p7) "
+                    "first or pass solve_if_needed=True."
+                )
+
+        from .visualization import plot_magnetic_beam_scene
+
+        return plot_magnetic_beam_scene(
+            p7=p7,
+            centerline=result.p,
+            lumen_query=self.lumen_query,
+            magnet_axis_body=self.m_body,
+            show=show,
+            save_path=save_path,
+            **plot_kwargs,
+        )
 
     def build_problem(self, p7: np.ndarray) -> BeamSolveProblem:
         p7 = self._validate_p7(p7)
@@ -361,12 +654,10 @@ class MagneticBeamForwardModel:
             L_tip_min=self.beam.L_tip_min,
         )
 
-        m_local_fun = make_m_local_fun_wire_tip(
-            wire_len,
-            len_tip=tip_len,
-            mode="axial",
-            alpha_end=0.0,
-            eps=1e-3,
+        m_local_fun = self._make_m_local_fun(
+            L_model=L_model,
+            wire_len=wire_len,
+            tip_len=tip_len,
         )
 
         return BeamSolveProblem(
@@ -383,14 +674,31 @@ class MagneticBeamForwardModel:
             m_src=m_src,
             m_body=self.m_body.copy(),
             m_local_fun=m_local_fun,
+
+            # Keep this because your m_local_fun already contains
+            # the physical magnetic-moment magnitude.
             m_moment=0.0,
-            lumen_query=self.lumen_query if self.contact_cfg.enabled else None,
-            contact=self.contact_cfg.params if self.contact_cfg.enabled else None,
+
+            lumen_query=(
+                self.lumen_query
+                if self.contact_cfg.enabled
+                else None
+            ),
+            contact=(
+                self.contact_cfg.params
+                if self.contact_cfg.enabled
+                else None
+            ),
             use_contact=self.contact_cfg.enabled,
-            use_contact_in_jacobian=self.contact_cfg.use_in_jacobian,
+            use_contact_in_jacobian=(
+                self.contact_cfg.use_in_jacobian
+            ),
             N_nodes=self.beam.N_nodes,
             L_tip_full=self.beam.L_tip_full,
             L_tip_min=self.beam.L_tip_min,
+
+            # New.
+            m_local_factory=self.m_local_factory,
         )
     def set_lumen(self, lumen_C: np.ndarray, lumen_R: np.ndarray, *, reset_cache: bool = True):
         lumen_C = np.asarray(lumen_C, float)
@@ -469,12 +777,188 @@ class MagneticBeamForwardModel:
         return copy.deepcopy(self.cache)
 
     def set_cache(self, cache: ForwardCache) -> None:
+        self._invalidate_jacobian_values()
         self.cache = copy.deepcopy(cache)
 
     def reset_cache(self) -> None:
         self.cache = ForwardCache()
         self.last_J_tip_pose7 = None
+        self.last_J_tip_actuation_tangent = None
         self.last_sens_info = None
+        self.last_jacobian_diag = {}
+        self.last_sensitivity_H = None
+        self.last_sensitivity_H_p7 = None
+        self.last_sensitivity_H_eps = None
+        self.last_sensitivity_contact_mask = None
+        self._last_tangent_key = None
+        self._last_pose7_key = None
+
+    def _invalidate_jacobian_values(self) -> None:
+        """Invalidate pose-specific Jacobians but retain a reusable Hessian."""
+        self.last_J_tip_pose7 = None
+        self.last_J_tip_actuation_tangent = None
+        self.last_sens_info = None
+        self.last_jacobian_diag = {}
+        self._last_tangent_key = None
+        self._last_pose7_key = None
+
+    def _cache_matches(self, p7: np.ndarray, *, atol: float) -> bool:
+        return bool(
+            self.cache.p7_last is not None
+            and self.cache.u_flat_opt is not None
+            and self.cache.tip is not None
+            and self.cache.centerline is not None
+            and bool((self.cache.info or {}).get("success", False))
+            and np.allclose(
+                np.asarray(p7, float),
+                self.cache.p7_last,
+                rtol=0.0,
+                atol=float(atol),
+            )
+        )
+
+    def _validate_source_magnet_clearance(self, p7: np.ndarray) -> None:
+        """
+        Reject an undeformed beam that intersects the finite source cylinder.
+
+        The magnetic field is currently evaluated with a point-dipole model.
+        It is singular at the source centre and is not physically meaningful
+        inside the actual permanent magnet.  This guard catches invalid test
+        poses before L-BFGS-B is attracted into that singularity.
+        """
+        params = getattr(self, "source_magnet_parameters", None)
+        if not params:
+            return
+
+        diameter = float(params.get("diameter", 0.0))
+        length = float(params.get("length", 0.0))
+        if diameter <= 0.0 or length <= 0.0:
+            return
+
+        q_src = quat_from_rotvec_ur(p7[3:6])
+        source_axis = quat_to_R(q_src) @ (
+            self.m_body / max(float(np.linalg.norm(self.m_body)), 1e-12)
+        )
+        source_axis /= max(float(np.linalg.norm(source_axis)), 1e-12)
+
+        L_model, _, _ = effective_lengths(
+            float(p7[6]),
+            L_tip_full=self.beam.L_tip_full,
+            L_tip_min=self.beam.L_tip_min,
+        )
+        base_tangent = quat_to_R(self.base.q0_ur) @ np.array(
+            [-1.0, 0.0, 0.0]
+        )
+        s_check = np.linspace(0.0, L_model, max(20, self.beam.N_nodes))
+        undeformed = (
+            self.base.p0_ur[None, :]
+            + s_check[:, None] * base_tangent[None, :]
+        )
+
+        rel = undeformed - p7[0:3][None, :]
+        axial = rel @ source_axis
+        radial_vec = rel - axial[:, None] * source_axis[None, :]
+        radial = np.linalg.norm(radial_vec, axis=1)
+
+        radial_excess = radial - 0.5 * diameter
+        axial_excess = np.abs(axial) - 0.5 * length
+        outside = np.hypot(
+            np.maximum(radial_excess, 0.0),
+            np.maximum(axial_excess, 0.0),
+        )
+        inside = np.minimum(
+            np.maximum(radial_excess, axial_excess),
+            0.0,
+        )
+        cylinder_signed_distance = outside + inside
+
+        beam_radius = 0.0
+        composite = getattr(self, "composite_properties", None)
+        if composite and float(composite.get("area", 0.0)) > 0.0:
+            beam_radius = np.sqrt(float(composite["area"]) / np.pi)
+        elif self.contact_cfg.params is not None:
+            beam_radius = float(self.contact_cfg.params.r_beam)
+
+        clearance = cylinder_signed_distance - beam_radius
+        minimum = float(np.min(clearance))
+        if minimum <= 0.0:
+            raise ValueError(
+                "The undeformed beam intersects the finite source magnet "
+                f"(minimum surface clearance {minimum * 1e3:.3f} mm). "
+                "The point-dipole field is invalid inside the 68 mm-class "
+                "source and becomes singular near its centre. Move or rotate "
+                "the source magnet so the complete beam remains outside it, "
+                "or replace the point dipole with a finite-cylinder field and "
+                "add source-magnet contact."
+            )
+
+    @staticmethod
+    def _jacobian_key(
+        p7: np.ndarray,
+        *,
+        mode: str,
+        eps_theta: float,
+        eps_hess: float,
+        debug_jac: bool,
+        debug_hessian_terms: bool,
+    ) -> tuple:
+        return (
+            tuple(np.asarray(p7, float).tolist()),
+            str(mode),
+            float(eps_theta),
+            float(eps_hess),
+            bool(debug_jac),
+            bool(debug_hessian_terms),
+        )
+
+    def _can_reuse_sensitivity_hessian(
+        self,
+        p7: np.ndarray,
+        *,
+        eps_hess: float,
+    ) -> bool:
+        """
+        Reuse H only within a small neighbourhood of its anchor pose.
+
+        G_theta is still recomputed at every changed pose.  This is a
+        quasi-Newton approximation intended for controller-rate updates.
+        """
+        if self.last_sensitivity_H is None or self.last_sensitivity_H_p7 is None:
+            return False
+        if self.last_sensitivity_H_eps != float(eps_hess):
+            return False
+        if self.contact_cfg.enabled:
+            current_mask = self._contact_active_mask()
+            if (
+                current_mask is None
+                or self.last_sensitivity_contact_mask is None
+                or not np.array_equal(
+                    current_mask,
+                    self.last_sensitivity_contact_mask,
+                )
+            ):
+                return False
+
+        delta = np.asarray(p7, float) - self.last_sensitivity_H_p7
+        return bool(
+            np.linalg.norm(delta[0:3]) <= 2.0e-3
+            and np.linalg.norm(delta[3:6]) <= 5.0e-2
+            and abs(float(delta[6])) <= 2.0e-3
+        )
+
+    def _contact_active_mask(self) -> np.ndarray | None:
+        if not self.contact_cfg.enabled or not self.cache.info:
+            return None
+        parts = self.cache.info.get("parts", {})
+        gaps = parts.get("gap_nodes")
+        if gaps is None:
+            return None
+        smooth_eps = (
+            float(self.contact_cfg.params.smooth_eps)
+            if self.contact_cfg.params is not None
+            else 0.0
+        )
+        return np.asarray(gaps, float).reshape(-1) <= 3.0 * smooth_eps
 
     @staticmethod
     def _validate_p7(p7: np.ndarray) -> np.ndarray:

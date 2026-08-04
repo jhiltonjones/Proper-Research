@@ -15,6 +15,27 @@ class BeamModelConfig:
     L_tip_min: float = 0.01
     energy_scale: float = 1e-8
     u_scale: float = 30.0
+    # L-BFGS-B settings.  The old 1e-22/1e-14 tolerances forced many
+    # numerically meaningless iterations on an energy that is already scaled.
+    optimizer_ftol: float = 1e-8
+    optimizer_gtol: float = 1e-5
+    optimizer_maxls: int = 80
+    optimizer_maxfun: int = 50000
+    optimizer_maxcor: int = 20
+    # SciPy can report max-iteration/line-search failure even when the final
+    # projected gradient is already adequate for controller use.  Accept only
+    # a genuinely stationary result; never accept based on iteration count
+    # alone.
+    accept_stationary_failure: bool = True
+    acceptable_grad_inf_scaled: float = 1e-3
+    diagnose_failed_gradient: bool = True
+    gradient_check_eps: float = 1e-6
+    # A controller normally changes the actuation by a small amount between
+    # frames.  In that case solve the requested final length directly from the
+    # previous equilibrium; retain continuation for cold starts.
+    direct_warm_start: bool = True
+    fallback_to_continuation: bool = True
+    exact_cache_atol: float = 1e-12
 
     def validate(self) -> None:
         if self.N_nodes < 2:
@@ -33,6 +54,22 @@ class BeamModelConfig:
             raise ValueError(f"energy_scale must be positive, got {self.energy_scale}.")
         if self.u_scale <= 0:
             raise ValueError(f"u_scale must be positive, got {self.u_scale}.")
+        if self.optimizer_ftol <= 0:
+            raise ValueError("optimizer_ftol must be positive.")
+        if self.optimizer_gtol <= 0:
+            raise ValueError("optimizer_gtol must be positive.")
+        if self.optimizer_maxls <= 0:
+            raise ValueError("optimizer_maxls must be positive.")
+        if self.optimizer_maxfun <= 0:
+            raise ValueError("optimizer_maxfun must be positive.")
+        if self.optimizer_maxcor <= 0:
+            raise ValueError("optimizer_maxcor must be positive.")
+        if self.acceptable_grad_inf_scaled <= 0:
+            raise ValueError("acceptable_grad_inf_scaled must be positive.")
+        if self.gradient_check_eps <= 0:
+            raise ValueError("gradient_check_eps must be positive.")
+        if self.exact_cache_atol < 0:
+            raise ValueError("exact_cache_atol must be non-negative.")
         if self.L_tip_min > self.L_tip_full:
             raise ValueError(
                 "L_tip_min should usually be <= L_tip_full. "

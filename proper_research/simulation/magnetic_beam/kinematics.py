@@ -4,6 +4,47 @@ import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
 
+def skew(v: np.ndarray) -> np.ndarray:
+    """Return the 3x3 cross-product matrix of a 3-vector."""
+    x, y, z = np.asarray(v, float).reshape(3)
+    return np.array(
+        [
+            [0.0, -z, y],
+            [z, 0.0, -x],
+            [-y, x, 0.0],
+        ],
+        dtype=float,
+    )
+
+
+def so3_left_jacobian(rotvec: np.ndarray) -> np.ndarray:
+    """
+    Map additive rotation-vector rates to world-frame angular velocity.
+
+    For ``R = Exp(rotvec^)`` and an additive increment ``drotvec``,
+
+        Exp((rotvec + drotvec)^)
+            = Exp((J_left(rotvec) @ drotvec)^) @ R + O(||drotvec||^2).
+
+    This is the coordinate conversion needed when a Jacobian computed with
+    world-frame tangent perturbations is exposed against SciPy/UR rotation
+    vector coordinates.
+    """
+    phi = np.asarray(rotvec, float).reshape(3)
+    theta = float(np.linalg.norm(phi))
+    Phi = skew(phi)
+    Phi2 = Phi @ Phi
+
+    if theta < 1e-7:
+        # Terms through theta^2 are sufficient in this regime and avoid the
+        # cancellation in 1-cos(theta) and theta-sin(theta).
+        return np.eye(3) + 0.5 * Phi + (1.0 / 6.0) * Phi2
+
+    a = (1.0 - np.cos(theta)) / (theta * theta)
+    b = (theta - np.sin(theta)) / (theta * theta * theta)
+    return np.eye(3) + a * Phi + b * Phi2
+
+
 def quat_normalize(q: np.ndarray) -> np.ndarray:
     q = np.asarray(q, float).reshape(4)
     n = float(np.linalg.norm(q))
@@ -83,6 +124,94 @@ def quat_exp_body(u: np.ndarray, ds: float) -> np.ndarray:
         )
     )
 
+
+def _normalization_jacobian(x: np.ndarray) -> np.ndarray:
+    """Jacobian of ``x / ||x||``."""
+    x = np.asarray(x, float).reshape(-1)
+    norm_x = float(np.linalg.norm(x))
+    if norm_x < 1e-12:
+        raise ValueError("Cannot differentiate normalization near zero.")
+    xn = x / norm_x
+    return (np.eye(x.size) - np.outer(xn, xn)) / norm_x
+
+
+def _quat_left_matrix(q: np.ndarray) -> np.ndarray:
+    """Matrix L(q) satisfying ``q * d = L(q) @ d``."""
+    w, x, y, z = quat_normalize(q)
+    return np.array(
+        [
+            [w, -x, -y, -z],
+            [x, w, -z, y],
+            [y, z, w, -x],
+            [z, -y, x, w],
+        ],
+        dtype=float,
+    )
+
+
+def _quat_right_matrix(q: np.ndarray) -> np.ndarray:
+    """Matrix R(q) satisfying ``d * q = R(q) @ d``."""
+    w, x, y, z = quat_normalize(q)
+    return np.array(
+        [
+            [w, -x, -y, -z],
+            [x, w, z, -y],
+            [y, -z, w, x],
+            [z, y, -x, w],
+        ],
+        dtype=float,
+    )
+
+
+def _rotated_vector_jacobian_q(q: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Analytic Jacobian of ``R(normalize(q)) @ v`` with respect to q."""
+    q_raw = np.asarray(q, float).reshape(4)
+    qn = quat_normalize(q_raw)
+    w = float(qn[0])
+    r = qn[1:4]
+    v = np.asarray(v, float).reshape(3)
+
+    D = np.empty((3, 4), dtype=float)
+    D[:, 0] = 2.0 * w * v + 2.0 * np.cross(r, v)
+    r_dot_v = float(np.dot(r, v))
+    eye3 = np.eye(3)
+    for j in range(3):
+        ej = eye3[:, j]
+        D[:, j + 1] = (
+            -2.0 * r[j] * v
+            + 2.0 * ej * r_dot_v
+            + 2.0 * r * v[j]
+            + 2.0 * w * np.cross(ej, v)
+        )
+    return D @ _normalization_jacobian(q_raw)
+
+
+def _quat_exp_body_jacobian_u(u: np.ndarray, ds: float) -> np.ndarray:
+    """Analytic Jacobian of ``quat_exp_body(u, ds)`` with respect to u."""
+    u = np.asarray(u, float).reshape(3)
+    h = float(ds)
+    a = h * u
+    theta = float(np.linalg.norm(a))
+
+    if theta < 1e-7:
+        theta2 = theta * theta
+        scalar_factor = -0.25 + theta2 / 96.0
+        f = 0.5 - theta2 / 48.0 + theta2 * theta2 / 3840.0
+        radial_factor = -1.0 / 24.0 + theta2 / 960.0
+    else:
+        half = 0.5 * theta
+        scalar_factor = -0.5 * np.sin(half) / theta
+        f = np.sin(half) / theta
+        radial_factor = (
+            0.5 * theta * np.cos(half) - np.sin(half)
+        ) / (theta**3)
+
+    D_a = np.empty((4, 3), dtype=float)
+    D_a[0, :] = scalar_factor * a
+    D_a[1:4, :] = f * np.eye(3) + radial_factor * np.outer(a, a)
+    return h * D_a
+
+
 def integrate_pq_and_sens_from_u(
     u_flat,
     *,
@@ -96,14 +225,16 @@ def integrate_pq_and_sens_from_u(
     """
     Discrete sensitivity version of integrate_pq_from_u().
 
-    This intentionally matches the exact same forward update:
+    This analytically differentiates the exact same forward update:
 
         p_{i+1} = p_i + ds_i * R(q_i) e1
         q_{i+1} = normalize(q_i * exp_body(u_i, ds_i))
 
     Therefore S_p and S_q are sensitivities of the same discrete map used
-    by energy_from_u().
+    by energy_from_u(). ``eps_q`` and ``eps_u`` remain accepted for API
+    compatibility but are no longer used.
     """
+    del eps_q, eps_u
     u_flat = np.asarray(u_flat, float).reshape(-1)
     s = np.asarray(s, float).ravel()
     p0 = np.asarray(p0, float).reshape(3,)
@@ -163,15 +294,7 @@ def integrate_pq_and_sens_from_u(
         # No direct dependence on current ui, because your plain
         # integrator uses q_i, not q_{i+1} or q_mid, for position.
         # ------------------------------------------------------------
-        def tangent_from_q(q_raw):
-            qn = quat_normalize(q_raw)
-            return quat_to_R(qn) @ e1
-
-        d_tangent_dq = numerical_jacobian(
-            tangent_from_q,
-            q_i,
-            eps=eps_q,
-        )  # shape (3, 4)
+        d_tangent_dq = _rotated_vector_jacobian_q(q_i, e1)
 
         S_p[:, i + 1, :] = (
             S_p[:, i, :]
@@ -183,26 +306,14 @@ def integrate_pq_and_sens_from_u(
         #
         # q_{i+1} = normalize(q_i * exp_body(ui, h))
         # ------------------------------------------------------------
-        def qnext_from_q(q_raw):
-            qn = quat_normalize(q_raw)
-            dq_local = quat_exp_body(ui, h)
-            return quat_normalize(quat_mul(qn, dq_local))
-
-        def qnext_from_u(u_local):
-            dq_local = quat_exp_body(u_local, h)
-            return quat_normalize(quat_mul(q_i, dq_local))
-
-        dqnext_dq = numerical_jacobian(
-            qnext_from_q,
-            q_i,
-            eps=eps_q,
-        )  # shape (4, 4)
-
-        dqnext_du = numerical_jacobian(
-            qnext_from_u,
-            ui,
-            eps=eps_u,
-        )  # shape (4, 3)
+        P_q = _normalization_jacobian(q_i)
+        P_next = _normalization_jacobian(q_next)
+        dqnext_dq = P_next @ _quat_right_matrix(dq) @ P_q
+        dqnext_du = (
+            P_next
+            @ _quat_left_matrix(q_i)
+            @ _quat_exp_body_jacobian_u(ui, h)
+        )
 
         S_q[:, i + 1, :] = dqnext_dq @ S_q[:, i, :]
         S_q[:, i + 1, col0:col1] += dqnext_du

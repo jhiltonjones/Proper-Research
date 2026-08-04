@@ -405,7 +405,7 @@ def quat_wxyz_to_R(qwxyz):
     ], float)
     return R
 def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straight=None,lumen_others=None,
-                        title="Energy-min centerline", show_rings=True,
+                        title="Energy-min centerline", show_rings=True, plot_mag = False,
                         targets=None, tip=None, tip_from_centerline=None,
                         p_mag=None, mag_axis="x", mag_arrow_len=0.02,
                         show_tangent_segment=True, show=False, fixed_limits=None, zoom_out=1.25):
@@ -473,7 +473,7 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
         ax.scatter([tip_from_centerline[0]], [tip_from_centerline[1]], [tip_from_centerline[2]],
                    marker="o", s=40, label="Centerline end")
 
-    # --- MPC targets (your existing) ---
+    # --- MPC targets ---
     if targets is not None:
         T = np.asarray(targets, float).reshape(-1, 3)
         ax.scatter(T[:, 0], T[:, 1], T[:, 2], marker="^", s=30, label="MPC targets")
@@ -483,8 +483,8 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
         if T.shape[0] > 1:
             ax.text(T[1,0], T[1,1], T[1,2] + 0.0002, "1")
 
-    # --- external magnet pose (NEW) ---
-    if p_mag is not None:
+    # --- external magnet pose  ---
+    if p_mag is not None and plot_mag==True:
         p_mag = np.asarray(p_mag, float).ravel()
 
         # supports pose8=[x,y,z,qw,qx,qy,qz,L] or pose7=[x,y,z,rx,ry,rz,L]
@@ -519,7 +519,6 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     ax.set_title(title)
     # ax.legend()
 
-    # axis equal
     pts = [C_energy]
     if p_straight is not None:
         C_st = _ensure_centerline_shape(p_straight)
@@ -531,12 +530,12 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
         for item in lumen_others:
             pts.append(np.asarray(item[0], float))
     if tip is not None: pts.append(np.asarray(tip, float).reshape(1,3))
-    if p_mag is not None and np.asarray(p_mag).size >= 3:
+    if p_mag is not None and np.asarray(p_mag).size >= 3 and plot_mag==True:
         pts.append(np.asarray(p_mag[:3], float).reshape(1,3))
 
     P = np.vstack(pts)
 
-    # ---- FIX LIMITS ONCE ----
+    # # ---- FIX LIMITS ONCE ----
     if fixed_limits is None:
         pmin = P.min(axis=0)
         pmax = P.max(axis=0)
@@ -550,7 +549,7 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
         pmax = c + half
         fixed_limits = (pmin, pmax)
 
-    # Always apply the same limits
+    # # Always apply the same limits
     pmin, pmax = fixed_limits
     ax.set_xlim(pmin[0], pmax[0])
     ax.set_ylim(pmin[1], pmax[1])
@@ -560,7 +559,7 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     if show:
         plt.show()
 
-    return fixed_limits
+    return fig, ax, fixed_limits
 def plot_error_vs_s(s, p_bvp, p_energy):
     err = np.linalg.norm(p_bvp - p_energy, axis=0)  # (N,)
     plt.figure()

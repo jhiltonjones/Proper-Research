@@ -59,7 +59,8 @@ def default_beam_params():
     mag = 128e3
     r = 0.001
     # E = 12e5
-    E=2e6
+    # E=2e6
+    E=1e6
     # E = 86e4
     A_cs = np.pi * r**2
     I = np.pi * r**4 / 4

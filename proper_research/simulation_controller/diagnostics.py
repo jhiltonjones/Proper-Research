@@ -1,6 +1,99 @@
 import numpy as np
 
+def classify_constraint_issue(diag):
+    if int(diag.get("constraint_num_inconsistent_bounds", 0)) > 0:
+        return "inconsistent_bounds_l_greater_than_u"
 
+    block_names = [
+        k.replace("constr_", "").replace("_max_vio_guess", "")
+        for k in diag.keys()
+        if k.startswith("constr_") and k.endswith("_max_vio_guess")
+    ]
+
+    if not block_names:
+        return "no_constraint_blocks"
+
+    worst_name = None
+    worst_value = -np.inf
+
+    for name in block_names:
+        value = float(diag.get(f"constr_{name}_max_vio_guess", 0.0))
+        if value > worst_value:
+            worst_value = value
+            worst_name = name
+
+    if worst_value <= 1e-8:
+        return "no_violation_at_U_guess"
+
+    if worst_name == "input_bounds":
+        return "input_bounds_violate_U_guess"
+
+    if worst_name == "trust_region":
+        return "trust_region_violate_U_guess"
+
+    if worst_name == "dL_bounds":
+        return "insertion_bounds_violate_U_guess"
+
+    if "clearance" in worst_name:
+        return "hard_clearance_violate_U_guess"
+
+    return f"largest_violation_in_{worst_name}"
+def diagnose_constraints_at_U(A, l, u, U, constraint_slices, *, tol=1e-8):
+    """
+    Diagnose l <= A U <= u at a candidate U.
+    """
+    A = np.asarray(A, float)
+    l = np.asarray(l, float).reshape(-1)
+    u = np.asarray(u, float).reshape(-1)
+    U = np.asarray(U, float).reshape(-1)
+
+    z = A @ U
+
+    lower_violation = np.maximum(l - z, 0.0)
+    upper_violation = np.maximum(z - u, 0.0)
+    violation = np.maximum(lower_violation, upper_violation)
+
+    inconsistent = l > u
+
+    diag = {
+        "constraint_max_vio_guess": float(np.nanmax(violation)) if violation.size else 0.0,
+        "constraint_num_vio_guess": int(np.sum(violation > tol)),
+        "constraint_num_inconsistent_bounds": int(np.sum(inconsistent)),
+        "constraint_worst_row": int(np.nanargmax(violation)) if violation.size else -1,
+        "constraint_worst_l": float(l[np.nanargmax(violation)]) if violation.size else np.nan,
+        "constraint_worst_z": float(z[np.nanargmax(violation)]) if violation.size else np.nan,
+        "constraint_worst_u": float(u[np.nanargmax(violation)]) if violation.size else np.nan,
+    }
+
+    for name, sl in constraint_slices.items():
+        vv = violation[sl]
+        ll = l[sl]
+        zz = z[sl]
+        uu = u[sl]
+        bad_bounds = inconsistent[sl]
+
+        if vv.size:
+            j = int(np.nanargmax(vv))
+            max_vio = float(vv[j])
+            worst_l = float(ll[j])
+            worst_z = float(zz[j])
+            worst_u = float(uu[j])
+        else:
+            max_vio = 0.0
+            worst_l = np.nan
+            worst_z = np.nan
+            worst_u = np.nan
+
+        key = name.replace(" ", "_")
+
+        diag[f"constr_{key}_max_vio_guess"] = max_vio
+        diag[f"constr_{key}_num_vio_guess"] = int(np.sum(vv > tol))
+        diag[f"constr_{key}_bad_bounds"] = int(np.sum(bad_bounds))
+        diag[f"constr_{key}_worst_l"] = worst_l
+        diag[f"constr_{key}_worst_z"] = worst_z
+        diag[f"constr_{key}_worst_u"] = worst_u
+
+    return diag
 def qp_objective_value(H, f, z):
     """
     Evaluate OSQP-style quadratic objective:

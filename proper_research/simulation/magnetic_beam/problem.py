@@ -6,7 +6,20 @@ from typing import Callable, Any
 import numpy as np
 
 from .contact import ContactParams
+from collections.abc import Callable
+from dataclasses import dataclass
+import numpy as np
 
+
+MlocalFunction = Callable[
+    [np.ndarray, object],
+    np.ndarray,
+]
+
+MlocalFactory = Callable[
+    ...,
+    MlocalFunction,
+]
 
 @dataclass(frozen=True)
 class BaseFrameConfig:
@@ -33,34 +46,32 @@ class BaseFrameConfig:
         object.__setattr__(self, "u_star", u_star)
 
 
-@dataclass(frozen=True)
+@dataclass
 class BeamSolveProblem:
     p0: np.ndarray
     q0: np.ndarray
-
     L_ins: float
     L_model: float
     wire_len: float
     tip_len: float
-
-    Kinv_fun: Callable
+    Kinv_fun: object
     u_star: np.ndarray
-
     r_src: np.ndarray
     q_src: np.ndarray
     m_src: np.ndarray
     m_body: np.ndarray
-    m_local_fun: Callable
+    m_local_fun: MlocalFunction
     m_moment: float
-
-    lumen_query: Any | None
-    contact: ContactParams | None
+    lumen_query: object
+    contact: object
     use_contact: bool
     use_contact_in_jacobian: bool
-
     N_nodes: int
     L_tip_full: float
     L_tip_min: float
+
+    # New optional field must follow required fields.
+    m_local_factory: MlocalFactory | None = None
 
     def __post_init__(self):
         p0 = np.asarray(self.p0, float).reshape(3)
@@ -94,6 +105,13 @@ class BeamSolveProblem:
         object.__setattr__(self, "q_src", q_src)
         object.__setattr__(self, "m_src", m_src)
         object.__setattr__(self, "m_body", m_body)
+
+        if not callable(self.Kinv_fun):
+            raise TypeError("Kinv_fun must be callable.")
+        if not callable(self.m_local_factory):
+            raise TypeError("m_local_factory must be callable.")
+        if not callable(self.m_local_fun):
+            raise TypeError("m_local_fun must be callable.")
 
         if self.L_ins < 0:
             raise ValueError(f"L_ins must be non-negative, got {self.L_ins}.")

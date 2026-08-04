@@ -96,9 +96,24 @@ def m_local_wire_plus_magnetised_tip(
         raise ValueError(f"Unknown mode='{mode}'")
 
     return m * w[None, :]
+
 def make_m_local_fun_wire_tip(len_wire, *, len_tip, alpha_end=0.0, mode="axial", eps=1e-3):
     def _m_local(s, _unused=None):
         return m_local_wire_plus_magnetised_tip(
             s, len_wire, len_tip=len_tip, alpha_end=alpha_end, mode=mode, eps=eps
         )
     return _m_local
+def make_uniform_axial_m_local_fun(moment_per_length):
+    moment_per_length = float(moment_per_length)
+
+    def m_local_fun(s_mid, unused_parameter):
+        s_mid = np.asarray(s_mid, float).reshape(-1)
+
+        m_local = np.zeros((3, s_mid.size))
+
+        # The undeformed beam tangent in this model is local -x.
+        m_local[0, :] = -moment_per_length
+
+        return m_local
+
+    return m_local_fun

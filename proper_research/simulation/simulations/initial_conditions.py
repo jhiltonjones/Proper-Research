@@ -23,7 +23,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     dt:
         Controller timestep.
     """
-    L_cmd = 0.016
+    L_cmd = 0.013
 
     pivot_point = np.array(
         [
@@ -39,7 +39,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
 
     base_point = np.array(
         [
-            pivot_point[0] - (L_cmd + 0.12),
+            pivot_point[0] - (L_cmd + 0.17),
             pivot_point[1],
             -0.1,
             np.pi,
@@ -54,7 +54,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
         dtype=float,
     )
 
-    dt = 0.02
+    dt = 0.01
 
     print(f"[INIT] start_point={start_point}")
     print(f"[INIT] pivot_point={pivot_point}")

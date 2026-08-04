@@ -2,13 +2,60 @@ from __future__ import annotations
 
 import numpy as np
 
-from .contact import ContactParams
+from .contact import ContactParams, contact_energy_from_p
+from .kinematics import integrate_pq_and_sens_from_u
 
 from beam_direction_magnetisation.ana_energy import (
     elastic_energy_gradient_u,
     magnetic_energy_gradient_u_virtual_work_analytic,
-    contact_energy_gradient_u_sens,
 )
+
+
+def contact_energy_gradient_u_consistent(
+    u_flat: np.ndarray,
+    *,
+    p0: np.ndarray,
+    q0: np.ndarray,
+    s: np.ndarray,
+    lumen_query,
+    contact: ContactParams | None = None,
+) -> np.ndarray:
+    """
+    Differentiate the same discrete contact energy used by ``energy_from_u``.
+
+    ``F_nodes`` is the physical force ``-dC/dp``.  Consequently,
+
+        dW_contact/du = -sum_j w_j S_p[j]^T F_j.
+
+    This includes both closest-point distance and tapered-radius interpolation
+    derivatives through ``contact_energy_from_p``.
+    """
+    u_flat = np.asarray(u_flat, float).reshape(-1)
+    s = np.asarray(s, float).ravel()
+
+    p, _, S_p, _ = integrate_pq_and_sens_from_u(
+        u_flat,
+        p0=p0,
+        q0=q0,
+        s=s,
+    )
+
+    _, _, F_nodes, _, weights = contact_energy_from_p(
+        p,
+        s=s,
+        lumen_query=lumen_query,
+        contact=contact,
+        return_force=True,
+    )
+
+    grad = -np.einsum(
+        "j,ajn,aj->n",
+        weights,
+        S_p,
+        F_nodes,
+        optimize=True,
+    )
+    return np.asarray(grad, float).reshape(-1)
 
 
 def energy_gradient_u(
@@ -101,7 +148,7 @@ def energy_gradient_u(
 
         contact.validate()
 
-        grad_contact = contact_energy_gradient_u_sens(
+        grad_contact = contact_energy_gradient_u_consistent(
             u_flat,
             p0=p0,
             q0=q0,

@@ -525,12 +525,12 @@ def build_forward_model_no_lumen_effect(
     # )
     contact = ContactParams(
         r_beam=0.0011,   # or 0.001, but use one value everywhere
-        k=1e5,
+        k=1e4,
         pen_switch=5e-5,
-        k_hard=1e10,
+        k_hard=1e8,
         smooth=True,
         smooth_eps=1e-5,
-        window=3,
+        window=4,
     )
 
     forward_model = EnergyMinForwardWithAnalyticJac(

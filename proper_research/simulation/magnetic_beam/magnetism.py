@@ -23,11 +23,23 @@ def quat_stack_to_R(q: np.ndarray) -> np.ndarray:
     if q.ndim != 2 or q.shape[0] != 4:
         raise ValueError(f"Expected q with shape (4, N), got {q.shape}.")
 
+    norms = np.linalg.norm(q, axis=0, keepdims=True)
+    if np.any(norms < 1e-12):
+        raise ValueError("Cannot normalise a near-zero quaternion.")
+    qn = q / norms
+    w, x, y, z = qn
+
     N = q.shape[1]
     R = np.empty((N, 3, 3), dtype=float)
-
-    for i in range(N):
-        R[i] = quat_to_R(q[:, i])
+    R[:, 0, 0] = 1.0 - 2.0 * (y * y + z * z)
+    R[:, 0, 1] = 2.0 * (x * y - z * w)
+    R[:, 0, 2] = 2.0 * (x * z + y * w)
+    R[:, 1, 0] = 2.0 * (x * y + z * w)
+    R[:, 1, 1] = 1.0 - 2.0 * (x * x + z * z)
+    R[:, 1, 2] = 2.0 * (y * z - x * w)
+    R[:, 2, 0] = 2.0 * (x * z - y * w)
+    R[:, 2, 1] = 2.0 * (y * z + x * w)
+    R[:, 2, 2] = 1.0 - 2.0 * (x * x + y * y)
 
     return R
 
@@ -290,6 +302,60 @@ def magnetic_wrench_density_cosserat_profile_segments(
     tau_mid = np.cross(m_mid_world.T, B_mid.T).T
 
     return f_mid, tau_mid, B_mid, m_mid_world, s_mid
+
+
+def magnetic_energy_quantities_cosserat_profile_segments(
+    p: np.ndarray,
+    q: np.ndarray,
+    s: np.ndarray,
+    m_ext: np.ndarray,
+    r_src: np.ndarray,
+    m_local_fun,
+    m_front_or_overhead,
+    *,
+    r_min: float = 1e-6,
+):
+    """
+    Return only the quantities required by ``-integral(m.B) ds``.
+
+    The optimizer used to call the full wrench routine for every scalar-energy
+    evaluation, even though force and torque are only needed by the gradient
+    and final diagnostics.  Avoiding those calculations reduces line-search
+    cost without changing the energy.
+    """
+    p = np.asarray(p, float)
+    q = np.asarray(q, float)
+    s = np.asarray(s, float).ravel()
+    m_ext = np.asarray(m_ext, float).reshape(3)
+    r_src = np.asarray(r_src, float).reshape(3)
+
+    if p.shape != (3, s.size):
+        raise ValueError(f"p must have shape (3, {s.size}), got {p.shape}.")
+    if q.shape != (4, s.size):
+        raise ValueError(f"q must have shape (4, {s.size}), got {q.shape}.")
+    if s.size < 2:
+        raise ValueError("s must contain at least two nodes.")
+
+    s_mid = 0.5 * (s[:-1] + s[1:])
+    p_mid = 0.5 * (p[:, :-1] + p[:, 1:])
+    q_mid = midpoint_quaternions(q)
+    R_mid = quat_stack_to_R(q_mid)
+
+    m_loc_mid = np.asarray(m_local_fun(s_mid, m_front_or_overhead), float)
+    expected = (3, s.size - 1)
+    if m_loc_mid.shape != expected:
+        raise ValueError(
+            f"m_local_fun returned shape {m_loc_mid.shape}, expected {expected}."
+        )
+
+    m_mid_world = np.einsum("nij,nj->in", R_mid, m_loc_mid.T)
+    B_mid = dipole_field_from_source(
+        p_mid.T,
+        r_src,
+        m_ext,
+        r_min=r_min,
+    ).T
+    return B_mid, m_mid_world, s_mid
 
 
 def dipole_from_pose(q_src: np.ndarray, m_body: np.ndarray) -> np.ndarray:

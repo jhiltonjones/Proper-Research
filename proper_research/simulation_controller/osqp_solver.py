@@ -13,8 +13,8 @@ def solve_qp_osqp(
     *,
     eps_abs=1e-5,
     eps_rel=1e-5,
-    max_iter=10000,
-    polish=True,
+    max_iter=100000,
+    polish=False,
     verbose=False,
 ):
     """

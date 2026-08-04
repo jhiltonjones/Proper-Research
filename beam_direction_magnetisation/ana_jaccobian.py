@@ -3106,7 +3106,7 @@ if __name__ == "__main__":
     # ============================================================
     # Placement option A: directly above beam tip
     # ============================================================
-    above_distance = 0.18  # 20 cm above tip
+    above_distance = 0.22 # 20 cm above tip
 
     def source_position_above_tip(distance_above_tip):
         return p_tip_straight + np.array([0.0, 0.0, float(distance_above_tip)])
@@ -3114,7 +3114,7 @@ if __name__ == "__main__":
     # ============================================================
     # Placement option B: directly in front of beam tip
     # ============================================================
-    front_distance = 0.18 # 12 cm in front of tip, along beam axis
+    front_distance = 0.22 # 12 cm in front of tip, along beam axis
 
     front_axis = beam_axis.copy()
     front_axis = front_axis / (np.linalg.norm(front_axis) + 1e-12)
@@ -3124,7 +3124,7 @@ if __name__ == "__main__":
     # ============================================================
     # Placement option C: same plane, 90 degrees from beam axis
     # ============================================================
-    side_distance = 0.18 # 20 cm to the side of the beam tip
+    side_distance = 0.22 # 20 cm to the side of the beam tip
 
     # Use the beam direction projected into the world xy plane
     beam_axis_xy = beam_axis.copy()
@@ -3385,7 +3385,7 @@ if __name__ == "__main__":
         #   horizontal axis = z rotation angle
         #   vertical axis   = magnet distance from beam
         # ------------------------------------------------------------
-        zrot_grid = np.deg2rad(np.linspace(-90.0, 90.0, 21))
+        zrot_grid = np.deg2rad(np.linspace(-40.0, 40.0, 5))
 
         # Example distances: 30 mm to 180 mm.
         # Adjust these to your physical workspace.
@@ -3790,7 +3790,7 @@ if __name__ == "__main__":
             Bnorm_tip_map,
             "Magnetic field magnitude at tip",
             r"$\log_{10}\|B_{tip}\|$ [T]",
-            log=True,
+            log=False,
             save_path=run_dir / "map_Bnorm_tip_log10.png",
         )
 
@@ -3798,7 +3798,7 @@ if __name__ == "__main__":
             Fnorm_map,
             "Net magnetic force magnitude",
             r"$\log_{10}\|F_{net}\|$ [N]",
-            log=True,
+            log=False,
             save_path=run_dir / "map_Fnorm_log10.png",
         )
 
@@ -3806,7 +3806,7 @@ if __name__ == "__main__":
             Tnorm_map,
             "Net magnetic torque magnitude",
             r"$\log_{10}\|T_{net}\|$ [N m]",
-            log=True,
+            log=False,
             vmin=-6,
             save_path=run_dir / "map_Tnorm_log10.png",
         )

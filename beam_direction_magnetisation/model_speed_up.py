@@ -3184,15 +3184,21 @@ if __name__ == "__main__":
     beam_axis_xy = beam_axis_xy / (np.linalg.norm(beam_axis_xy) + 1e-12)
 
     # +90 degree rotation about world z gives a side direction in the same xy plane
-    Rz_90 = Rot.from_euler("z", np.deg2rad(-60.0), degrees=False).as_matrix()
-    side_axis = Rz_90 @ beam_axis_xy
-    side_axis[2] = 0.0
-    side_axis = side_axis / (np.linalg.norm(side_axis) + 1e-12)
+    Rz_30 = Rot.from_euler("z", np.deg2rad(-30.0), degrees=False).as_matrix()
+    side_axis_30 = Rz_30 @ beam_axis_xy
+    side_axis_30[2] = 0.0
+    side_axis_30 = side_axis_30 / (np.linalg.norm(side_axis_30) + 1e-12)
 
-    def source_position_side_90(distance_from_tip):
-        return p_tip_straight + float(distance_from_tip) * side_axis
+    def source_position_side_30(distance_from_tip):
+        return p_tip_straight + float(distance_from_tip) * side_axis_30
     
+    Rz_60 = Rot.from_euler("z", np.deg2rad(-60.0), degrees=False).as_matrix()
+    side_axis_60 = Rz_60 @ beam_axis_xy
+    side_axis_60[2] = 0.0
+    side_axis_60 = side_axis_60 / (np.linalg.norm(side_axis_60) + 1e-12)
 
+    def source_position_side_60(distance_from_tip):
+        return p_tip_straight + float(distance_from_tip) * side_axis_60
 
     # ============================================================
     # Fixed-distance placement definitions
@@ -3211,9 +3217,15 @@ if __name__ == "__main__":
             "m_src_base": m_mag * beam_axis,
         },
         "side_90": {
-            "label": "Side 90 deg",
+            "label": "Side 30 deg",
             "distance_m": side_distance,
-            "source_position_fun": source_position_side_90,
+            "source_position_fun": source_position_side_30,
+            "m_src_base": m_mag * beam_axis,
+        },
+        "side_60": {
+            "label": "Side 60 deg",
+            "distance_m": side_distance,
+            "source_position_fun": source_position_side_60,
             "m_src_base": m_mag * beam_axis,
         },
     }
@@ -3224,7 +3236,7 @@ if __name__ == "__main__":
     # ============================================================
     # Select map distance grid and nominal source position
     # ============================================================
-    zrot_grid = np.deg2rad(np.linspace(-180.0, 180.0, 51))
+    zrot_grid = np.deg2rad(np.linspace(-180.0, 180.0, 20))
 
     expected_front = p_tip_straight + front_distance * beam_axis
     actual_vec = r_src_nom - p_tip_straight
@@ -3830,6 +3842,7 @@ if __name__ == "__main__":
             plt.tight_layout()
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
             plt.show()
+            
         plot_placement_curves(
             Jcond_xyz_map,
             "3D pose Jacobian conditioning vs dipole rotation",
@@ -3873,25 +3886,25 @@ if __name__ == "__main__":
         plot_placement_curves(
             Bnorm_tip_map,
             "Magnetic field magnitude at beam tip vs dipole rotation",
-            r"$\log_{10}\|B_{\mathrm{tip}}\|$ [T]",
+            r"$\|B_{\mathrm{tip}}\|$ [T]",
             run_dir / "compare_Bnorm_tip_vs_zrot.png",
-            log10=True,
+            log10=False,
         )
 
         plot_placement_curves(
             Fnorm_map,
             "Net magnetic force magnitude vs dipole rotation",
-            r"$\log_{10}\|F_{\mathrm{net}}\|$ [N]",
+            r"$\|F_{\mathrm{net}}\|$ [N]",
             run_dir / "compare_Fnorm_vs_zrot.png",
-            log10=True,
+            log10=False,
         )
 
         plot_placement_curves(
             Tnorm_map,
             "Net magnetic torque magnitude vs dipole rotation",
-            r"$\log_{10}\|T_{\mathrm{net}}\|$ [N m]",
+            r"$\|T_{\mathrm{net}}\|$ [N m]",
             run_dir / "compare_Tnorm_vs_zrot.png",
-            log10=True,
+            log10=False,
         )
         plot_placement_curves(
             Bx_tip_map,

@@ -6,7 +6,54 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+def parse_Np_from_run_name(run_name: str):
+    m = re.search(r"_Np(\d+)", run_name)
+    if not m:
+        return np.nan
+    return int(m.group(1))
 
+
+def collect_run_logs(run_root: Path):
+    run_root = Path(run_root)
+    runs = []
+
+    for log_csv in sorted(run_root.glob("*/log.csv")):
+        run_dir = log_csv.parent
+        run_name = run_dir.name
+
+        df = pd.read_csv(log_csv)
+
+        runs.append(
+            {
+                "run_name": run_name,
+                "run_dir": run_dir,
+                "log_csv": log_csv,
+                "run_root": run_root,
+                "bend_angle_deg": parse_bend_angle_from_run_name(run_name),
+                "jacobian_variant": infer_jacobian_variant(run_name),
+                "solver_mode": infer_solver_mode(run_name),
+                "rollout_steps": parse_rollout_steps_from_run_name(run_name),
+                "Np": parse_Np_from_run_name(run_name),
+                "df": df,
+            }
+        )
+
+    return runs
+
+
+def collect_run_logs_many(run_roots):
+    runs = []
+
+    for run_root in run_roots:
+        runs.extend(collect_run_logs(Path(run_root)))
+
+    return runs
+
+def parse_Np_from_root_name(root_name: str):
+    m = re.search(r"run_Np_eval_(\d+)", str(root_name))
+    if not m:
+        return np.nan
+    return int(m.group(1))
 def load_json(path: Path) -> dict:
     path = Path(path)
 
@@ -42,30 +89,14 @@ def infer_solver_mode(run_name: str):
     if "lti" in run_name:
         return "lti"
     return ""
-def collect_run_logs(run_root: Path):
-    run_root = Path(run_root)
-    runs = []
 
-    for log_csv in sorted(run_root.glob("*/log.csv")):
-        run_dir = log_csv.parent
-        run_name = run_dir.name
+def collect_run_logs_many(run_roots):
+    all_runs = []
 
-        df = pd.read_csv(log_csv)
+    for run_root in run_roots:
+        all_runs.extend(collect_run_logs(Path(run_root)))
 
-        runs.append(
-            {
-                "run_name": run_name,
-                "run_dir": run_dir,
-                "log_csv": log_csv,
-                "bend_angle_deg": parse_bend_angle_from_run_name(run_name),
-                "jacobian_variant": infer_jacobian_variant(run_name),
-                "solver_mode": infer_solver_mode(run_name),
-                "df": df,
-            }
-        )
-
-    return runs
-
+    return all_runs
 def summarize_log_csv(log_csv_path, *, bend_angle_deg=None, run_name=None):
     log_csv_path = Path(log_csv_path)
     df = pd.read_csv(log_csv_path)
@@ -746,32 +777,12 @@ def parse_rollout_steps_from_run_name(run_name: str):
     if not m:
         return np.nan
     return int(m.group(1))
-def collect_run_logs(run_root: Path):
-    run_root = Path(run_root)
-    runs = []
 
-    for log_csv in sorted(run_root.glob("*/log.csv")):
-        run_dir = log_csv.parent
-        run_name = run_dir.name
+def build_Np_summary(run_roots, *, out_root: Path = Path("Np_analysis")) -> pd.DataFrame:
+    out_root = Path(out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
 
-        df = pd.read_csv(log_csv)
-
-        runs.append(
-            {
-                "run_name": run_name,
-                "run_dir": run_dir,
-                "log_csv": log_csv,
-                "bend_angle_deg": parse_bend_angle_from_run_name(run_name),
-                "jacobian_variant": infer_jacobian_variant(run_name),
-                "solver_mode": infer_solver_mode(run_name),
-                "rollout_steps": parse_rollout_steps_from_run_name(run_name),
-                "df": df,
-            }
-        )
-
-    return runs
-def build_grid_summary(run_root: Path) -> pd.DataFrame:
-    runs = collect_run_logs(run_root)
+    runs = collect_run_logs_many(run_roots)
     rows = []
 
     for run in runs:
@@ -784,13 +795,34 @@ def build_grid_summary(run_root: Path) -> pd.DataFrame:
 
         infeasible = col("infeasible").fillna(0).astype(int)
 
+        u_cols = [
+            "u0_vx",
+            "u0_vy",
+            "u0_vz",
+            "u0_wx",
+            "u0_wy",
+            "u0_wz",
+            "u0_dL",
+        ]
+
+        control_rms = np.nan
+        control_max = np.nan
+
+        existing_u_cols = [c for c in u_cols if c in df.columns]
+        if existing_u_cols:
+            U = df[existing_u_cols].apply(pd.to_numeric, errors="coerce").to_numpy()
+            control_rms = float(np.sqrt(np.nanmean(U**2)))
+            control_max = float(np.nanmax(np.abs(U)))
+
         row = {
             "run_name": run["run_name"],
             "run_dir": str(run["run_dir"]),
+            "run_root": str(run["run_root"]),
             "bend_angle_deg": run["bend_angle_deg"],
             "jacobian_variant": run["jacobian_variant"],
             "solver_mode": run["solver_mode"],
             "rollout_steps": run["rollout_steps"],
+            "Np": run["Np"],
 
             "n_steps": int(len(df)),
             "success": bool((infeasible == 0).all()),
@@ -802,7 +834,11 @@ def build_grid_summary(run_root: Path) -> pd.DataFrame:
             "final_p_now_L_mm": 1e3 * float(col("p_now_L").iloc[-1]) if len(df) else np.nan,
 
             "mean_pred_err_xy_mm": float(col("adapt_pred_err_xy_mm").mean()),
+            "median_pred_err_xy_mm": float(col("adapt_pred_err_xy_mm").median()),
             "max_pred_err_xy_mm": float(col("adapt_pred_err_xy_mm").max()),
+
+            "mean_pred_err_xyz_mm": float(col("adapt_pred_err_xyz_mm").mean()),
+            "max_pred_err_xyz_mm": float(col("adapt_pred_err_xyz_mm").max()),
 
             "mean_clearance_mm": float(col("adapt_clearance_mm").mean()),
             "min_clearance_mm": float(col("adapt_clearance_mm").min()),
@@ -812,14 +848,25 @@ def build_grid_summary(run_root: Path) -> pd.DataFrame:
 
             "mean_cond_H_beam": float(col("cond_H_beam").mean()),
             "max_cond_H_beam": float(col("cond_H_beam").max()),
+            "median_cond_H_beam": float(col("cond_H_beam").median()),
 
             "mean_cond_H_mpc": float(col("cond_H_mpc").mean()),
             "max_cond_H_mpc": float(col("cond_H_mpc").max()),
+            "median_cond_H_mpc": float(col("cond_H_mpc").median()),
+
+            "mean_mpc_eig_cond": float(col("mpc_eig_cond").mean()),
+            "max_mpc_eig_cond": float(col("mpc_eig_cond").max()),
+
+            "control_rms": control_rms,
+            "control_max_abs": control_max,
 
             "max_abs_u0_vx": float(col("u0_vx").abs().max()),
             "max_abs_u0_vy": float(col("u0_vy").abs().max()),
             "max_abs_u0_wz_rad_s": float(col("u0_wz").abs().max()),
             "max_u0_dL": float(col("u0_dL").max()),
+
+            "mean_sqp_iters": float(col("sqp_iters_done").mean()),
+            "max_sqp_iters": float(col("sqp_iters_done").max()),
         }
 
         rows.append(row)
@@ -828,14 +875,277 @@ def build_grid_summary(run_root: Path) -> pd.DataFrame:
 
     if len(summary) > 0:
         summary = summary.sort_values(
-            ["bend_angle_deg", "solver_mode", "jacobian_variant", "rollout_steps"]
+            ["bend_angle_deg", "solver_mode", "jacobian_variant", "Np"]
         )
 
-    out_path = Path(run_root) / "grid_summary_analysis.csv"
-    summary.to_csv(out_path, index=False)
-    print(f"[ANALYSIS] Wrote {out_path}")
+    out_csv = out_root / "Np_summary.csv"
+    out_json = out_root / "Np_summary.json"
+
+    summary.to_csv(out_csv, index=False)
+
+    with open(out_json, "w") as f:
+        json.dump(summary.replace({np.nan: None}).to_dict(orient="records"), f, indent=2)
+
+    print(f"[ANALYSIS] Wrote {out_csv}")
+    print(f"[ANALYSIS] Wrote {out_json}")
 
     return summary
+def plot_metric_vs_Np_by_solver(
+    summary: pd.DataFrame,
+    metric: str,
+    *,
+    out_dir: Path,
+    solver_order=("lti", "ltv_oneshot", "sqp_full"),
+):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pretty_solver = {
+        "lti": "LTI",
+        "ltv_oneshot": "LTV one-shot",
+        "sqp_full": "SQP full",
+    }
+
+    color_map = {
+        "lti": "tab:blue",
+        "ltv_oneshot": "tab:orange",
+        "sqp_full": "tab:green",
+    }
+
+    bends = sorted(summary["bend_angle_deg"].dropna().unique())
+
+    fig, axes = plt.subplots(
+        1,
+        len(bends),
+        figsize=(5.2 * len(bends), 4.2),
+        sharey=True,
+    )
+
+    if len(bends) == 1:
+        axes = [axes]
+
+    for ax, bend in zip(axes, bends):
+        for solver_mode in solver_order:
+            g = summary[
+                (summary["bend_angle_deg"] == bend)
+                & (summary["solver_mode"] == solver_mode)
+            ].copy()
+
+            if g.empty or metric not in g.columns:
+                continue
+
+            g = g.sort_values("Np")
+
+            ax.plot(
+                g["Np"],
+                g[metric],
+                marker="o",
+                linewidth=2.2,
+                color=color_map.get(solver_mode, None),
+                label=pretty_solver.get(solver_mode, solver_mode),
+            )
+
+            failed = ~g["success"].astype(bool)
+            if failed.any():
+                ax.scatter(
+                    g.loc[failed, "Np"],
+                    g.loc[failed, metric],
+                    marker="x",
+                    s=90,
+                    color="black",
+                    linewidths=2,
+                    zorder=10,
+                )
+
+        ax.set_title(f"Bend {bend:.0f}°")
+        ax.set_xlabel("Prediction horizon Np")
+        ax.set_xticks(sorted(summary["Np"].dropna().unique()))
+        ax.grid(True, alpha=0.3)
+
+    axes[0].set_ylabel(metric)
+    axes[-1].legend(fontsize=9)
+
+    fig.suptitle(f"{metric} vs prediction horizon Np")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+    save_path = out_dir / f"{metric}_vs_Np_by_solver.png"
+    fig.savefig(save_path, dpi=220)
+    plt.close(fig)
+def plot_metric_by_solver_for_each_Np(
+    summary: pd.DataFrame,
+    metric: str,
+    *,
+    out_dir: Path,
+    solver_order=("lti", "ltv_oneshot", "sqp_full"),
+):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pretty_solver = {
+        "lti": "LTI",
+        "ltv_oneshot": "LTV one-shot",
+        "sqp_full": "SQP full",
+    }
+
+    bends = sorted(summary["bend_angle_deg"].dropna().unique())
+    Nps = sorted(summary["Np"].dropna().unique())
+
+    x = np.arange(len(solver_order))
+    width = 0.72
+
+    for Np_val in Nps:
+        fig, axes = plt.subplots(
+            1,
+            len(bends),
+            figsize=(5.2 * len(bends), 4.2),
+            sharey=True,
+        )
+
+        if len(bends) == 1:
+            axes = [axes]
+
+        for ax, bend in zip(axes, bends):
+            values = []
+            success_flags = []
+
+            for solver in solver_order:
+                g = summary[
+                    (summary["bend_angle_deg"] == bend)
+                    & (summary["Np"] == Np_val)
+                    & (summary["solver_mode"] == solver)
+                ]
+
+                if g.empty or metric not in g.columns:
+                    values.append(np.nan)
+                    success_flags.append(False)
+                else:
+                    values.append(float(g[metric].iloc[0]))
+                    success_flags.append(bool(g["success"].iloc[0]))
+
+            bars = ax.bar(
+                x,
+                values,
+                width=width,
+                alpha=0.85,
+            )
+
+            for bar, ok in zip(bars, success_flags):
+                if not ok:
+                    bar.set_hatch("//")
+                    bar.set_edgecolor("black")
+
+            ax.set_xticks(x)
+            ax.set_xticklabels(
+                [pretty_solver.get(s, s) for s in solver_order],
+                rotation=20,
+                ha="right",
+            )
+            ax.set_title(f"Bend {bend:.0f}°")
+            ax.grid(True, axis="y", alpha=0.3)
+
+        axes[0].set_ylabel(metric)
+
+        fig.suptitle(f"{metric} by solver, Np={int(Np_val)}")
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+        save_path = out_dir / f"{metric}_by_solver_Np_{int(Np_val)}.png"
+        fig.savefig(save_path, dpi=220)
+        plt.close(fig)
+def plot_metric_reference_traces_by_Np(
+    run_roots,
+    metric: str,
+    *,
+    Np_value: int,
+    x_col: str = "i_ref",
+    out_dir: Path | None = None,
+    solver_order=("lti", "ltv_oneshot", "sqp_full"),
+):
+    runs = collect_run_logs_many(run_roots)
+
+    if out_dir is None:
+        out_dir = Path("Np_analysis") / "reference_traces" / f"Np_{Np_value}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pretty_solver = {
+        "lti": "LTI",
+        "ltv_oneshot": "LTV one-shot",
+        "sqp_full": "SQP full",
+    }
+
+    color_map = {
+        "lti": "tab:blue",
+        "ltv_oneshot": "tab:orange",
+        "sqp_full": "tab:green",
+    }
+
+    bends = sorted(
+        {r["bend_angle_deg"] for r in runs if np.isfinite(r["bend_angle_deg"])}
+    )
+
+    for bend in bends:
+        fig, ax = plt.subplots(figsize=(8.0, 4.6))
+
+        for solver_mode in solver_order:
+            matching = [
+                r for r in runs
+                if r["bend_angle_deg"] == bend
+                and r["solver_mode"] == solver_mode
+                and int(r["Np"]) == int(Np_value)
+            ]
+
+            if not matching:
+                continue
+
+            run = matching[0]
+            df = run["df"]
+
+            if x_col not in df.columns or metric not in df.columns:
+                continue
+
+            x = pd.to_numeric(df[x_col], errors="coerce")
+            y = pd.to_numeric(df[metric], errors="coerce")
+
+            valid = x.notna() & y.notna() & np.isfinite(y)
+
+            if metric in ("cond_H_beam", "cond_H_mpc", "mpc_eig_cond"):
+                ax.set_yscale("log")
+
+            ax.plot(
+                x[valid],
+                y[valid],
+                color=color_map.get(solver_mode, None),
+                marker="o",
+                linewidth=2.0,
+                markersize=3.8,
+                label=pretty_solver.get(solver_mode, solver_mode),
+            )
+
+            if "infeasible" in df.columns:
+                infeas = pd.to_numeric(df["infeasible"], errors="coerce").fillna(0).astype(int) > 0
+                if infeas.any():
+                    ax.scatter(
+                        x[infeas],
+                        y[infeas],
+                        marker="x",
+                        s=90,
+                        color="black",
+                        linewidths=2.0,
+                        zorder=10,
+                    )
+
+        ax.set_title(f"{metric} vs reference index, bend {bend:.0f}°, Np={Np_value}")
+        ax.set_xlabel("Reference index along trajectory")
+        ax.set_ylabel(metric)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9)
+        fig.tight_layout()
+
+        safe_metric = metric.replace("/", "_")
+        bend_tag = f"m{int(abs(bend))}" if bend < 0 else f"p{int(abs(bend))}"
+
+        save_path = out_dir / f"{safe_metric}_bend_{bend_tag}_Np_{Np_value}.png"
+        fig.savefig(save_path, dpi=220)
+        plt.close(fig)
 def plot_metric_vs_rollout_by_controller(
     summary: pd.DataFrame,
     metric: str,
@@ -1166,47 +1476,88 @@ def plot_metric_reference_traces_by_rollout(
         fig.savefig(save_path, dpi=220)
         plt.close(fig)
 if __name__ == "__main__":
-    run_root = Path("run_experiment_4")
+    run_roots = [
+        Path("/Users/jackhilton-jones/Proper-Research/run_Np_eval_1"),
+        Path("/Users/jackhilton-jones/Proper-Research/run_Np_eval_2"),
+        Path("/Users/jackhilton-jones/Proper-Research/run_Np_eval_3"),
+        Path("/Users/jackhilton-jones/Proper-Research/run_Np_eval_4"),
+        Path("/Users/jackhilton-jones/Proper-Research/run_Np_eval_5"),
+    ]
+
+    out_root = Path("Np_analysis")
+    out_root.mkdir(parents=True, exist_ok=True)
 
     metrics = [
-        "max_pred_err_xy_mm",
-        "mean_pred_err_xy_mm",
-        "min_clearance_mm",
-        "max_tip_vessel_angle_deg",
         "final_i_ref",
-        "max_cond_H_beam",
-        "max_cond_H_mpc",
+        "max_i_ref",
+        "n_steps",
         "num_infeasible_steps",
+
+        "mean_pred_err_xy_mm",
+        "max_pred_err_xy_mm",
+        "mean_pred_err_xyz_mm",
+        "max_pred_err_xyz_mm",
+
+        "min_clearance_mm",
+        "mean_clearance_mm",
+
+        "mean_tip_vessel_angle_deg",
+        "max_tip_vessel_angle_deg",
+
+        "mean_cond_H_beam",
+        "max_cond_H_beam",
+        "mean_cond_H_mpc",
+        "max_cond_H_mpc",
+        "mean_mpc_eig_cond",
+        "max_mpc_eig_cond",
+
+        "control_rms",
+        "control_max_abs",
+        "mean_sqp_iters",
+        "max_sqp_iters",
     ]
-    summary = build_grid_summary(run_root)
+
+    summary = build_Np_summary(
+        run_roots,
+        out_root=out_root,
+    )
+
     print(summary.to_string(index=False))
+
     for metric in metrics:
-        plot_metric_vs_rollout_by_controller(
+        plot_metric_vs_Np_by_solver(
             summary,
             metric,
-            out_dir=run_root / "analysis_plots" / "rollout_effects",
+            out_dir=out_root / "metric_vs_Np",
         )
+
     for metric in metrics:
-        plot_metric_by_controller_for_each_rollout(
+        plot_metric_by_solver_for_each_Np(
             summary,
             metric,
-            out_dir=run_root / "analysis_plots" / "controller_comparison",
+            out_dir=out_root / "solver_comparison_by_Np",
         )
+
     trace_metrics = [
         "adapt_pred_err_xy_mm",
+        "adapt_pred_err_xyz_mm",
         "adapt_clearance_mm",
         "adapt_tip_vessel_angle_deg",
         "cond_H_beam",
         "cond_H_mpc",
-        "rollout_steps_used"
+        "mpc_eig_cond",
+        "sqp_iters_done",
+        "u0_dL",
     ]
 
-    for rollout in (3, 5, 10):
+    for Np_value in (1, 2, 3, 4, 5):
         for metric in trace_metrics:
-            plot_metric_reference_traces_by_rollout(
-                run_root,
+            plot_metric_reference_traces_by_Np(
+                run_roots,
                 metric,
-                rollout_steps=rollout,
+                Np_value=Np_value,
                 x_col="i_ref",
+                out_dir=out_root / "reference_traces" / f"Np_{Np_value}",
             )
+
     plt.show()

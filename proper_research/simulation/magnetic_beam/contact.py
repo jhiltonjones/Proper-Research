@@ -50,35 +50,120 @@ class LumenQuery:
         self.kdt = cKDTree(self.C)
 
     def closest(self, p: np.ndarray, window: int | None = None):
-        p = np.asarray(p, float).reshape(3)
+        """
+        Return distance, interpolated radius, and closest centreline point.
 
-        dmin = np.inf
-        best = None
+        Use :meth:`closest_with_gradients` when differentiating a contact
+        energy.  In a tapered lumen the interpolated radius changes as the
+        closest point moves along a segment, so the distance normal alone is
+        not the complete derivative.
+        """
+        delta, Rloc, q, _, _ = self.closest_with_gradients(p, window=window)
+        return delta, Rloc, q
 
+    def closest_with_gradients(
+        self,
+        p: np.ndarray,
+        window: int | None = None,
+    ):
+        """
+        Return the active-segment closest-point query and its local gradients.
+
+        Returns:
+            delta, Rloc, q, grad_delta, grad_Rloc
+
+        The derivatives are exact while the same polyline segment remains
+        active.  At an interior projection,
+
+            grad_Rloc = (R[i+1] - R[i]) * (C[i+1] - C[i]) / ||C[i+1]-C[i]||^2.
+
+        At a clamped endpoint the interpolation parameter is locally constant.
+        Segment switches and exact centreline points remain nonsmooth, as is
+        inherent in a closest-point polyline contact model.
+        """
+        result = self.closest_many_with_gradients(
+            np.asarray(p, float).reshape(1, 3),
+            window=window,
+        )
+        return (
+            float(result[0][0]),
+            float(result[1][0]),
+            result[2][0].copy(),
+            result[3][0].copy(),
+            result[4][0].copy(),
+        )
+
+    def closest_many_with_gradients(
+        self,
+        points: np.ndarray,
+        window: int | None = None,
+    ):
+        """Vectorized active-segment query for an array of world points."""
+        points = np.asarray(points, float)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError(
+                f"points must have shape (N, 3), got {points.shape}."
+            )
+
+        n_points = points.shape[0]
+        n_segments = self.C.shape[0] - 1
         if window is None:
-            i0 = 0
-            i1 = len(self.C) - 2
+            candidates = np.broadcast_to(
+                np.arange(n_segments, dtype=int),
+                (n_points, n_segments),
+            )
         else:
-            _, k = self.kdt.query(p)
-            k = int(k)
-            i0 = max(0, k - int(window))
-            i1 = min(len(self.C) - 2, k + int(window))
+            _, nearest = self.kdt.query(points)
+            offsets = np.arange(-int(window), int(window) + 1)
+            candidates = np.clip(
+                np.asarray(nearest, int)[:, None] + offsets[None, :],
+                0,
+                n_segments - 1,
+            )
 
-        for i in range(i0, i1 + 1):
-            q, t = closest_point_on_segment(p, self.C[i], self.C[i + 1])
-            d = float(np.linalg.norm(p - q))
+        a = self.C[candidates]
+        ab = self.C[candidates + 1] - a
+        denom = np.einsum("nkj,nkj->nk", ab, ab)
+        safe_denom = np.maximum(denom, 1e-18)
+        ap = points[:, None, :] - a
+        t_raw = np.einsum("nkj,nkj->nk", ap, ab) / safe_denom
+        t = np.clip(t_raw, 0.0, 1.0)
+        q_all = a + t[:, :, None] * ab
+        offsets = points[:, None, :] - q_all
+        distance2 = np.einsum("nkj,nkj->nk", offsets, offsets)
 
-            if d < dmin:
-                dmin = d
-                best = (i, t, q)
+        local_choice = np.argmin(distance2, axis=1)
+        rows = np.arange(n_points)
+        active = candidates[rows, local_choice]
+        q = q_all[rows, local_choice]
+        offset = points - q
+        delta = np.sqrt(distance2[rows, local_choice])
+        t_active = t[rows, local_choice]
+        t_raw_active = t_raw[rows, local_choice]
+        ab_active = ab[rows, local_choice]
+        denom_active = denom[rows, local_choice]
 
-        if best is None:
-            raise RuntimeError("Failed to find closest lumen segment.")
+        Rloc = (
+            (1.0 - t_active) * self.R[active]
+            + t_active * self.R[active + 1]
+        )
+        grad_delta = np.zeros_like(points)
+        away = delta > 1e-12
+        grad_delta[away] = offset[away] / delta[away, None]
 
-        i, t, q = best
-        Rloc = (1.0 - t) * self.R[i] + t * self.R[i + 1]
-
-        return float(dmin), float(Rloc), q
+        grad_Rloc = np.zeros_like(points)
+        interior = (
+            (denom_active >= 1e-18)
+            & (t_raw_active > 0.0)
+            & (t_raw_active < 1.0)
+        )
+        radius_delta = self.R[active + 1] - self.R[active]
+        grad_Rloc[interior] = (
+            radius_delta[interior, None]
+            * ab_active[interior]
+            / denom_active[interior, None]
+        )
+        return delta, Rloc, q, grad_delta, grad_Rloc
 
 
 def closest_point_on_segment(
@@ -135,7 +220,7 @@ def contact_energy_from_p(
         smooth_eps=contact.smooth_eps,
     )
 
-    w = uniform_node_weights_like_current_energy(s)
+    w = node_quadrature_weights(s)
     W_cf = float(np.dot(w, C_nodes))
 
     if not return_force:
@@ -169,45 +254,39 @@ def contact_barrier_energy_and_force_fast(
     F = np.zeros((3, N), dtype=float)
     gap_arr = np.zeros(N, dtype=float)
 
-    for j in range(N):
-        x = p[:, j]
+    delta, Rloc, _, grad_delta, grad_Rloc = (
+        lumen_query.closest_many_with_gradients(p.T, window=window)
+    )
+    grad_phi = grad_delta - grad_Rloc
+    gap_arr[:] = Rloc - delta - r_beam
+    phi = -gap_arr
 
-        delta, Rloc, q_closest = lumen_query.closest(x, window=window)
+    if smooth:
+        root = np.sqrt(phi * phi + smooth_eps * smooth_eps)
+        phi_pos = 0.5 * (phi + root)
+        dphi_pos_dphi = 0.5 * (1.0 + phi / root)
+        C[:] = 0.5 * k_contact * phi_pos**2
+        force_mag = k_contact * phi_pos * dphi_pos_dphi
+        F[:, :] = -(force_mag[:, None] * grad_phi).T
+        return C, F, gap_arr
 
-        if delta > eps:
-            n = (x - q_closest) / delta
-        else:
-            n = np.array([1.0, 0.0, 0.0], dtype=float)
+    soft = (phi > 0.0) & (phi <= pen_switch)
+    hard = phi > pen_switch
+    C[soft] = 0.5 * k_contact * phi[soft] ** 2
+    F[:, soft] = -(
+        (k_contact * phi[soft])[:, None] * grad_phi[soft]
+    ).T
 
-        gap = Rloc - delta - r_beam
-        phi = -gap
+    dp = phi[hard] - pen_switch
+    C0 = 0.5 * k_contact * pen_switch**2
+    F0 = k_contact * pen_switch
+    C[hard] = C0 + F0 * dp + 0.5 * k_hard * dp**2
+    F[:, hard] = -(
+        (F0 + k_hard * dp)[:, None] * grad_phi[hard]
+    ).T
 
-        gap_arr[j] = gap
-
-        if smooth:
-            root = np.sqrt(phi * phi + smooth_eps * smooth_eps)
-            phi_pos = 0.5 * (phi + root)
-            dphi_pos_dphi = 0.5 * (1.0 + phi / root)
-
-            C[j] = 0.5 * k_contact * phi_pos**2
-            F[:, j] = -(k_contact * phi_pos * dphi_pos_dphi) * n
-            continue
-
-        if phi <= 0.0:
-            if debug and gap < 0.0:
-                print("[CONTACT DBG] impossible branch: gap < 0 but phi <= 0")
-            continue
-
-        if phi <= pen_switch:
-            C[j] = 0.5 * k_contact * phi**2
-            F[:, j] = -(k_contact * phi) * n
-        else:
-            dp = phi - pen_switch
-            C0 = 0.5 * k_contact * pen_switch**2
-            F0 = k_contact * pen_switch
-
-            C[j] = C0 + F0 * dp + 0.5 * k_hard * dp**2
-            F[:, j] = -(F0 + k_hard * dp) * n
+    if debug and np.any((gap_arr < 0.0) & (phi <= 0.0)):
+        print("[CONTACT DBG] impossible branch: gap < 0 but phi <= 0")
 
     return C, F, gap_arr
 
@@ -242,3 +321,28 @@ def uniform_node_weights_like_current_energy(s: np.ndarray) -> np.ndarray:
 
     h = float(ds[0])
     return np.full(s.size, h, dtype=float)
+
+
+def node_quadrature_weights(s: np.ndarray) -> np.ndarray:
+    """
+    Trapezoidal node weights for an integral sampled at beam nodes.
+
+    The weights sum to ``s[-1] - s[0]`` for both uniform and nonuniform grids.
+    """
+    s = np.asarray(s, float).ravel()
+
+    if s.size < 2:
+        raise ValueError("s must contain at least two nodes.")
+
+    ds = np.diff(s)
+    if not np.all(ds > 0):
+        raise ValueError("s must be strictly increasing.")
+
+    w = np.empty(s.size, dtype=float)
+    w[0] = 0.5 * ds[0]
+    w[-1] = 0.5 * ds[-1]
+
+    if s.size > 2:
+        w[1:-1] = 0.5 * (ds[:-1] + ds[1:])
+
+    return w

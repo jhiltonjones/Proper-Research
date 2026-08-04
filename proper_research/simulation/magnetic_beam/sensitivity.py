@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Any
+import time
 
 import numpy as np
 
@@ -9,20 +10,20 @@ from .kinematics import (
     perturb_quat_world,
     effective_lengths,
     quat_to_R,
-    integrate_pq_from_u,integrate_pq_and_sens_from_u
+    integrate_pq_from_u,
+    integrate_pq_and_sens_from_u,
 )
-from .gradients import energy_gradient_u
+from .gradients import (
+    contact_energy_gradient_u_consistent,
+    energy_gradient_u,
+)
 from .magnetism import dipole_from_pose
 
-from beam_direction_magnetisation.magnetism.beam_geometry import (
-    make_m_local_fun_wire_tip,
-)
 from beam_direction_magnetisation.ana_energy import (
     precompute_K_segments,
     hessian_diagnostic_for_grad,
     elastic_energy_gradient_u,
     magnetic_energy_gradient_u_virtual_work_analytic,
-    contact_energy_gradient_u_analytic,
     check_magnetic_grad_against_energy_fd,
 )
 
@@ -68,6 +69,7 @@ class SensitivityOptions:
     symmetrise_hessian: bool = True
     debug_jac: bool = False
     debug_hessian_terms: bool = False
+    difference_scheme: str = "forward"
 
     def validate(self) -> None:
         if self.eps_theta <= 0:
@@ -78,6 +80,11 @@ class SensitivityOptions:
             raise ValueError(f"eps_L_direct must be positive, got {self.eps_L_direct}.")
         if self.hessian_reg < 0:
             raise ValueError(f"hessian_reg must be non-negative, got {self.hessian_reg}.")
+        if self.difference_scheme not in {"forward", "central"}:
+            raise ValueError(
+                "difference_scheme must be 'forward' or 'central', got "
+                f"{self.difference_scheme!r}."
+            )
 
 
 @dataclass
@@ -93,7 +100,7 @@ class SensitivityResult:
     info: dict[str, Any] = field(default_factory=dict)
 
 
-def make_energy_grad_fun_for_problem(
+def ake_energy_grad_fun_for_problem(
     *,
     problem,
     theta_model: ThetaModel,
@@ -126,12 +133,10 @@ def make_energy_grad_fun_for_problem(
         s = np.linspace(0.0, float(L_model), int(problem.N_nodes))
         K_seg = precompute_K_segments(s, problem.Kinv_fun, wire_len)
 
-        m_local_fun = make_m_local_fun_wire_tip(
-            wire_len,
-            len_tip=tip_len,
-            mode="axial",
-            alpha_end=0.0,
-            eps=1e-3,
+        m_local_fun = problem.m_local_factory(
+            L_model=L_model,
+            wire_len=wire_len,
+            tip_len=tip_len,
         )
 
         return energy_gradient_u(
@@ -161,9 +166,11 @@ def finite_difference_jacobian_of_gradient(
     grad_fun: Callable[[np.ndarray], np.ndarray],
     u0: np.ndarray,
     eps: float,
+    scheme: str = "central",
+    base_value: np.ndarray | None = None,
 ) -> np.ndarray:
     """
-    Compute d grad_fun / du by central differences.
+    Compute d grad_fun / du by forward or central differences.
 
     Returns H with columns:
         H[:, k] = d grad / d u_k
@@ -172,18 +179,26 @@ def finite_difference_jacobian_of_gradient(
     n_u = u0.size
 
     H = np.empty((n_u, n_u), dtype=float)
+    if scheme not in {"forward", "central"}:
+        raise ValueError(f"Unknown finite-difference scheme {scheme!r}.")
+    if scheme == "forward":
+        g0 = (
+            np.asarray(grad_fun(u0), float).reshape(-1)
+            if base_value is None
+            else np.asarray(base_value, float).reshape(-1)
+        )
 
     for k in range(n_u):
         up = u0.copy()
-        um = u0.copy()
-
         up[k] += eps
-        um[k] -= eps
-
         gp = np.asarray(grad_fun(up), float).reshape(-1)
-        gm = np.asarray(grad_fun(um), float).reshape(-1)
-
-        H[:, k] = (gp - gm) / (2.0 * eps)
+        if scheme == "forward":
+            H[:, k] = (gp - g0) / eps
+        else:
+            um = u0.copy()
+            um[k] -= eps
+            gm = np.asarray(grad_fun(um), float).reshape(-1)
+            H[:, k] = (gp - gm) / (2.0 * eps)
 
     return H
 
@@ -194,6 +209,8 @@ def finite_difference_theta_gradient(
     u_opt: np.ndarray,
     theta0: np.ndarray,
     eps: float,
+    scheme: str = "central",
+    base_value: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Compute Gtheta = d/dtheta grad_u Π(u_opt, theta).
@@ -205,18 +222,26 @@ def finite_difference_theta_gradient(
     n_theta = theta0.size
 
     Gtheta = np.empty((n_u, n_theta), dtype=float)
+    if scheme not in {"forward", "central"}:
+        raise ValueError(f"Unknown finite-difference scheme {scheme!r}.")
+    if scheme == "forward":
+        g0 = (
+            np.asarray(energy_grad_fun(u_opt, theta0), float).reshape(-1)
+            if base_value is None
+            else np.asarray(base_value, float).reshape(-1)
+        )
 
     for j in range(n_theta):
         thp = theta0.copy()
-        thm = theta0.copy()
-
         thp[j] += eps
-        thm[j] -= eps
-
         gp = np.asarray(energy_grad_fun(u_opt, thp), float).reshape(-1)
-        gm = np.asarray(energy_grad_fun(u_opt, thm), float).reshape(-1)
-
-        Gtheta[:, j] = (gp - gm) / (2.0 * eps)
+        if scheme == "forward":
+            Gtheta[:, j] = (gp - g0) / eps
+        else:
+            thm = theta0.copy()
+            thm[j] -= eps
+            gm = np.asarray(energy_grad_fun(u_opt, thm), float).reshape(-1)
+            Gtheta[:, j] = (gp - gm) / (2.0 * eps)
 
     return Gtheta
 
@@ -312,7 +337,7 @@ def run_hessian_diagnostics(
     if problem.use_contact_in_jacobian and problem.lumen_query is not None:
         hessian_diagnostic_for_grad(
             "contact only",
-            lambda u: contact_energy_gradient_u_analytic(
+            lambda u: contact_energy_gradient_u_consistent(
                 u,
                 p0=problem.p0,
                 q0=problem.q0,
@@ -338,6 +363,7 @@ def implicit_tip_jacobian(
     problem,
     theta_model: ThetaModel,
     options: SensitivityOptions | None = None,
+    H_override: np.ndarray | None = None,
 ) -> SensitivityResult:
     """
     Compute d tip_xyz / d theta using implicit differentiation of the
@@ -379,13 +405,53 @@ def implicit_tip_jacobian(
             f"N_nodes={problem.N_nodes}."
         )
 
-    energy_grad_fun = make_energy_grad_fun_for_problem(
+    raw_energy_grad_fun = ake_energy_grad_fun_for_problem(
         problem=problem,
         theta_model=theta_model,
     )
+    gradient_evaluations = 0
+    gradient_time_s = 0.0
 
+    def energy_grad_fun(u, theta):
+        nonlocal gradient_evaluations, gradient_time_s
+        started = time.perf_counter()
+        value = raw_energy_grad_fun(u, theta)
+        gradient_evaluations += 1
+        gradient_time_s += time.perf_counter() - started
+        return value
+
+    sensitivity_started = time.perf_counter()
     g0 = np.asarray(energy_grad_fun(u_opt, theta0), float).reshape(-1)
+    contact_gradient_evaluated = bool(
+        problem.use_contact_in_jacobian
+        and problem.lumen_query is not None
+    )
 
+    contact_gradient_norm = 0.0
+    contact_gradient_inf = 0.0
+
+    if contact_gradient_evaluated:
+        g_contact = contact_energy_gradient_u_consistent(
+            u_opt,
+            p0=problem.p0,
+            q0=problem.q0,
+            s=s,
+            lumen_query=problem.lumen_query,
+            contact=problem.contact,
+        )
+
+        g_contact = np.asarray(
+            g_contact,
+            float,
+        ).reshape(-1)
+
+        contact_gradient_norm = float(
+            np.linalg.norm(g_contact)
+        )
+
+        contact_gradient_inf = float(
+            np.max(np.abs(g_contact))
+        )
     if options.debug_jac:
         print("\n--- IMPLICIT JAC STATIONARITY ---")
         print("||g0|| =", np.linalg.norm(g0))
@@ -410,11 +476,23 @@ def implicit_tip_jacobian(
             "Use finite differences of the analytic gradient."
         )
 
-    H_raw = finite_difference_jacobian_of_gradient(
-        grad_fun=lambda u: energy_grad_fun(u, theta0),
-        u0=u_opt,
-        eps=options.eps_hess,
-    )
+    hessian_reused = H_override is not None
+    if H_override is None:
+        H_raw = finite_difference_jacobian_of_gradient(
+            grad_fun=lambda u: energy_grad_fun(u, theta0),
+            u0=u_opt,
+            eps=options.eps_hess,
+            scheme=options.difference_scheme,
+            base_value=g0,
+        )
+    else:
+        H_raw = np.asarray(H_override, float).copy()
+        if H_raw.shape != (n_u, n_u):
+            raise ValueError(
+                f"H_override must have shape {(n_u, n_u)}, got {H_raw.shape}."
+            )
+        if not np.all(np.isfinite(H_raw)):
+            raise ValueError("H_override contains non-finite values.")
 
     H = 0.5 * (H_raw + H_raw.T) if options.symmetrise_hessian else H_raw
     H_reg = H + options.hessian_reg * np.eye(n_u)
@@ -439,6 +517,8 @@ def implicit_tip_jacobian(
         u_opt=u_opt,
         theta0=theta0,
         eps=options.eps_theta,
+        scheme=options.difference_scheme,
+        base_value=g0,
     )
 
     du_dtheta = -np.linalg.solve(H_reg, Gtheta)
@@ -474,7 +554,7 @@ def implicit_tip_jacobian(
 
     J_implicit = P_u @ du_dtheta
     J_tip = J_implicit + J_direct
-
+ 
     if options.debug_jac:
         q_tip = q_base[:, -1]
         R_tip = quat_to_R(q_tip)
@@ -500,6 +580,11 @@ def implicit_tip_jacobian(
         "H_condition": float(np.linalg.cond(H_reg)),
         "theta0": theta0.copy(),
         "s": s.copy(),
+        "difference_scheme": options.difference_scheme,
+        "hessian_reused": bool(hessian_reused),
+        "gradient_evaluations": int(gradient_evaluations),
+        "gradient_time_s": float(gradient_time_s),
+        "sensitivity_time_s": float(time.perf_counter() - sensitivity_started),
     }
 
     return SensitivityResult(

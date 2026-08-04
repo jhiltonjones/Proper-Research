@@ -361,7 +361,7 @@ def integrate_pq_and_sens_from_u(
         S_q[:, i + 1, col0:col1] += dqnext_du
 
     return p, q, S_p, S_q
-def pq_midpoint_sensitivities(p, q, S_p, S_q):
+def  pq_midpoint_sensitivities(p, q, S_p, S_q):
     """
     Build midpoint p, q and analytic sensitivities.
 
@@ -540,6 +540,7 @@ def hessian_from_scalar_energy(E_fun, u_ref, eps=1e-5):
             H[j, i] = Hij
 
     return H
+
 def make_energy_fun_for_pose(
     *,
     p0,

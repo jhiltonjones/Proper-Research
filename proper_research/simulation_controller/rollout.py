@@ -161,27 +161,48 @@ class RolloutMixin:
         Shift the optimal sequence after applying n_apply controls.
 
         Example:
-            U_seq = [u0, u1, u2, u3]
-            n_apply = 2
+            U_seq = [u0, u1, u2, u3, u4]
 
-        New warm start:
-            [u2, u3, u3, u3]
+            n_apply = 1:
+                applied:   [u0]
+                warm start:[u1, u2, u3, u4, u4]
 
-        This is usually smoother than appending a fresh initial guess.
+            n_apply = 2:
+                applied:   [u0, u1]
+                warm start:[u2, u3, u4, u4, u4]
+
+        The last applied control is stored separately in self.u_prev.
         """
-        U_seq = np.asarray(U_seq, float).reshape(self.Np, self.m)
-        n_apply = int(np.clip(n_apply, 1, self.Np))
+        U_seq = np.asarray(
+            U_seq,
+            float,
+        ).reshape(self.Np, self.m)
+
+        n_apply = int(
+            np.clip(n_apply, 1, self.Np)
+        )
 
         if n_apply < self.Np:
-            tail = U_seq[n_apply:, :]
+            remaining = U_seq[n_apply:, :]
 
-            # Repeat the last optimised control to fill the horizon.
-            fill_count = n_apply
-            fill = np.tile(U_seq[-1:, :], (fill_count, 1))
+            fill = np.tile(
+                U_seq[-1:, :],
+                (n_apply, 1),
+            )
 
-            U_next = np.vstack([tail, fill])
+            U_next = np.vstack(
+                [remaining, fill]
+            )
         else:
-            # If the entire sequence was applied, use the last control as the next guess.
-            U_next = np.tile(U_seq[-1:, :], (self.Np, 1))
+            U_next = np.tile(
+                U_seq[-1:, :],
+                (self.Np, 1),
+            )
+
+        if U_next.shape != (self.Np, self.m):
+            raise RuntimeError(
+                f"Shifted warm start has shape {U_next.shape}; "
+                f"expected {(self.Np, self.m)}."
+            )
 
         self.U_warm = U_next.reshape(-1)

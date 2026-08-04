@@ -8,7 +8,6 @@ from proper_research.simulation.magnetic_beam.controller_adapters import (
     ControllerForwardAdapter,
 )
 from proper_research.simulation.simulations.scenario import ControllerRunConfig
-from .jacobian_utils import analytic_J_robot_xy_yaw_dL_with_diag
 # Put these helper functions wherever you currently have them.
 # If they are still in the old simulation script, move them into geometry_utils.py
 # and jacobian_utils.py as shown here.
@@ -20,7 +19,13 @@ from proper_research.simulation.simulations.jacobian_utils import (
     analytic_J_robot_xy_yaw_dL,
     J_full_from_robot_reduced_tip_tangent,
 )
+from proper_research.simulation_controller.controller import (
+    MPCControllerTipXY,
+)
 
+from proper_research.simulation_controller.inverse_jacobian_controller import (
+    InverseJacobianControllerTipXY,
+)
 @dataclass(frozen=True)
 class ControllerDesignConfig:
     """
@@ -47,7 +52,7 @@ class ControllerDesignConfig:
         1e-6,
         1e-2,
         1e-2,
-        1e-2,
+        1e-6,
         1e-6,
         1e-6,
     )
@@ -61,42 +66,75 @@ class ControllerDesignConfig:
         1e-8,
         1e-8,
     )
+    wz_max = np.deg2rad(30.0) / 0.1  # 1.745 rad/s
 
-    u_max: tuple[float, float, float, float, float, float, float] = (
-        3.0,
-        3.0,
-        3.0,
-        np.deg2rad(60.0),
-        np.deg2rad(60.0),
-        np.deg2rad(360.0),
-        0.5,
+    u_max = np.array(
+        [
+            0.5,       # vx [m/s]
+            0.5,       # vy [m/s]
+            0.0,       # vz locked
+            0.0,       # wx locked
+            0.5,       # wy [rad/s]
+            wz_max,    # wz [rad/s]: 10 degrees per command
+            0.5,       # insertion rate [m/s]
+        ],
+        dtype=float,
     )
 
-    trust_radius = (
-        5,              # vx: ±50 mm/s
-        5,              # vy: ±50 mm/s
-        1,              # vz
-        np.deg2rad(90.0),  # wx
-        np.deg2rad(90.0),  # wy
-        np.deg2rad(120.0), # wz
-        5,              # dL: ±80 mm/s
+    # trust_radius = np.array(
+    #     [
+    #         0.50,  # vx
+    #         0.50,  # vy
+    #         0.00,  # vz
+    #         0.00,  # wx
+    #         0.50,  # wy
+    #         0.50,  # wz
+    #         0.50,  # Ldot
+    #     ],
+    #     dtype=float,
+    # )
+    trust_radius = u_max
+    trust_radius_max = trust_radius
+    trust_radius_min = np.array(
+        [
+            0.025,
+            0.025,
+            0.000,
+            0.000,
+            0.050,
+            0.050,
+            0.025,
+        ],
+        dtype=float,
     )
 
+    # trust_radius_max = np.array(
+    #    [
+    #         0.50,  # vx
+    #         0.50,  # vy
+    #         0.00,  # vz
+    #         0.00,  # wx
+    #         0.50,  # wy
+    #         0.50,  # wz
+    #         0.50,  # Ldot
+    #     ],
+    #     dtype=float,
+    # )
 
     L_min: float = 0.01
     L_max: float = 0.05
 
     dL_index: int = 6
-    dL_back_max: float = 0.005
-    dL_fwd_max: float = 0.1
+    dL_back_max: float = 1
+    dL_fwd_max: float = 1
 
     enable_hard_epm_tip_clearance: bool = True
-    epm_tip_hard_min_m: float = 0.11
+    epm_tip_hard_min_m: float = 0.05
 
     qp_reg: float = 1e-9
 
     use_xy_ref_distance: bool = True
-    ref_lookahead_pts: int = 2
+    ref_lookahead_pts: int = 1
     allow_ref_backward: bool = False
     ref_stride_pts: int = 1
     ref_weight_start: float = 2.0
@@ -179,63 +217,129 @@ def make_pose_bounds(
 
     return p_min, p_max
 
-def make_jacobian_fn(
-    *,
-    jacobian_model,
-    dt: float,
-    n_out: int,
-):
-    dt = float(dt)
+"""
+Drop-in bridge from the controller package to magnetic_beam2.
 
-    last_diag = {}
+Replace the controller package's existing ``make_jacobian_fn`` with the
+function below, then delete ``analytic_J_robot_full_with_diag``.  The beam
+Jacobian is computed only by MagneticBeamForwardModel.
+"""
 
-    def J_fn(p8):
-        nonlocal last_diag
+from proper_research.simulation.magnetic_beam.controller_adapters import (
+    make_controller_jacobian_fn,
+)
 
-        p8 = np.asarray(p8, float).reshape(8)
 
-        forward6d_jac = ControllerForwardAdapter(copy.deepcopy(jacobian_model))
-        forward6d_jac.start_step()
+# def make_jacobian_fn(
+#     *,
+#     jacobian_model,
+#     dt: float,
+#     n_out: int,
+# ):
+#     return make_controller_jacobian_fn(
+#         jacobian_model=jacobian_model,
+#         dt=dt,
+#         n_out=n_out,
+#         # Your controller update is q_next = q * dq(dt * omega_body).
+#         angular_velocity_frame="body",
+#         # Uses forward differences, exact matrix caching, and bounded
+#         # quasi-Newton Hessian reuse from the magnetic_beam2 model.
+#         jacobian_mode="fast",
+#         # Create one private Jacobian-model instance once.  It is deliberately
+#         # not copied again inside each J_fn call.
+#         copy_model=True,
+#     )
+# def make_jacobian_fn(
+#     *,
+#     jacobian_model,
+#     dt: float,
+#     n_out: int,
+# ):
+#     """
+#     Construct the one-step control-to-tip Jacobian
 
-        Jred_state, beam_diag = analytic_J_robot_xy_yaw_dL_with_diag(
-            p8,
-            forward6d_jac,
-            n_out=n_out,
-        )
+#         B = d p_tip,next / d u
 
-        last_diag = dict(beam_diag)
+#     for the seven-channel controller input:
 
-        Jred_state = np.asarray(Jred_state, float)
+#         [vx, vy, vz, wx, wy, wz, dL_rate].
+#     """
+#     dt = float(dt)
 
-        if Jred_state.shape != (n_out, 4):
-            raise ValueError(
-                f"analytic_J_robot_xy_yaw_dL returned {Jred_state.shape}, "
-                f"expected {(n_out, 4)}."
-            )
+#     if dt <= 0.0:
+#         raise ValueError(
+#             f"dt must be positive, got {dt}."
+#         )
 
-        B_reduced = Jred_state @ np.diag([dt, dt, dt, dt])
+#     if int(n_out) != 3:
+#         raise ValueError(
+#             "The current beam model supplies a 3D "
+#             "tip-position Jacobian, so n_out must be 3."
+#         )
 
-        B_full = J_full_from_robot_reduced_tip_tangent(
-            B_reduced,
-            n_out_full=n_out,
-        )
+#     last_diag: dict = {}
 
-        B_full = np.asarray(B_full, float)
+#     def J_fn(p8):
+#         nonlocal last_diag
 
-        if B_full.shape != (n_out, 7):
-            raise ValueError(
-                f"J_full_from_robot_reduced_tip_tangent returned {B_full.shape}, "
-                f"expected {(n_out, 7)}."
-            )
+#         p8 = np.asarray(
+#             p8,
+#             float,
+#         ).reshape(8)
 
-        return B_full
+#         forward6d_jac = (
+#             ControllerForwardAdapter(
+#                 copy.deepcopy(jacobian_model)
+#             )
+#         )
 
-    def get_last_diag():
-        return dict(last_diag)
+#         forward6d_jac.start_step()
 
-    J_fn.get_last_diag = get_last_diag
+#         J_control_state, beam_diag = (
+#             analytic_J_robot_full_with_diag(
+#                 p8,
+#                 forward6d_jac,
+#                 n_out=n_out,
+#             )
+#         )
 
-    return J_fn
+#         last_diag = dict(beam_diag)
+
+#         J_control_state = np.asarray(
+#             J_control_state,
+#             float,
+#         ).reshape(n_out, 7)
+
+#         # --------------------------------------------------------
+#         # Convert instantaneous pose/length sensitivity to the
+#         # one-sample control sensitivity used by MPC:
+#         #
+#         #   dr       = dt * v_world
+#         #   dphi_body = dt * omega_body
+#         #   dL       = dt * dL_rate
+#         # --------------------------------------------------------
+#         B_full = dt * J_control_state
+
+#         if B_full.shape != (n_out, 7):
+#             raise ValueError(
+#                 "Full one-step Jacobian has shape "
+#                 f"{B_full.shape}; expected {(n_out, 7)}."
+#             )
+
+#         if not np.all(np.isfinite(B_full)):
+#             raise FloatingPointError(
+#                 "Full one-step Jacobian contains "
+#                 "non-finite values."
+#             )
+
+#         return B_full
+
+#     def get_last_diag():
+#         return dict(last_diag)
+
+#     J_fn.get_last_diag = get_last_diag
+
+#     return J_fn
 
 
 def build_controller(
@@ -251,69 +355,112 @@ def build_controller(
     design_cfg: ControllerDesignConfig | None = None,
 ):
     """
-    Build one MPC controller for one experiment.
+    Build either:
+        - MPCControllerTipXY, or
+        - InverseJacobianControllerTipXY.
 
-    Parameters
-    ----------
-    plant_model:
-        Forward model used for rollout/application. In your main study this
-        should usually be the contact-aware model.
-
-    jacobian_model:
-        Forward model used only inside the MPC Jacobian callback. This is the
-        model that changes between "contact" and "no_contact".
-
-    run_cfg:
-        Experiment run configuration: Np, N_sqp, solver_mode, rollout_steps,
-        max_steps.
-
-    design_cfg:
-        Controller weights, bounds, trust region and clearance settings.
+    Both controllers expose the same public interface required by
+    run_simulation().
     """
+    run_cfg.validate()
+
     if design_cfg is None:
         design_cfg = ControllerDesignConfig()
 
     lumen_C = np.asarray(lumen_C, float)
-    lumen_R = np.asarray(lumen_R, float).reshape(-1)
+    lumen_R = np.asarray(
+        lumen_R,
+        float,
+    ).reshape(-1)
 
     if lumen_C.ndim != 2 or lumen_C.shape[1] < 3:
-        raise ValueError(f"lumen_C must have shape (M, >=3), got {lumen_C.shape}.")
+        raise ValueError(
+            f"lumen_C must have shape (M, >=3), "
+            f"got {lumen_C.shape}."
+        )
 
     if lumen_R.size != lumen_C.shape[0]:
         raise ValueError(
-            f"lumen_R length {lumen_R.size} does not match lumen_C length "
-            f"{lumen_C.shape[0]}."
+            f"lumen_R length {lumen_R.size} does not match "
+            f"lumen_C length {lumen_C.shape[0]}."
         )
 
     p0 = make_pose8_from_start_point(
         start_point=start_point,
         L0=L0,
     )
-
+    print(f"p0 is {p0}")
     p_min, p_max = make_pose_bounds(
         start_point=start_point,
         design_cfg=design_cfg,
     )
 
-    u_max = np.asarray(design_cfg.u_max, float).reshape(design_cfg.n_u)
-    trust_radius = np.asarray(design_cfg.trust_radius, float).reshape(design_cfg.n_u)
-    w_u = np.asarray(design_cfg.w_u, float).reshape(design_cfg.n_u)
-    w_du = np.asarray(design_cfg.w_du, float).reshape(design_cfg.n_u)
+    u_max = np.asarray(
+        design_cfg.u_max,
+        float,
+    ).reshape(design_cfg.n_u)
 
-    forward6d_plant = ControllerForwardAdapter(copy.deepcopy(plant_model))
+    trust_radius = np.asarray(
+        design_cfg.trust_radius,
+        float,
+    ).reshape(design_cfg.n_u)
+
+    w_u = np.asarray(
+        design_cfg.w_u,
+        float,
+    ).reshape(design_cfg.n_u)
+
+    w_du = np.asarray(
+        design_cfg.w_du,
+        float,
+    ).reshape(design_cfg.n_u)
+
+    # ------------------------------------------------------------
+    # Plant model
+    # ------------------------------------------------------------
+    forward6d_plant = ControllerForwardAdapter(
+        copy.deepcopy(plant_model)
+    )
     forward6d_plant.start_step()
 
     def forward3d_plant(p8, *, commit=False):
-        y6 = forward6d_plant(p8, commit=commit)
-        return np.asarray(y6, float).reshape(-1)[:design_cfg.n_out]
-    # This is the Jacobian model used by the MPC.
-    J_fn = make_jacobian_fn(
+        y6 = forward6d_plant(
+            p8,
+            commit=commit,
+        )
+
+        return np.asarray(
+            y6,
+            float,
+        ).reshape(-1)[:design_cfg.n_out]
+
+
+    # Expose the wrapped plant adapter/model.
+    forward3d_plant.start_step = (
+        forward6d_plant.start_step
+    )
+    forward3d_plant.reset = (
+        forward6d_plant.reset
+    )
+    forward3d_plant.adapter = forward6d_plant
+    forward3d_plant.model = forward6d_plant.model
+
+    # ------------------------------------------------------------
+    # Jacobian model
+    # ------------------------------------------------------------
+    J_fn = make_controller_jacobian_fn(
         jacobian_model=jacobian_model,
         dt=dt,
         n_out=design_cfg.n_out,
+        angular_velocity_frame="body",
+        jacobian_mode="fast",
+        copy_model=True,
     )
 
-    mpc = MPCControllerTipXY(
+    # ------------------------------------------------------------
+    # Arguments shared by MPC and inverse Jacobian
+    # ------------------------------------------------------------
+    common_kwargs = dict(
         Jxy_fn=J_fn,
         forward_tip_fn=forward3d_plant,
         dt=float(dt),
@@ -331,106 +478,94 @@ def build_controller(
         solver_mode=str(run_cfg.solver_mode),
         N_sqp=int(run_cfg.N_sqp),
         trust_radius=trust_radius,
-        enable_hard_epm_tip_clearance=design_cfg.enable_hard_epm_tip_clearance,
-        epm_tip_hard_min_m=design_cfg.epm_tip_hard_min_m,
+        trust_radius_min=np.asarray(
+            design_cfg.trust_radius_min,
+            float,
+        ),
+        trust_radius_max=np.asarray(
+            design_cfg.trust_radius_max,
+            float,
+        ),
+        enable_hard_epm_tip_clearance=(
+            design_cfg.enable_hard_epm_tip_clearance
+        ),
+        epm_tip_hard_min_m=(
+            design_cfg.epm_tip_hard_min_m
+        ),
         dL_index=design_cfg.dL_index,
         dL_back_max=design_cfg.dL_back_max,
         dL_fwd_max=design_cfg.dL_fwd_max,
         qp_reg=design_cfg.qp_reg,
     )
 
-    # Lumen/reference data used by the controller.
-    mpc.lumen_C = lumen_C
-    mpc.lumen_R = lumen_R
+    # ------------------------------------------------------------
+    # Instantiate selected controller
+    # ------------------------------------------------------------
+    if run_cfg.controller_kind == "mpc":
+        controller = MPCControllerTipXY(
+            **common_kwargs,
+        )
 
-    mpc.use_xy_ref_distance = design_cfg.use_xy_ref_distance
-    mpc.ref_lookahead_pts = design_cfg.ref_lookahead_pts
-    mpc.allow_ref_backward = design_cfg.allow_ref_backward
-    mpc.ref_stride_pts = design_cfg.ref_stride_pts
+    elif run_cfg.controller_kind == "inverse_jacobian":
+        controller = InverseJacobianControllerTipXY(
+            **common_kwargs,
+            sequence_mode=run_cfg.inverse_sequence_mode,
+            kp=run_cfg.inverse_kp,
+            desired_step_max=(
+                run_cfg.inverse_desired_step_max_m
+            ),
+            extra_damping=(
+                run_cfg.inverse_extra_damping
+            ),
+        )
 
-    mpc.ref_stage_weights = np.linspace(
-        design_cfg.ref_weight_start,
-        design_cfg.ref_weight_end,
-        mpc.Np,
+    else:
+        raise ValueError(
+            f"Unknown controller_kind: "
+            f"{run_cfg.controller_kind!r}."
+        )
+
+    # ------------------------------------------------------------
+    # Shared reference configuration
+    # ------------------------------------------------------------
+    controller.lumen_C = lumen_C
+    controller.lumen_R = lumen_R
+
+    controller.use_xy_ref_distance = (
+        design_cfg.use_xy_ref_distance
+    )
+    controller.ref_lookahead_pts = (
+        design_cfg.ref_lookahead_pts
+    )
+    controller.allow_ref_backward = (
+        design_cfg.allow_ref_backward
+    )
+    controller.ref_stride_pts = (
+        design_cfg.ref_stride_pts
     )
 
-    mpc.dL_guess = design_cfg.dL_guess
+    controller.ref_stage_weights = np.linspace(
+        design_cfg.ref_weight_start,
+        design_cfg.ref_weight_end,
+        controller.Np,
+    )   
+    
 
-    mpc.set_initial_params(p0)
+    controller.dL_guess = design_cfg.dL_guess
 
+    controller.set_initial_params(p0)
     return {
-        "mpc": mpc,
+        "controller": controller,
+        "mpc": controller,
+        "controller_kind": run_cfg.controller_kind,
         "p0": p0,
         "p_min": p_min,
         "p_max": p_max,
         "u_max": u_max,
         "forward6d_plant": forward6d_plant,
         "design_cfg": design_cfg,
+
+        # Contact/Jacobian debugging.
+        "J_fn": J_fn,
+        "jacobian_model_owned": J_fn.model,
     }
-def make_jacobian_fn(
-    *,
-    jacobian_model,
-    dt: float,
-    n_out: int,
-):
-    """
-    Build MPC Jacobian callback.
-
-    The jacobian_model is separate from the plant model so that the experiment
-    can compare contact-aware versus no-contact Jacobians.
-    """
-    dt = float(dt)
-
-    jac_model_working = copy.deepcopy(jacobian_model)
-    forward_jac = ControllerForwardAdapter(jac_model_working)
-
-    last_diag = {}
-
-    def J_fn(p8):
-        nonlocal last_diag
-
-        p8 = np.asarray(p8, float).reshape(8)
-
-        forward_jac.start_step()
-
-        Jred_state, beam_diag = analytic_J_robot_xy_yaw_dL_with_diag(
-            p8,
-            forward_jac,
-            n_out=n_out,
-        )
-
-        last_diag = dict(beam_diag)
-
-        Jred_state = np.asarray(Jred_state, float)
-
-        if Jred_state.shape != (n_out, 4):
-            raise ValueError(
-                f"analytic_J_robot_xy_yaw_dL_with_diag returned "
-                f"{Jred_state.shape}, expected {(n_out, 4)}."
-            )
-
-        # Controls are rates, so convert sensitivity wrt pose increments into
-        # sensitivity wrt one control sample.
-        B_reduced = Jred_state @ np.diag([dt, dt, dt, dt])
-
-        B_full = J_full_from_robot_reduced_tip_tangent(
-            B_reduced,
-            n_out_full=n_out,
-        )
-
-        B_full = np.asarray(B_full, float)
-
-        if B_full.shape != (n_out, 7):
-            raise ValueError(
-                f"J_full_from_robot_reduced_tip_tangent returned "
-                f"{B_full.shape}, expected {(n_out, 7)}."
-            )
-
-        return B_full
-
-    def get_last_diag():
-        return dict(last_diag)
-
-    J_fn.get_last_diag = get_last_diag
-
-    return J_fn

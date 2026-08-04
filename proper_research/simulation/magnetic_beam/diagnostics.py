@@ -265,8 +265,23 @@ def summarise_solve_result(result, *, prefix: str = "[SOLVE]") -> None:
 
     print(prefix)
     print(f"  success: {info.get('success')}")
+    print(f"  optimizer success: {info.get('optimizer_success')}")
+    print(
+        "  accepted stationary failure: "
+        f"{info.get('accepted_stationary_failure')}"
+    )
     print(f"  message: {info.get('message')}")
     print(f"  nit:     {info.get('nit')}")
+    print(f"  nfev:    {info.get('nfev')}")
+    print(f"  njev:    {info.get('njev')}")
+    print(
+        "  ||grad_z||_inf: "
+        f"{info.get('grad_inf_norm_scaled', np.nan):.6e}"
+    )
+    print(
+        "  gradient-check max relative error: "
+        f"{(info.get('gradient_check') or {}).get('max_relative_error', np.nan):.6e}"
+    )
     print(f"  W:       {info.get('W', np.nan):.6e}")
     print(f"  dW:      {info.get('dW', np.nan):.6e}")
     print(f"  W_el:    {parts.get('W_el', np.nan):.6e}")

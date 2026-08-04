@@ -4,7 +4,10 @@ from typing import Any
 
 import numpy as np
 
-from .magnetism import magnetic_wrench_density_cosserat_profile_segments
+from .magnetism import (
+    magnetic_energy_quantities_cosserat_profile_segments,
+    magnetic_wrench_density_cosserat_profile_segments,
+)
 from .kinematics import integrate_pq_from_u
 from .contact import (
     ContactParams,
@@ -74,6 +77,7 @@ def magnetic_energy_from_centerline(
     m_local_fun,
     m_moment: float,
     r_min: float = 1e-6,
+    return_parts: bool = True,
 ) -> tuple[float, dict[str, np.ndarray]]:
     """
     Compute segment-midpoint distributed magnetic energy.
@@ -84,18 +88,33 @@ def magnetic_energy_from_centerline(
     s = np.asarray(s, float).ravel()
     ds = np.diff(s)
 
-    f_mid, tau_mid, B_mid, m_world_mid, s_mid = (
-        magnetic_wrench_density_cosserat_profile_segments(
-            p,
-            q,
-            s,
-            m_src,
-            r_src,
-            m_local_fun,
-            m_moment,
-            r_min=r_min,
+    if return_parts:
+        f_mid, tau_mid, B_mid, m_world_mid, s_mid = (
+            magnetic_wrench_density_cosserat_profile_segments(
+                p,
+                q,
+                s,
+                m_src,
+                r_src,
+                m_local_fun,
+                m_moment,
+                r_min=r_min,
+            )
         )
-    )
+    else:
+        B_mid, m_world_mid, s_mid = (
+            magnetic_energy_quantities_cosserat_profile_segments(
+                p,
+                q,
+                s,
+                m_src,
+                r_src,
+                m_local_fun,
+                m_moment,
+                r_min=r_min,
+            )
+        )
+        f_mid = tau_mid = None
 
     m_dot_B_mid = np.sum(m_world_mid * B_mid, axis=0)
     w_m_mid = -m_dot_B_mid
@@ -106,6 +125,9 @@ def magnetic_energy_from_centerline(
         )
 
     W_m = float(np.sum(w_m_mid * ds))
+
+    if not return_parts:
+        return W_m, {}
 
     Bnorm = np.linalg.norm(B_mid, axis=0)
     mnorm = np.linalg.norm(m_world_mid, axis=0)
@@ -141,6 +163,7 @@ def contact_energy_from_centerline(
     lumen_C: np.ndarray | None,
     lumen_R: np.ndarray | None,
     contact: ContactParams | None,
+    return_parts: bool = True,
 ) -> tuple[float, dict[str, Any]]:
     """
     Compute contact/lumen penalty energy from the centerline.
@@ -156,6 +179,16 @@ def contact_energy_from_centerline(
         contact = ContactParams()
 
     contact.validate()
+
+    if not return_parts:
+        W_cf = contact_energy_from_p(
+            p,
+            s=s,
+            lumen_query=lumen_query,
+            contact=contact,
+            return_force=False,
+        )
+        return float(W_cf), {}
 
     W_cf, C_nodes, F_nodes, gap_nodes, w_contact = contact_energy_from_p(
         p,
@@ -214,6 +247,7 @@ def energy_from_u(
     contact: ContactParams | None = None,
     gravity_force_density: np.ndarray | None = None,
     debug_mag: bool = False,
+    return_parts: bool = True,
 ) -> tuple[float, dict[str, Any]]:
     """
     Compute total potential energy Π(u).
@@ -249,6 +283,7 @@ def energy_from_u(
         r_src=r_src,
         m_local_fun=m_local_fun,
         m_moment=m_moment,
+        return_parts=return_parts,
     )
 
     W_g = gravity_energy_from_centerline(
@@ -274,9 +309,13 @@ def energy_from_u(
             lumen_C=lumen_C,
             lumen_R=lumen_R,
             contact=contact,
+            return_parts=return_parts,
         )
 
     W_total = float(W_el + W_m + W_g + W_cf)
+
+    if not return_parts:
+        return W_total, {}
 
     if debug_mag:
         print("\n[DBG-MAG]")

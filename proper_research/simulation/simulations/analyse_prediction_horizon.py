@@ -1,1 +1,0 @@
-plot_computational_costs(cost_by_run, cost_by_rollout, plot_dir)

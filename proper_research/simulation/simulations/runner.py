@@ -1569,20 +1569,7 @@ def run_simulation(
                 decision=decision,
                 cfg=hierarchical_policy_config,
             )
-        # print("[MPC EIG DEBUG]", {
-        #     "cond_H_mpc": info.get("cond_H_mpc", None),
-        #     "mpc_eig_cond": info.get("mpc_eig_cond", None),
-        #     "mpc_eig_logged": info.get("mpc_eig_logged", None),
-        #     "mpc_eig_failed": info.get("mpc_eig_failed", None),
-        #     "H_shape": (
-        #         info.get("mpc_H_shape_0", None),
-        #         info.get("mpc_H_shape_1", None),
-        #     ),
-        #     "weak_channel": info.get("mpc_weak_channel_name", None),
-        #     "weak_energy": info.get("mpc_weak_channel_energy", None),
-        #     "strong_channel": info.get("mpc_strong_channel_name", None),
-        #     "strong_energy": info.get("mpc_strong_channel_energy", None),
-        # })
+
         U_seq = np.asarray(
             info.get("U_seq", []),
             float,

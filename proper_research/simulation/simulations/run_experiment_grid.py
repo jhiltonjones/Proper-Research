@@ -135,9 +135,7 @@ def run_experiment(
         "bundle_model_id": id(jacobian_model),
     }
 
-    print("\n[JACOBIAN CONTACT CONFIGURATION]")
-    for key, value in actual.items():
-        print(f"  {key}: {value}")
+
     controller = controller_pack["controller"]
     p0 = controller_pack["p0"]
     p_min = controller_pack["p_min"]
@@ -689,7 +687,7 @@ if __name__ == "__main__":
         ),
 
         jacobian_variants=(
-            "contact",
+            "no_contact",
         ),
         inverse_sequence_modes=("held",),
         controller_kinds=("mpc",),
@@ -706,55 +704,3 @@ if __name__ == "__main__":
         hierarchical_mpc_enabled=False,
         stop_on_failure=False,
     )
-# from pathlib import Path
-
-# if __name__ == "__main__":
-
-#     rollout = np.array([1, 2, 3, 4, 5, 6])
-#     prediction_horizon = np.array([1, 2, 3, 4, 5, 6])
-#     sqp_iterations = np.array([1,2,3,4,5,6])
-#     for sqps in sqp_iterations:
-#         for roll in rollout:
-#             # Loop forward through horizons so they match the 1 to 6 progression
-#             for pred in prediction_horizon:
-#                 if pred >= roll:
-#                     run_experiment_grid(
-#                         # NESTED PATH: Creates a clean folder tree where rollouts contain predictions
-#                         run_root=Path("prediction_h_contact_sqp_budget_sweep") / f"sqp_{sqps}" / f"roll_{roll}" / f"pred_{pred}",
-#                         bend_angles_deg=(-30.0, -45.0, -60.0, -75.0, -90.0),
-#                         jacobian_variants=("contact",),
-#                         solver_modes=("sqp_full",),
-#                         rollout_steps_values=(roll,),
-#                         Np=pred,
-#                         N_sqp=sqps,
-#                         max_steps=45,
-#                         plant_contact=True,
-#                         save_plots=False, 
-#                         adaptive_rollout_enabled=False,
-#                         hierarchical_mpc_enabled=False,
-#                         hierarchical_policy_config=None,
-
-#                         stop_on_failure=False,
-#                     )
-    # prediction_horizon = np.array([1,2,3,4,5,6])
-    # sqp_iterations = np.array(1,2,3,4,5,6)
-    # for sqps in sqp_iterations:
-    #     for pred in prediction_horizon:
-
-    #         run_experiment_grid(
-    #             # NESTED PATH: Creates a clean folder tree where rollouts contain predictions
-    #             run_root=Path("contact_vs_no_contact_rollout_sim2"),
-    #             bend_angles_deg=(-30.0, -45.0, -60.0, -75.0, -90.0),
-    #             jacobian_variants=("no_contact","contact",),
-    #             solver_modes=("lti",),
-    #             rollout_steps_values=(pred,),
-    #             Np=pred,
-    #             N_sqp=sqps,
-    #             max_steps=45,
-    #             plant_contact=True,
-    #             save_plots=False, 
-    #             adaptive_rollout_enabled=False,
-    #             hierarchical_mpc_enabled=False,
-    #             hierarchical_policy_config=None,
-    #             stop_on_failure=False,
-    #         )

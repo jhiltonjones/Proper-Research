@@ -389,7 +389,6 @@ def build_controller(
         start_point=start_point,
         L0=L0,
     )
-    print(f"p0 is {p0}")
     p_min, p_max = make_pose_bounds(
         start_point=start_point,
         design_cfg=design_cfg,

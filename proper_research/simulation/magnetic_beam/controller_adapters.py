@@ -341,21 +341,7 @@ def make_controller_jacobian_fn(
     J_fn.model = adapter.model
     diag = J_fn.get_last_diag()
 
-    print("\n[JACOBIAN CONTACT DIAGNOSTICS]")
-    for key in (
-        "jacobian_contact_forward_enabled",
-        "jacobian_contact_requested",
-        "jacobian_problem_use_contact",
-        "jacobian_problem_use_contact_in_jacobian",
-        "jacobian_lumen_attached",
-        "jacobian_gap_min_m",
-        "jacobian_penetrating_nodes",
-        "jacobian_smoothing_band_nodes",
-        "jacobian_contact_energy",
-        "jacobian_contact_force_norm",
-        "hessian_reused",
-    ):
-        print(f"  {key}: {diag.get(key)}")
+
     return J_fn
 
 

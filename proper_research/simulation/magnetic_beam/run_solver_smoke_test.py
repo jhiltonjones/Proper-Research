@@ -467,7 +467,6 @@ def run_forward_only() -> None:
 
     result = model.solve(p7, commit=True)
 
-    print("\n=== FORWARD SOLVE TEST ===")
     summarise_solve_result(result)
 
     assert result.tip.shape == (3,)
@@ -491,7 +490,6 @@ def run_forward_only() -> None:
         "warm_fallback_continuation",
     }
 
-    print("Forward solve smoke test passed.")
 
 
 def run_forward_with_contact() -> None:

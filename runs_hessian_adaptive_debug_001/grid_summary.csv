@@ -1,2 +1,0 @@
-N_sqp,Np,bend_angle_deg,error,final_i_ref,final_infeasible,final_status,final_tip,jacobian_variant,log_csv_path,max_jac_cond,mean_jac_cond,mean_sqp_iters,n_steps,num_infeasible_steps,plant_contact,rollout_steps,run_name,solver_mode,success
-1,5,-30.0,,41,0,solved,"[0.758254644535654, -0.7034490822253507, -0.10001267840021706]",contact,runs_hessian_adaptive_debug_001/bend_m30_jac_contact_plant_contact_1_lti_rollout5_Np5_sqp1/log.csv,13504.78293254997,8908.841033177863,1.0,9,0,True,5,bend_m30_jac_contact_plant_contact_1_lti_rollout5_Np5_sqp1,lti,True

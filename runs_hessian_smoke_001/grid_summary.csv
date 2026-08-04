@@ -1,2 +1,0 @@
-N_sqp,Np,bend_angle_deg,error,final_i_ref,final_infeasible,final_status,final_tip,jacobian_variant,log_csv_path,max_jac_cond,mean_jac_cond,mean_sqp_iters,n_steps,num_infeasible_steps,plant_contact,rollout_steps,run_name,solver_mode,success
-1,3,-30.0,,18,0,solved,"[0.7813328295130401, -0.709915595847252, -0.10000438658777527]",contact,runs_hessian_smoke_001/bend_m30_jac_contact_plant_contact_1_lti_rollout1_Np3_sqp1/log.csv,13504.78293254997,13504.78293254997,1.0,1,0,True,1,bend_m30_jac_contact_plant_contact_1_lti_rollout1_Np3_sqp1,lti,True

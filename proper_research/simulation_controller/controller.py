@@ -298,7 +298,7 @@ class MPCControllerTipXY(
         self.U_warm = None
         self.u_prev = np.zeros(self.m, float)
         self.Du = build_Du_matrix(self.Np, self.m)
-
+        self.output_bias = np.zeros(self.n)
         self.ref_stride_pts = 1
         self.ref_stage_weights = np.array([2.0, 1.0, 1.0, 0.5, 0.1])
 
@@ -307,7 +307,13 @@ class MPCControllerTipXY(
         self.i_closest_last = None
         self.dist_to_ref_last = None
         self.use_affine_matching = True
-
+    def set_output_bias(self, bias):
+        bias = np.asarray(bias, dtype=float).reshape(-1)
+        if bias.size != self.n:
+            raise ValueError(f"output bias size {bias.size} != n={self.n}")
+        if not np.all(np.isfinite(bias)):
+            raise ValueError(f"non-finite output bias: {bias}")
+        self.output_bias = bias.copy()
     def set_initial_params(self, p0):
         self.p = np.asarray(p0, float).reshape(self.np,)
         self.u_prev = np.zeros(self.m)
@@ -1571,7 +1577,58 @@ class MPCControllerTipXY(
 
         finally:
             self.model_mode = old_model_mode
+    def set_measured_params(self, p_meas):
+        """
+        Hardware compatibility hook.
 
+        The hardware loop estimates the current magnet pose/insertion from the UR
+        pose and camera-derived insertion length, then calls this before solving MPC.
+
+        This updates the controller's internal actuator/magnet state but does not
+        treat the forward model as plant truth. The measured tip state is still
+        supplied separately through step(x_meas=...).
+        """
+        if self.p is None:
+            raise ValueError("Call set_initial_params(...) before set_measured_params(...).")
+
+        p_meas = np.asarray(p_meas, float).reshape(-1)
+
+        if p_meas.size != self.np:
+            raise ValueError(
+                f"p_meas must have length {self.np}, got shape {p_meas.shape}."
+            )
+
+        if not np.all(np.isfinite(p_meas)):
+            raise ValueError(f"p_meas contains non-finite values: {p_meas}")
+
+        self.p = p_meas.copy()
+
+        # Do not overwrite self.x here using the forward model.
+        # Hardware truth comes from camera x_meas in step(...).
+
+
+    def apply_open_loop_control(self, u):
+        """
+        Hardware compatibility hook for buffered rollout.
+
+        Used only for buffered hardware commands after a previous MPC plan.
+        It advances the controller's internal actuator/magnet state by one command.
+        """
+        if self.p is None:
+            raise ValueError("Call set_initial_params(...) before apply_open_loop_control(...).")
+
+        u = np.asarray(u, float).reshape(-1)
+
+        if u.size != self.m:
+            raise ValueError(f"u must have length {self.m}, got shape {u.shape}.")
+
+        if not np.all(np.isfinite(u)):
+            raise ValueError(f"u contains non-finite values: {u}")
+
+        p_next = self._apply_control_to_p(self.p, u)
+        self.p = np.asarray(p_next, float).reshape(self.np,)
+
+        return self.p.copy()
     def step(self, x_meas=None, rollout_steps=1, solver_mode=None):
         """
         Multi-step MPC step.

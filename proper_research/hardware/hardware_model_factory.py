@@ -90,7 +90,15 @@ def build_hardware_model_bundle(
             f"Unknown jacobian_variant={jacobian_variant!r}. "
             "Use 'contact' or 'no_contact'."
         )
-
+    print("[MODEL CONFIG] plant_model =", type(contact_model))
+    print("[MODEL CONFIG] jacobian_model =", type(jacobian_model))
+    print("[MODEL CONFIG] N_nodes =", getattr(contact_model, "N_nodes", None))
+    print("[MODEL CONFIG] L_tip_full =", getattr(contact_model, "L_tip_full", None))
+    print("[MODEL CONFIG] L_tip_min =", getattr(contact_model, "L_tip_min", None))
+    print("[MODEL CONFIG] dL_internal =", getattr(contact_model, "dL_internal", None))
+    print("[MODEL CONFIG] maxiter =", getattr(contact_model, "maxiter", None))
+    print("[MODEL CONFIG] use_lumen_jac =", getattr(contact_model, "use_lumen_jac", None))
+    print("[MODEL CONFIG] use_fast_contact_grad =", getattr(contact_model, "use_fast_contact_grad", None))
     return HardwareModelBundle(
         plant_model=contact_model,
         jacobian_model=jacobian_model,

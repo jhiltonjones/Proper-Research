@@ -303,7 +303,7 @@ def create_vessel_geometry_from_clicks(
     to_full_px,
     radius_px=16.0,
     samples_per_segment=30,
-    boundary_samples=200,
+    boundary_samples=60,   # changed from 200 to 60
     smooth_iter=3,
     mode="auto",
 ):
@@ -375,6 +375,22 @@ def create_vessel_geometry_from_clicks(
         )
 
         creation_mode = "boundaries"
+
+    # Force final geometry to exactly 60 equally spaced reference points.
+    left_boundary_px = resample_polyline_by_arclength(
+        left_boundary_px,
+        n_samples=boundary_samples,
+    )
+
+    right_boundary_px = resample_polyline_by_arclength(
+        right_boundary_px,
+        n_samples=boundary_samples,
+    )
+
+    centerline_px = resample_polyline_by_arclength(
+        centerline_px,
+        n_samples=boundary_samples,
+    )
 
     return left_boundary_px, right_boundary_px, centerline_px, creation_mode
 def draw_centerline_radius_overlay(
@@ -665,7 +681,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                         to_full_px=to_full_px,
                         radius_px=14.0,
                         samples_per_segment=30,
-                        boundary_samples=200,
+                        boundary_samples=60,
                         smooth_iter=3,
                         mode=vessel_creation_mode["name"],
                     )
@@ -748,7 +764,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                         to_full_px=to_full_px,
                         radius_px=16.0,
                         samples_per_segment=30,
-                        boundary_samples=200,
+                        boundary_samples=60,
                         smooth_iter=3,
                         mode=vessel_creation_mode["name"],
                     )
@@ -770,7 +786,7 @@ def draw_manual_vessel_boundaries_with_origin_and_axis(
                 window_name="Boundary preview before save",
             )
 
-            print("[PREVIEW] Press y to accept/save, n to reject and continue editing.")
+            print("[PREVIEW] qPress y to accept/save, n to reject and continue editing.")
 
             accept_preview = False
             while True:
@@ -947,6 +963,39 @@ def resample_smooth_boundaries_monotonic(
         [tuple(map(float, p)) for p in center],
         width,
     )
+def resample_polyline_fixed_n(points, n_samples):
+    """
+    Resample a 2D or 3D polyline to exactly n_samples points,
+    equally spaced by cumulative arclength.
+    """
+    pts = np.asarray(points, dtype=float)
+
+    if pts.ndim != 2:
+        raise ValueError(f"Expected points with shape (N,D), got {pts.shape}")
+
+    if pts.shape[0] < 2:
+        raise ValueError("Need at least 2 points.")
+
+    if int(n_samples) < 2:
+        raise ValueError("n_samples must be at least 2.")
+
+    seg = pts[1:] - pts[:-1]
+    seg_len = np.linalg.norm(seg, axis=1)
+
+    s = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = s[-1]
+
+    if total < 1e-12:
+        raise ValueError("Polyline length is too small.")
+
+    s_new = np.linspace(0.0, total, int(n_samples))
+
+    out = np.column_stack([
+        np.interp(s_new, s, pts[:, d])
+        for d in range(pts.shape[1])
+    ])
+
+    return out, s_new
 def show_boundary_preview(
     image_bgr,
     left_boundary_px,

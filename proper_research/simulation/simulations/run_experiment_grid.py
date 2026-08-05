@@ -649,7 +649,7 @@ def make_double_bend_lumen_config(
     second_angle_deg: float = -70.0,
 ) -> LumenConfig:
     return LumenConfig(
-        length=0.06,
+        length=0.04,
         n_pts=240,
         n_ref_pts=100,
         radius=0.006,
@@ -676,11 +676,11 @@ def make_double_bend_lumen_config(
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
         first_angle_deg=0.0,
-        second_angle_deg=-100.0,
+        second_angle_deg=-6.0,
     )
 
     run_experiment_grid(
-        run_root=Path("testing_w_tangent"),
+        run_root=Path("testing_iridis"),
 
         lumen_configs=(
             double_bend_lumen,
@@ -690,8 +690,8 @@ if __name__ == "__main__":
             "no_contact",
         ),
         inverse_sequence_modes=("held",),
-        controller_kinds=("mpc",),
-        solver_modes=( "sqp_full",),
+        controller_kinds=("mpc", "inverse_jacobian"),
+        solver_modes=( "sqp_full", "lti"),
         rollout_steps_values=(10,),
 
         Np=15,

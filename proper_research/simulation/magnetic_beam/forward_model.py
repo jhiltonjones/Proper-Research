@@ -27,22 +27,6 @@ from beam_direction_magnetisation.magnetism.beam_geometry import (
 )
 
 
-def default_m_local_factory(
-    *,
-    L_model: float,
-    wire_len: float,
-    tip_len: float,
-):
-    """Build the legacy wire/tip magnetization profile."""
-    del L_model
-    return make_m_local_fun_wire_tip(
-        wire_len,
-        len_tip=tip_len,
-        mode="axial",
-        alpha_end=0.0,
-        eps=1e-3,
-    )
-
 
 class MagneticBeamForwardModel:
     """
@@ -56,8 +40,6 @@ class MagneticBeamForwardModel:
     p7 convention:
         [magnet_x, magnet_y, magnet_z, rx, ry, rz, L_inserted]
     """
-
-class MagneticBeamForwardModel:
     def __init__(
         self,
         *,
@@ -67,8 +49,6 @@ class MagneticBeamForwardModel:
         Kinv_fun,
         m_body: np.ndarray,
         lumen_query: LumenQuery | None,
-
-        # New, optional argument.
         m_local_factory=None,
     ):
         beam.validate()

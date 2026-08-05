@@ -14,9 +14,24 @@ from .energy import energy_from_u
 from .gradients import energy_gradient_u
 from .kinematics import effective_lengths, integrate_pq_from_u
 
-from beam_direction_magnetisation.ana_energy import (
-    precompute_K_segments,
-)
+
+def precompute_K_segments(s, Kinv_fun, wire_len):
+    """
+    Returns K_seg: (N-1, 3, 3) stiffness per segment midpoint.
+    You provide Kinv_fun(s, wire_len) -> (3,3,N).
+    """
+    s = np.asarray(s, float)
+    smid = 0.5*(s[:-1] + s[1:])
+    Kinv = Kinv_fun(smid, wire_len)  # (3,3,N-1) if your function respects input
+    # ensure shape (3,3,N-1)
+    if Kinv.shape[-1] != smid.size:
+        # if your Kinv_fun always returns (3,3,N) for node-based s, call with nodes then slice midpoints
+        raise ValueError(f"Kinv_fun returned shape {Kinv.shape}, expected last dim {smid.size}")
+
+    K_seg = np.zeros((smid.size, 3, 3), float)
+    for i in range(smid.size):
+        K_seg[i] = np.linalg.inv(Kinv[:, :, i])
+    return K_seg
 def make_length_schedule(
     *,
     L_start: float,

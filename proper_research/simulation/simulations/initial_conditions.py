@@ -39,7 +39,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
 
     base_point = np.array(
         [
-            pivot_point[0] - (L_cmd + 0.17),
+            pivot_point[0] - (L_cmd + 0.21),
             pivot_point[1],
             -0.1,
             np.pi,

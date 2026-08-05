@@ -1,0 +1,26 @@
+{
+  "run_name": "bends_p0_m6_jac_no_contact_plant_contact_1_ctrl_mpc_lti_rollout10_Np15_sqp50_bends_0_-6",
+  "log_csv_path": "testing_iridis/bends_p0_m6_jac_no_contact_plant_contact_1_ctrl_mpc_lti_rollout10_Np15_sqp50_bends_0_-6/log.csv",
+  "plant_contact": true,
+  "jacobian_variant": "no_contact",
+  "controller_kind": "mpc",
+  "inverse_sequence_mode": "",
+  "inverse_kp": NaN,
+  "solver_mode": "lti",
+  "rollout_steps": 10,
+  "Np": 15,
+  "N_sqp": 50,
+  "n_steps": 14,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 99,
+  "final_tip": [
+    0.7582241669304399,
+    -0.7131232112673791,
+    -0.10108468692046611
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 0.9285714285714286,
+  "mean_jac_cond": 51.59346415124639,
+  "max_jac_cond": 207.17402833676485
+}

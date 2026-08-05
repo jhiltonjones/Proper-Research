@@ -503,7 +503,12 @@ def build_forward_model(
     contact_enabled: bool,
     use_lumen_jac: bool,
     contact_params: ContactParams | None,
-    m_local_factory=None
+    m_local_factory=None,
+    result_detail: str = "contact",
+    store_history: bool = False,
+    store_vectors_in_info: bool = False,
+    sensitivity_workers: int = 1,
+    copy_cached_results: bool = True,
 ):
     """
     Build a new magnetic_beam forward model instance.
@@ -579,6 +584,11 @@ def build_forward_model(
         m_body=m_body,
         lumen_query=lumen_query,
         m_local_factory=m_local_factory,
+        result_detail=result_detail,
+        store_history=store_history,
+        store_vectors_in_info=store_vectors_in_info,
+        sensitivity_workers=sensitivity_workers,
+        copy_cached_results=copy_cached_results,
     )
 
 
@@ -594,6 +604,13 @@ def build_model_bundle(
     use_physical_stiffness: bool = False,
     effective_youngs_modulus: float = 1.0e6,
     remanence_fraction: float = 1.0,
+
+    # Optimized forward/Jacobian execution.
+    result_detail: str = "contact",
+    store_history: bool = False,
+    store_vectors_in_info: bool = False,
+    sensitivity_workers: int = 1,
+    copy_cached_results: bool = True,
 ) -> ModelBundle:
     if hasattr(lumen_cfg, "validate"):
         lumen_cfg.validate()
@@ -775,6 +792,13 @@ def build_model_bundle(
 
         # New distributed beam-magnetisation factory.
         m_local_factory=m_local_factory,
+
+        # Optimized model settings.
+        result_detail=result_detail,
+        store_history=store_history,
+        store_vectors_in_info=store_vectors_in_info,
+        sensitivity_workers=sensitivity_workers,
+        copy_cached_results=copy_cached_results,
     )
 
     forward_model_contact = (
@@ -841,3 +865,7 @@ def build_model_bundle(
         s_path=s_path,
         models=models,
     )
+
+# Explicit names for new scripts.
+build_forward_model_optimized = build_forward_model
+build_model_bundle_optimized = build_model_bundle

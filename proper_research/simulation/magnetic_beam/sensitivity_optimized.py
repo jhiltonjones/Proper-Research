@@ -23,6 +23,7 @@ from .kinematics import (
     quat_exp_body,
     quat_mul,
     quat_normalize,
+    quat_to_R,
 )
 from .magnetism import dipole_from_pose
 from .solver_optimized import precompute_K_segments_optimized
@@ -92,6 +93,7 @@ class ThetaModel:
 
 @dataclass
 class SensitivityResult:
+    # Backwards-compatible tip-position output.
     J_tip: np.ndarray
     du_dtheta: np.ndarray
     J_implicit: np.ndarray
@@ -100,6 +102,15 @@ class SensitivityResult:
     P_u: np.ndarray
     H: np.ndarray
     info: dict
+
+    # Optional six-output extension [tip_xyz, tip_tangent]. These fields reuse
+    # the same equilibrium, H, Gtheta and implicit solve as J_tip.
+    J_tangent: np.ndarray
+    J_output: np.ndarray
+    J_tangent_implicit: np.ndarray
+    J_tangent_direct: np.ndarray
+    T_u: np.ndarray
+    tip_tangent_base: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -313,33 +324,50 @@ def _finite_difference_Gtheta(
     return np.column_stack(columns), evaluations
 
 
-def _tip_position_jacobian_u_from_solution(
+def _tip_output_jacobians_u_from_solution(
     *,
     u0: np.ndarray,
     s: np.ndarray,
     q_nodes: np.ndarray | None,
     q0: np.ndarray,
     e1: np.ndarray = np.array([-1.0, 0.0, 0.0]),
-) -> np.ndarray:
-    """Return d p_tip / d u without rebuilding the full forward state.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return position and tangent sensitivities with respect to beam strain.
 
-    When cached nominal quaternions are available, this propagates only the
-    current S_p and S_q matrices. It avoids allocating the full 3-D sensitivity
-    histories and avoids re-integrating p and q. The recurrence is identical to
-    ``integrate_pq_and_sens_from_u``.
+    Returns
+    -------
+    P_u:
+        d tip_xyz / d u_beam, shape (3, n_u).
+    T_u:
+        d tip_tangent / d u_beam, shape (3, n_u).
+    tip_tangent:
+        Nominal unit tangent, shape (3,).
+
+    The recurrence is the same analytic discrete kinematic sensitivity used by
+    the legacy code. No equilibrium/BVP solve is performed here.
     """
     u0 = np.asarray(u0, dtype=float).reshape(-1)
     s = np.asarray(s, dtype=float).reshape(-1)
+    e1 = np.asarray(e1, dtype=float).reshape(3)
     n_seg = s.size - 1
     n_u = u0.size
     if n_u != 3 * n_seg:
         raise ValueError(f"Expected {3 * n_seg} strain variables, got {n_u}.")
 
     if q_nodes is None:
-        _, _, S_p_all, _ = integrate_pq_and_sens_from_u(
-            u0, p0=np.zeros(3), q0=q0, s=s, e1=e1
+        _, q_all, S_p_all, S_q_all = integrate_pq_and_sens_from_u(
+            u0,
+            p0=np.zeros(3),
+            q0=q0,
+            s=s,
+            e1=e1,
         )
-        return np.asarray(S_p_all[:, -1, :], dtype=float)
+        q_tip = np.asarray(q_all[:, -1], dtype=float)
+        P_u = np.asarray(S_p_all[:, -1, :], dtype=float)
+        S_q = np.asarray(S_q_all[:, -1, :], dtype=float)
+        tip_tangent = quat_to_R(q_tip) @ e1
+        T_u = _rotated_vector_jacobian_q(q_tip, e1) @ S_q
+        return P_u, T_u, tip_tangent
 
     q_nodes = np.asarray(q_nodes, dtype=float)
     if q_nodes.shape != (4, s.size):
@@ -349,7 +377,6 @@ def _tip_position_jacobian_u_from_solution(
 
     ds = np.diff(s)
     u_seg = u0.reshape(n_seg, 3)
-    e1 = np.asarray(e1, dtype=float).reshape(3)
     S_p = np.zeros((3, n_u), dtype=float)
     S_q = np.zeros((4, n_u), dtype=float)
 
@@ -375,52 +402,69 @@ def _tip_position_jacobian_u_from_solution(
         S_q = dqnext_dq @ S_q
         S_q[:, 3 * i : 3 * i + 3] += dqnext_du
 
-    return S_p
+    q_tip = q_nodes[:, -1]
+    tip_tangent = quat_to_R(q_tip) @ e1
+    T_u = _rotated_vector_jacobian_q(q_tip, e1) @ S_q
+    return S_p, T_u, np.asarray(tip_tangent, dtype=float)
 
 
-def _tip_direct_theta_derivative(
+def _tip_output_direct_theta_derivative(
     *,
     u0: np.ndarray,
     problem,
     theta_model,
     nominal_tip: np.ndarray,
+    nominal_tangent: np.ndarray,
     eps: float,
     scheme: DifferenceScheme,
-) -> tuple[np.ndarray, int]:
-    """
-    Direct derivative at fixed strain.
+    e1: np.ndarray = np.array([-1.0, 0.0, 0.0]),
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Fixed-strain direct derivatives of tip position and tip tangent.
 
-    Source translation/rotation affect equilibrium through du/dtheta, not the
-    kinematic map p(u, L) directly. Only insertion length changes the direct
-    kinematic map through the segment arclengths.
+    Source translation/rotation affect the output through the equilibrium
+    sensitivity du/dtheta. Only insertion length changes the fixed-strain
+    kinematic map directly. These evaluations are kinematic integrations, not
+    equilibrium optimizations.
     """
-    out = np.zeros((3, 7), dtype=float)
+    Jp = np.zeros((3, 7), dtype=float)
+    Jt = np.zeros((3, 7), dtype=float)
     theta0 = np.asarray(theta_model.theta0, dtype=float).reshape(7)
+    e1 = np.asarray(e1, dtype=float).reshape(3)
 
-    def tip_at(theta: np.ndarray) -> np.ndarray:
+    def output_at(theta: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         p_theta = _problem_at_theta(problem, theta_model, theta)
         s_theta = np.linspace(
             0.0,
             float(p_theta.L_model),
             int(p_theta.N_nodes),
         )
-        p, _, _ = integrate_pq_from_u(
+        p_nodes, q_nodes, _ = integrate_pq_from_u(
             u0,
             p0=p_theta.p0,
             q0=p_theta.q0,
             s=s_theta,
         )
-        return np.asarray(p[:, -1], dtype=float)
+        tip = np.asarray(p_nodes[:, -1], dtype=float)
+        tangent = quat_to_R(np.asarray(q_nodes[:, -1], dtype=float)) @ e1
+        return tip, np.asarray(tangent, dtype=float)
 
     d = np.zeros(7, dtype=float)
     d[6] = eps
     if scheme == "forward":
-        nominal = np.asarray(nominal_tip, dtype=float).reshape(3)
-        out[:, 6] = (tip_at(theta0 + d) - nominal) / eps
-        return out, 1
+        tip_plus, tangent_plus = output_at(theta0 + d)
+        Jp[:, 6] = (
+            tip_plus - np.asarray(nominal_tip, dtype=float).reshape(3)
+        ) / eps
+        Jt[:, 6] = (
+            tangent_plus - np.asarray(nominal_tangent, dtype=float).reshape(3)
+        ) / eps
+        return Jp, Jt, 1
 
-    out[:, 6] = (tip_at(theta0 + d) - tip_at(theta0 - d)) / (2.0 * eps)
-    return out, 2
+    tip_plus, tangent_plus = output_at(theta0 + d)
+    tip_minus, tangent_minus = output_at(theta0 - d)
+    Jp[:, 6] = (tip_plus - tip_minus) / (2.0 * eps)
+    Jt[:, 6] = (tangent_plus - tangent_minus) / (2.0 * eps)
+    return Jp, Jt, 2
 
 
 def _solve_implicit_system(
@@ -539,19 +583,22 @@ def implicit_tip_jacobian(
     gtheta_time_s = time.perf_counter() - gtheta_started
 
     kinematics_started = time.perf_counter()
-    P_u = _tip_position_jacobian_u_from_solution(
+    P_u, T_u, tip_tangent_base = _tip_output_jacobians_u_from_solution(
         u0=u0,
         s=prepared0.s,
         q_nodes=getattr(solution, "q", None),
         q0=problem.q0,
     )
-    J_direct, direct_tip_evaluations = _tip_direct_theta_derivative(
-        u0=u0,
-        problem=problem,
-        theta_model=theta_model,
-        nominal_tip=solution.tip,
-        eps=float(options.eps_theta),
-        scheme=options.difference_scheme,
+    J_direct, J_tangent_direct, direct_tip_evaluations = (
+        _tip_output_direct_theta_derivative(
+            u0=u0,
+            problem=problem,
+            theta_model=theta_model,
+            nominal_tip=solution.tip,
+            nominal_tangent=tip_tangent_base,
+            eps=float(options.eps_theta),
+            scheme=options.difference_scheme,
+        )
     )
     kinematics_time_s = time.perf_counter() - kinematics_started
 
@@ -565,8 +612,15 @@ def implicit_tip_jacobian(
 
     J_implicit = P_u @ du_dtheta
     J_tip = J_implicit + J_direct
-    if not np.all(np.isfinite(J_tip)):
-        raise FloatingPointError("Implicit tip Jacobian contains non-finite values.")
+
+    J_tangent_implicit = T_u @ du_dtheta
+    J_tangent = J_tangent_implicit + J_tangent_direct
+    J_output = np.vstack((J_tip, J_tangent))
+
+    if not np.all(np.isfinite(J_output)):
+        raise FloatingPointError(
+            "Implicit tip position/tangent Jacobian contains non-finite values."
+        )
 
     sensitivity_time_s = time.perf_counter() - started_total
     info = {
@@ -584,6 +638,8 @@ def implicit_tip_jacobian(
         "linear_solve_method": linear_solve_method,
         "regularization": float(regularization),
         "direct_tip_evaluations": int(direct_tip_evaluations),
+        "output_dimension": 6,
+        "tip_tangent_norm": float(np.linalg.norm(tip_tangent_base)),
         "H_condition": (
             float(np.linalg.cond(H)) if options.debug_jac else np.nan
         ),
@@ -599,4 +655,10 @@ def implicit_tip_jacobian(
         P_u=np.asarray(P_u, dtype=float),
         H=np.asarray(H, dtype=float),
         info=info,
+        J_tangent=np.asarray(J_tangent, dtype=float),
+        J_output=np.asarray(J_output, dtype=float),
+        J_tangent_implicit=np.asarray(J_tangent_implicit, dtype=float),
+        J_tangent_direct=np.asarray(J_tangent_direct, dtype=float),
+        T_u=np.asarray(T_u, dtype=float),
+        tip_tangent_base=np.asarray(tip_tangent_base, dtype=float),
     )

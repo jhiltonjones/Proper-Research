@@ -1,7 +1,7 @@
 import numpy as np
 
 from proper_research.robot.transformations import get_point
-
+from scipy.spatial.transform import Rotation as R
 
 def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     """
@@ -28,23 +28,23 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     pivot_point = np.array(
         [
             0.7981328220229531,
-            -0.70992731669220016,
+            -0.7099273166922002,
             -0.1,
             np.pi,
-            0.001,
-            0.001,
+            0.0,
+            0.0,
         ],
         dtype=float,
     )
 
     base_point = np.array(
         [
-            pivot_point[0] - (L_cmd + 0.21),
+            pivot_point[0] - (L_cmd+0.18),
             pivot_point[1],
-            -0.1,
+            0.1,
             np.pi,
-            0.001,
-            0.001,
+            0.0,
+            0.0,
         ],
         dtype=float,
     )
@@ -55,7 +55,11 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     )
 
     dt = 0.01
+    current_rot = R.from_rotvec(start_point[3:6])
 
+    # new_rot = R.from_euler('z', np.pi)
+    # final_rot = new_rot*current_rot
+    # start_point[3:6] = R.as_rotvec(final_rot)
     print(f"[INIT] start_point={start_point}")
     print(f"[INIT] pivot_point={pivot_point}")
     print(f"[INIT] L0={L_cmd:.4f}, dt={dt:.4f}")

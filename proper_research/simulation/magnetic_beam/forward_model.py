@@ -81,6 +81,9 @@ class MagneticBeamForwardModel:
         self.cache = ForwardCache()
 
         self.last_J_tip_pose7 = None
+        self.last_J_tip_actuation_tangent = None
+        self.last_J_output_pose7 = None
+        self.last_J_output_actuation_tangent = None
         self.last_sens_info = None
         self.last_jacobian_diag = {}
         self.last_sensitivity_H = None
@@ -416,7 +419,7 @@ class MagneticBeamForwardModel:
 
         return result
 
-    def jacobian_tip_actuation_tangent(
+    def jacobian_output_actuation_tangent(
         self,
         p7: np.ndarray,
         *,
@@ -428,19 +431,7 @@ class MagneticBeamForwardModel:
         mode: str = "fast",
         reuse_cached: bool = True,
     ) -> np.ndarray:
-        """
-        Tip Jacobian in robot-compatible tangent coordinates.
-
-        Columns map
-
-            [source linear velocity in world,
-             source angular velocity in world,
-             insertion-length rate]
-
-        to tip linear velocity.  Use this method when chaining a robot spatial
-        Jacobian.  Use :meth:`jacobian_tip_pose7` when differentiating the
-        additive SciPy/UR rotation-vector entries in ``p7``.
-        """
+        """Return d[tip_xyz, tip_tangent]/d[source pose tangent, insertion]."""
         p7 = self._validate_p7(p7)
         if mode not in {"fast", "accurate"}:
             raise ValueError("mode must be 'fast' or 'accurate'.")
@@ -455,10 +446,10 @@ class MagneticBeamForwardModel:
         )
         if (
             reuse_cached
-            and self.last_J_tip_actuation_tangent is not None
+            and self.last_J_output_actuation_tangent is not None
             and tangent_key == self._last_tangent_key
         ):
-            return self.last_J_tip_actuation_tangent.copy()
+            return self.last_J_output_actuation_tangent.copy()
 
         if self.cache.u_flat_opt is None:
             if not solve_if_needed:
@@ -467,13 +458,11 @@ class MagneticBeamForwardModel:
                     "a Jacobian, or pass solve_if_needed=True."
                 )
             self.solve(p7, commit=True)
-
         self._assert_cache_matches(p7)
 
         problem = self.build_problem(p7)
         solution = self.cache_as_solution()
         theta_model = self.build_theta_model(p7)
-
         H_override = None
         if mode == "fast" and self._can_reuse_sensitivity_hessian(
             p7,
@@ -494,23 +483,29 @@ class MagneticBeamForwardModel:
             ),
             H_override=H_override,
         )
-        self.last_J_tip_actuation_tangent = sens.J_tip.copy()
+        J_output = np.asarray(sens.J_output, dtype=float).reshape(6, 7)
+        self.last_J_output_actuation_tangent = J_output.copy()
+        self.last_J_tip_actuation_tangent = J_output[:3, :].copy()
         self._last_tangent_key = tangent_key
+        self.last_J_output_pose7 = None
         self.last_J_tip_pose7 = None
         self._last_pose7_key = None
         self.last_sens_info = sens.info
         diag, H = self._build_last_jacobian_diag_from_sensitivity(sens)
-
+        diag["jacobian_output_dimension"] = 6
         self.last_jacobian_diag = diag
         self.last_sensitivity_H = H
         if not bool(sens.info.get("hessian_reused", False)):
             self.last_sensitivity_H_p7 = p7.copy()
             self.last_sensitivity_H_eps = float(eps_hess)
             self.last_sensitivity_contact_mask = self._contact_active_mask()
+        return J_output.copy()
 
-        return sens.J_tip.copy()
+    def jacobian_tip_actuation_tangent(self, p7: np.ndarray, **kwargs) -> np.ndarray:
+        """Backwards-compatible position-only 3x7 Jacobian."""
+        return self.jacobian_output_actuation_tangent(p7, **kwargs)[:3, :]
 
-    def jacobian_tip_pose7(
+    def jacobian_output_pose7(
         self,
         p7: np.ndarray,
         *,
@@ -522,14 +517,7 @@ class MagneticBeamForwardModel:
         mode: str = "fast",
         reuse_cached: bool = True,
     ) -> np.ndarray:
-        """
-        Differentiate tip position with respect to the public ``p7`` vector.
-
-        The implicit sensitivity is naturally computed against a left,
-        world-frame rotation perturbation.  ``p7[3:6]`` is instead an additive
-        SciPy/UR rotation vector, so its columns are converted using the SO(3)
-        left Jacobian.
-        """
+        """Differentiate [tip_xyz, tip_tangent] w.r.t. public pose7 entries."""
         p7 = self._validate_p7(p7)
         pose_key = self._jacobian_key(
             p7,
@@ -541,12 +529,12 @@ class MagneticBeamForwardModel:
         )
         if (
             reuse_cached
-            and self.last_J_tip_pose7 is not None
+            and self.last_J_output_pose7 is not None
             and pose_key == self._last_pose7_key
         ):
-            return self.last_J_tip_pose7.copy()
+            return self.last_J_output_pose7.copy()
 
-        J_tangent = self.jacobian_tip_actuation_tangent(
+        J_output_tangent = self.jacobian_output_actuation_tangent(
             p7,
             solve_if_needed=solve_if_needed,
             eps_theta=eps_theta,
@@ -556,14 +544,17 @@ class MagneticBeamForwardModel:
             mode=mode,
             reuse_cached=reuse_cached,
         )
-
-        tangent_from_pose7_rate = np.eye(7, dtype=float)
-        tangent_from_pose7_rate[3:6, 3:6] = so3_left_jacobian(p7[3:6])
-
-        J_pose7 = J_tangent @ tangent_from_pose7_rate
-        self.last_J_tip_pose7 = J_pose7.copy()
+        transform = np.eye(7, dtype=float)
+        transform[3:6, 3:6] = so3_left_jacobian(p7[3:6])
+        J_output_pose7 = J_output_tangent @ transform
+        self.last_J_output_pose7 = J_output_pose7.copy()
+        self.last_J_tip_pose7 = J_output_pose7[:3, :].copy()
         self._last_pose7_key = pose_key
-        return J_pose7.copy()
+        return J_output_pose7.copy()
+
+    def jacobian_tip_pose7(self, p7: np.ndarray, **kwargs) -> np.ndarray:
+        """Backwards-compatible position-only 3x7 pose-vector Jacobian."""
+        return self.jacobian_output_pose7(p7, **kwargs)[:3, :]
 
     def plot_solution(
         self,
@@ -764,6 +755,8 @@ class MagneticBeamForwardModel:
         self.cache = ForwardCache()
         self.last_J_tip_pose7 = None
         self.last_J_tip_actuation_tangent = None
+        self.last_J_output_pose7 = None
+        self.last_J_output_actuation_tangent = None
         self.last_sens_info = None
         self.last_jacobian_diag = {}
         self.last_sensitivity_H = None
@@ -777,6 +770,8 @@ class MagneticBeamForwardModel:
         """Invalidate pose-specific Jacobians but retain a reusable Hessian."""
         self.last_J_tip_pose7 = None
         self.last_J_tip_actuation_tangent = None
+        self.last_J_output_pose7 = None
+        self.last_J_output_actuation_tangent = None
         self.last_sens_info = None
         self.last_jacobian_diag = {}
         self._last_tangent_key = None

@@ -13,6 +13,7 @@ from proper_research.simulation.simulations.model_factory import (
 from beam_direction_magnetisation.quarternions.quarternions_functions import (
     T_to_p_quat_wxyz,
 )
+from scipy.spatial.transform import Rotation as R
 from proper_research.simulation.magnetic_beam.kinematics import effective_lengths, pose8_quat_to_pose7_rotvec
 from proper_research.parameters import default_magnet_params
 from beam_direction_magnetisation.cosserat_6d_pose import ur_pose6_to_T
@@ -152,7 +153,7 @@ def make_initial_poses(
         lumen_base_robot = np.array(
             [
                 0.7981328220229531,
-                -0.7109273166922002,
+                -0.7099273166922002,
                 -0.1000000000000000,
                 np.pi,
                 0.001,
@@ -442,19 +443,19 @@ def make_run_plot_lumen_config() -> LumenConfig:
         length=0.04,
         n_pts=240,
         n_ref_pts=100,
-        radius=0.006,
+        radius=0.004,
         bends=(
             LumenBend(
                 bend_axis=(0.0, 0.0, 1.0),
-                bend_angle_rad=np.deg2rad(0.0),
+                bend_angle_rad=np.deg2rad(00.0),
                 bend_start=0.0,
-                bend_end=0.005,
+                bend_end=0.01,
             ),
             LumenBend(
                 bend_axis=(0.0, 0.0, 1.0),
-                bend_angle_rad=np.deg2rad(-100.0),
-                bend_start=0.01,
-                bend_end=0.015,
+                bend_angle_rad=np.deg2rad(0.0),
+                bend_start=0.02,
+                bend_end=0.025,
             ),
         ),
     )
@@ -1160,28 +1161,27 @@ def run_single_robot_pose() -> None:
     #
     # Position: metres
     # Rotation: UR rotation vector in radians
-    # source_magnet_robot = np.array(
-    #     [
-    #         0.610,
-    #         -0.705,
-    #         -0.045,
-    #         2.221,
-    #         0.000,
-    #         2.221,
-    #     ],
-    #     dtype=float,
-    # )
-    p8 = np.array([0.65	,-0.62,	-0.1,0,	1,	0.03,0,	0.02
-])
-    p7 = pose8_quat_to_pose7_rotvec(p8)
+    source_magnet_robot = np.array(
+        [
+        7.85132822e-01, -7.09927317e-01,  1.00000000e-01,  2.22144147e+00,
+        2.22144147e+00,  1.36024059e-16
+        ],
+        dtype=float,
+    )
+    current_rot = R.from_rotvec(source_magnet_robot[3:6])
+    new_rot = R.from_euler('z', 0)
+    final_rot = new_rot*current_rot
+    source_magnet_robot[3:6] = final_rot.as_rotvec()
+    # p8 = np.array([0.57,	-0.74,	-0.1,	0.01,	0.91,	0.41,	0,	0.02])
+    # p7 = pose8_quat_to_pose7_rotvec(p8)
     # # Beam insertion in metres.
-    insertion_m = p7[-1]
-
+    # insertion_m = p7[-1]
+    insertion_m = 0.013
     # Build the exact seven-value forward-model input.
-    # p7 = magnet_pose_and_insertion_to_p7(
-    #     source_magnet_robot,
-    #     insertion_m,
-    # )
+    p7 = magnet_pose_and_insertion_to_p7(
+        source_magnet_robot,
+        insertion_m,
+    )
 
     # ============================================================
     # 2. FIXED BEAM AND LUMEN POSES
@@ -1207,7 +1207,7 @@ def run_single_robot_pose() -> None:
         lumen_cfg=lumen_cfg,
         plant_contact=True,
     )
-
+    print(f"Beam shape is {scene.beam_base_robot.shape}")
     # Select the model to evaluate.
     model = bundle.models["contact"]
 
@@ -1231,7 +1231,15 @@ def run_single_robot_pose() -> None:
         "centreline shape:",
         np.asarray(result.p).shape,
     )
+    print(f"vector of p7 is {p7[0:3]} and beam base is {scene.beam_base_robot[0:3]}")
+    dot_prod = np.dot(p7[0:3],scene.beam_base_robot[0:3])
+    norm_1 = np.linalg.norm(p7[0:3])
+    norm_2 = np.linalg.norm(scene.beam_base_robot[0:3])
+    angle_1 = dot_prod/(norm_1*norm_2)
+    angle_rad = np.arccos(angle_1)
+    angle_bet = np.degrees(angle_rad)
 
+    print(f"Angle is {angle_bet}")
     # ============================================================
     # 5. PLOT AND SAVE
     # ============================================================

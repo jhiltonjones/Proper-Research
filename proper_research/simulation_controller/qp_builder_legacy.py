@@ -122,417 +122,38 @@ def symmetric_hessian_diagnostics(H, *, eps: float = 1e-12) -> dict:
         "num_near_zero_H_mpc": int(np.sum(abs_eigs < eps)),
     }
 class QPBuilderMixin:
-    """
-    Shared QP builder for the original and optimized MPC controllers.
-
-    The default ``reference_mode='point'`` preserves the legacy objective.
-    Set ``reference_mode='contouring'`` to use a continuous path-following
-    objective with a strong normal/contouring penalty, a weaker along-path
-    lag penalty, and an optional hard minimum-progress constraint.
-
-    The decision vector remains the original stacked control sequence U.  No
-    additional slack variable is introduced, so this file is a drop-in
-    replacement for both the ordinary and persistent-OSQP controllers.
-    """
-
-    # ------------------------------------------------------------------
-    # Reference/path helpers
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _normalised_path_tangents(T: np.ndarray) -> np.ndarray:
-        T = np.asarray(T, dtype=float)
-        if T.ndim != 2 or T.shape[1] != 3:
-            raise ValueError(f"Path tangents must have shape (Np, 3), got {T.shape}.")
-        norms = np.linalg.norm(T, axis=1, keepdims=True)
-        if np.any(~np.isfinite(norms)) or np.any(norms <= 1.0e-12):
-            raise ValueError("Path tangents must be finite and non-zero.")
-        return T / norms
-
-    def _reference_mode(self) -> str:
-        mode = str(getattr(self, "reference_mode", "point")).strip().lower()
-        aliases = {
-            "waypoint": "point",
-            "waypoints": "point",
-            "path": "contouring",
-            "path_following": "contouring",
-            "path-following": "contouring",
-        }
-        mode = aliases.get(mode, mode)
-        if mode not in ("point", "contouring"):
-            raise ValueError(
-                "reference_mode must be 'point' or 'contouring'; "
-                f"got {mode!r}."
-            )
-        return mode
-
-    @staticmethod
-    def _state_reference_key(x0: np.ndarray) -> tuple[float, ...]:
-        # x0 is fixed throughout one SQP solve, so this key freezes the path
-        # reference across all SQP linearisation iterations.
-        return tuple(np.asarray(x0, dtype=float).reshape(-1).tolist())
-
-    def _validate_path_reference(self, path_ref: dict) -> dict:
-        if not isinstance(path_ref, dict):
-            raise TypeError("active_path_reference must be a dictionary.")
-
-        Np = int(self.Np)
-        C_ref = np.asarray(path_ref.get("C_ref"), dtype=float)
-        T_ref = np.asarray(path_ref.get("T_ref"), dtype=float)
-        s_ref = np.asarray(path_ref.get("s_ref"), dtype=float).reshape(-1)
-
-        if C_ref.shape != (Np, 3):
-            raise ValueError(
-                f"C_ref must have shape {(Np, 3)}, got {C_ref.shape}."
-            )
-        if T_ref.shape != (Np, 3):
-            raise ValueError(
-                f"T_ref must have shape {(Np, 3)}, got {T_ref.shape}."
-            )
-        if s_ref.shape != (Np,):
-            raise ValueError(
-                f"s_ref must have shape {(Np,)}, got {s_ref.shape}."
-            )
-        if not (
-            np.all(np.isfinite(C_ref))
-            and np.all(np.isfinite(T_ref))
-            and np.all(np.isfinite(s_ref))
-        ):
-            raise FloatingPointError("Path reference contains non-finite values.")
-
-        T_ref = self._normalised_path_tangents(T_ref)
-
-        out = dict(path_ref)
-        out["C_ref"] = C_ref.copy()
-        out["T_ref"] = T_ref.copy()
-        out["s_ref"] = s_ref.copy()
-        out["s_progress"] = float(
-            path_ref.get(
-                "s_progress",
-                getattr(self, "path_progress_s", s_ref[0]),
-            )
-        )
-        return out
-
-    def _resolve_path_reference(self, x0: np.ndarray) -> dict:
-        """
-        Return one path reference frozen for the complete SQP solve.
-
-        Preferred integration:
-            ReferenceMixin._select_reference_indices(...) sets
-            self.active_path_reference before _solve_mpc_sequence(...).
-
-        Compatibility fallback:
-            when _build_path_reference exists, build it once for the current
-            x0 and reuse it for every subsequent QP in the same SQP solve.
-        """
-        key = self._state_reference_key(x0)
-        cached_key = getattr(self, "_active_path_reference_x0_key", None)
-        active = getattr(self, "active_path_reference", None)
-
-        if active is not None and cached_key == key:
-            return self._validate_path_reference(active)
-
-        if active is not None and cached_key is None:
-            active = self._validate_path_reference(active)
-            self.active_path_reference = active
-            self._active_path_reference_x0_key = key
-            return active
-
-        if hasattr(self, "_build_path_reference"):
-            active = self._build_path_reference(x0)
-        elif all(
-            hasattr(self, name)
-            for name in ("ref_points_last", "ref_tangents_last", "ref_s_last")
-        ):
-            active = {
-                "C_ref": np.asarray(self.ref_points_last, dtype=float),
-                "T_ref": np.asarray(self.ref_tangents_last, dtype=float),
-                "s_ref": np.asarray(self.ref_s_last, dtype=float),
-                "s_progress": float(
-                    getattr(self, "path_progress_s", self.ref_s_last[0])
-                ),
-                "projection": {
-                    "distance_m": float(
-                        getattr(self, "path_projection_distance_last", np.nan)
-                    )
-                },
-            }
-        else:
-            raise RuntimeError(
-                "reference_mode='contouring' requires a continuous path "
-                "reference. Install the PathReferenceMixin and either set "
-                "self.active_path_reference before solving or provide "
-                "_build_path_reference(x_now)."
-            )
-
-        active = self._validate_path_reference(active)
-        self.active_path_reference = active
-        self._active_path_reference_x0_key = key
-        return active
-
-    def _build_continuous_reference_stack(self, path_ref: dict) -> np.ndarray:
-        n = int(self.n)
-        Np = int(self.Np)
-        C_ref = np.asarray(path_ref["C_ref"], dtype=float).reshape(Np, 3)
-        T_ref = np.asarray(path_ref["T_ref"], dtype=float).reshape(Np, 3)
-
-        X_ref = np.zeros((Np, n), dtype=float)
-        X_ref[:, : min(3, n)] = C_ref[:, : min(3, n)]
-
-        # Tangent references are always populated when the output contains
-        # them. Whether they are tracked is determined only by the configured
-        # tangent weights in self.Q. Zero weights keep tangent out of the
-        # objective while still allowing tangent safety constraints.
-        if n >= 6:
-            X_ref[:, 3:6] = T_ref
-
-        return X_ref.reshape(Np * n, 1)
-
-    def _build_contouring_Qtil(self, path_ref: dict) -> np.ndarray:
-        """
-        Build the path-following stage weights
-
-            Q_k = q_contour P_perp^T W P_perp
-                + q_lag     P_tan^T  W P_tan
-
-        where P_tan = t t^T and P_perp = I - t t^T.
-        """
-        n = int(self.n)
-        Np = int(self.Np)
-        T_ref = self._normalised_path_tangents(path_ref["T_ref"])
-
-        stage_weights = np.asarray(
-            getattr(self, "ref_stage_weights", np.ones(Np)),
-            dtype=float,
-        ).reshape(-1)
-        if stage_weights.size != Np:
-            raise ValueError(
-                f"ref_stage_weights must have length {Np}, "
-                f"got {stage_weights.size}."
-            )
-        if np.any(~np.isfinite(stage_weights)) or np.any(stage_weights < 0.0):
-            raise ValueError("ref_stage_weights must be finite and non-negative.")
-
-        q_default = 1.0
-        try:
-            q_diag = np.diag(np.asarray(self.Q, dtype=float)[:3, :3])
-            positive = q_diag[np.isfinite(q_diag) & (q_diag > 0.0)]
-            if positive.size:
-                q_default = float(np.mean(positive))
-        except Exception:
-            pass
-
-        q_contour = float(getattr(self, "q_contour", q_default))
-        q_lag = float(
-            getattr(
-                self,
-                "q_lag",
-                float(getattr(self, "contouring_lag_ratio", 0.05)) * q_contour,
-            )
-        )
-        if q_contour < 0.0 or q_lag < 0.0:
-            raise ValueError("q_contour and q_lag must be non-negative.")
-
-        axis_weights = np.asarray(
-            getattr(self, "contouring_axis_weights", np.ones(3)),
-            dtype=float,
-        ).reshape(-1)
-        if axis_weights.size != 3:
-            raise ValueError(
-                "contouring_axis_weights must contain three entries."
-            )
-        if np.any(~np.isfinite(axis_weights)) or np.any(axis_weights < 0.0):
-            raise ValueError(
-                "contouring_axis_weights must be finite and non-negative."
-            )
-
-        W = np.diag(axis_weights)
-        I3 = np.eye(3)
-        Qtil = np.zeros((Np * n, Np * n), dtype=float)
-
-        for k in range(Np):
-            t = T_ref[k]
-            P_tan = np.outer(t, t)
-            P_perp = I3 - P_tan
-            Q_pos = (
-                q_contour * (P_perp.T @ W @ P_perp)
-                + q_lag * (P_tan.T @ W @ P_tan)
-            )
-            Q_pos = 0.5 * (Q_pos + Q_pos.T)
-
-            Qk = np.zeros((n, n), dtype=float)
-            Qk[:3, :3] = stage_weights[k] * Q_pos
-
-            # Optional tip-tangent tracking. The normal path objective remains
-            # position-only. Tangent tracking is a separate ordinary quadratic
-            # term with reference T_ref. With weights [0, 0, 0] this block is
-            # exactly zero, so the tangent is modelled but not tracked.
-            if n >= 6:
-                tangent_Q = np.asarray(self.Q, dtype=float)[3:6, 3:6]
-                Qk[3:6, 3:6] = stage_weights[k] * tangent_Q
-
-            # Preserve any explicitly configured channels beyond six.
-            if n > 6:
-                Qk[6:, 6:] = stage_weights[k] * np.asarray(
-                    self.Q, dtype=float
-                )[6:, 6:]
-
-            rows = slice(k * n, (k + 1) * n)
-            Qtil[rows, rows] = Qk
-
-        return Qtil
-
-    @staticmethod
-    def _path_error_components(
-        positions: np.ndarray,
-        C_ref: np.ndarray,
-        T_ref: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        positions = np.asarray(positions, dtype=float).reshape(-1, 3)
-        C_ref = np.asarray(C_ref, dtype=float).reshape(-1, 3)
-        T_ref = np.asarray(T_ref, dtype=float).reshape(-1, 3)
-        error = positions - C_ref
-        lag = np.sum(error * T_ref, axis=1)
-        contour_vec = error - lag[:, None] * T_ref
-        contour_norm = np.linalg.norm(contour_vec, axis=1)
-        return contour_vec, contour_norm, lag
-
-    def _path_tracking_diagnostics(
-        self,
-        *,
-        X_nom: np.ndarray,
-        path_ref: dict,
-    ) -> dict:
-        n = int(self.n)
-        Np = int(self.Np)
-        X_nom_stage = np.asarray(X_nom, dtype=float).reshape(Np, n)
-        C_ref = np.asarray(path_ref["C_ref"], dtype=float).reshape(Np, 3)
-        T_ref = self._normalised_path_tangents(path_ref["T_ref"])
-        contour_vec, contour_norm, lag = self._path_error_components(
-            X_nom_stage[:, :3], C_ref, T_ref
-        )
-
-        projection = path_ref.get("projection", {}) or {}
-        projection_distance = float(
-            projection.get(
-                "distance_m",
-                getattr(self, "path_projection_distance_last", np.nan),
-            )
-        )
-
-        return {
-            "reference_mode": "contouring",
-            "path_progress_current_m": float(path_ref["s_progress"]),
-            "path_projection_distance_m": projection_distance,
-            "path_projection_distance_mm": 1.0e3 * projection_distance,
-            "contour_error_nominal_rms_m": float(
-                np.sqrt(np.mean(contour_norm**2))
-            ),
-            "contour_error_nominal_max_m": float(np.max(contour_norm)),
-            "contour_error_nominal_terminal_m": float(contour_norm[-1]),
-            "lag_error_nominal_rms_m": float(np.sqrt(np.mean(lag**2))),
-            "lag_error_nominal_terminal_m": float(lag[-1]),
-            "contour_error_nominal_m": contour_norm.copy(),
-            "lag_error_nominal_m": lag.copy(),
-            "contour_error_nominal_vectors_m": contour_vec.copy(),
-        }
-
-    def _path_total_length(self) -> float:
-        C = np.asarray(self.lumen_C, dtype=float)
-        if C.ndim != 2 or C.shape[0] < 2 or C.shape[1] < 3:
-            raise ValueError(
-                f"lumen_C must have shape (M, >=3), M >= 2; got {C.shape}."
-            )
-        return float(np.sum(np.linalg.norm(np.diff(C[:, :3], axis=0), axis=1)))
-
-    def _build_terminal_progress_model(
-        self,
-        *,
-        X_aff: np.ndarray,
-        Mc: np.ndarray,
-        U_guess: np.ndarray,
-        path_ref: dict,
-    ) -> tuple[np.ndarray, float, dict]:
-        """
-        Build the affine terminal progress approximation
-
-            s_hat(U) = b_progress + A_progress @ U.
-
-        The local progress coordinate is measured along the terminal reference
-        tangent.  It is not an exact-waypoint equality.
-        """
-        n = int(self.n)
-        m = int(self.m)
-        Np = int(self.Np)
-        Nu = Np * m
-
-        X_aff = np.asarray(X_aff, dtype=float).reshape(Np * n, 1)
-        Mc = np.asarray(Mc, dtype=float).reshape(Np * n, Nu)
-        U_guess_vec = np.asarray(U_guess, dtype=float).reshape(Nu)
-
-        C_terminal = np.asarray(path_ref["C_ref"], dtype=float).reshape(Np, 3)[-1]
-        T_terminal = self._normalised_path_tangents(path_ref["T_ref"])[-1]
-        s_anchor = float(np.asarray(path_ref["s_ref"], dtype=float).reshape(Np)[-1])
-
-        rows = slice((Np - 1) * n, (Np - 1) * n + 3)
-        X_aff_terminal = X_aff[rows, 0]
-        Mc_terminal = Mc[rows, :]
-
-        A_progress = (T_terminal.reshape(1, 3) @ Mc_terminal).reshape(Nu)
-        b_progress = float(
-            s_anchor
-            + T_terminal @ (X_aff_terminal - C_terminal)
-        )
-        s_nominal = float(b_progress + A_progress @ U_guess_vec)
-
-        s_progress = float(path_ref["s_progress"])
-        request = float(getattr(self, "progress_request_m", 0.0))
-        if request < 0.0:
-            raise ValueError("progress_request_m must be non-negative.")
-
-        path_end = self._path_total_length()
-        target = min(path_end, s_progress + request)
-        effective_request = max(0.0, target - s_progress)
-        shortfall = max(0.0, target - s_nominal)
-
-        debug = {
-            "progress_affine_b_m": b_progress,
-            "progress_current_m": s_progress,
-            "progress_request_m": request,
-            "progress_request_effective_m": effective_request,
-            "progress_target_m": target,
-            "progress_nominal_terminal_m": s_nominal,
-            "progress_nominal_shortfall_m": shortfall,
-            "progress_nominal_shortfall_mm": 1.0e3 * shortfall,
-            "progress_path_end_m": path_end,
-            "progress_constraint_row_norm": float(np.linalg.norm(A_progress)),
-        }
-        return A_progress, b_progress, debug
-
-    def _build_terminal_progress_constraint(
-        self,
-        *,
-        A_progress: np.ndarray,
-        b_progress: float,
-        progress_debug: dict,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        Nu = int(self.Np) * int(self.m)
-        A_progress = np.asarray(A_progress, dtype=float).reshape(1, Nu)
-        target = float(progress_debug["progress_target_m"])
-        lower = np.array([target - float(b_progress)], dtype=float)
-        upper = np.array([np.inf], dtype=float)
-        return A_progress, lower, upper
-
-    # ------------------------------------------------------------------
-    # Main builder
-    # ------------------------------------------------------------------
     def _build_mpc_qp(self, *, p0, x0, U_guess, idx_ref):
         """
-        Build one local MPC QP around ``U_guess``.
+        Build one local MPC QP around U_guess.
 
-        Point mode preserves the original exact-waypoint tracking objective.
-        Contouring mode uses continuous path points and tangents while keeping
-        the same control decision vector and all existing safety constraints.
+        Decision variable:
+            U = [u_0, u_1, ..., u_{Np-1}]
+            shape: (Np*m,)
+
+        Local prediction model:
+            X(U) ≈ X_nom + Mc @ (U - U_guess)
+
+        Equivalently:
+            X(U) ≈ X_aff + Mc @ U
+
+        where:
+            X_aff = X_nom - Mc @ U_guess
+
+        Objective:
+            tracking + effort + smoothness
+
+        Constraints:
+            input bounds
+            trust region around U_guess
+            insertion dL bounds
+            hard EPM-tip distance constraint
+
+        Returns:
+            H, f, A, l, u, debug
+
+        OSQP convention:
+            minimize 0.5 * U.T @ H @ U + f.T @ U
+            subject to l <= A @ U <= u
         """
         n = int(self.n)
         m = int(self.m)
@@ -543,88 +164,91 @@ class QPBuilderMixin:
         x0 = np.asarray(x0, float).reshape(-1)
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
         idx_ref = np.asarray(idx_ref, int).reshape(Np)
+
         U_guess_vec = U_guess.reshape(Nu, 1)
 
-        # Prediction matrices.
-        p_seq, Mx, Mc, B0 = self._build_prediction_mats(p0, U_guess)
+        # ------------------------------------------------------------
+        # Prediction matrices
+        # ------------------------------------------------------------
+        p_seq, Mx, Mc, B0 = self._build_prediction_mats(
+            p0,
+            U_guess,
+        )
+
         if Mc.shape != (Np * n, Nu):
             raise ValueError(
                 f"Mc has shape {Mc.shape}, expected {(Np * n, Nu)}."
             )
 
-        # Nonlinear nominal rollout at the SQP linearisation point.
-        Y_nom = [self._eval_forward_tip(p_seq[k]) for k in range(Np)]
+        # ------------------------------------------------------------
+        # Nonlinear nominal rollout at the SQP linearisation point
+        # ------------------------------------------------------------
+        Y_nom = []
+
+        for k in range(Np):
+            yk = self._eval_forward_tip(p_seq[k])
+            Y_nom.append(yk)
+
         Y_nom = np.asarray(Y_nom, float).reshape(Np, n)
         X_nom = Y_nom.reshape(Np * n, 1)
 
+        # ------------------------------------------------------------
+        # Affine matching
+        # ------------------------------------------------------------
         use_affine_matching = bool(getattr(self, "use_affine_matching", True))
+
         if use_affine_matching:
+            # X ≈ X_nom + Mc (U - U_guess)
+            #   = X_aff + Mc U
             X_aff = X_nom - Mc @ U_guess_vec
         else:
+            # Less accurate for nonlinear implicit model, but useful for testing.
             X_aff = (Mx @ x0.reshape(-1, 1)).reshape(Np * n, 1)
 
-        # Reference and tracking objective.
-        reference_mode = self._reference_mode()
-        path_ref = None
-        path_diag: dict = {"reference_mode": reference_mode}
+        # ------------------------------------------------------------
+        # Reference stack
+        # ------------------------------------------------------------
+        X_ref = self._build_reference_stack(idx_ref)
 
-        if reference_mode == "point":
-            X_ref = self._build_reference_stack(idx_ref)
-            Qtil = self._build_Qtil()
-        else:
-            path_ref = self._resolve_path_reference(x0)
-            X_ref = self._build_continuous_reference_stack(path_ref)
-            Qtil = self._build_contouring_Qtil(path_ref)
-            path_diag = self._path_tracking_diagnostics(
-                X_nom=X_nom,
-                path_ref=path_ref,
-            )
+        # ------------------------------------------------------------
+        # Objective: tracking
+        # ------------------------------------------------------------
+        Qtil = self._build_Qtil()
 
         H_track = 2.0 * (Mc.T @ Qtil @ Mc)
         f_track = 2.0 * (Mc.T @ Qtil @ (X_aff - X_ref))
+
         H = H_track.copy()
         f = f_track.copy()
 
-        # Optional progress reward.  The hard constraint below is what creates
-        # the clean safe-progress feasibility test; this reward only biases the
-        # solution towards forward motion when several safe solutions exist.
-        progress_debug: dict = {}
-        A_progress = None
-        b_progress = None
-        if reference_mode == "contouring":
-            A_progress, b_progress, progress_debug = (
-                self._build_terminal_progress_model(
-                    X_aff=X_aff,
-                    Mc=Mc,
-                    U_guess=U_guess,
-                    path_ref=path_ref,
-                )
-            )
-            progress_reward_weight = float(
-                getattr(self, "progress_reward_weight", 0.0)
-            )
-            if progress_reward_weight < 0.0:
-                raise ValueError("progress_reward_weight must be non-negative.")
-            if progress_reward_weight > 0.0:
-                f += -progress_reward_weight * A_progress.reshape(Nu, 1)
-            progress_debug["progress_reward_weight"] = progress_reward_weight
-
-        # Input effort.
+        # ------------------------------------------------------------
+        # Objective: input effort
+        # ------------------------------------------------------------
         Rtil = np.kron(np.eye(Np), self.R)
+
         H_effort = 2.0 * Rtil
         f_effort = np.zeros((Nu, 1), float)
+
         H += H_effort
         f += f_effort
 
-        # Input smoothness.
+        # ------------------------------------------------------------
+        # Objective: input smoothness
+        # ------------------------------------------------------------
         H_smooth = np.zeros((Nu, Nu), float)
         f_smooth = np.zeros((Nu, 1), float)
+
         if np.any(np.diag(self.Rd) > 0.0):
             D_full = np.zeros((Np * m, Nu), float)
+
             for k in range(Np):
                 rows = slice(k * m, (k + 1) * m)
                 cols = slice(k * m, (k + 1) * m)
+
+                # +u_k
                 D_full[rows, cols] = np.eye(m)
+
+                # -u_{k-1}, for k >= 1
                 if k > 0:
                     prev_cols = slice((k - 1) * m, k * m)
                     D_full[rows, prev_cols] = -np.eye(m)
@@ -633,52 +257,78 @@ class QPBuilderMixin:
                 getattr(self, "u_prev", np.zeros(m, float)),
                 float,
             ).reshape(m, 1)
+
             c_prev = np.zeros((Np * m, 1), float)
             c_prev[:m, :] = u_prev
+
             Rd_til = np.kron(np.eye(Np), self.Rd)
+
             H_smooth = 2.0 * (D_full.T @ Rd_til @ D_full)
             f_smooth = -2.0 * (D_full.T @ Rd_til @ c_prev)
+
             H += H_smooth
             f += f_smooth
 
+        # ------------------------------------------------------------
+        # Numerical regularisation
+        # ------------------------------------------------------------
         qp_reg = float(getattr(self, "qp_reg", 1e-9))
         H += qp_reg * np.eye(Nu)
+
         H = 0.5 * (H + H.T)
         f = f.reshape(Nu)
-
+        # ------------------------------------------------------------
+        # MPC Hessian diagnostics
+        # ------------------------------------------------------------
         hmpc_diag = symmetric_hessian_diagnostics(H)
         hmpc_diag.update({
             "norm_H_mpc": float(np.linalg.norm(H)),
             "norm_H_track": float(np.linalg.norm(H_track)),
             "norm_H_effort": float(np.linalg.norm(H_effort)),
             "norm_H_smooth": float(np.linalg.norm(H_smooth)),
-            "qp_reg": qp_reg,
+            "qp_reg": float(qp_reg),
         })
-        hmpc_diag.update(
-            mpc_hessian_channel_diagnostics(
-                H,
-                Np=self.Np,
-                m=self.m,
-                cond_warn=5e7,
-            )
+        mpc_channel_diag = mpc_hessian_channel_diagnostics(
+            H,
+            Np=self.Np,
+            m=self.m,
+            cond_warn=5e7,
         )
 
-        # Constraints.
+        hmpc_diag.update(mpc_channel_diag)
+        # ------------------------------------------------------------
+        # Constraints
+        # ------------------------------------------------------------
         constraint_blocks = []
-        u_max = np.asarray(self.u_max, float).reshape(self.m)
-        if np.all(np.isfinite(u_max)):
-            A_b, l_b, u_b = input_bounds(u_max=u_max, Np=Np)
-            constraint_blocks.append(("input_bounds", A_b, l_b, u_b))
 
-        if bool(getattr(self, "use_trust_region", True)):
+        # 1. Physical symmetric input bounds: -u_max <= U <= u_max
+        u_max = np.asarray(self.u_max, float).reshape(self.m)
+
+        if np.all(np.isfinite(u_max)):
+            A_b, l_b, u_b = input_bounds(
+                u_max=u_max,
+                Np=Np,
+            )
+            constraint_blocks.append(
+                ("input_bounds", A_b, l_b, u_b)
+            )
+        if self.use_trust_region == True:
+            # 2. Trust region: U_guess - tr <= U <= U_guess + tr
             tr_l, tr_u = trust_region_bounds(
                 U_guess,
                 getattr(self, "trust_radius", None),
             )
-            if np.any(np.isfinite(tr_l)) or np.any(np.isfinite(tr_u)):
-                A_b, l_b, u_b = box_constraint_from_bounds(tr_l, tr_u)
-                constraint_blocks.append(("trust_region", A_b, l_b, u_b))
 
+            if np.any(np.isfinite(tr_l)) or np.any(np.isfinite(tr_u)):
+                A_b, l_b, u_b = box_constraint_from_bounds(
+                    tr_l,
+                    tr_u,
+                )
+                constraint_blocks.append(
+                    ("trust_region", A_b, l_b, u_b)
+                )
+        # print(f"dL min is: {self.dL_back_max}")
+        # 3. Insertion bounds on dL
         A_b, l_b, u_b = dL_bounds(
             Np=Np,
             m=m,
@@ -686,8 +336,12 @@ class QPBuilderMixin:
             dL_back_max=float(getattr(self, "dL_back_max", 0.1)),
             dL_fwd_max=float(getattr(self, "dL_fwd_max", np.inf)),
         )
-        constraint_blocks.append(("dL_bounds", A_b, l_b, u_b))
 
+        constraint_blocks.append(
+            ("dL_bounds", A_b, l_b, u_b)
+        )
+
+        # 4. Hard EPM-lumen-end clearance
         if bool(getattr(self, "enable_hard_epm_tip_clearance", True)):
             A_b, l_b, u_b = self._build_epm_lumen_end_clearance_constraint(
                 p0=p0,
@@ -696,8 +350,20 @@ class QPBuilderMixin:
             constraint_blocks.append(
                 ("epm_lumen_end_clearance", A_b, l_b, u_b)
             )
+            
 
-        if bool(getattr(self, "enable_hard_tip_tangent_angle", False)):
+        # 5. Hard tip-tangent alignment constraint.
+        #
+        # This is not a tracking objective. It limits the angle between the
+        # predicted beam-tip tangent and the local lumen tangent at every
+        # prediction stage.
+        if bool(
+            getattr(
+                self,
+                "enable_hard_tip_tangent_angle",
+                False,
+            )
+        ):
             A_b, l_b, u_b, angle_dbg = (
                 self._build_tip_tangent_angle_constraint(
                     U_guess=U_guess,
@@ -706,42 +372,29 @@ class QPBuilderMixin:
                 )
             )
             constraint_blocks.append(
-                ("tip_tangent_angle", A_b, l_b, u_b)
+                (
+                    "tip_tangent_angle",
+                    A_b,
+                    l_b,
+                    u_b,
+                )
             )
         else:
             angle_dbg = {}
 
-        enable_progress_constraint = bool(
-            getattr(self, "enable_hard_progress_constraint", False)
-        )
-        if enable_progress_constraint:
-            if reference_mode != "contouring":
-                raise ValueError(
-                    "enable_hard_progress_constraint requires "
-                    "reference_mode='contouring'."
-                )
-            A_b, l_b, u_b = self._build_terminal_progress_constraint(
-                A_progress=A_progress,
-                b_progress=b_progress,
-                progress_debug=progress_debug,
-            )
-            constraint_blocks.append(
-                ("terminal_progress", A_b, l_b, u_b)
-            )
-        progress_debug["progress_constraint_enabled"] = int(
-            enable_progress_constraint
-        )
-
         A, l, u, constraint_slices = stack_named_constraints(constraint_blocks)
+
+        # stack_constraints returns (0, 0) if no blocks exist.
+        # For this builder, Nu is known, so enforce correct empty shape.
         if A.size == 0:
             A = np.zeros((0, Nu), float)
             l = np.zeros(0, float)
             u = np.zeros(0, float)
+
         if A.shape[1] != Nu:
             raise ValueError(
                 f"A has shape {A.shape}; expected second dimension {Nu}."
             )
-
         constraint_diag = diagnose_constraints_at_U(
             A=A,
             l=l,
@@ -753,7 +406,6 @@ class QPBuilderMixin:
         constraint_diag["constraint_issue_guess"] = classify_constraint_issue(
             constraint_diag
         )
-
         B_sequence_linearisation = np.asarray(
             getattr(
                 self,
@@ -762,6 +414,7 @@ class QPBuilderMixin:
             ),
             float,
         )
+
         B_pose_nodes_linearisation = np.asarray(
             getattr(
                 self,
@@ -770,18 +423,23 @@ class QPBuilderMixin:
             ),
             float,
         )
+
         if B_sequence_linearisation.shape != (Np, n, m):
             raise ValueError(
                 "Stored Jacobian sequence has shape "
-                f"{B_sequence_linearisation.shape}; expected {(Np, n, m)}."
+                f"{B_sequence_linearisation.shape}; "
+                f"expected {(Np, n, m)}."
             )
-        if B_pose_nodes_linearisation.shape != (Np, self.np):
+
+        if B_pose_nodes_linearisation.shape != (
+            Np,
+            self.np,
+        ):
             raise ValueError(
                 "Stored Jacobian pose nodes have shape "
                 f"{B_pose_nodes_linearisation.shape}; "
                 f"expected {(Np, self.np)}."
             )
-
         debug = {
             "p_seq": np.asarray(p_seq, float).copy(),
             "X_nom": X_nom.copy(),
@@ -801,24 +459,23 @@ class QPBuilderMixin:
                 getattr(self, "u_prev", np.zeros(m, float)),
                 float,
             ).copy(),
+
+            # Constraint diagnostics
             "constraint_slices": constraint_slices,
             "constraint_l": l.copy(),
             "constraint_u": u.copy(),
             **constraint_diag,
             **angle_dbg,
-            **path_diag,
-            **progress_debug,
-            "B_sequence_linearisation": B_sequence_linearisation.copy(),
-            "B_pose_nodes_linearisation": B_pose_nodes_linearisation.copy(),
+            "B_sequence_linearisation": (
+                B_sequence_linearisation.copy()
+            ),
+
+            "B_pose_nodes_linearisation": (
+                B_pose_nodes_linearisation.copy()
+            ),
+            # MPC Hessian diagnostics
             **hmpc_diag,
         }
-
-        if path_ref is not None:
-            debug.update({
-                "path_ref_points": np.asarray(path_ref["C_ref"], float).copy(),
-                "path_ref_tangents": np.asarray(path_ref["T_ref"], float).copy(),
-                "path_ref_s": np.asarray(path_ref["s_ref"], float).copy(),
-            })
 
         return H, f, A, l, u, debug
 
@@ -1199,19 +856,11 @@ class QPBuilderMixin:
 
         X_ref = np.zeros((Np * n, 1), float)
 
-        n_copy = min(3, n, Cc.shape[1])
+        n_copy = min(n, Cc.shape[1])
 
         for k in range(Np):
             idx = int(np.clip(idx_ref[k], 0, Cc.shape[0] - 1))
-            row0 = k * n
-            X_ref[row0:row0 + n_copy, 0] = Cc[idx, :n_copy]
-
-            # When the controller output contains a tip tangent, provide the
-            # local lumen tangent as its point-mode reference. Zero tangent
-            # weights still mean no tangent tracking.
-            if n >= 6:
-                tangent, _ = self._local_lumen_tangent(Cc[idx, :3])
-                X_ref[row0 + 3:row0 + 6, 0] = tangent
+            X_ref[k * n:k * n + n_copy, 0] = Cc[idx, :n_copy]
 
         return X_ref
     def _build_Qtil(self):
@@ -1236,10 +885,7 @@ class QPBuilderMixin:
                 f"ref_stage_weights must have length {Np}, got {stage_weights.size}."
             )
 
-        # Weight entries are the primary switch. With n=6 and tangent
-        # weights set to zero, only tip position is tracked. Set positive
-        # tangent weights to enable tangent tracking explicitly.
-        track_all_outputs = bool(getattr(self, "track_all_outputs", True))
+        track_all_outputs = bool(getattr(self, "track_all_outputs", False))
 
         for k in range(Np):
             Qk = np.zeros((n, n), float)
@@ -1331,7 +977,7 @@ class QPBuilderMixin:
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
         U_guess_vec = U_guess.reshape(Nu, 1)
 
-        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.18))
+        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.15))
         # print(f"Constraint d_min is : {d_min}")
         if d_min < 0.0:
             raise ValueError("epm_lumen_end_hard_min_m must be non-negative.")

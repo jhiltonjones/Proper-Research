@@ -10,6 +10,7 @@ from .kinematics import (
     perturb_quat_world,
     effective_lengths,
     quat_to_R,
+    _rotated_vector_jacobian_q,
     integrate_pq_from_u,
     integrate_pq_and_sens_from_u,
 )
@@ -98,6 +99,12 @@ class SensitivityResult:
     J_implicit: np.ndarray
     p_tip_base: np.ndarray
     info: dict[str, Any] = field(default_factory=dict)
+    J_tangent: np.ndarray | None = None
+    J_output: np.ndarray | None = None
+    T_u: np.ndarray | None = None
+    J_tangent_direct: np.ndarray | None = None
+    J_tangent_implicit: np.ndarray | None = None
+    t_tip_base: np.ndarray | None = None
 
 
 def ake_energy_grad_fun_for_problem(
@@ -278,6 +285,39 @@ def direct_tip_length_jacobian(
 
     return P_theta_direct
 
+
+
+def direct_tip_tangent_length_jacobian(
+    *,
+    u_opt: np.ndarray,
+    p0: np.ndarray,
+    q0: np.ndarray,
+    L: float,
+    N: int,
+    n_theta: int,
+    eps_L: float,
+    e1: np.ndarray = np.array([-1.0, 0.0, 0.0]),
+) -> np.ndarray:
+    """Fixed-strain direct tangent derivative for insertion length only."""
+    out = np.zeros((3, n_theta), dtype=float)
+    e1 = np.asarray(e1, dtype=float).reshape(3)
+
+    def tangent_at(L_eval: float) -> np.ndarray:
+        _, q_eval, _ = integrate_pq_from_u(
+            u_opt,
+            p0=p0,
+            q0=q0,
+            s=np.linspace(0.0, float(L_eval), int(N)),
+        )
+        return quat_to_R(q_eval[:, -1]) @ e1
+
+    if L - eps_L <= 0.0:
+        out[:, -1] = (tangent_at(L + eps_L) - tangent_at(L)) / eps_L
+    else:
+        out[:, -1] = (
+            tangent_at(L + eps_L) - tangent_at(L - eps_L)
+        ) / (2.0 * eps_L)
+    return out
 
 def run_hessian_diagnostics(
     *,
@@ -542,6 +582,13 @@ def implicit_tip_jacobian(
     if P_u.shape != (3, n_u):
         raise ValueError(f"P_u must have shape (3, {n_u}), got {P_u.shape}.")
 
+    e1 = np.array([-1.0, 0.0, 0.0], dtype=float)
+    q_tip_base = q_base[:, -1].copy()
+    t_tip_base = quat_to_R(q_tip_base) @ e1
+    T_u = _rotated_vector_jacobian_q(q_tip_base, e1) @ S_q_base[:, -1, :]
+    if T_u.shape != (3, n_u):
+        raise ValueError(f"T_u must have shape (3, {n_u}), got {T_u.shape}.")
+
     J_direct = direct_tip_length_jacobian(
         u_opt=u_opt,
         p0=problem.p0,
@@ -552,8 +599,26 @@ def implicit_tip_jacobian(
         eps_L=options.eps_L_direct,
     )
 
+    J_tangent_direct = direct_tip_tangent_length_jacobian(
+        u_opt=u_opt,
+        p0=problem.p0,
+        q0=problem.q0,
+        L=problem.L_model,
+        N=problem.N_nodes,
+        n_theta=n_theta,
+        eps_L=options.eps_L_direct,
+        e1=e1,
+    )
+
     J_implicit = P_u @ du_dtheta
     J_tip = J_implicit + J_direct
+    J_tangent_implicit = T_u @ du_dtheta
+    J_tangent = J_tangent_implicit + J_tangent_direct
+    J_output = np.vstack((J_tip, J_tangent))
+    if not np.all(np.isfinite(J_output)):
+        raise FloatingPointError(
+            "Implicit tip position/tangent Jacobian contains non-finite values."
+        )
  
     if options.debug_jac:
         q_tip = q_base[:, -1]
@@ -597,4 +662,10 @@ def implicit_tip_jacobian(
         J_implicit=np.asarray(J_implicit, float).copy(),
         p_tip_base=np.asarray(p_tip_base, float).copy(),
         info=info,
+        J_tangent=np.asarray(J_tangent, float).copy(),
+        J_output=np.asarray(J_output, float).copy(),
+        T_u=np.asarray(T_u, float).copy(),
+        J_tangent_direct=np.asarray(J_tangent_direct, float).copy(),
+        J_tangent_implicit=np.asarray(J_tangent_implicit, float).copy(),
+        t_tip_base=np.asarray(t_tip_base, float).copy(),
     )

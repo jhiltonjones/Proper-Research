@@ -300,7 +300,8 @@ class MPCControllerTipXY(
         self.Du = build_Du_matrix(self.Np, self.m)
         self.output_bias = np.zeros(self.n)
         self.ref_stride_pts = 1
-        self.ref_stage_weights = np.array([2.0, 1.0, 1.0, 0.5, 0.1])
+        self.ref_stage_weights = np.ones(self.Np, dtype=float)
+        self.reference_mode = "point"
 
         self.i_ref_last = 0
         self.idx_ref_last = None
@@ -331,6 +332,8 @@ class MPCControllerTipXY(
 
         self.d = np.zeros(self.n, float)
         self.U_warm = None
+        if hasattr(self, "reset_path_reference_state"):
+            self.reset_path_reference_state()
     def set_prediction_horizon(self, Np: int, *, reset_warm: bool = False):
         """
         Safely change the MPC prediction horizon online.
@@ -1659,8 +1662,10 @@ class MPCControllerTipXY(
         else:
             U_init = self._make_initial_U_guess()
 
+        # The reference mixin owns both legacy point references and the
+        # continuous contouring reference. In contouring mode it also freezes
+        # active_path_reference for the complete SQP solve.
         idx_ref = self._select_reference_indices(x0)
-
         U_seq, solve_info = self._solve_mpc_sequence(
             p0=p0,
             x0=x0,

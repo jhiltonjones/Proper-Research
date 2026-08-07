@@ -98,14 +98,14 @@ def run_experiment(
         lumen_cfg=exp_cfg.lumen,
         plant_contact=exp_cfg.model.plant_contact,
     )
-    report = reference_spacing_report(
-        bundle.lumen_C,
-        ref_stride_pts=design_cfg.ref_stride_pts,
-        ref_lookahead_pts=design_cfg.ref_lookahead_pts,
-        Np=exp_cfg.controller.Np,
-    )
+    # report = reference_spacing_report(
+    #     bundle.lumen_C,
+    #     ref_stride_pts=design_cfg.ref_stride_pts,
+    #     ref_lookahead_pts=design_cfg.ref_lookahead_pts,
+    #     Np=exp_cfg.controller.Np,
+    # )
 
-    print_reference_spacing_report(report)
+    # print_reference_spacing_report(report)
     plant_model = bundle.models["plant"]
     jacobian_model = bundle.models[exp_cfg.model.jacobian_variant]
 
@@ -204,6 +204,7 @@ def run_experiment(
         design_cfg.trust_radius,
         float,
     ).copy()
+
     stats = run_simulation(
         mpc=controller,  # Existing runner parameter name.
         forward6d=forward6d,
@@ -652,7 +653,7 @@ def make_double_bend_lumen_config(
         length=0.04,
         n_pts=240,
         n_ref_pts=100,
-        radius=0.006,
+        radius=0.004,
         ds_target=1e-3,
         bends=(
             LumenBend(
@@ -675,28 +676,28 @@ def make_double_bend_lumen_config(
     )
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
-        first_angle_deg=0.0,
-        second_angle_deg=-6.0,
+        first_angle_deg=30.0,
+        second_angle_deg=-70.0,
     )
 
     run_experiment_grid(
-        run_root=Path("testing_iridis"),
+        run_root=Path("experiment2_sim"),
 
         lumen_configs=(
             double_bend_lumen,
         ),
 
         jacobian_variants=(
-            "no_contact",
+            "no_contact", "contact",
         ),
         inverse_sequence_modes=("held",),
-        controller_kinds=("mpc", "inverse_jacobian"),
-        solver_modes=( "sqp_full", "lti"),
+        controller_kinds=( "mpc", ),
+        solver_modes=( "sqp_full",),
         rollout_steps_values=(10,),
 
         Np=15,
         N_sqp=50,
-        max_steps=100,
+        max_steps=25,
 
         plant_contact=True,
         save_plots=True,

@@ -144,7 +144,7 @@ class ControllerRunConfig:
     inverse_kp: float = 1
 
     # Maximum requested one-step tip displacement.
-    inverse_desired_step_max_m: float = 4.0e-3
+    inverse_desired_step_max_m: float = 10.0e-3
 
     # Additional regularisation added to the inverse-Jacobian solve.
     inverse_extra_damping: float = 0.0
@@ -371,8 +371,8 @@ def make_curvature_jacobian_grid(
     controller_kinds=("mpc",),
     solver_modes=("sqp_full",),
     inverse_sequence_modes=("rollout_ltv",),
-    inverse_kp_values=(0.3,),
-    inverse_desired_step_max_m=4.0e-3,
+    inverse_kp_values=(1,),
+    inverse_desired_step_max_m=5.0e-3,
     inverse_extra_damping=0.0,
     rollout_steps_values=(1,),
     Np: int = 12,

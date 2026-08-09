@@ -59,8 +59,19 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
         self.controller_solve_time_total_s = 0.0
         self.controller_rollout_time_total_s = 0.0
 
+        # Warm start for the optional dimensionless progress-shortfall variable.
+        # None means that the QP builder's current nominal shortfall estimate
+        # should be used instead. This variable is never part of U_warm because
+        # U_warm stores physical controls only.
+        self._progress_slack_warm_fraction: float | None = None
+
     def reset_qp_workspace(self) -> None:
         self.qp_solver.reset()
+        self._progress_slack_warm_fraction = None
+
+    def set_initial_params(self, p0):
+        super().set_initial_params(p0)
+        self._progress_slack_warm_fraction = None
 
     def set_prediction_horizon(self, Np: int, *, reset_warm: bool = False):
         old_np = int(self.Np)
@@ -125,7 +136,17 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
         # Retain the matrices required to reconstruct X_pred and scalar
         # diagnostics. Drop plotting-only arrays from the hot-path result.
         compact = _scalar_debug(debug)
-        for key in ("X_aff", "Mc"):
+        # X_aff/Mc are required to reconstruct the predicted output. The path
+        # reference arrays are only O(Np) and are retained so hardware logging
+        # uses the same continuous C(s), T(s), s reference as the objective
+        # rather than reconstructing a legacy centreline-node reference.
+        for key in (
+            "X_aff",
+            "Mc",
+            "path_ref_points",
+            "path_ref_tangents",
+            "path_ref_s",
+        ):
             if key in debug:
                 compact[key] = debug[key]
         return H, f, A, l, u, compact
@@ -176,12 +197,18 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
             max_sqp = max(1, int(self.N_sqp))
 
         U_guess = np.asarray(U_init, dtype=float).reshape(self.Np, self.m)
+        Nu = int(self.Np) * int(self.m)
         u_max = np.asarray(self.u_max, dtype=float).reshape(1, self.m)
         U_guess = np.clip(U_guess, -u_max, u_max)
         inactive = np.abs(u_max.reshape(-1)) <= 1.0e-12
         U_guess[:, inactive] = 0.0
 
+        sigma_warm = getattr(self, "_progress_slack_warm_fraction", None)
+        if sigma_warm is not None and not np.isfinite(float(sigma_warm)):
+            sigma_warm = None
+
         best_U: np.ndarray | None = None
+        best_sigma: float | None = None
         best_debug: dict[str, Any] = {}
         best_status = "not_solved"
         sqp_hist: list[dict[str, Any]] = []
@@ -202,14 +229,39 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                 qp_build_s = time.perf_counter() - build_started
                 qp_build_total_s += qp_build_s
 
+                # The newest QP can append one scalar sigma for soft progress.
+                # U_guess/U_warm remain physical-control vectors only, so build a
+                # decision-vector warm start explicitly when sigma is present.
+                n_decision = int(np.asarray(H).shape[0])
+                if n_decision == Nu:
+                    z_warm = U_guess.reshape(Nu)
+                    has_progress_slack = False
+                elif n_decision == Nu + 1:
+                    sigma0 = sigma_warm
+                    if sigma0 is None:
+                        sigma0 = float(
+                            dbg.get("progress_slack_guess_fraction", 0.0)
+                        )
+                    sigma0 = float(np.clip(sigma0, 0.0, 1.0))
+                    z_warm = np.concatenate(
+                        [U_guess.reshape(Nu), np.array([sigma0], dtype=float)]
+                    )
+                    has_progress_slack = True
+                else:
+                    raise ValueError(
+                        "Unexpected optimized QP decision dimension: "
+                        f"{n_decision}; expected {Nu} controls or {Nu + 1} "
+                        "for controls plus progress slack."
+                    )
+
                 solve_started = time.perf_counter()
-                U_vec, _, status, osqp_diag = self.qp_solver.solve(
+                Z_vec, _, status, osqp_diag = self.qp_solver.solve(
                     H,
                     f,
                     A,
                     l,
                     u,
-                    x_warm=U_guess.reshape(-1),
+                    x_warm=z_warm,
                 )
                 osqp_s = time.perf_counter() - solve_started
                 osqp_total_s += osqp_s
@@ -219,7 +271,7 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                     "solved inaccurate",
                 }
 
-                if not solved or U_vec is None:
+                if not solved or Z_vec is None:
                     failure = {
                         "status": status_text,
                         "infeasible": int("infeasible" in status_text.lower()),
@@ -241,11 +293,24 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                         )
                         failure["used_previous_feasible"] = True
                         failure.update(best_debug)
+                        if best_sigma is not None:
+                            self._progress_slack_warm_fraction = float(best_sigma)
                         return best_U, failure
                     return None, failure
 
-                U_new = np.asarray(U_vec, dtype=float).reshape(self.Np, self.m)
+                Z_vec = np.asarray(Z_vec, dtype=float).reshape(-1)
+                if Z_vec.size != n_decision:
+                    raise ValueError(
+                        f"OSQP returned {Z_vec.size} decision values; "
+                        f"expected {n_decision}."
+                    )
+                U_new = Z_vec[:Nu].reshape(self.Np, self.m)
                 U_new[:, inactive] = 0.0
+                sigma_solution = (
+                    float(Z_vec[Nu]) if has_progress_slack else None
+                )
+                if sigma_solution is not None:
+                    sigma_warm = float(np.clip(sigma_solution, 0.0, 1.0))
 
                 validation_diag: dict[str, Any] = {}
                 if self.validate_nonlinear_candidate:
@@ -323,11 +388,18 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                     "osqp_setup_performed": int(
                         osqp_diag.get("osqp_setup_performed", 0)
                     ),
+                    "qp_decision_dim": int(n_decision),
+                    "progress_slack_solution_fraction": (
+                        np.nan
+                        if sigma_solution is None
+                        else float(sigma_solution)
+                    ),
                 }
                 iteration_diag.update(_scalar_debug(validation_diag))
                 sqp_hist.append(iteration_diag)
 
                 best_U = U_new.copy()
+                best_sigma = sigma_solution
                 best_status = status_text
                 if self.collect_full_diagnostics:
                     best_debug = dict(dbg)
@@ -336,6 +408,11 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                     best_debug = _scalar_debug(dbg)
                     best_debug.update(_scalar_debug(validation_diag))
                 best_debug.update(osqp_diag)
+                best_debug["qp_control_dim"] = int(Nu)
+                best_debug["qp_decision_dim"] = int(n_decision)
+                best_debug["progress_slack_solution_fraction"] = (
+                    np.nan if sigma_solution is None else float(sigma_solution)
+                )
 
                 if solver_mode == "sqp_full" and converged:
                     best_debug.update(
@@ -360,6 +437,10 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
                     "solver_failed": 1,
                     "sqp_hist": sqp_hist,
                 }
+
+            self._progress_slack_warm_fraction = (
+                None if best_sigma is None else float(best_sigma)
+            )
 
             result = {
                 "status": best_status,
@@ -555,6 +636,28 @@ class MPCControllerTipXYOptimized(MPCControllerTipXY):
             **rollout_info,
             **solve_info,
         }
+        # Always expose the exact frozen continuous reference used by this
+        # controller frame. These arrays are small and are required for correct
+        # hardware/publication logging even when full diagnostics are disabled.
+        active_ref = getattr(self, "active_path_reference", None)
+        if isinstance(active_ref, dict):
+            try:
+                C_ref = np.asarray(active_ref["C_ref"], dtype=float).copy()
+                T_ref = np.asarray(active_ref["T_ref"], dtype=float).copy()
+                s_ref = np.asarray(active_ref["s_ref"], dtype=float).copy()
+            except (KeyError, TypeError, ValueError):
+                pass
+            else:
+                info["path_ref_points"] = C_ref
+                info["path_ref_tangents"] = T_ref
+                info["path_ref_s"] = s_ref
+                info["path_progress_current_m"] = float(
+                    active_ref.get(
+                        "s_progress",
+                        getattr(self, "path_progress_s", np.nan),
+                    )
+                )
+
         if hasattr(self.Jxy_fn, "get_last_diag"):
             info.update(self.Jxy_fn.get_last_diag())
         return self.p.copy(), self.x.copy(), info

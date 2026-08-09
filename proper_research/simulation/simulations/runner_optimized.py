@@ -36,6 +36,15 @@ _LIGHT_COLUMNS = (
     "N_sqp",
     "rollout_steps",
     "i_ref",
+    "reference_mode",
+    "path_progress_current_m",
+    "path_reference_s0_m",
+    "path_projection_distance_mm",
+    "contour_error_nominal_rms_mm",
+    "lag_error_nominal_rms_mm",
+    "progress_constraint_mode",
+    "progress_nominal_shortfall_mm",
+    "progress_slack_solution_fraction",
     "tip_x",
     "tip_y",
     "tip_z",
@@ -102,6 +111,7 @@ def run_simulation_optimized(
     tip_tangent_stop_clearance_m: float = 1.0e-3,
     tip_radius_m: float = 0.0,
     stop_reference_margin: int = 5,
+    stop_progress_margin_m: float = 2.5e-3,
 ):
     """
     Fixed-mode simulation runner with no hierarchical controller.
@@ -126,12 +136,22 @@ def run_simulation_optimized(
     frames_dir = None if frames_dir is None else Path(frames_dir)
     lumen_C = np.asarray(lumen_C, dtype=float)
     lumen_R = np.asarray(lumen_R, dtype=float).reshape(-1)
+    if lumen_C.ndim != 2 or lumen_C.shape[0] < 2 or lumen_C.shape[1] < 3:
+        raise ValueError("lumen_C must have shape (M, >=3), M >= 2.")
+    path_total_length_m = float(
+        np.sum(np.linalg.norm(np.diff(lumen_C[:, :3], axis=0), axis=1))
+    )
+    stop_progress_margin_m = float(stop_progress_margin_m)
+    if stop_progress_margin_m < 0.0:
+        raise ValueError("stop_progress_margin_m must be non-negative.")
 
     history: dict[str, list] = {
         "k": [],
         "status": [],
         "infeasible": [],
         "i_ref": [],
+        "path_progress_current_m": [],
+        "path_reference_s0_m": [],
         "tip": [],
         "p": [],
         "u0": [],
@@ -167,6 +187,17 @@ def run_simulation_optimized(
 
         idx_ref = np.asarray(info.get("idx_ref", []), dtype=int).reshape(-1)
         i_ref = int(idx_ref[0]) if idx_ref.size else -1
+        reference_mode = str(
+            info.get("reference_mode", getattr(mpc, "reference_mode", "point"))
+        ).strip().lower()
+        path_progress_current_m = float(
+            info.get(
+                "path_progress_current_m",
+                info.get("progress_current_m", getattr(mpc, "path_progress_s", np.nan)),
+            )
+        )
+        path_ref_s = np.asarray(info.get("path_ref_s", []), dtype=float).reshape(-1)
+        path_reference_s0_m = float(path_ref_s[0]) if path_ref_s.size else np.nan
         U0 = np.asarray(
             info.get("u0", np.full(mpc.m, np.nan)),
             dtype=float,
@@ -194,6 +225,30 @@ def run_simulation_optimized(
                 info.get("rollout_steps_used", rollout_steps)
             ),
             "i_ref": i_ref,
+            "reference_mode": reference_mode,
+            "path_progress_current_m": path_progress_current_m,
+            "path_reference_s0_m": path_reference_s0_m,
+            "path_projection_distance_mm": 1.0e3 * float(
+                info.get("path_projection_distance_m", np.nan)
+            ),
+            "contour_error_nominal_rms_mm": 1.0e3 * float(
+                info.get("contour_error_nominal_rms_m", np.nan)
+            ),
+            "lag_error_nominal_rms_mm": 1.0e3 * float(
+                info.get("lag_error_nominal_rms_m", np.nan)
+            ),
+            "progress_constraint_mode": str(
+                info.get(
+                    "progress_constraint_mode",
+                    getattr(mpc, "progress_constraint_mode", "none"),
+                )
+            ),
+            "progress_nominal_shortfall_mm": float(
+                info.get("progress_nominal_shortfall_mm", np.nan)
+            ),
+            "progress_slack_solution_fraction": float(
+                info.get("progress_slack_solution_fraction", np.nan)
+            ),
             "tip_x": float(tip[0]),
             "tip_y": float(tip[1]),
             "tip_z": float(tip[2]),
@@ -264,6 +319,8 @@ def run_simulation_optimized(
         history["status"].append(str(info.get("status", "unknown")))
         history["infeasible"].append(int(info.get("infeasible", 0)))
         history["i_ref"].append(i_ref)
+        history["path_progress_current_m"].append(path_progress_current_m)
+        history["path_reference_s0_m"].append(path_reference_s0_m)
         history["tip"].append(tip.copy())
         history["p"].append(np.asarray(p_post, dtype=float).copy())
         history["u0"].append(U0.copy())
@@ -304,7 +361,18 @@ def run_simulation_optimized(
         if int(info.get("infeasible", 0)):
             stop_reason = "controller_infeasible"
             break
-        if i_ref >= lumen_C.shape[0] - int(stop_reference_margin):
+        if reference_mode == "contouring":
+            completion_threshold = max(
+                0.0, path_total_length_m - stop_progress_margin_m
+            )
+            if (
+                np.isfinite(path_progress_current_m)
+                and path_progress_current_m >= completion_threshold
+            ):
+                stop_reason = "reference_complete"
+                break
+        elif i_ref >= lumen_C.shape[0] - int(stop_reference_margin):
+            # Legacy point-mode compatibility only.
             stop_reason = "reference_complete"
             break
 

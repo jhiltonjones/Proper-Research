@@ -128,11 +128,11 @@ class QPBuilderMixin:
     The default ``reference_mode='point'`` preserves the legacy objective.
     Set ``reference_mode='contouring'`` to use a continuous path-following
     objective with a strong normal/contouring penalty, a weaker along-path
-    lag penalty, and an optional hard minimum-progress constraint.
-
-    The decision vector remains the original stacked control sequence U.  No
-    additional slack variable is introduced, so this file is a drop-in
-    replacement for both the ordinary and persistent-OSQP controllers.
+    lag penalty and configurable progress handling.  For normal safe control,
+    ``progress_constraint_mode="soft_slack"`` augments the decision vector with
+    one dimensionless progress-shortfall variable sigma.  Hard physical/safety
+    constraints remain hard; progress is allowed to relax so the controller can
+    safely reposition before advancing.
     """
 
     # ------------------------------------------------------------------
@@ -523,6 +523,119 @@ class QPBuilderMixin:
         upper = np.array([np.inf], dtype=float)
         return A_progress, lower, upper
 
+    def _progress_constraint_mode(self, *, reference_mode: str) -> str:
+        """Resolve progress handling while preserving legacy configuration.
+
+        Modes
+        -----
+        none:
+            No terminal progress constraint.
+        hard:
+            Legacy hard terminal minimum-progress constraint.
+        soft_slack:
+            Add one dimensionless slack fraction sigma to the QP.  sigma=0
+            means the full requested progress must be achieved; sigma=1 allows
+            the terminal progress requirement to relax back to the current path
+            station.  Safety constraints are never softened.
+        """
+        if reference_mode != "contouring":
+            return "none"
+
+        configured = getattr(self, "progress_constraint_mode", None)
+        if configured is None:
+            if bool(getattr(self, "enable_progress_slack", False)):
+                return "soft_slack"
+            if bool(getattr(self, "enable_hard_progress_constraint", False)):
+                return "hard"
+            return "none"
+
+        mode = str(configured).strip().lower()
+        aliases = {
+            "off": "none",
+            "disabled": "none",
+            "soft": "soft_slack",
+            "slack": "soft_slack",
+            "soft-progress": "soft_slack",
+        }
+        mode = aliases.get(mode, mode)
+        if mode not in {"none", "hard", "soft_slack"}:
+            raise ValueError(
+                "progress_constraint_mode must be 'none', 'hard', or "
+                f"'soft_slack'; got {mode!r}."
+            )
+        return mode
+
+    @staticmethod
+    def _augment_control_constraint(A: np.ndarray, *, n_control: int, n_decision: int):
+        """Append zero columns for non-control decision variables."""
+        A = np.asarray(A, dtype=float)
+        if A.ndim != 2 or A.shape[1] != n_control:
+            raise ValueError(
+                f"Control constraint must have {n_control} columns; got {A.shape}."
+            )
+        if n_decision == n_control:
+            return A
+        return np.hstack(
+            [A, np.zeros((A.shape[0], n_decision - n_control), dtype=float)]
+        )
+
+    def _build_soft_progress_constraint(
+        self,
+        *,
+        A_progress: np.ndarray,
+        b_progress: float,
+        progress_debug: dict,
+        n_control: int,
+        n_decision: int,
+        slack_index: int,
+    ):
+        """Build soft terminal-progress and sigma-bound rows.
+
+        The terminal progress row is
+
+            A_progress U + ds_request * sigma >= target - b_progress.
+
+        sigma is dimensionless.  With 0 <= sigma <= 1, sigma=1 relaxes the
+        requested progress back to zero net forward progress, rather than
+        permitting the optimizer to move backwards simply to buy feasibility.
+        """
+        if n_decision != n_control + 1 or slack_index != n_control:
+            raise ValueError("Soft progress currently expects one appended slack variable.")
+
+        effective_request = float(progress_debug["progress_request_effective_m"])
+        target = float(progress_debug["progress_target_m"])
+
+        row = np.zeros((1, n_decision), dtype=float)
+        if effective_request > 1.0e-12:
+            row[0, :n_control] = np.asarray(A_progress, dtype=float).reshape(n_control)
+            row[0, slack_index] = effective_request
+            l_progress = np.array([target - float(b_progress)], dtype=float)
+            u_progress = np.array([np.inf], dtype=float)
+        else:
+            # Keep a fixed row count for persistent OSQP, but disable the row
+            # when there is no remaining progress request (e.g. path end).
+            l_progress = np.array([-np.inf], dtype=float)
+            u_progress = np.array([np.inf], dtype=float)
+
+        max_fraction = float(getattr(self, "progress_slack_max_fraction", 1.0))
+        if (
+            not np.isfinite(max_fraction)
+            or max_fraction < 0.0
+            or max_fraction > 1.0
+        ):
+            raise ValueError(
+                "progress_slack_max_fraction must be finite and lie in [0, 1]."
+            )
+        if effective_request <= 1.0e-12:
+            max_fraction = 0.0
+
+        A_sigma = np.zeros((1, n_decision), dtype=float)
+        A_sigma[0, slack_index] = 1.0
+        l_sigma = np.array([0.0], dtype=float)
+        u_sigma = np.array([max_fraction], dtype=float)
+
+        return (row, l_progress, u_progress), (A_sigma, l_sigma, u_sigma)
+
     # ------------------------------------------------------------------
     # Main builder
     # ------------------------------------------------------------------
@@ -531,8 +644,10 @@ class QPBuilderMixin:
         Build one local MPC QP around ``U_guess``.
 
         Point mode preserves the original exact-waypoint tracking objective.
-        Contouring mode uses continuous path points and tangents while keeping
-        the same control decision vector and all existing safety constraints.
+        Contouring mode uses continuous path points and tangents. The physical
+        control subvector is unchanged; ``progress_constraint_mode="soft_slack"``
+        appends one dimensionless progress-shortfall variable. All physical and
+        safety constraints remain hard.
         """
         n = int(self.n)
         m = int(self.m)
@@ -580,14 +695,22 @@ class QPBuilderMixin:
                 path_ref=path_ref,
             )
 
+        progress_mode = self._progress_constraint_mode(
+            reference_mode=reference_mode
+        )
+        use_progress_slack = progress_mode == "soft_slack"
+        n_decision = Nu + (1 if use_progress_slack else 0)
+        progress_slack_index = Nu if use_progress_slack else -1
+
         H_track = 2.0 * (Mc.T @ Qtil @ Mc)
         f_track = 2.0 * (Mc.T @ Qtil @ (X_aff - X_ref))
         H = H_track.copy()
         f = f_track.copy()
 
-        # Optional progress reward.  The hard constraint below is what creates
-        # the clean safe-progress feasibility test; this reward only biases the
-        # solution towards forward motion when several safe solutions exist.
+        # Optional progress reward.  In soft-slack mode the requested progress
+        # is represented explicitly by sigma, while this reward can still bias
+        # the optimizer toward extra forward motion among otherwise similar safe
+        # solutions.
         progress_debug: dict = {}
         A_progress = None
         b_progress = None
@@ -646,6 +769,57 @@ class QPBuilderMixin:
         H = 0.5 * (H + H.T)
         f = f.reshape(Nu)
 
+        # --------------------------------------------------------------
+        # Optional dimensionless progress-shortfall variable sigma.
+        # --------------------------------------------------------------
+        progress_slack_guess_fraction = 0.0
+        progress_slack_quadratic_weight = 0.0
+        progress_slack_linear_weight = 0.0
+        if use_progress_slack:
+            progress_slack_quadratic_weight = float(
+                getattr(self, "progress_slack_quadratic_weight", 1.0e3)
+            )
+            progress_slack_linear_weight = float(
+                getattr(self, "progress_slack_linear_weight", 0.0)
+            )
+            if progress_slack_quadratic_weight < 0.0:
+                raise ValueError(
+                    "progress_slack_quadratic_weight must be non-negative."
+                )
+            if progress_slack_linear_weight < 0.0:
+                raise ValueError(
+                    "progress_slack_linear_weight must be non-negative."
+                )
+
+            H_aug = np.zeros((n_decision, n_decision), dtype=float)
+            H_aug[:Nu, :Nu] = H
+            # OSQP uses 0.5*z.T*H*z, hence 2*w for w*sigma^2.
+            H_aug[progress_slack_index, progress_slack_index] = (
+                2.0 * progress_slack_quadratic_weight + qp_reg
+            )
+            f_aug = np.zeros(n_decision, dtype=float)
+            f_aug[:Nu] = f
+            f_aug[progress_slack_index] = progress_slack_linear_weight
+            H, f = H_aug, f_aug
+
+            effective_request = float(
+                progress_debug.get("progress_request_effective_m", 0.0)
+            )
+            nominal_shortfall = float(
+                progress_debug.get("progress_nominal_shortfall_m", 0.0)
+            )
+            max_fraction = float(
+                getattr(self, "progress_slack_max_fraction", 1.0)
+            )
+            if effective_request > 1.0e-12:
+                progress_slack_guess_fraction = float(
+                    np.clip(
+                        nominal_shortfall / effective_request,
+                        0.0,
+                        max_fraction,
+                    )
+                )
+
         hmpc_diag = symmetric_hessian_diagnostics(H)
         hmpc_diag.update({
             "norm_H_mpc": float(np.linalg.norm(H)),
@@ -653,10 +827,19 @@ class QPBuilderMixin:
             "norm_H_effort": float(np.linalg.norm(H_effort)),
             "norm_H_smooth": float(np.linalg.norm(H_smooth)),
             "qp_reg": qp_reg,
+            "qp_control_dim": int(Nu),
+            "qp_decision_dim": int(n_decision),
+            "progress_constraint_mode": progress_mode,
+            "progress_slack_enabled": int(use_progress_slack),
+            "progress_slack_index": int(progress_slack_index),
+            "progress_slack_guess_fraction": float(progress_slack_guess_fraction),
+            "progress_slack_quadratic_weight": float(progress_slack_quadratic_weight),
+            "progress_slack_linear_weight": float(progress_slack_linear_weight),
         })
+        # Channel diagnostics concern only physical controls, not sigma.
         hmpc_diag.update(
             mpc_hessian_channel_diagnostics(
-                H,
+                H[:Nu, :Nu],
                 Np=self.Np,
                 m=self.m,
                 cond_warn=5e7,
@@ -665,10 +848,19 @@ class QPBuilderMixin:
 
         # Constraints.
         constraint_blocks = []
+
+        def append_control_constraint(name, A_b, l_b, u_b):
+            A_aug = self._augment_control_constraint(
+                A_b,
+                n_control=Nu,
+                n_decision=n_decision,
+            )
+            constraint_blocks.append((name, A_aug, l_b, u_b))
+
         u_max = np.asarray(self.u_max, float).reshape(self.m)
         if np.all(np.isfinite(u_max)):
             A_b, l_b, u_b = input_bounds(u_max=u_max, Np=Np)
-            constraint_blocks.append(("input_bounds", A_b, l_b, u_b))
+            append_control_constraint("input_bounds", A_b, l_b, u_b)
 
         if bool(getattr(self, "use_trust_region", True)):
             tr_l, tr_u = trust_region_bounds(
@@ -677,7 +869,7 @@ class QPBuilderMixin:
             )
             if np.any(np.isfinite(tr_l)) or np.any(np.isfinite(tr_u)):
                 A_b, l_b, u_b = box_constraint_from_bounds(tr_l, tr_u)
-                constraint_blocks.append(("trust_region", A_b, l_b, u_b))
+                append_control_constraint("trust_region", A_b, l_b, u_b)
 
         A_b, l_b, u_b = dL_bounds(
             Np=Np,
@@ -686,15 +878,15 @@ class QPBuilderMixin:
             dL_back_max=float(getattr(self, "dL_back_max", 0.1)),
             dL_fwd_max=float(getattr(self, "dL_fwd_max", np.inf)),
         )
-        constraint_blocks.append(("dL_bounds", A_b, l_b, u_b))
+        append_control_constraint("dL_bounds", A_b, l_b, u_b)
 
         if bool(getattr(self, "enable_hard_epm_tip_clearance", True)):
             A_b, l_b, u_b = self._build_epm_lumen_end_clearance_constraint(
                 p0=p0,
                 U_guess=U_guess,
             )
-            constraint_blocks.append(
-                ("epm_lumen_end_clearance", A_b, l_b, u_b)
+            append_control_constraint(
+                "epm_lumen_end_clearance", A_b, l_b, u_b
             )
 
         if bool(getattr(self, "enable_hard_tip_tangent_angle", False)):
@@ -705,48 +897,73 @@ class QPBuilderMixin:
                     Mc=Mc,
                 )
             )
-            constraint_blocks.append(
-                ("tip_tangent_angle", A_b, l_b, u_b)
-            )
+            append_control_constraint("tip_tangent_angle", A_b, l_b, u_b)
         else:
             angle_dbg = {}
 
-        enable_progress_constraint = bool(
-            getattr(self, "enable_hard_progress_constraint", False)
-        )
-        if enable_progress_constraint:
-            if reference_mode != "contouring":
-                raise ValueError(
-                    "enable_hard_progress_constraint requires "
-                    "reference_mode='contouring'."
-                )
+        if progress_mode == "hard":
             A_b, l_b, u_b = self._build_terminal_progress_constraint(
                 A_progress=A_progress,
                 b_progress=b_progress,
                 progress_debug=progress_debug,
             )
-            constraint_blocks.append(
-                ("terminal_progress", A_b, l_b, u_b)
+            append_control_constraint("terminal_progress_hard", A_b, l_b, u_b)
+        elif progress_mode == "soft_slack":
+            progress_block, sigma_block = self._build_soft_progress_constraint(
+                A_progress=A_progress,
+                b_progress=b_progress,
+                progress_debug=progress_debug,
+                n_control=Nu,
+                n_decision=n_decision,
+                slack_index=progress_slack_index,
             )
-        progress_debug["progress_constraint_enabled"] = int(
-            enable_progress_constraint
-        )
+            constraint_blocks.append(
+                ("terminal_progress_soft", *progress_block)
+            )
+            constraint_blocks.append(
+                ("progress_slack_bounds", *sigma_block)
+            )
 
+        progress_debug["progress_constraint_enabled"] = int(
+            progress_mode in {"hard", "soft_slack"}
+        )
+        progress_debug["progress_constraint_mode"] = progress_mode
+        progress_debug["progress_slack_enabled"] = int(use_progress_slack)
+        progress_debug["progress_slack_index"] = int(progress_slack_index)
+        progress_debug["progress_slack_guess_fraction"] = float(
+            progress_slack_guess_fraction
+        )
+        progress_debug["progress_slack_quadratic_weight"] = float(
+            progress_slack_quadratic_weight
+        )
+        progress_debug["progress_slack_linear_weight"] = float(
+            progress_slack_linear_weight
+        )
         A, l, u, constraint_slices = stack_named_constraints(constraint_blocks)
         if A.size == 0:
-            A = np.zeros((0, Nu), float)
+            A = np.zeros((0, n_decision), float)
             l = np.zeros(0, float)
             u = np.zeros(0, float)
-        if A.shape[1] != Nu:
+        if A.shape[1] != n_decision:
             raise ValueError(
-                f"A has shape {A.shape}; expected second dimension {Nu}."
+                f"A has shape {A.shape}; expected second dimension {n_decision}."
             )
+
+        if use_progress_slack:
+            Z_guess_vec = np.concatenate(
+                [
+                    U_guess_vec.reshape(Nu),
+                    np.array([progress_slack_guess_fraction], dtype=float),
+                ]
+            ).reshape(n_decision, 1)
+        else:
+            Z_guess_vec = U_guess_vec.reshape(Nu, 1)
 
         constraint_diag = diagnose_constraints_at_U(
             A=A,
             l=l,
             u=u,
-            U=U_guess_vec,
+            U=Z_guess_vec,
             constraint_slices=constraint_slices,
             tol=1e-8,
         )
@@ -797,6 +1014,12 @@ class QPBuilderMixin:
             "H_smooth": H_smooth.copy(),
             "f_smooth": f_smooth.copy(),
             "U_guess": U_guess.copy(),
+            "Z_guess": Z_guess_vec.copy(),
+            "progress_affine_A": (
+                np.empty(0, dtype=float)
+                if A_progress is None
+                else np.asarray(A_progress, dtype=float).copy()
+            ),
             "u_prev": np.asarray(
                 getattr(self, "u_prev", np.zeros(m, float)),
                 float,
@@ -832,14 +1055,17 @@ class QPBuilderMixin:
             )
         return v / norm, norm
 
-    def _local_lumen_tangent(self, point):
-        """
-        Estimate the local lumen-centreline tangent at a world-frame point.
+    def _local_lumen_geometry(self, point):
+        """Continuous nearest-segment lumen geometry at ``point``.
+
+        This intentionally uses segment projection rather than nearest centreline
+        *node*.  The latter can falsely report low wall clearance for a tip that
+        lies exactly on the centreline between two sparsely sampled nodes.
         """
         if not hasattr(self, "lumen_C"):
-            raise AttributeError(
-                "Tip-tangent constraint requires self.lumen_C."
-            )
+            raise AttributeError("Lumen geometry requires self.lumen_C.")
+        if not hasattr(self, "lumen_R"):
+            raise AttributeError("Lumen geometry requires self.lumen_R.")
 
         C = np.asarray(self.lumen_C, float)
         if C.ndim != 2 or C.shape[0] < 2 or C.shape[1] < 3:
@@ -847,115 +1073,77 @@ class QPBuilderMixin:
                 "lumen_C must have shape (M, >=3) with M >= 2; "
                 f"got {C.shape}."
             )
-
         C = C[:, :3]
         point = np.asarray(point, float).reshape(3)
-        index = int(
-            np.argmin(
-                np.linalg.norm(
-                    C - point.reshape(1, 3),
-                    axis=1,
-                )
-            )
-        )
 
-        if index == 0:
-            delta = C[1] - C[0]
-        elif index == C.shape[0] - 1:
-            delta = C[-1] - C[-2]
-        else:
-            delta = C[index + 1] - C[index - 1]
+        A = C[:-1]
+        B = C[1:]
+        AB = B - A
+        denom = np.sum(AB * AB, axis=1)
+        if np.any(denom <= 1.0e-24):
+            raise ValueError("lumen_C contains duplicate consecutive points.")
 
-        tangent, _ = self._normalise_vector(
-            delta,
-            name="local lumen tangent",
-        )
-        return tangent, index
+        tau = np.sum((point[None, :] - A) * AB, axis=1) / denom
+        tau = np.clip(tau, 0.0, 1.0)
+        projected = A + tau[:, None] * AB
+        distance_sq = np.sum((point[None, :] - projected) ** 2, axis=1)
+        seg = int(np.argmin(distance_sq))
+        tau_seg = float(tau[seg])
+        centre = projected[seg].copy()
+        radial_distance = float(np.sqrt(distance_sq[seg]))
 
-
-    def _tip_wall_clearance(self, point):
-        """
-        Approximate signed radial clearance between the beam-tip centre and
-        the lumen wall at the nearest centreline sample.
-
-        Positive:
-            tip centre is inside the lumen with free clearance.
-
-        Zero:
-            tip surface is at the wall.
-
-        Negative:
-            tip surface has crossed the nominal wall in the geometric model.
-
-        The configured ``tip_radius_m`` is subtracted from the available lumen
-        radius. ``lumen_R`` may be a scalar or one radius per lumen point.
-        """
-        if not hasattr(self, "lumen_C"):
-            raise AttributeError(
-                "Proximity-gated tip-tangent constraint requires self.lumen_C."
-            )
-        if not hasattr(self, "lumen_R"):
-            raise AttributeError(
-                "Proximity-gated tip-tangent constraint requires self.lumen_R."
-            )
-
-        C = np.asarray(self.lumen_C, float)
-        if C.ndim != 2 or C.shape[0] < 1 or C.shape[1] < 3:
-            raise ValueError(
-                "lumen_C must have shape (M, >=3); "
-                f"got {C.shape}."
-            )
-
-        point = np.asarray(point, float).reshape(3)
-        C_xyz = C[:, :3]
-        distances = np.linalg.norm(
-            C_xyz - point.reshape(1, 3),
-            axis=1,
-        )
-        index = int(np.argmin(distances))
-        radial_distance = float(distances[index])
+        tangent = AB[seg] / np.sqrt(denom[seg])
 
         R = np.asarray(self.lumen_R, float)
         if R.ndim == 0 or R.size == 1:
             lumen_radius = float(R.reshape(-1)[0])
-        elif R.size == C_xyz.shape[0]:
-            lumen_radius = float(R.reshape(-1)[index])
+        elif R.size == C.shape[0]:
+            r_nodes = R.reshape(-1)
+            lumen_radius = float(
+                (1.0 - tau_seg) * r_nodes[seg]
+                + tau_seg * r_nodes[seg + 1]
+            )
         else:
             raise ValueError(
-                "lumen_R must be scalar or contain one radius per lumen "
-                f"centreline point; got shape {R.shape} for "
-                f"{C_xyz.shape[0]} points."
+                "lumen_R must be scalar or contain one radius per lumen node; "
+                f"got shape {R.shape} for {C.shape[0]} points."
             )
-
-        tip_radius = float(
-            getattr(
-                self,
-                "tip_radius_m",
-                0.0,
-            )
-        )
-
         if not np.isfinite(lumen_radius) or lumen_radius <= 0.0:
             raise ValueError(
                 f"Local lumen radius must be finite and positive; got {lumen_radius}."
             )
+
+        return tangent, centre, seg, tau_seg, lumen_radius, radial_distance
+
+    def _local_lumen_tangent(self, point):
+        tangent, _, segment, _, _, _ = self._local_lumen_geometry(point)
+        return np.asarray(tangent, float).reshape(3), int(segment)
+
+    def _tip_wall_clearance(self, point):
+        """Signed radial tip-surface clearance using continuous segment projection."""
+        (
+            _,
+            _,
+            segment,
+            _,
+            lumen_radius,
+            radial_distance,
+        ) = self._local_lumen_geometry(point)
+
+        tip_radius = float(getattr(self, "tip_radius_m", 0.0))
         if not np.isfinite(tip_radius) or tip_radius < 0.0:
             raise ValueError(
                 f"tip_radius_m must be finite and non-negative; got {tip_radius}."
             )
 
-        clearance = (
-            lumen_radius
-            - radial_distance
-            - tip_radius
-        )
-
+        clearance = lumen_radius - radial_distance - tip_radius
         return (
             float(clearance),
-            index,
-            lumen_radius,
-            radial_distance,
+            int(segment),
+            float(lumen_radius),
+            float(radial_distance),
         )
+
 
     def _build_tip_tangent_angle_constraint(
         self,
@@ -1124,18 +1312,15 @@ class QPBuilderMixin:
             lower.append(-b)
             active_stages.append(stage)
 
-        if rows:
-            A_angle = np.vstack(rows).reshape(-1, Nu)
-            l_angle = np.asarray(lower, float)
-            u_angle = np.full(
-                len(rows),
-                np.inf,
-                dtype=float,
-            )
-        else:
-            A_angle = np.zeros((0, Nu), dtype=float)
-            l_angle = np.zeros(0, dtype=float)
-            u_angle = np.zeros(0, dtype=float)
+        # Keep one row per horizon stage so the optimized persistent OSQP
+        # workspace does not change dimensions as the proximity gate switches
+        # individual stages on and off.  Inactive rows are exactly unconstrained.
+        A_angle = np.zeros((Np, Nu), dtype=float)
+        l_angle = np.full(Np, -np.inf, dtype=float)
+        u_angle = np.full(Np, np.inf, dtype=float)
+        for row_vec, lower_value, stage in zip(rows, lower, active_stages):
+            A_angle[int(stage), :] = np.asarray(row_vec, dtype=float).reshape(Nu)
+            l_angle[int(stage)] = float(lower_value)
 
         debug = {
             "tip_tangent_angle_limit_deg": alpha_deg,
@@ -1331,7 +1516,7 @@ class QPBuilderMixin:
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
         U_guess_vec = U_guess.reshape(Nu, 1)
 
-        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.18))
+        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.2))
         # print(f"Constraint d_min is : {d_min}")
         if d_min < 0.0:
             raise ValueError("epm_lumen_end_hard_min_m must be non-negative.")

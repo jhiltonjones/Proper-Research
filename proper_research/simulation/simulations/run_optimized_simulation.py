@@ -122,6 +122,33 @@ def run_experiment_optimized(
             validate_nonlinear_candidate
         ),
         "collect_full_diagnostics": bool(collect_full_diagnostics),
+        "reference_mode": str(design_cfg.reference_mode),
+        "q_contour": float(design_cfg.q_contour),
+        "q_lag": float(design_cfg.q_lag),
+        "contouring_axis_weights": list(design_cfg.contouring_axis_weights),
+        "ref_lookahead_m": float(design_cfg.ref_lookahead_m),
+        "ref_stride_m": float(design_cfg.ref_stride_m),
+        "ref_search_backward_m": float(design_cfg.ref_search_backward_m),
+        "ref_search_forward_m": float(design_cfg.ref_search_forward_m),
+        "ref_max_progress_per_step_m": float(
+            design_cfg.ref_max_progress_per_step_m
+        ),
+        "progress_constraint_mode": design_cfg.progress_constraint_mode,
+        "enable_progress_slack": bool(design_cfg.enable_progress_slack),
+        "enable_hard_progress_constraint": bool(
+            design_cfg.enable_hard_progress_constraint
+        ),
+        "progress_request_m": float(design_cfg.progress_request_m),
+        "progress_reward_weight": float(design_cfg.progress_reward_weight),
+        "progress_slack_quadratic_weight": float(
+            design_cfg.progress_slack_quadratic_weight
+        ),
+        "progress_slack_linear_weight": float(
+            design_cfg.progress_slack_linear_weight
+        ),
+        "progress_slack_max_fraction": float(
+            design_cfg.progress_slack_max_fraction
+        ),
         "pid": int(os.getpid()),
     }
     with (out_root / "optimized_run_metadata.json").open("w") as stream:

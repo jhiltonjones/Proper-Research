@@ -669,35 +669,35 @@ def make_double_bend_lumen_config(
                 bend_angle_rad=np.deg2rad(
                     second_angle_deg
                 ),
-                bend_start=0.02,
+                bend_start=0.015,
                 bend_end=0.025,
             ),
         ),
     )
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
-        first_angle_deg=30.0,
-        second_angle_deg=-70.0,
+        first_angle_deg=0.0,
+        second_angle_deg=-110.0,
     )
 
     run_experiment_grid(
-        run_root=Path("experiment2_sim"),
+        run_root=Path("experiment3_sim_3"),
 
         lumen_configs=(
             double_bend_lumen,
         ),
 
         jacobian_variants=(
-            "no_contact", "contact",
+             "contact", "no_contact"
         ),
         inverse_sequence_modes=("held",),
         controller_kinds=( "mpc", ),
-        solver_modes=( "sqp_full",),
+        solver_modes=( "sqp_full" ,),
         rollout_steps_values=(10,),
 
         Np=15,
         N_sqp=50,
-        max_steps=25,
+        max_steps=40,
 
         plant_contact=True,
         save_plots=True,

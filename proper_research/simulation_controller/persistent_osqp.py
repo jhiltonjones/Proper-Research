@@ -225,6 +225,9 @@ class PersistentOSQPSolver:
 
         diagnostics = {
             "osqp_setup_performed": int(setup_performed),
+            "osqp_workspace_reused": int(not setup_performed),
+            "osqp_primal_dim": int(H.shape[0]),
+            "osqp_constraint_dim": int(A_dense.shape[0]),
             "osqp_setup_count": int(self.setup_count),
             "osqp_update_count": int(self.update_count),
             "osqp_solve_count": int(self.solve_count),

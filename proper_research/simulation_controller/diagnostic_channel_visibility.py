@@ -421,24 +421,26 @@ def _plot_magnitude_visibility(
     channel_names: tuple[str, ...],
     dpi: int,
     value_multiplier: float,
+    show_normalized_panel: bool = False,
 ) -> Path | None:
     """
-    Three-panel visibility plot.
+    Plot absolute channel magnitudes.
 
-    Panel 1:
-        Absolute source-channel magnitudes.
+    Default:
+        Panel 1:
+            Absolute source-channel magnitudes.
 
-    Panel 2:
-        Each source channel divided by its own maximum across the
-        horizon. This is visualization-only and exposes weak channels
-        without claiming equal physical magnitude.
+        Panel 2:
+            Absolute dL magnitude on a separate axis.
 
-    Panel 3:
-        Absolute dL magnitude on a separate axis.
+    Optional:
+        A normalized source-channel panel can be enabled with
+        show_normalized_panel=True. Each source channel is divided
+        by its own maximum magnitude across the prediction horizon.
     """
     values = np.asarray(
         values,
-        float,
+        dtype=float,
     )
 
     if values.ndim != 2 or values.shape[0] == 0:
@@ -460,23 +462,47 @@ def _plot_magnitude_visibility(
         number_of_channels,
     )
 
-    source_values = (
+    # Absolute source-channel magnitudes.
+    source_values = np.abs(
         value_multiplier
         * values[:, :source_count]
     )
 
-    fig, axes = plt.subplots(
-        3,
-        1,
-        figsize=(9.0, 9.5),
-        sharex=True,
-        gridspec_kw={
-            "height_ratios": [2.6, 2.2, 1.2],
-        },
-    )
+    # ------------------------------------------------------------
+    # Create either:
+    #   2 panels: absolute source + absolute dL
+    #   3 panels: absolute source + normalized source + absolute dL
+    # ------------------------------------------------------------
+    if show_normalized_panel:
+        fig, axes = plt.subplots(
+            3,
+            1,
+            figsize=(9.0, 9.5),
+            sharex=True,
+            gridspec_kw={
+                "height_ratios": [2.6, 2.2, 1.2],
+            },
+        )
 
-    ax_absolute, ax_relative, ax_dL = axes
+        ax_absolute, ax_normalized, ax_dL = axes
 
+    else:
+        fig, axes = plt.subplots(
+            2,
+            1,
+            figsize=(9.0, 7.0),
+            sharex=True,
+            gridspec_kw={
+                "height_ratios": [2.6, 1.2],
+            },
+        )
+
+        ax_absolute, ax_dL = axes
+        ax_normalized = None
+
+    # ------------------------------------------------------------
+    # Source channels
+    # ------------------------------------------------------------
     for channel in range(source_count):
         name = channel_names[channel]
         colour = _colour(name, channel)
@@ -491,73 +517,89 @@ def _plot_magnitude_visibility(
             color=colour,
         )
 
-        channel_max = float(
-            np.nanmax(
-                np.abs(
+        # Optional normalized visibility plot.
+        if ax_normalized is not None:
+            channel_max = float(
+                np.nanmax(
                     source_values[:, channel]
                 )
             )
-        )
 
-        if (
-            np.isfinite(channel_max)
-            and channel_max > 1e-15
-        ):
-            relative = (
-                np.abs(source_values[:, channel])
-                / channel_max
+            if (
+                np.isfinite(channel_max)
+                and channel_max > 1e-15
+            ):
+                normalized = (
+                    source_values[:, channel]
+                    / channel_max
+                )
+            else:
+                normalized = np.zeros(
+                    source_values.shape[0],
+                    dtype=float,
+                )
+
+            ax_normalized.plot(
+                stages,
+                normalized,
+                marker="o",
+                linewidth=1.8,
+                markersize=4.0,
+                label=(
+                    f"{name} "
+                    f"(maximum = {channel_max:.3g})"
+                ),
+                color=colour,
             )
-        else:
-            relative = np.zeros(
-                source_values.shape[0],
-                dtype=float,
-            )
 
-        ax_relative.plot(
-            stages,
-            relative,
-            marker="o",
-            linewidth=1.8,
-            markersize=4.0,
-            label=(
-                f"{name} "
-                f"(max={channel_max:.3g})"
-            ),
-            color=colour,
-        )
-
+    # ------------------------------------------------------------
+    # Absolute source-channel plot
+    # ------------------------------------------------------------
     ax_absolute.set_ylabel(
         absolute_ylabel
     )
     ax_absolute.set_title(
         f"Frame {k}: {title}"
     )
-    ax_absolute.grid(True, alpha=0.3)
+    ax_absolute.grid(
+        True,
+        alpha=0.3,
+    )
     ax_absolute.legend(
         ncol=3,
         loc="best",
     )
 
-    ax_relative.set_ylim(
-        -0.03,
-        1.08,
-    )
-    ax_relative.set_ylabel(
-        "Per-channel relative magnitude"
-    )
-    ax_relative.set_title(
-        "Source-only visibility normalization "
-        "(each channel divided by its own horizon maximum)"
-    )
-    ax_relative.grid(True, alpha=0.3)
-    ax_relative.legend(
-        ncol=2,
-        loc="best",
-        fontsize=8,
-    )
+    # ------------------------------------------------------------
+    # Optional normalized source-channel plot
+    # ------------------------------------------------------------
+    if ax_normalized is not None:
+        ax_normalized.set_ylim(
+            -0.03,
+            1.08,
+        )
+        ax_normalized.set_ylabel(
+            "Normalized magnitude"
+        )
+        ax_normalized.set_title(
+            "Normalized source-channel magnitudes "
+            "(each channel divided by its maximum)"
+        )
+        ax_normalized.grid(
+            True,
+            alpha=0.3,
+        )
+        ax_normalized.legend(
+            ncol=2,
+            loc="best",
+            fontsize=8,
+        )
 
+    # ------------------------------------------------------------
+    # Absolute dL magnitude
+    # ------------------------------------------------------------
     if number_of_channels > 6:
-        dL_values = (
+        dL_values = np.abs(
             value_multiplier
             * values[:, 6]
         )
@@ -571,6 +613,7 @@ def _plot_magnitude_visibility(
             label=channel_names[6],
             color=CHANNEL_COLOURS["dL"],
         )
+
         ax_dL.legend(
             loc="best",
         )
@@ -582,9 +625,12 @@ def _plot_magnitude_visibility(
         absolute_ylabel
     )
     ax_dL.set_title(
-        "Insertion shown separately"
+        "Absolute insertion-length magnitude"
     )
-    ax_dL.grid(True, alpha=0.3)
+    ax_dL.grid(
+        True,
+        alpha=0.3,
+    )
 
     fig.tight_layout()
 

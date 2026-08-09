@@ -1084,6 +1084,289 @@ class MPCControllerTipXY(
 
         return out
 
+    def _qp_decision_warm_start(self, U_guess, dbg, n_decision):
+        """Build a warm start for either U or [U, progress_slack_fraction]."""
+        U_vec = np.asarray(U_guess, float).reshape(self.Np * self.m)
+        n_decision = int(n_decision)
+        if n_decision == U_vec.size:
+            return U_vec
+
+        if (
+            int(dbg.get("progress_slack_enabled", 0)) == 1
+            and n_decision == U_vec.size + 1
+        ):
+            sigma0 = float(dbg.get("progress_slack_guess_fraction", 0.0))
+            sigma_max = float(getattr(self, "progress_slack_max_fraction", 1.0))
+            sigma0 = float(np.clip(sigma0, 0.0, max(0.0, sigma_max)))
+            return np.concatenate([U_vec, np.array([sigma0], dtype=float)])
+
+        raise ValueError(
+            "Unsupported QP decision dimension: "
+            f"controls={U_vec.size}, decision={n_decision}."
+        )
+
+    def _progress_solution_diagnostics(self, *, U_candidate, sigma, dbg):
+        """Classify one solved soft-progress QP without making global claims.
+
+        The result separates ADVANCE/LIMITED_PROGRESS from REPOSITION/BLOCKED.
+        A later receding-horizon persistence counter decides whether repeated
+        blocking should be escalated to a controller-level 'impossible within
+        configured horizon' suggestion.
+        """
+        if int(dbg.get("progress_slack_enabled", 0)) != 1:
+            return {
+                "progress_motion_state": "PROGRESS_SLACK_DISABLED",
+                "progress_slack_fraction": np.nan,
+                "progress_predicted_terminal_m": float(
+                    dbg.get("progress_nominal_terminal_m", np.nan)
+                ),
+                "progress_predicted_safe_m": np.nan,
+                "progress_predicted_safe_fraction": np.nan,
+            }
+
+        U_candidate = np.asarray(U_candidate, float).reshape(self.Np, self.m)
+        sigma = float(sigma)
+        sigma_max = float(getattr(self, "progress_slack_max_fraction", 1.0))
+        sigma = float(np.clip(sigma, 0.0, max(0.0, sigma_max)))
+
+        request = float(dbg.get("progress_request_effective_m", 0.0))
+        current = float(dbg.get("progress_current_m", np.nan))
+        target = float(dbg.get("progress_target_m", np.nan))
+        b_progress = float(dbg.get("progress_affine_b_m", np.nan))
+        A_progress = np.asarray(
+            dbg.get("progress_affine_A", np.empty(0)), float
+        ).reshape(-1)
+
+        Nu = self.Np * self.m
+        if A_progress.size == Nu and np.isfinite(b_progress):
+            terminal = float(b_progress + A_progress @ U_candidate.reshape(Nu))
+        else:
+            # The compact optimized controller should retain progress_affine_A.
+            terminal = float(dbg.get("progress_nominal_terminal_m", np.nan))
+
+        if np.isfinite(current) and np.isfinite(terminal):
+            achieved = max(0.0, terminal - current)
+        else:
+            achieved = np.nan
+        if np.isfinite(target) and np.isfinite(terminal):
+            shortfall = max(0.0, target - terminal)
+        else:
+            shortfall = np.nan
+        if request > 1.0e-12 and np.isfinite(achieved):
+            safe_fraction = float(np.clip(achieved / request, 0.0, 1.0))
+        elif request <= 1.0e-12:
+            safe_fraction = 1.0
+        else:
+            safe_fraction = np.nan
+
+        u_scale = np.abs(np.asarray(self.u_max, float).reshape(self.m))
+        enabled = u_scale > 1.0e-12
+        if np.any(enabled):
+            normalized = np.zeros_like(U_candidate)
+            normalized[:, enabled] = (
+                np.abs(U_candidate[:, enabled])
+                / u_scale[enabled].reshape(1, -1)
+            )
+            control_activity = float(np.max(normalized[:, enabled]))
+            first_control_activity = float(np.max(normalized[0, enabled]))
+        else:
+            control_activity = 0.0
+            first_control_activity = 0.0
+
+        epm_cols = np.arange(min(6, self.m), dtype=int)
+        epm_enabled = epm_cols[u_scale[epm_cols] > 1.0e-12]
+        if epm_enabled.size:
+            epm_activity = float(
+                np.max(
+                    np.abs(U_candidate[:, epm_enabled])
+                    / u_scale[epm_enabled].reshape(1, -1)
+                )
+            )
+            epm_first_activity = float(
+                np.max(
+                    np.abs(U_candidate[0, epm_enabled])
+                    / u_scale[epm_enabled]
+                )
+            )
+        else:
+            epm_activity = 0.0
+            epm_first_activity = 0.0
+
+        if self.m > 6 and u_scale[6] > 1.0e-12:
+            insertion_activity = float(
+                np.max(np.abs(U_candidate[:, 6]) / u_scale[6])
+            )
+        else:
+            insertion_activity = 0.0
+
+        full_tol = float(
+            getattr(self, "progress_full_slack_fraction_tol", 0.05)
+        )
+        blocked_fraction = float(
+            getattr(self, "progress_blocked_slack_fraction", 0.95)
+        )
+        reposition_activity_threshold = float(
+            getattr(self, "progress_reposition_activity_fraction", 0.05)
+        )
+        min_progress_m = float(
+            getattr(
+                self,
+                "progress_min_meaningful_m",
+                max(1.0e-5, 0.05 * max(request, 0.0)),
+            )
+        )
+        angle_active = int(dbg.get("tip_tangent_constraint_num_active", 0))
+
+        if request <= 1.0e-12:
+            state = "PATH_COMPLETE_OR_NO_REQUEST"
+        elif sigma <= full_tol:
+            state = "ADVANCE"
+        elif np.isfinite(achieved) and achieved >= min_progress_m:
+            state = "LIMITED_PROGRESS"
+        elif epm_activity >= reposition_activity_threshold:
+            state = "REPOSITION"
+        else:
+            state = "BLOCKED_CURRENT_HORIZON"
+
+        return {
+            "progress_motion_state": state,
+            "progress_slack_fraction": sigma,
+            "progress_slack_fraction_percent": 100.0 * sigma,
+            "progress_predicted_terminal_m": terminal,
+            "progress_predicted_safe_m": achieved,
+            "progress_predicted_safe_mm": 1.0e3 * achieved if np.isfinite(achieved) else np.nan,
+            "progress_predicted_safe_fraction": safe_fraction,
+            "progress_solution_shortfall_m": shortfall,
+            "progress_solution_shortfall_mm": 1.0e3 * shortfall if np.isfinite(shortfall) else np.nan,
+            "progress_control_activity_fraction": control_activity,
+            "progress_first_control_activity_fraction": first_control_activity,
+            "progress_epm_reposition_activity_fraction": epm_activity,
+            "progress_epm_first_activity_fraction": epm_first_activity,
+            "progress_insertion_activity_fraction": insertion_activity,
+            "progress_angle_constraint_active": int(angle_active > 0),
+            "progress_safety_limited_candidate": int(
+                angle_active > 0 and sigma >= blocked_fraction
+            ),
+        }
+
+    def _unpack_qp_decision(self, z_vec, dbg):
+        """Return physical U and scalar progress diagnostics from OSQP z."""
+        z = np.asarray(z_vec, float).reshape(-1)
+        Nu = self.Np * self.m
+        if z.size < Nu:
+            raise ValueError(f"QP solution has length {z.size}; expected at least {Nu}.")
+        U_new = z[:Nu].reshape(self.Np, self.m)
+
+        if int(dbg.get("progress_slack_enabled", 0)) == 1:
+            slack_index = int(dbg.get("progress_slack_index", Nu))
+            if slack_index < 0 or slack_index >= z.size:
+                raise ValueError(
+                    f"Invalid progress_slack_index={slack_index} for z size {z.size}."
+                )
+            sigma = float(z[slack_index])
+        else:
+            sigma = np.nan
+
+        return U_new, self._progress_solution_diagnostics(
+            U_candidate=U_new,
+            sigma=sigma,
+            dbg=dbg,
+        )
+
+    def _update_safe_progress_persistence(self, solve_info):
+        """Escalate repeated no-progress predictions across controller frames.
+
+        This is an operational controller status, not a proof of global physical
+        infeasibility.  It deliberately distinguishes a feasible REPOSITION
+        action from persistent safety-limited blocking.
+        """
+        info = dict(solve_info)
+
+        # With soft progress enabled, OSQP infeasibility is no longer caused by
+        # the requested progress itself: sigma can relax that request.  Therefore
+        # expose QP infeasibility separately as a hard/local-constraint failure.
+        if int(info.get("qp_infeasible", 0)) == 1:
+            info.update(
+                {
+                    "controller_motion_state": "HARD_CONSTRAINT_INFEASIBLE",
+                    "hard_constraint_infeasible": 1,
+                    "trajectory_impossible_suggested": 0,
+                    "trajectory_impossible_scope": "local_qp_only",
+                }
+            )
+            return info
+
+        if int(info.get("safety_constraint_infeasible", 0)) == 1:
+            info.update(
+                {
+                    "controller_motion_state": "NONLINEAR_SAFETY_VIOLATION",
+                    "hard_constraint_infeasible": 0,
+                    "trajectory_impossible_suggested": 0,
+                    "trajectory_impossible_scope": "candidate_validation",
+                }
+            )
+            return info
+
+        info["hard_constraint_infeasible"] = 0
+        state = str(info.get("progress_motion_state", "PROGRESS_SLACK_DISABLED"))
+        sigma = float(info.get("progress_slack_fraction", np.nan))
+        blocked_fraction = float(
+            getattr(self, "progress_blocked_slack_fraction", 0.95)
+        )
+        patience = int(getattr(self, "progress_impossible_patience_steps", 5))
+        patience = max(1, patience)
+        angle_active = int(info.get("progress_angle_constraint_active", 0)) == 1
+
+        if not hasattr(self, "_safe_progress_blocked_streak"):
+            self._safe_progress_blocked_streak = 0
+        if not hasattr(self, "_safe_progress_reposition_streak"):
+            self._safe_progress_reposition_streak = 0
+
+        strongly_blocked = (
+            np.isfinite(sigma)
+            and sigma >= blocked_fraction
+            and state in {"REPOSITION", "BLOCKED_CURRENT_HORIZON"}
+        )
+        if strongly_blocked:
+            self._safe_progress_blocked_streak += 1
+        else:
+            self._safe_progress_blocked_streak = 0
+
+        if state == "REPOSITION" and strongly_blocked:
+            self._safe_progress_reposition_streak += 1
+        else:
+            self._safe_progress_reposition_streak = 0
+
+        impossible_suggested = int(
+            strongly_blocked
+            and angle_active
+            and self._safe_progress_blocked_streak >= patience
+        )
+
+        if impossible_suggested:
+            operational_state = "IMPOSSIBLE_WITHIN_CONFIGURED_HORIZON"
+        elif state == "REPOSITION":
+            operational_state = "SAFE_REPOSITIONING"
+        elif state == "BLOCKED_CURRENT_HORIZON":
+            operational_state = "NO_SAFE_PROGRESS_CURRENT_HORIZON"
+        else:
+            operational_state = state
+
+        info.update(
+            {
+                "controller_motion_state": operational_state,
+                "progress_blocked_streak": int(self._safe_progress_blocked_streak),
+                "progress_reposition_streak": int(self._safe_progress_reposition_streak),
+                "trajectory_impossible_suggested": impossible_suggested,
+                "trajectory_impossible_scope": (
+                    "configured_prediction_horizon_and_local_model"
+                    if impossible_suggested
+                    else ""
+                ),
+            }
+        )
+        return info
+
     def _solve_mpc_sequence(self, *, p0, x0, U_init, idx_ref, solver_mode):
         """
         Solve one MPC problem.
@@ -1169,13 +1452,16 @@ class MPCControllerTipXY(
 
                 # dbg.update(probe_dbg)
 
-                U_vec, _, status = solve_qp_osqp(
+                z_warm = self._qp_decision_warm_start(
+                    U_guess, dbg, H.shape[0]
+                )
+                z_vec, _, status = solve_qp_osqp(
                     H,
                     f,
                     A,
                     l,
                     u,
-                    U_warm=U_guess.reshape(-1),
+                    U_warm=z_warm,
                 )
 
                 status_str = str(status)
@@ -1183,7 +1469,7 @@ class MPCControllerTipXY(
                 # ----------------------------------------------------
                 # QP failure: expose current failed QP diagnostics
                 # ----------------------------------------------------
-                if status not in ("solved", "solved inaccurate") or U_vec is None:
+                if status not in ("solved", "solved inaccurate") or z_vec is None:
                     failed_scalar_debug = {
                         f"failed_{k}": v
                         for k, v in dbg.items()
@@ -1223,10 +1509,10 @@ class MPCControllerTipXY(
                 # ----------------------------------------------------
                 # QP solved
                 # ----------------------------------------------------
-                U_new = np.asarray(
-                    U_vec,
-                    float,
-                ).reshape(self.Np, self.m)
+                U_new, progress_solution_diag = self._unpack_qp_decision(
+                    z_vec, dbg
+                )
+                dbg.update(progress_solution_diag)
 
                 angle_nl_diag = (
                     self._nonlinear_tip_tangent_constraint_diagnostics(
@@ -1417,6 +1703,15 @@ class MPCControllerTipXY(
                     {
                         "it": int(it),
                         "status": status_str,
+                        "progress_motion_state": str(
+                            dbg.get("progress_motion_state", "")
+                        ),
+                        "progress_slack_fraction": float(
+                            dbg.get("progress_slack_fraction", np.nan)
+                        ),
+                        "progress_predicted_safe_mm": float(
+                            dbg.get("progress_predicted_safe_mm", np.nan)
+                        ),
                         # "step_norm": step_norm,
                         # "rel_step_norm": rel_step_norm,
                         "step_inf": float(step_diag.get("step_inf", np.nan)),
@@ -1470,10 +1765,7 @@ class MPCControllerTipXY(
                     float,
                 ).reshape(self.Np, self.m).copy()
 
-                U_new = np.asarray(
-                    U_vec,
-                    float,
-                ).reshape(self.Np, self.m)
+                U_new = np.asarray(U_new, float).reshape(self.Np, self.m).copy()
 
                 # Remove tiny OSQP residuals in exactly locked channels.
                 U_previous[:, ~active] = 0.0
@@ -1674,6 +1966,8 @@ class MPCControllerTipXY(
             solver_mode=solver_mode,
         )
 
+        solve_info = self._update_safe_progress_persistence(solve_info)
+
         infeasible = U_seq is None
 
         if infeasible:
@@ -1704,6 +1998,17 @@ class MPCControllerTipXY(
         print("\n[PREDICTION MODEL PROVENANCE]")
         print("  nonlinear plant:", plant_provenance)
         print("  Jacobian model: ", jacobian_provenance)
+        progress_stop = bool(
+            getattr(self, "stop_on_persistent_no_safe_progress", False)
+            and int(solve_info.get("trajectory_impossible_suggested", 0)) == 1
+        )
+        if progress_stop:
+            U_seq = np.zeros((self.Np, self.m), dtype=float)
+            solve_info["controller_progress_stop_applied"] = 1
+            solve_info["status"] = "persistent_no_safe_progress_stop"
+        else:
+            solve_info["controller_progress_stop_applied"] = 0
+
         n_apply = int(np.clip(rollout_steps, 1, self.Np))
         rollout_info = self._apply_control_sequence(U_seq, n_apply)
         plant_adapter = getattr(
@@ -1888,45 +2193,108 @@ class MPCControllerTipXY(
             error_xy = np.empty(0)
             error_xyz = np.empty(0)
         info = {
-            "status": solve_info.get("status", "unknown"),
+            "status": solve_info.get(
+                "status",
+                "unknown",
+            ),
             "infeasible": int(infeasible),
             "solver_mode": str(solver_mode),
             "rollout_steps": int(n_apply),
+
             "u0": U_seq[0].copy(),
             "U_seq": U_seq.copy(),
+
             "p_now": self.p.copy(),
             "x_now": self.x.copy(),
-            "idx_ref": np.asarray(idx_ref, int).copy(),
-            "X_pred": X_pred.copy() if X_pred is not None else None,
-            "sqp_hist": solve_info.get("sqp_hist", []),
+
+            "idx_ref": np.asarray(
+                idx_ref,
+                int,
+            ).copy(),
+
+            "X_pred": (
+                X_pred.copy()
+                if X_pred is not None
+                else None
+            ),
+
+            "sqp_hist": solve_info.get(
+                "sqp_hist",
+                [],
+            ),
+
             "trust_radius": (
                 None
                 if self.trust_radius is None
                 else self.trust_radius.copy()
             ),
+
             "trust_radius_current": solve_info.get(
                 "trust_radius_current",
-                None if self.trust_radius is None else self.trust_radius.copy(),
+                (
+                    None
+                    if self.trust_radius is None
+                    else self.trust_radius.copy()
+                ),
             ),
-            "trust_last_action": solve_info.get("trust_last_action", self.trust_last_action),
-            "trust_last_linerr_max_m": solve_info.get(
-                "trust_last_linerr_max_m",
-                self.trust_last_linerr_max_m,
+
+            "trust_last_action": solve_info.get(
+                "trust_last_action",
+                self.trust_last_action,
             ),
-            "trust_last_linerr_first_m": solve_info.get(
-                "trust_last_linerr_first_m",
-                self.trust_last_linerr_first_m,
-            ),
-            "trust_last_probe_max_err_m": solve_info.get(
-                "trust_last_probe_max_err_m",
-                self.trust_last_probe_max_err_m,
-            ),
-            "trust_last_probe_changed": solve_info.get(
-                "trust_last_probe_changed",
-                self.trust_last_probe_changed,
-            ),
+
             **rollout_info,
         }
+        safe_progress_keys = (
+            "controller_motion_state",
+            "progress_motion_state",
+
+            "progress_constraint_mode",
+
+            "progress_current_m",
+            "progress_target_m",
+
+            "progress_request_m",
+            "progress_request_effective_m",
+
+            "progress_slack_fraction",
+            "progress_slack_fraction_percent",
+
+            "progress_predicted_terminal_m",
+            "progress_predicted_safe_m",
+            "progress_predicted_safe_mm",
+            "progress_predicted_safe_fraction",
+
+            "progress_solution_shortfall_m",
+            "progress_solution_shortfall_mm",
+
+            "progress_epm_reposition_activity_fraction",
+            "progress_epm_first_activity_fraction",
+            "progress_insertion_activity_fraction",
+
+            "progress_angle_constraint_active",
+            "progress_safety_limited_candidate",
+
+            "progress_blocked_streak",
+            "progress_reposition_streak",
+
+            "trajectory_impossible_suggested",
+            "trajectory_impossible_scope",
+
+            "hard_constraint_infeasible",
+            "controller_progress_stop_applied",
+
+            "qp_infeasible",
+            "safety_constraint_infeasible",
+
+            "tip_tangent_constraint_num_active",
+            "tip_tangent_angle_nominal_max_deg",
+            "tip_tangent_nonlinear_max_near_wall_deg",
+        )
+
+        for key in safe_progress_keys:
+            if key in solve_info:
+                info[key] = solve_info[key]
         for key in (
             "cond_H_mpc",
             "lambda_min_H_mpc",

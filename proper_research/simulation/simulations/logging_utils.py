@@ -9,7 +9,9 @@ from proper_research.simulation.simulations.rollout_diagnostics import (
     append_rollout_stage_csv,
     save_rollout_npz,
 )
-
+from proper_research.simulation_controller.safe_progress_logging import (
+    safe_progress_log_row,
+)
 
 def save_controller_diagnostics_npz(
     *,
@@ -525,7 +527,9 @@ def save_step_artifacts(
 
         "frame_path": str(fig_path),
     }
-
+    row.update(
+        safe_progress_log_row(info)
+    )
     # Current geometry metrics.
     row.update(centreline_metrics)
 
@@ -607,6 +611,8 @@ def save_step_artifacts(
             "curvature_lookahead_points": info.get("curvature_lookahead_points", ""),
         }
     )
+
+
     # ------------------------------------------------------------
     # SQP iteration diagnostics
     # ------------------------------------------------------------

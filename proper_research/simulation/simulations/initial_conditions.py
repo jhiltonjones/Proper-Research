@@ -39,9 +39,9 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
 
     base_point = np.array(
         [
-            pivot_point[0] - (L_cmd+0.18),
+            pivot_point[0] - (L_cmd+0.2),
             pivot_point[1],
-            0.1,
+            -0.1,
             np.pi,
             0.0,
             0.0,
@@ -55,7 +55,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     )
 
     dt = 0.01
-    current_rot = R.from_rotvec(start_point[3:6])
+    # current_rot = R.from_rotvec(start_point[3:6])
 
     # new_rot = R.from_euler('z', np.pi)
     # final_rot = new_rot*current_rot

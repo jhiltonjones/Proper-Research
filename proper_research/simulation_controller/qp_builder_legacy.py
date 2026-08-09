@@ -977,7 +977,7 @@ class QPBuilderMixin:
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
         U_guess_vec = U_guess.reshape(Nu, 1)
 
-        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.15))
+        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.11))
         # print(f"Constraint d_min is : {d_min}")
         if d_min < 0.0:
             raise ValueError("epm_lumen_end_hard_min_m must be non-negative.")

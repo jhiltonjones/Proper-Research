@@ -95,7 +95,7 @@ class ControllerDesignConfig:
     L_max: float = 0.05
     dL_index: int = 6
     dL_back_max: float = 0.01
-    dL_fwd_max: float = 0.05
+    dL_fwd_max: float = 1.0
 
     enable_hard_epm_tip_clearance: bool = True
     epm_tip_hard_min_m: float = 0.05
@@ -105,8 +105,8 @@ class ControllerDesignConfig:
     reference_mode: str = "contouring"
     use_xy_ref_distance: bool = False
     allow_ref_backward: bool = False
-    ref_lookahead_m: float = 4.0e-4
-    ref_stride_m: float = 4.0e-4
+    ref_lookahead_m: float = 5.0e-4
+    ref_stride_m: float = 5.0e-4
     ref_search_backward_m: float = 5.0e-4
     ref_search_forward_m: float = 5.0e-3
     ref_max_progress_per_step_m: float = 1.0e-3
@@ -115,16 +115,29 @@ class ControllerDesignConfig:
     ref_weight_end: float = 0.5
 
     # Contouring objective: strong normal error, weak along-path lag error.
-    q_contour: float = 100.0
-    q_lag: float = 2.0
+    q_contour: float = 1000.0
+    q_lag: float = 50.0
     contouring_axis_weights: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
-    # Progress constraint is separate from the geometric reference. Leave off
-    # while validating path tracking; turn on identically for both Jacobians in
-    # the safe-progress feasibility experiment.
+    # Progress handling is separate from the geometric reference.
+    #
+    # progress_constraint_mode:
+    #   None         -> compatibility mode: resolve from the two legacy flags.
+    #   "none"       -> no terminal minimum-progress constraint.
+    #   "soft_slack" -> append one dimensionless shortfall variable sigma.
+    #   "hard"       -> hard terminal minimum-progress requirement.
+    #
+    # For normal safe hardware control, soft_slack is usually preferable because
+    # physical/safety constraints remain hard while requested progress may relax.
+    # Use hard only when formal requested-progress feasibility is the experiment.
+    progress_constraint_mode: str | None = None
+    enable_progress_slack: bool = False
     enable_hard_progress_constraint: bool = False
     progress_request_m: float = 5.0e-4
     progress_reward_weight: float = 0.0
+    progress_slack_quadratic_weight: float = 1.0e3
+    progress_slack_linear_weight: float = 0.0
+    progress_slack_max_fraction: float = 1.0
 
     # Tangent is modelled when n_out=6. It is not tracked unless w_tracking[3:6]
     # are positive. This safety constraint is independent of tracking weights.
@@ -158,9 +171,99 @@ class ControllerDesignConfig:
             )
         if self.reference_mode not in {"point", "contouring"}:
             raise ValueError("reference_mode must be 'point' or 'contouring'.")
-        if self.enable_hard_progress_constraint and self.reference_mode != "contouring":
+        if self.ref_lookahead_m < 0.0:
+            raise ValueError("ref_lookahead_m must be non-negative.")
+        if self.ref_stride_m <= 0.0:
+            raise ValueError("ref_stride_m must be positive.")
+        if self.ref_search_backward_m < 0.0:
+            raise ValueError("ref_search_backward_m must be non-negative.")
+        if self.ref_search_forward_m <= 0.0:
+            raise ValueError("ref_search_forward_m must be positive.")
+        if self.ref_max_progress_per_step_m <= 0.0:
+            raise ValueError("ref_max_progress_per_step_m must be positive.")
+        if self.ref_max_backward_per_step_m < 0.0:
+            raise ValueError("ref_max_backward_per_step_m must be non-negative.")
+        if self.ref_weight_start < 0.0 or self.ref_weight_end < 0.0:
+            raise ValueError("Reference stage weights must be non-negative.")
+        if self.q_contour < 0.0 or self.q_lag < 0.0:
+            raise ValueError("q_contour and q_lag must be non-negative.")
+        axis_weights = np.asarray(self.contouring_axis_weights, dtype=float).reshape(-1)
+        if (
+            axis_weights.size != 3
+            or np.any(~np.isfinite(axis_weights))
+            or np.any(axis_weights < 0.0)
+        ):
             raise ValueError(
-                "enable_hard_progress_constraint requires reference_mode='contouring'."
+                "contouring_axis_weights must contain three finite, non-negative values."
+            )
+
+        progress_mode = self.progress_constraint_mode
+        if progress_mode is not None:
+            progress_mode = str(progress_mode).strip().lower()
+            aliases = {
+                "off": "none",
+                "disabled": "none",
+                "soft": "soft_slack",
+                "slack": "soft_slack",
+                "soft-progress": "soft_slack",
+            }
+            progress_mode = aliases.get(progress_mode, progress_mode)
+            if progress_mode not in {"none", "hard", "soft_slack"}:
+                raise ValueError(
+                    "progress_constraint_mode must be None, 'none', 'hard', "
+                    "or 'soft_slack'."
+                )
+        if progress_mode is not None:
+            if progress_mode == "none" and (
+                self.enable_hard_progress_constraint or self.enable_progress_slack
+            ):
+                raise ValueError(
+                    "Explicit progress_constraint_mode='none' conflicts with an "
+                    "enabled legacy progress flag."
+                )
+            if progress_mode == "hard" and self.enable_progress_slack:
+                raise ValueError(
+                    "progress_constraint_mode='hard' conflicts with "
+                    "enable_progress_slack=True."
+                )
+            if progress_mode == "soft_slack" and self.enable_hard_progress_constraint:
+                raise ValueError(
+                    "progress_constraint_mode='soft_slack' conflicts with "
+                    "enable_hard_progress_constraint=True."
+                )
+
+        progress_requested = (
+            progress_mode in {"hard", "soft_slack"}
+            if progress_mode is not None
+            else bool(
+                self.enable_hard_progress_constraint
+                or self.enable_progress_slack
+            )
+        )
+        if progress_requested and self.reference_mode != "contouring":
+            raise ValueError(
+                "Progress constraints require reference_mode='contouring'."
+            )
+        if self.enable_hard_progress_constraint and self.enable_progress_slack:
+            raise ValueError(
+                "enable_hard_progress_constraint and enable_progress_slack "
+                "cannot both be True."
+            )
+        if self.progress_request_m < 0.0:
+            raise ValueError("progress_request_m must be non-negative.")
+        if self.progress_reward_weight < 0.0:
+            raise ValueError("progress_reward_weight must be non-negative.")
+        if self.progress_slack_quadratic_weight < 0.0:
+            raise ValueError(
+                "progress_slack_quadratic_weight must be non-negative."
+            )
+        if self.progress_slack_linear_weight < 0.0:
+            raise ValueError(
+                "progress_slack_linear_weight must be non-negative."
+            )
+        if not (0.0 <= self.progress_slack_max_fraction <= 1.0):
+            raise ValueError(
+                "progress_slack_max_fraction must lie in [0, 1]."
             )
 
 
@@ -235,11 +338,26 @@ def configure_path_following(controller, design_cfg: ControllerDesignConfig) -> 
         design_cfg.contouring_axis_weights,
         dtype=float,
     )
+    controller.progress_constraint_mode = (
+        None
+        if design_cfg.progress_constraint_mode is None
+        else str(design_cfg.progress_constraint_mode)
+    )
+    controller.enable_progress_slack = bool(design_cfg.enable_progress_slack)
     controller.enable_hard_progress_constraint = bool(
         design_cfg.enable_hard_progress_constraint
     )
     controller.progress_request_m = float(design_cfg.progress_request_m)
     controller.progress_reward_weight = float(design_cfg.progress_reward_weight)
+    controller.progress_slack_quadratic_weight = float(
+        design_cfg.progress_slack_quadratic_weight
+    )
+    controller.progress_slack_linear_weight = float(
+        design_cfg.progress_slack_linear_weight
+    )
+    controller.progress_slack_max_fraction = float(
+        design_cfg.progress_slack_max_fraction
+    )
 
     # Respect all configured output weights. Zero tangent weights produce zero
     # tangent cost; positive weights enable tangent tracking explicitly.

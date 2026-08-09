@@ -5,7 +5,9 @@ from .adaptive_rollout import update_rollout_steps
 from beam_direction_magnetisation.post_processing.post_processing import (
     plot_energy_only_3d,
 )
-
+from proper_research.simulation_controller.safe_progress_logging import (
+    safe_progress_log_row,
+)
 from dataclasses import replace
 from proper_research.hardware.evidence_based_hierarchical_policy import (
     HierarchicalMPCPolicyConfig,

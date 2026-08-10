@@ -41,14 +41,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
-        {
-            "name": "Run mpc",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.experiments.mpc_implementation_pose",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
+
         {
             "name": "Run Advancer Unit test",
             "type": "debugpy",
@@ -57,14 +50,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
-        {
-            "name": "Run multiple targets",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.experiments.mpc_multiple_targets",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
+
         {
             "name": "Run testing camera",
             "type": "debugpy",
@@ -113,79 +99,8 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
-        {
-            "name": "Run cosserat practice",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.cosserat_model_type",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run cosserat 6d",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.cosserat_6d_pose",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "beam results compare",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.beam_mpc_compare",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run mpc with xy",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.control.mpc_improve",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
+ 
 
-        {
-            "name": "Run mpc_lab",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.control.lab_ready_mpc",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run nmpc2",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.control.nmpc2",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run mpc w boundary",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.control.no_path_plan_mpc",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "mpc sig bound",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.control.mpc_sig_bound",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run sim energy",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "proper_research.simulation.minimal_energy",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
         {
             "name": "Simualtion Controller",
             "type": "debugpy",
@@ -194,14 +109,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
-        {
-            "name": "Run energy_minimal",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.cosserat_w_minimal_energy",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
+   
         {
             "name": "Test Energy Minimisation",
             "type": "debugpy",
@@ -210,60 +118,6 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
-        {
-            "name": "Run ana jac",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.ana_jaccobian",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run ana jac2",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.model_speed_up",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run ana energy",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.ana_energy",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run node energy",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.node_optimisation",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run beam comparison",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.beam_theory_comparison",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "Run forward model repeat",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.forward_model_repeat",
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "name": "energy solve equil",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "beam_direction_magnetisation.dips_energy_solve",
-            "cwd": "${workspaceFolder}"
-        }
 
     ]
 }

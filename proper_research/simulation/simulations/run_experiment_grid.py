@@ -204,7 +204,7 @@ def run_experiment(
         design_cfg.trust_radius,
         float,
     ).copy()
-
+    controller.progress_constraint_mode = "soft_slack"
     stats = run_simulation(
         mpc=controller,  # Existing runner parameter name.
         forward6d=forward6d,
@@ -677,11 +677,11 @@ def make_double_bend_lumen_config(
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
         first_angle_deg=0.0,
-        second_angle_deg=-110.0,
+        second_angle_deg=-120.0,
     )
 
     run_experiment_grid(
-        run_root=Path("experiment3_sim_3"),
+        run_root=Path("experiment3_sim_2"),
 
         lumen_configs=(
             double_bend_lumen,

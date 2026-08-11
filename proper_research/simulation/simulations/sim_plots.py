@@ -100,8 +100,8 @@ def _plot_title(
 
     return (
         f"{description}\n"
-        f"k={k}, controller={controller_type}, "
-        f"mode={mode}, Np={Np}, Nr={Nr}"
+        # f"k={k}, controller={controller_type}, "
+        # f"mode={mode}, Np={Np}, Nr={Nr}"
     )
 
 

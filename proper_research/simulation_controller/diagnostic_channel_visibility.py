@@ -260,7 +260,7 @@ def plot_command_visibility_split(
         "Source command / characteristic scale"
     )
     ax_source.set_title(
-        f"Frame {k}: normalized source-magnet commands"
+        f"Frame {k}: normalised source-magnet commands"
     )
     ax_source.grid(True, alpha=0.3)
     ax_source.legend(
@@ -698,8 +698,8 @@ def plot_actual_jacobian_authority_split(
             "actual_jacobian_authority_split"
         ),
         title=(
-            "actual stagewise Jacobian authority "
-            "along selected poses"
+            "Actual stagewise Jacobian authority "
+
         ),
         absolute_ylabel=(
             "Scaled authority [mm]"
@@ -761,7 +761,7 @@ def plot_controller_jacobian_authority_split(
             "controller_jacobian_authority_split"
         ),
         title=(
-            "controller-assumed Jacobian authority"
+            "Controller-assumed Jacobian authority"
         ),
         absolute_ylabel=(
             "Scaled authority [mm]"
@@ -830,7 +830,7 @@ def plot_selected_channel_contributions_split(
             "selected_channel_contributions_split"
         ),
         title=(
-            "selected per-channel tip-motion contribution"
+            "Selected per-channel tip-motion contribution"
         ),
         absolute_ylabel=(
             "||B[:,j] u_j|| [mm]"

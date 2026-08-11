@@ -45,9 +45,9 @@ SCRIPT_VERSION = "2026-08-08-v5-final-integer-frame-index"
 # Edit this path for each run. Relative paths are resolved from the directory
 # from which you launch this script (normally the Proper-Research repo root).
 RUN_DIR = Path(
-    "experiment2_sim_v2/"
-    "bends_p30_m60_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_"
-    "rollout10_Np15_sqp50_bends_30_-60"
+    "experiment1_sim_2/"
+    "bends_p0_m30_jac_no_contact_plant_contact_1_ctrl_mpc_lti_"
+    "rollout10_Np15_sqp50_bends_0_-30"
 )
 
 # Output is written inside the run directory unless you change this.

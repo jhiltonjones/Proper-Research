@@ -1,7 +1,8 @@
-"""Read-only UR magnet-pose, inverse-kinematics, and Jacobian validation.
+"""UR magnet-pose, inverse-kinematics, Jacobian, and motion validation.
 
 Edit the configuration section below; this script has no command-line
-arguments.  It does not contain or call any robot motion command.
+arguments.  Live communication and joint motion use the supplied
+``URRTDERobot`` class, in the same style as ``testing_robot_class.py``.
 
 Frame convention
 ----------------
@@ -20,6 +21,13 @@ The physical chain is therefore::
 
     T_R_M = T_R_F(q) @ T_F_TCP @ T_TCP_M
 
+For the configured axis-aligned 27 mm offset,
+``p_R_M = p_R_TCP + R_R_TCP @ [0, 0, +0.027]``.  The local offset is never
+added directly to robot-base z.  A requested magnet target is converted back
+to the controller's active TCP with
+``T_R_TCP_target = T_R_M_target @ inverse(T_TCP_M)`` so rotations occur about
+the magnet centre rather than about the TCP origin.
+
 ``getActualTCPPose()`` supplies ``T_R_TCP``.  Consequently
 ``T_R_TCP @ T_TCP_M`` is a robot-inferred magnet pose, not an independent
 physical measurement.  An optional camera/tracker measurement can be supplied
@@ -32,11 +40,13 @@ Validation layers
    calibrated FK/Jacobian exposed through ur_rtde.
 3. Independent damped-least-squares IK versus ur_rtde IK.  Both returned joint
    solutions are evaluated through both forward-kinematics implementations.
+4. Optional hardware comparison: send selected joint solutions with ``move_j``
+   and record the actual joints/TCP returned by ``get_joints``/``get_tcp_pose``.
 
-Important: constructing ``RTDEControlInterface`` may upload its control script
-to the controller even though this file sends no motion command.  Live mode is
-disabled by default and requires an exact typed confirmation.  Run it only
-with the robot stationary and no production program in progress.
+Important: live mode connects a control interface and motion mode moves the
+robot.  Connection and motion require separate exact typed confirmations.  Run
+only after checking the robot model, frames, target offsets, joint bounds,
+speed, acceleration, workspace, payload, and safety configuration.
 """
 
 from __future__ import annotations
@@ -44,6 +54,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,19 +86,60 @@ class IKTargetOffset:
 
 @dataclass
 class ValidationConfig:
-    # Live access is deliberately off.  Set the exact robot model, provide
-    # T_TCP_M, then enable this only while the robot is stationary.
-    use_live_robot: bool = False
-    robot_ip: str = "192.168.56.101"
-    robot_model: str = "EDIT_ME"  # ur3e, ur5e/ur7e, ur10e/ur12e, ur16e,
-                                  # ur3, ur5, or ur10
-    live_confirmation_phrase: str = "CONNECT READ ONLY KINEMATICS"
+    # Terminal diagnostics.  Leave debug_enabled=True while bringing the
+    # validator up.  IK progress is printed at iteration 0, every N iterations,
+    # and at termination.  Matrix dumps are optional because they are verbose.
+    debug_enabled: bool = True
+    debug_ik_iteration_interval: int = 10
+    debug_rtde_call_interval: int = 1
+    debug_print_matrices: bool = False
+    debug_print_feedback_samples: bool = True
 
-    # T_TCP_M: source-magnet centre/body pose expressed in the ACTIVE TCP.
-    # Calibrate all six components.  Do not use a scalar z offset as a second,
-    # separate correction.  To assert physical identity explicitly, leave this
-    # as None and set assume_tcp_is_magnet_frame=True.
-    T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = None
+    # This optional controller query is not used by IK/Jacobian validation.
+    # Some ur_rtde/controller combinations block inside
+    # getActualToolFlangePose(), so keep it disabled unless diagnosing that API.
+    query_actual_tool_flange_pose: bool = False
+
+    # Live state, ur_rtde kinematics, and motion all share one URRTDERobot
+    # instance.  Keep ur_rtde_robot.py next to this script (or on PYTHONPATH).
+    use_live_robot: bool = True
+    robot_ip: str = "192.168.56.101"
+    rtde_frequency_hz: float = 125.0
+    robot_model: str = "ur10e"  # ur3e, ur5e/ur7e, ur10e/ur12e, ur16e,
+                                  # ur3, ur5, or ur10
+    live_confirmation_phrase: str = "1"
+
+    # Hardware comparison.  The default sends both solutions for one selected
+    # target: custom IK first, then ur_rtde IK.  Set execute_motion=False for a
+    # calculation-only run.  Empty motion_target_names means all targets.
+    execute_motion: bool = True
+    motion_confirmation_phrase: str = "1"
+    motion_solution_sources: tuple[str, ...] = ("own", "ur_rtde")
+    motion_target_names: tuple[str, ...] = ("robot_x_plus_100mm",)
+    move_joint_speed_rad_s: float = 0.25
+    move_joint_acceleration_rad_s2: float = 0.20
+    maximum_commanded_joint_delta_norm_rad: float = 0.35
+    maximum_commanded_per_joint_delta_rad: tuple[float, ...] = (0.25,) * 6
+    feedback_sample_count: int = 5
+    feedback_sample_interval_s: float = 0.05
+
+    # T_TCP_M: magnet-centre/body pose expressed in the LOCAL ACTIVE-TCP frame.
+    # The magnet centre is 27 mm along TCP +z and its axes are aligned with the
+    # TCP axes.  This is not a robot-base z offset: R_R_TCP rotates this lever
+    # arm whenever the tool rotates.  Change the final three rotation-vector
+    # values if the magnet body axes are not physically aligned with the TCP.
+    # The logged downward reference pose shows that TCP +z points toward the
+    # ground, so +0.027 m produces a negative robot-base z displacement.  Do
+    # not enter -0.027 merely because "down" is robot-base -z: this translation
+    # is expressed in the rotating TCP frame, not the robot-base frame.
+    T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = (
+        0.0,
+        0.0,
+        0.044,
+        0.0,
+        0.0,
+        0.0,
+    )
     assume_tcp_is_magnet_frame: bool = False
 
     # Optional independent camera/tracker measurement T_R_M.  This must already
@@ -130,10 +182,10 @@ class ValidationConfig:
     targets: tuple[IKTargetOffset, ...] = field(
         default_factory=lambda: (
             IKTargetOffset("current_pose", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_x_plus_1mm", (1.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_y_plus_1mm", (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_z_plus_1mm", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("magnet_z_rotation_1deg", (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), "magnet_local"),
+            IKTargetOffset("robot_x_plus_100mm", (-100.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            IKTargetOffset("robot_y_plus_100mm", (0.0, -100.0, 0.0), (0.0, 0.0, 0.0)),
+            IKTargetOffset("robot_z_plus_100mm", (0.0, 0.0, -100.0), (0.0, 0.0, 0.0)),
+            IKTargetOffset("magnet_z_rotation_90deg", (0.0, 0.0, 0.0), (0.0, 0.0, -180.0), "magnet_local"),
         )
     )
 
@@ -167,12 +219,39 @@ class ValidationConfig:
     strict_validation: bool = False
 
     output_root: str = "ur_magnet_ik_jacobian_validation"
-    run_name: str = "stationary_read_only_check"
+    run_name: str = "ik_comparison_with_joint_feedback"
     make_plots: bool = True
     show_plots_interactively: bool = False
 
 
 CONFIG = ValidationConfig()
+
+
+def debug_print(
+    cfg: ValidationConfig,
+    stage: str,
+    message: str,
+    value: Any | None = None,
+) -> None:
+    """Print one timestamped, immediately flushed diagnostic line."""
+
+    if not cfg.debug_enabled:
+        return
+    timestamp = datetime.now().astimezone().strftime("%H:%M:%S.%f")[:-3]
+    prefix = f"[UR-IK DEBUG][{timestamp}][{stage}]"
+    if value is None:
+        print(f"{prefix} {message}", flush=True)
+        return
+    if isinstance(value, np.ndarray):
+        rendered = np.array2string(
+            value,
+            precision=8,
+            suppress_small=False,
+            max_line_width=160,
+        )
+    else:
+        rendered = repr(value)
+    print(f"{prefix} {message}: {rendered}", flush=True)
 
 
 # =============================================================================
@@ -220,6 +299,54 @@ def inverse_T(T: Any) -> np.ndarray:
     result[:3, :3] = matrix[:3, :3].T
     result[:3, 3] = -result[:3, :3] @ matrix[:3, 3]
     return result
+
+
+def magnet_pose_from_tcp(
+    T_A_TCP: Any,
+    T_TCP_M: Any,
+    name: str = "T_A_M",
+) -> np.ndarray:
+    """Map the rigid TCP-to-magnet offset into any parent frame A.
+
+    The component equations are::
+
+        p_A_M = p_A_TCP + R_A_TCP @ p_TCP_M
+        R_A_M = R_A_TCP @ R_TCP_M
+
+    Thus a TCP rotation rotates the 27 mm lever arm as well as the magnet axes.
+    """
+
+    parent_tcp = validate_transform(T_A_TCP, "T_A_TCP")
+    tcp_magnet = validate_transform(T_TCP_M, "T_TCP_M")
+    return validate_transform(parent_tcp @ tcp_magnet, name)
+
+
+def tcp_pose_for_magnet_target(
+    T_A_M_target: Any,
+    T_TCP_M: Any,
+    name: str = "T_A_TCP_target",
+) -> np.ndarray:
+    """Return the TCP pose that realizes a requested magnet-centre pose.
+
+    The robot accepts a TCP target, while this validator defines motion at M::
+
+        T_A_TCP_target = T_A_M_target @ inverse(T_TCP_M)
+
+    For a pure rotation about the magnet centre, the magnet target translation
+    stays fixed and the resulting TCP translation moves around that centre.
+    """
+
+    magnet_target = validate_transform(T_A_M_target, "T_A_M_target")
+    tcp_magnet = validate_transform(T_TCP_M, "T_TCP_M")
+    tcp_target = validate_transform(magnet_target @ inverse_T(tcp_magnet), name)
+    reconstructed_magnet = magnet_pose_from_tcp(
+        tcp_target,
+        tcp_magnet,
+        "reconstructed magnet target",
+    )
+    if not np.allclose(reconstructed_magnet, magnet_target, atol=1.0e-10):
+        raise RuntimeError("TCP/magnet target conversion failed its round-trip check.")
+    return tcp_target
 
 
 def pose_error_spatial(T_current: Any, T_target: Any) -> np.ndarray:
@@ -522,6 +649,8 @@ def inverse_kinematics_dls(
     history: list[dict[str, float]] = []
     reason = "maximum_iterations"
     converged = False
+    debug_print(cfg, "CUSTOM IK", "seed q [rad]", q)
+    debug_print(cfg, "CUSTOM IK", "target pose [m, rotvec rad]", T_to_pose6(target))
 
     def evaluate(q_value: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
         T_current = forward_kinematics(q_value, dh, T_F_target).T_R_target
@@ -545,6 +674,17 @@ def inverse_kinematics_dls(
                 "damping_m_per_rad": damping,
             }
         )
+        if iteration == 0 or iteration % cfg.debug_ik_iteration_interval == 0:
+            debug_print(
+                cfg,
+                "CUSTOM IK",
+                (
+                    f"iteration={iteration} position_error={1.0e3 * position_error:.6f} mm "
+                    f"orientation_error={np.degrees(orientation_error):.6f} deg "
+                    f"scaled_cost={cost:.6e} m condition={scaled_condition:.6e} "
+                    f"damping={damping:.6e}"
+                ),
+            )
         if (
             position_error <= cfg.ik_position_tolerance_m
             and orientation_error <= cfg.ik_orientation_tolerance_rad
@@ -561,6 +701,7 @@ def inverse_kinematics_dls(
             delta_q = J_scaled.T @ np.linalg.solve(regularized, rhs)
         except np.linalg.LinAlgError:
             reason = "linear_solve_failed"
+            debug_print(cfg, "CUSTOM IK", "linear solve failed")
             break
         delta_q = saturate_joint_step(
             delta_q,
@@ -580,12 +721,27 @@ def inverse_kinematics_dls(
                 break
         if not accepted:
             damping *= 10.0
+            debug_print(
+                cfg,
+                "CUSTOM IK",
+                f"line search rejected every step; damping increased to {damping:.6e}",
+            )
             if damping > cfg.ik_maximum_damping_m_per_rad:
                 reason = "line_search_stalled"
                 break
 
     final_T = forward_kinematics(q, dh, T_F_target).T_R_target
     final_error = pose_error_spatial(final_T, target)
+    debug_print(
+        cfg,
+        "CUSTOM IK",
+        (
+            f"finished converged={converged} reason={reason} iterations={len(history) - 1} "
+            f"position_error={1.0e3 * np.linalg.norm(final_error[:3]):.6f} mm "
+            f"orientation_error={np.degrees(np.linalg.norm(final_error[3:])):.6f} deg"
+        ),
+    )
+    debug_print(cfg, "CUSTOM IK", "solution q [rad]", q)
     return IKResult(
         q_rad=q.copy(),
         converged=converged,
@@ -610,7 +766,7 @@ def wrapped_joint_difference(q_a: Iterable[float], q_b: Iterable[float]) -> np.n
 
 
 # =============================================================================
-# READ-ONLY ur_rtde ORACLE
+# URRTDERobot ADAPTER FOR STATE, KINEMATICS, AND MOTION
 # =============================================================================
 
 
@@ -624,59 +780,178 @@ class RobotSnapshot:
     actual_T_R_F_reported: np.ndarray | None
 
 
-class ReadOnlyURRTDEOracle:
-    """Expose only state and kinematics queries; intentionally no motion API."""
+class URRTDERobotAdapter:
+    """Use one supplied ``URRTDERobot`` connection for the entire validation.
+
+    The supplied wrapper intentionally exposes only ordinary state and motion
+    methods.  ur_rtde's FK, IK, Jacobian, TCP-offset, and safety-limit queries
+    are therefore called on that wrapper's existing control interface.  This
+    avoids starting a second RTDE control session or modifying the wrapper.
+    """
 
     def __init__(self, cfg: ValidationConfig):
+        self.cfg = cfg
+        self._rtde_call_counts: dict[str, int] = {}
         print(
             "\nLIVE CONNECTION WARNING:\n"
-            "  No motion method exists in this validator.\n"
-            "  RTDEControlInterface may still upload a controller script.\n"
-            "  Keep the robot stationary and stop other robot programs first.\n"
+            "  This validator uses URRTDERobot and may move the robot.\n"
+            "  Stop other robot programs and verify the complete configuration.\n"
+            f"  Configured motion execution: {cfg.execute_motion}.\n"
         )
         confirmation = input(
             f"Type exactly {cfg.live_confirmation_phrase!r} to connect: "
         )
         if confirmation != cfg.live_confirmation_phrase:
             raise RuntimeError("Live connection cancelled: confirmation did not match.")
+        debug_print(cfg, "CONNECT", "connection confirmation accepted")
         try:
-            import rtde_control
-            import rtde_receive
+            debug_print(cfg, "CONNECT", "importing URRTDERobot from ur_rtde_robot")
+            from ur_rtde_robot import URRTDERobot
         except ImportError as exc:
             raise RuntimeError(
-                "ur_rtde is not installed in this Python environment."
+                "Could not import URRTDERobot. Keep ur_rtde_robot.py beside "
+                "this script and install ur_rtde in this Python environment."
             ) from exc
-        self.receive = rtde_receive.RTDEReceiveInterface(cfg.robot_ip)
-        self.control = rtde_control.RTDEControlInterface(cfg.robot_ip)
+        debug_print(
+            cfg,
+            "CONNECT",
+            f"opening URRTDERobot at {cfg.robot_ip}, frequency={cfg.rtde_frequency_hz} Hz",
+        )
+        self.robot = URRTDERobot(cfg.robot_ip, frequency=cfg.rtde_frequency_hz)
+        debug_print(
+            cfg,
+            "CONNECT",
+            f"URRTDERobot returned; is_connected={self.robot.is_connected()}",
+        )
+        self.control = getattr(self.robot, "_control", None)
+        if self.control is None:
+            self.robot.close()
+            raise RuntimeError(
+                "URRTDERobot connected without an accessible control interface; "
+                "controller kinematics cannot be compared without opening a "
+                "conflicting second control session."
+            )
+        debug_print(
+            cfg,
+            "CONNECT",
+            f"control interface ready: {type(self.control).__name__}",
+        )
+        try:
+            debug_print(cfg, "CONNECT", f"robot_mode={self.robot.get_robot_mode()}")
+            debug_print(cfg, "CONNECT", f"safety_mode={self.robot.get_safety_mode()}")
+            debug_print(
+                cfg,
+                "CONNECT",
+                f"protective_stopped={self.robot.is_protective_stopped()}",
+            )
+        except Exception as exc:
+            debug_print(
+                cfg,
+                "CONNECT",
+                f"state diagnostic query failed: {type(exc).__name__}: {exc}",
+            )
+
+    def _trace_rtde_call(self, name: str, message: str) -> int:
+        """Trace the first calls and periodic high-volume kinematic calls."""
+
+        count = self._rtde_call_counts.get(name, 0) + 1
+        self._rtde_call_counts[name] = count
+        if count <= 3 or count % self.cfg.debug_rtde_call_interval == 0:
+            debug_print(self.cfg, "RTDE CALL", f"{name} #{count}: {message}")
+        return count
+
+    def _trace_rtde_result(self, name: str, count: int, message: str) -> None:
+        if count <= 3 or count % self.cfg.debug_rtde_call_interval == 0:
+            debug_print(self.cfg, "RTDE RETURN", f"{name} #{count}: {message}")
 
     def close(self) -> None:
-        for interface in (getattr(self, "control", None), getattr(self, "receive", None)):
-            if interface is not None and hasattr(interface, "disconnect"):
-                try:
-                    interface.disconnect()
-                except Exception:
-                    pass
+        robot = getattr(self, "robot", None)
+        if robot is not None:
+            debug_print(self.cfg, "CLOSE", "closing URRTDERobot connection")
+            robot.close()
+            debug_print(self.cfg, "CLOSE", "URRTDERobot connection closed")
 
     def snapshot(self) -> RobotSnapshot:
-        q_before = finite_vector(self.receive.getActualQ(), 6, "getActualQ before")
-        actual_tcp = pose6_to_T(self.receive.getActualTCPPose())
-        q_after = finite_vector(self.receive.getActualQ(), 6, "getActualQ after")
+        debug_print(self.cfg, "SNAPSHOT", "requesting first actual joint sample")
+        q_before = finite_vector(self.robot.get_joints(), 6, "get_joints before")
+        debug_print(self.cfg, "SNAPSHOT", "q_before [rad]", q_before)
+        debug_print(self.cfg, "SNAPSHOT", "requesting actual TCP pose")
+        actual_tcp = pose6_to_T(self.robot.get_tcp_pose())
+        debug_print(
+            self.cfg,
+            "SNAPSHOT",
+            "actual TCP pose [m, rotvec rad]",
+            T_to_pose6(actual_tcp),
+        )
+        debug_print(self.cfg, "SNAPSHOT", "requesting second actual joint sample")
+        q_after = finite_vector(self.robot.get_joints(), 6, "get_joints after")
+        debug_print(self.cfg, "SNAPSHOT", "q_after [rad]", q_after)
         q = q_before + 0.5 * wrapped_joint_difference(q_after, q_before)
+        debug_print(self.cfg, "SNAPSHOT", "requesting active TCP offset")
         T_F_TCP = pose6_to_T(self.control.getTCPOffset())
+        debug_print(
+            self.cfg,
+            "SNAPSHOT",
+            "active T_F_TCP pose [m, rotvec rad]",
+            T_to_pose6(T_F_TCP),
+        )
         flange = None
-        if hasattr(self.control, "getActualToolFlangePose"):
-            try:
-                flange = pose6_to_T(self.control.getActualToolFlangePose())
-            except Exception:
-                flange = None
+        if self.cfg.query_actual_tool_flange_pose:
+            if hasattr(self.control, "getActualToolFlangePose"):
+                debug_print(
+                    self.cfg,
+                    "SNAPSHOT",
+                    "requesting optional actual tool-flange pose",
+                )
+                try:
+                    flange = pose6_to_T(self.control.getActualToolFlangePose())
+                    debug_print(
+                        self.cfg,
+                        "SNAPSHOT",
+                        "optional actual tool-flange pose returned",
+                        T_to_pose6(flange),
+                    )
+                except Exception as exc:
+                    debug_print(
+                        self.cfg,
+                        "SNAPSHOT",
+                        (
+                            "optional tool-flange query failed: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
+            else:
+                debug_print(
+                    self.cfg,
+                    "SNAPSHOT",
+                    "optional getActualToolFlangePose API is unavailable",
+                )
+        else:
+            debug_print(
+                self.cfg,
+                "SNAPSHOT",
+                "skipping optional getActualToolFlangePose query (disabled)",
+            )
+        debug_print(self.cfg, "SNAPSHOT", "stationary snapshot complete")
         return RobotSnapshot(q, actual_tcp, T_F_TCP, q_before, q_after, flange)
 
     def forward_kinematics(self, q_rad: Iterable[float], T_F_target: Any) -> np.ndarray:
+        q = finite_vector(q_rad, 6, "q_rad")
+        count = self._trace_rtde_call(
+            "getForwardKinematics",
+            f"q={q.tolist()}",
+        )
         pose = self.control.getForwardKinematics(
-            finite_vector(q_rad, 6, "q_rad").tolist(),
+            q.tolist(),
             T_to_pose6(T_F_target).tolist(),
         )
-        return pose6_to_T(pose)
+        result = pose6_to_T(pose)
+        self._trace_rtde_result(
+            "getForwardKinematics",
+            count,
+            f"pose={T_to_pose6(result).tolist()}",
+        )
+        return result
 
     def inverse_kinematics(
         self,
@@ -687,32 +962,53 @@ class ReadOnlyURRTDEOracle:
     ) -> tuple[np.ndarray | None, str]:
         pose = T_to_pose6(T_R_TCP_target).tolist()
         q_near = finite_vector(q_near_rad, 6, "q_near_rad").tolist()
+        debug_print(self.cfg, "UR RTDE IK", f"target TCP pose={pose}")
+        debug_print(self.cfg, "UR RTDE IK", f"q_near={q_near}")
         try:
             if hasattr(self.control, "getInverseKinematicsHasSolution"):
+                debug_print(self.cfg, "UR RTDE IK", "calling has-solution query")
                 has_solution = self.control.getInverseKinematicsHasSolution(
                     pose,
                     q_near,
                     float(position_tolerance_m),
                     float(orientation_tolerance_rad),
                 )
+                debug_print(self.cfg, "UR RTDE IK", f"has_solution={has_solution}")
                 if not has_solution:
                     return None, "ur_rtde_reported_no_solution"
+            debug_print(self.cfg, "UR RTDE IK", "calling getInverseKinematics")
             result = self.control.getInverseKinematics(
                 pose,
                 q_near,
                 float(position_tolerance_m),
                 float(orientation_tolerance_rad),
             )
-            return finite_vector(result, 6, "ur_rtde IK result"), "solution"
+            q_result = finite_vector(result, 6, "ur_rtde IK result")
+            debug_print(self.cfg, "UR RTDE IK", "solution q [rad]", q_result)
+            return q_result, "solution"
         except Exception as exc:
+            debug_print(
+                self.cfg,
+                "UR RTDE IK",
+                f"exception: {type(exc).__name__}: {exc}",
+            )
             return None, f"ur_rtde_exception: {type(exc).__name__}: {exc}"
 
     def jacobian(self, q_rad: Iterable[float], T_F_target: Any, row_order: str) -> np.ndarray:
+        q = finite_vector(q_rad, 6, "q_rad")
+        count = self._trace_rtde_call("getJacobian", f"q={q.tolist()}")
         raw = self.control.getJacobian(
-            finite_vector(q_rad, 6, "q_rad").tolist(),
+            q.tolist(),
             T_to_pose6(T_F_target).tolist(),
         )
         J = np.asarray(raw, dtype=float).reshape(6, 6)
+        self._trace_rtde_result(
+            "getJacobian",
+            count,
+            f"shape={J.shape}, finite={bool(np.all(np.isfinite(J)))}",
+        )
+        if self.cfg.debug_print_matrices:
+            debug_print(self.cfg, "UR RTDE JACOBIAN", "matrix", J)
         if row_order == "linear_angular":
             return J
         if row_order == "angular_linear":
@@ -721,11 +1017,47 @@ class ReadOnlyURRTDEOracle:
 
     def joints_within_safety_limits(self, q_rad: Iterable[float]) -> bool | None:
         try:
-            return bool(self.control.isJointsWithinSafetyLimits(
-                finite_vector(q_rad, 6, "q_rad").tolist()
-            ))
-        except Exception:
+            q = finite_vector(q_rad, 6, "q_rad")
+            debug_print(self.cfg, "SAFETY", "checking joint target [rad]", q)
+            result = bool(self.control.isJointsWithinSafetyLimits(q.tolist()))
+            debug_print(self.cfg, "SAFETY", f"controller result={result}")
+            return result
+        except Exception as exc:
+            debug_print(
+                self.cfg,
+                "SAFETY",
+                f"limit query exception: {type(exc).__name__}: {exc}",
+            )
             return None
+
+    def move_j(
+        self,
+        q_rad: Iterable[float],
+        speed_rad_s: float,
+        acceleration_rad_s2: float,
+    ) -> bool:
+        """Send one blocking joint command through the supplied robot class."""
+
+        debug_print(self.cfg, "MOVEJ", "entering blocking URRTDERobot.move_j")
+        accepted = bool(
+            self.robot.move_j(
+                finite_vector(q_rad, 6, "q_rad").tolist(),
+                speed=float(speed_rad_s),
+                acceleration=float(acceleration_rad_s2),
+                asynchronous=False,
+            )
+        )
+        debug_print(self.cfg, "MOVEJ", f"blocking move_j returned {accepted}")
+        return accepted
+
+    def receive_feedback(self) -> tuple[np.ndarray, np.ndarray]:
+        """Receive actual joints and active-TCP pose through public methods."""
+
+        feedback = (
+            finite_vector(self.robot.get_joints(), 6, "received joints"),
+            finite_vector(self.robot.get_tcp_pose(), 6, "received TCP pose"),
+        )
+        return feedback
 
 
 # =============================================================================
@@ -746,15 +1078,86 @@ def magnet_offset_from_config(cfg: ValidationConfig) -> np.ndarray:
 
 
 def validate_config(cfg: ValidationConfig) -> None:
+    if cfg.debug_ik_iteration_interval < 1:
+        raise ValueError("debug_ik_iteration_interval must be at least one.")
+    if cfg.debug_rtde_call_interval < 1:
+        raise ValueError("debug_rtde_call_interval must be at least one.")
     nominal_ur_dh(cfg.robot_model)
-    magnet_offset_from_config(cfg)
+    T_TCP_M = magnet_offset_from_config(cfg)
+    # Exercise the composition order with a nontrivial TCP pose.  This catches
+    # accidental use of a base-frame scalar offset or reversed multiplication.
+    test_T_R_TCP = pose6_to_T((0.3, -0.2, 0.5, 0.4, -0.3, 0.2))
+    test_T_R_M = magnet_pose_from_tcp(test_T_R_TCP, T_TCP_M, "test T_R_M")
+    reconstructed_T_R_TCP = tcp_pose_for_magnet_target(
+        test_T_R_M,
+        T_TCP_M,
+        "reconstructed test T_R_TCP",
+    )
+    if not np.allclose(reconstructed_T_R_TCP, test_T_R_TCP, atol=1.0e-10):
+        raise ValueError("TCP/magnet transform failed its configuration round-trip test.")
     finite_vector(cfg.joint_lower_bounds_rad, 6, "joint_lower_bounds_rad")
     finite_vector(cfg.joint_upper_bounds_rad, 6, "joint_upper_bounds_rad")
     finite_vector(cfg.ik_maximum_per_joint_step_rad, 6, "ik_maximum_per_joint_step_rad")
+    command_joint_limits = finite_vector(
+        cfg.maximum_commanded_per_joint_delta_rad,
+        6,
+        "maximum_commanded_per_joint_delta_rad",
+    )
+    if (
+        cfg.rtde_frequency_hz <= 0.0
+        or cfg.rtde_frequency_hz > 500.0
+        or not np.isfinite(cfg.rtde_frequency_hz)
+    ):
+        raise ValueError("rtde_frequency_hz must be positive, finite, and at most 500.")
+    if not cfg.live_confirmation_phrase:
+        raise ValueError("live_confirmation_phrase must not be empty.")
+    if cfg.execute_motion and not cfg.motion_confirmation_phrase:
+        raise ValueError("motion_confirmation_phrase must not be empty.")
+    if cfg.execute_motion and not cfg.use_live_robot:
+        raise ValueError("execute_motion=True requires use_live_robot=True.")
+    valid_motion_sources = {"own", "ur_rtde"}
+    if not cfg.motion_solution_sources:
+        raise ValueError("motion_solution_sources must not be empty.")
+    if len(set(cfg.motion_solution_sources)) != len(cfg.motion_solution_sources):
+        raise ValueError("motion_solution_sources must not contain duplicates.")
+    unknown_sources = set(cfg.motion_solution_sources) - valid_motion_sources
+    if unknown_sources:
+        raise ValueError(
+            f"Unknown motion solution sources: {sorted(unknown_sources)}; "
+            f"choose from {sorted(valid_motion_sources)}."
+        )
+    if (
+        not np.isfinite(cfg.move_joint_speed_rad_s)
+        or cfg.move_joint_speed_rad_s <= 0.0
+        or not np.isfinite(cfg.move_joint_acceleration_rad_s2)
+        or cfg.move_joint_acceleration_rad_s2 <= 0.0
+    ):
+        raise ValueError("moveJ speed and acceleration must be positive and finite.")
+    if (
+        not np.isfinite(cfg.maximum_commanded_joint_delta_norm_rad)
+        or cfg.maximum_commanded_joint_delta_norm_rad <= 0.0
+        or np.any(command_joint_limits <= 0.0)
+    ):
+        raise ValueError("Commanded joint-delta limits must be positive and finite.")
+    if cfg.feedback_sample_count < 1:
+        raise ValueError("feedback_sample_count must be at least one.")
+    if (
+        not np.isfinite(cfg.feedback_sample_interval_s)
+        or cfg.feedback_sample_interval_s < 0.0
+    ):
+        raise ValueError("feedback_sample_interval_s must be finite and non-negative.")
     if cfg.rtde_jacobian_row_order not in {"linear_angular", "angular_linear"}:
         raise ValueError("rtde_jacobian_row_order must be linear_angular or angular_linear.")
     if not cfg.targets:
         raise ValueError("At least one IK target is required.")
+    target_names = [target.name for target in cfg.targets]
+    if len(set(target_names)) != len(target_names):
+        raise ValueError("Every IK target name must be unique.")
+    unknown_target_names = set(cfg.motion_target_names) - set(target_names)
+    if unknown_target_names:
+        raise ValueError(
+            f"Unknown motion_target_names: {sorted(unknown_target_names)}."
+        )
     for target in cfg.targets:
         apply_target_offset(np.eye(4), target)
 
@@ -830,14 +1233,21 @@ def build_jacobian_record(
     dh: DHParameters,
     T_F_M: np.ndarray,
     cfg: ValidationConfig,
-    oracle: ReadOnlyURRTDEOracle | None,
+    oracle: URRTDERobotAdapter | None,
 ) -> dict[str, Any]:
+    debug_print(cfg, "JACOBIAN", f"{label}: starting")
+    debug_print(cfg, "JACOBIAN", f"{label}: q [rad]", q_rad)
     own_analytic = geometric_jacobian(q_rad, dh, T_F_M)
+    debug_print(cfg, "JACOBIAN", f"{label}: custom analytic Jacobian complete")
+    if cfg.debug_print_matrices:
+        debug_print(cfg, "JACOBIAN", f"{label}: custom analytic matrix", own_analytic)
+    debug_print(cfg, "JACOBIAN", f"{label}: starting custom finite differences")
     own_fd = central_difference_jacobian(
         lambda q: forward_kinematics(q, dh, T_F_M).T_R_target,
         q_rad,
         cfg.finite_difference_joint_step_rad,
     )
+    debug_print(cfg, "JACOBIAN", f"{label}: custom finite differences complete")
     matrices: dict[str, np.ndarray] = {
         "own_analytic": own_analytic,
         "own_finite_difference": own_fd,
@@ -845,22 +1255,38 @@ def build_jacobian_record(
     warnings: list[str] = []
     if oracle is not None:
         try:
+            debug_print(cfg, "JACOBIAN", f"{label}: requesting ur_rtde Jacobian")
             matrices["ur_rtde_analytic"] = oracle.jacobian(
                 q_rad, T_F_M, cfg.rtde_jacobian_row_order
             )
         except Exception as exc:
-            warnings.append(f"ur_rtde getJacobian unavailable: {type(exc).__name__}: {exc}")
+            warning = f"ur_rtde getJacobian unavailable: {type(exc).__name__}: {exc}"
+            warnings.append(warning)
+            debug_print(cfg, "JACOBIAN", f"{label}: {warning}")
         if cfg.calculate_rtde_fk_finite_difference_jacobian:
             try:
+                debug_print(
+                    cfg,
+                    "JACOBIAN",
+                    f"{label}: starting ur_rtde FK finite differences (12 FK calls)",
+                )
                 matrices["ur_rtde_fk_finite_difference"] = central_difference_jacobian(
                     lambda q: oracle.forward_kinematics(q, T_F_M),
                     q_rad,
                     cfg.finite_difference_joint_step_rad,
                 )
-            except Exception as exc:
-                warnings.append(
-                    f"ur_rtde FK finite difference unavailable: {type(exc).__name__}: {exc}"
+                debug_print(
+                    cfg,
+                    "JACOBIAN",
+                    f"{label}: ur_rtde FK finite differences complete",
                 )
+            except Exception as exc:
+                warning = (
+                    "ur_rtde FK finite difference unavailable: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                warnings.append(warning)
+                debug_print(cfg, "JACOBIAN", f"{label}: {warning}")
 
     comparisons: dict[str, Any] = {
         "own_analytic_vs_own_finite_difference": jacobian_difference(
@@ -888,6 +1314,16 @@ def build_jacobian_record(
         }
         for name, matrix in matrices.items()
     }
+    for comparison_name, metrics in comparisons.items():
+        debug_print(
+            cfg,
+            "JACOBIAN",
+            (
+                f"{label}: {comparison_name} relative_error="
+                f"{metrics['relative_frobenius_error']:.6e}"
+            ),
+        )
+    debug_print(cfg, "JACOBIAN", f"{label}: complete; sources={list(matrices)}")
     return {
         "label": label,
         "q_rad": q_rad.copy(),
@@ -907,7 +1343,7 @@ def ik_result_row(
     rtde_status: str,
     dh: DHParameters,
     T_F_M: np.ndarray,
-    oracle: ReadOnlyURRTDEOracle | None,
+    oracle: URRTDERobotAdapter | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     own_model_at_own = forward_kinematics(own.q_rad, dh, T_F_M).T_R_target
     detail: dict[str, Any] = {
@@ -1015,6 +1451,263 @@ def ik_result_row(
     return row, detail
 
 
+def execute_motion_comparison(
+    oracle: URRTDERobotAdapter,
+    target_details: list[dict[str, Any]],
+    T_TCP_M: np.ndarray,
+    cfg: ValidationConfig,
+) -> list[dict[str, Any]]:
+    """Send selected IK joint vectors and receive actual joints/TCP feedback."""
+
+    selected_targets = [
+        detail
+        for detail in target_details
+        if not cfg.motion_target_names
+        or detail["target"].name in cfg.motion_target_names
+    ]
+    planned_count = len(selected_targets) * len(cfg.motion_solution_sources)
+    print(
+        "\nMOTION CONFIRMATION:\n"
+        f"  Planned commands: {planned_count}\n"
+        f"  Targets: {[detail['target'].name for detail in selected_targets]}\n"
+        f"  Sources/order: {list(cfg.motion_solution_sources)}\n"
+        f"  moveJ speed: {cfg.move_joint_speed_rad_s} rad/s\n"
+        f"  moveJ acceleration: {cfg.move_joint_acceleration_rad_s2} rad/s^2\n"
+        "  Each command is rechecked against controller safety limits and\n"
+        "  configured joint-delta limits immediately before it is sent.\n"
+    )
+    confirmation = input(
+        f"Type exactly {cfg.motion_confirmation_phrase!r} to execute motion: "
+    )
+    if confirmation != cfg.motion_confirmation_phrase:
+        print("Motion skipped: confirmation did not match.")
+        debug_print(cfg, "MOTION", "motion confirmation did not match; no command sent")
+        return [
+            {
+                "status": "motion_confirmation_not_matched",
+                "planned_command_count": planned_count,
+            }
+        ]
+
+    per_joint_limit = finite_vector(
+        cfg.maximum_commanded_per_joint_delta_rad,
+        6,
+        "maximum_commanded_per_joint_delta_rad",
+    )
+    records: list[dict[str, Any]] = []
+    stop_remaining_commands = False
+    for detail in selected_targets:
+        target: IKTargetOffset = detail["target"]
+        T_R_M_target = validate_transform(detail["T_R_M_target"], "T_R_M_target")
+        for source in cfg.motion_solution_sources:
+            debug_print(cfg, "MOTION", f"evaluating target={target.name}, source={source}")
+            record: dict[str, Any] = {
+                "target_name": target.name,
+                "solution_source": source,
+                "target_T_R_M_pose6": T_to_pose6(T_R_M_target),
+            }
+            if stop_remaining_commands:
+                record["status"] = "skipped_after_previous_motion_failure"
+                debug_print(cfg, "MOTION", record["status"])
+                records.append(record)
+                continue
+
+            if source == "own":
+                own_ik: IKResult = detail["own_ik"]
+                q_command = own_ik.q_rad
+                if not own_ik.converged:
+                    record.update(
+                        {
+                            "status": "skipped_custom_ik_not_converged",
+                            "ik_reason": own_ik.reason,
+                        }
+                    )
+                    debug_print(
+                        cfg,
+                        "MOTION",
+                        f"{target.name}/{source}: {record['status']} ({own_ik.reason})",
+                    )
+                    records.append(record)
+                    continue
+            else:
+                q_command = detail["q_ur_rtde_rad"]
+                if q_command is None:
+                    record.update(
+                        {
+                            "status": "skipped_ur_rtde_ik_unavailable",
+                            "ik_reason": detail["ur_rtde_status"],
+                        }
+                    )
+                    debug_print(
+                        cfg,
+                        "MOTION",
+                        f"{target.name}/{source}: {record['status']} ({detail['ur_rtde_status']})",
+                    )
+                    records.append(record)
+                    continue
+
+            q_command = finite_vector(q_command, 6, f"{source} q_command")
+            debug_print(cfg, "MOTION", "candidate q_command [rad]", q_command)
+            debug_print(cfg, "MOTION", "requesting pre-command feedback")
+            q_before, tcp_before_pose6 = oracle.receive_feedback()
+            debug_print(cfg, "MOTION", "pre-command q [rad]", q_before)
+            debug_print(
+                cfg,
+                "MOTION",
+                "pre-command TCP pose [m, rotvec rad]",
+                tcp_before_pose6,
+            )
+            # moveJ receives absolute joint angles.  Apply motion bounds to the
+            # raw numerical delta, not a modulo-2*pi comparison: a target one
+            # full revolution away must never appear to be a zero-size move.
+            command_delta = q_command - q_before
+            command_delta_norm = float(np.linalg.norm(command_delta))
+            controller_safety_limit = oracle.joints_within_safety_limits(q_command)
+            debug_print(cfg, "MOTION", "raw command delta [rad]", command_delta)
+            debug_print(
+                cfg,
+                "MOTION",
+                (
+                    f"delta_norm={command_delta_norm:.8f} rad, "
+                    f"configured_norm_limit={cfg.maximum_commanded_joint_delta_norm_rad:.8f} rad, "
+                    f"controller_safety={controller_safety_limit}"
+                ),
+            )
+            record.update(
+                {
+                    "q_command_rad": q_command,
+                    "q_before_rad": q_before,
+                    "tcp_before_pose6": tcp_before_pose6,
+                    "raw_command_delta_from_received_q_rad": command_delta,
+                    "wrapped_command_delta_from_received_q_rad": (
+                        wrapped_joint_difference(q_command, q_before)
+                    ),
+                    "command_delta_norm_rad": command_delta_norm,
+                    "controller_joints_within_safety_limits": controller_safety_limit,
+                }
+            )
+            if controller_safety_limit is not True:
+                record["status"] = "skipped_controller_safety_limit_not_true"
+                debug_print(cfg, "MOTION", f"{target.name}/{source}: {record['status']}")
+                records.append(record)
+                continue
+            if (
+                command_delta_norm > cfg.maximum_commanded_joint_delta_norm_rad
+                or np.any(np.abs(command_delta) > per_joint_limit)
+            ):
+                record["status"] = "skipped_configured_joint_delta_limit"
+                debug_print(
+                    cfg,
+                    "MOTION",
+                    (
+                        f"{target.name}/{source}: {record['status']}; "
+                        f"per_joint_limit={per_joint_limit.tolist()}"
+                    ),
+                )
+                records.append(record)
+                continue
+
+            print(f"\nSending {source} joints for {target.name}: {q_command.tolist()}")
+            try:
+                accepted = oracle.move_j(
+                    q_command,
+                    cfg.move_joint_speed_rad_s,
+                    cfg.move_joint_acceleration_rad_s2,
+                )
+                record["move_j_returned"] = accepted
+                if not accepted:
+                    record["status"] = "move_j_returned_false"
+                    debug_print(cfg, "MOTION", f"{target.name}/{source}: {record['status']}")
+                    stop_remaining_commands = True
+                    records.append(record)
+                    continue
+
+                feedback_samples: list[dict[str, Any]] = []
+                feedback_start = time.monotonic()
+                for sample_index in range(cfg.feedback_sample_count):
+                    if sample_index:
+                        time.sleep(cfg.feedback_sample_interval_s)
+                    q_received, tcp_received_pose6 = oracle.receive_feedback()
+                    feedback_samples.append(
+                        {
+                            "sample_index": sample_index,
+                            "elapsed_s": time.monotonic() - feedback_start,
+                            "q_received_rad": q_received,
+                            "tcp_received_pose6": tcp_received_pose6,
+                            "q_tracking_error_rad": wrapped_joint_difference(
+                                q_received, q_command
+                            ),
+                        }
+                    )
+                    if cfg.debug_print_feedback_samples:
+                        debug_print(
+                            cfg,
+                            "FEEDBACK",
+                            (
+                                f"sample={sample_index} elapsed="
+                                f"{feedback_samples[-1]['elapsed_s']:.6f}s"
+                            ),
+                        )
+                        debug_print(cfg, "FEEDBACK", "q_received [rad]", q_received)
+                        debug_print(
+                            cfg,
+                            "FEEDBACK",
+                            "tcp_received [m, rotvec rad]",
+                            tcp_received_pose6,
+                        )
+
+                final_feedback = feedback_samples[-1]
+                final_q = final_feedback["q_received_rad"]
+                final_tcp_pose6 = final_feedback["tcp_received_pose6"]
+                T_R_M_received = magnet_pose_from_tcp(
+                    pose6_to_T(final_tcp_pose6),
+                    T_TCP_M,
+                    "received T_R_M",
+                )
+                record.update(
+                    {
+                        "status": "completed",
+                        "feedback_samples": feedback_samples,
+                        "final_q_received_rad": final_q,
+                        "final_tcp_received_pose6": final_tcp_pose6,
+                        "final_q_tracking_error_rad": wrapped_joint_difference(
+                            final_q, q_command
+                        ),
+                        "final_q_tracking_error_norm_rad": float(
+                            np.linalg.norm(
+                                wrapped_joint_difference(final_q, q_command)
+                            )
+                        ),
+                        "final_T_R_M_received_pose6": T_to_pose6(T_R_M_received),
+                        **{
+                            f"received_{key}": value
+                            for key, value in pose_error_metrics(
+                                T_R_M_received, T_R_M_target
+                            ).items()
+                        },
+                    }
+                )
+                print(f"Received joints: {final_q.tolist()}")
+                print(f"Received TCP pose: {final_tcp_pose6.tolist()}")
+                print(
+                    "Received magnet target error: "
+                    f"{record['received_position_error_mm']:.6f} mm, "
+                    f"{record['received_orientation_error_deg']:.6f} deg"
+                )
+                debug_print(cfg, "MOTION", f"{target.name}/{source}: completed")
+            except Exception as exc:
+                record.update(
+                    {
+                        "status": "motion_or_feedback_exception",
+                        "exception": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                stop_remaining_commands = True
+                print(f"Motion stopped after exception: {record['exception']}")
+            records.append(record)
+    return records
+
+
 def jacobian_csv_rows(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     summary_rows: list[dict[str, Any]] = []
     element_rows: list[dict[str, Any]] = []
@@ -1085,13 +1778,35 @@ def plot_results(
     actual_fk = forward_kinematics(snapshot.q_rad, dh, np.eye(4))
     links = actual_fk.link_points_R_m
     ax_3d.plot(links[:, 0], links[:, 1], links[:, 2], "o-", label="independent DH arm")
+    actual_tcp_position = snapshot.actual_T_R_TCP[:3, 3]
+    actual_magnet_position = T_R_M_inferred[:3, 3]
+    ax_3d.scatter(*actual_tcp_position, s=45, marker="o", label="actual TCP")
     ax_3d.scatter(*T_R_M_inferred[:3, 3], s=70, marker="*", label="robot-inferred actual M")
-    all_points = [*links, T_R_M_inferred[:3, 3]]
+    ax_3d.plot(
+        *np.vstack([actual_tcp_position, actual_magnet_position]).T,
+        "k--",
+        linewidth=1.5,
+        label="rigid TCP→M offset",
+    )
+    all_points = [*links, actual_tcp_position, actual_magnet_position]
     for detail in target_details:
-        p = np.asarray(detail["T_R_M_target"])[:3, 3]
-        all_points.append(p)
-        ax_3d.scatter(*p, s=30, label=f"target: {detail['target'].name}")
-    ax_3d.set_title("Robot and magnet targets in UR base frame R")
+        magnet_target_position = np.asarray(detail["T_R_M_target"])[:3, 3]
+        tcp_target_position = np.asarray(detail["T_R_TCP_target"])[:3, 3]
+        all_points.extend([magnet_target_position, tcp_target_position])
+        ax_3d.scatter(
+            *magnet_target_position,
+            s=30,
+            marker="*",
+            label=f"M target: {detail['target'].name}",
+        )
+        ax_3d.scatter(*tcp_target_position, s=18, marker="o", color="0.45")
+        ax_3d.plot(
+            *np.vstack([tcp_target_position, magnet_target_position]).T,
+            color="0.45",
+            linestyle=":",
+            linewidth=1.0,
+        )
+    ax_3d.set_title("TCP and magnet-centre targets in UR base frame R")
     ax_3d.set_xlabel("R.x [m]")
     ax_3d.set_ylabel("R.y [m]")
     ax_3d.set_zlabel("R.z [m]")
@@ -1168,22 +1883,101 @@ def check_threshold(
 
 
 def main() -> None:
+    debug_print(CONFIG, "START", "validator main() entered")
+    debug_print(
+        CONFIG,
+        "CONFIG",
+        (
+            f"robot_ip={CONFIG.robot_ip}, robot_model={CONFIG.robot_model}, "
+            f"live={CONFIG.use_live_robot}, execute_motion={CONFIG.execute_motion}, "
+            f"targets={[target.name for target in CONFIG.targets]}"
+        ),
+    )
+    debug_print(CONFIG, "CONFIG", "validating configuration")
     validate_config(CONFIG)
+    debug_print(CONFIG, "CONFIG", "configuration valid")
+    debug_print(CONFIG, "MODEL", "building corrected DH parameters")
     dh = corrected_dh_from_config(CONFIG)
+    debug_print(CONFIG, "MODEL", "DH a [m]", dh.a_m)
+    debug_print(CONFIG, "MODEL", "DH d [m]", dh.d_m)
+    debug_print(CONFIG, "MODEL", "DH alpha [rad]", dh.alpha_rad)
+    debug_print(CONFIG, "MODEL", "DH theta offsets [rad]", dh.theta_offset_rad)
     T_TCP_M = magnet_offset_from_config(CONFIG)
+    debug_print(
+        CONFIG,
+        "FRAMES",
+        "T_TCP_M pose [m, rotvec rad]",
+        T_to_pose6(T_TCP_M),
+    )
     output_dir = make_output_directory(CONFIG)
-    oracle: ReadOnlyURRTDEOracle | None = None
+    debug_print(CONFIG, "OUTPUT", f"created output directory {output_dir.resolve()}")
+    oracle: URRTDERobotAdapter | None = None
     try:
         if CONFIG.use_live_robot:
-            oracle = ReadOnlyURRTDEOracle(CONFIG)
+            debug_print(CONFIG, "CONNECT", "starting live URRTDERobot adapter")
+            oracle = URRTDERobotAdapter(CONFIG)
+            debug_print(CONFIG, "SNAPSHOT", "starting live snapshot")
             snapshot = oracle.snapshot()
         else:
+            debug_print(CONFIG, "SNAPSHOT", "building offline snapshot")
             snapshot = offline_snapshot(CONFIG, dh)
+            debug_print(CONFIG, "SNAPSHOT", "offline snapshot complete")
 
-        T_F_M = validate_transform(snapshot.T_F_TCP @ T_TCP_M, "T_F_M")
-        T_R_M_inferred = validate_transform(
-            snapshot.actual_T_R_TCP @ T_TCP_M, "robot-inferred T_R_M"
+        debug_print(CONFIG, "SNAPSHOT", "snapshot q [rad]", snapshot.q_rad)
+        debug_print(
+            CONFIG,
+            "SNAPSHOT",
+            "snapshot actual TCP [m, rotvec rad]",
+            T_to_pose6(snapshot.actual_T_R_TCP),
         )
+
+        T_F_M = magnet_pose_from_tcp(snapshot.T_F_TCP, T_TCP_M, "T_F_M")
+        T_R_M_inferred = magnet_pose_from_tcp(
+            snapshot.actual_T_R_TCP,
+            T_TCP_M,
+            "robot-inferred T_R_M",
+        )
+        debug_print(CONFIG, "FRAMES", "T_F_M pose [m, rotvec rad]", T_to_pose6(T_F_M))
+        debug_print(
+            CONFIG,
+            "FRAMES",
+            "robot-inferred T_R_M pose [m, rotvec rad]",
+            T_to_pose6(T_R_M_inferred),
+        )
+        tcp_to_magnet_lever_R_m = (
+            T_R_M_inferred[:3, 3] - snapshot.actual_T_R_TCP[:3, 3]
+        )
+        reconstructed_lever_TCP_m = (
+            snapshot.actual_T_R_TCP[:3, :3].T @ tcp_to_magnet_lever_R_m
+        )
+        relative_tcp_magnet_rotvec = Rot.from_matrix(
+            snapshot.actual_T_R_TCP[:3, :3].T @ T_R_M_inferred[:3, :3]
+        ).as_rotvec()
+        debug_print(
+            CONFIG,
+            "MAGNET OFFSET",
+            "configured lever arm in TCP [mm]",
+            1.0e3 * T_TCP_M[:3, 3],
+        )
+        debug_print(
+            CONFIG,
+            "MAGNET OFFSET",
+            "rotated lever arm in robot base [mm]",
+            1.0e3 * tcp_to_magnet_lever_R_m,
+        )
+        debug_print(
+            CONFIG,
+            "MAGNET OFFSET",
+            "base-frame lever transformed back into TCP [mm]",
+            1.0e3 * reconstructed_lever_TCP_m,
+        )
+        debug_print(
+            CONFIG,
+            "MAGNET OFFSET",
+            "magnet orientation relative to TCP [rotvec deg]",
+            np.degrees(relative_tcp_magnet_rotvec),
+        )
+        debug_print(CONFIG, "MODEL", "evaluating custom FK at actual joints")
         own_at_actual = forward_kinematics(snapshot.q_rad, dh, snapshot.T_F_TCP)
         own_magnet_at_actual = forward_kinematics(snapshot.q_rad, dh, T_F_M).T_R_target
         joint_snapshot_drift = float(
@@ -1200,6 +1994,10 @@ def main() -> None:
             "T_F_M": T_F_M,
             "T_R_TCP_reported": snapshot.actual_T_R_TCP,
             "T_R_M_robot_inferred": T_R_M_inferred,
+            "configured_tcp_to_magnet_translation_m": T_TCP_M[:3, 3],
+            "tcp_to_magnet_lever_arm_in_robot_base_m": tcp_to_magnet_lever_R_m,
+            "reconstructed_tcp_to_magnet_translation_m": reconstructed_lever_TCP_m,
+            "tcp_to_magnet_relative_rotation_vector_rad": relative_tcp_magnet_rotvec,
             "T_R_F_reported_if_available": snapshot.actual_T_R_F_reported,
             "T_R_TCP_own_DH_at_actual_q": own_at_actual.T_R_target,
             "T_R_M_own_DH_at_actual_q": own_magnet_at_actual,
@@ -1207,6 +2005,16 @@ def main() -> None:
                 own_at_actual.T_R_target, snapshot.actual_T_R_TCP
             ),
         }
+        debug_print(
+            CONFIG,
+            "MODEL",
+            f"reported TCP vs custom DH FK={actual_state['reported_tcp_vs_own_DH']}",
+        )
+        debug_print(
+            CONFIG,
+            "SNAPSHOT",
+            f"wrapped joint drift norm={joint_snapshot_drift:.8e} rad",
+        )
         checks: list[dict[str, Any]] = []
         check_threshold(
             checks,
@@ -1216,6 +2024,7 @@ def main() -> None:
         )
 
         if CONFIG.independent_measured_T_robot_magnet_pose6 is not None:
+            debug_print(CONFIG, "FRAMES", "loading independent magnet measurement")
             independent_magnet = pose6_to_T(
                 CONFIG.independent_measured_T_robot_magnet_pose6
             )
@@ -1225,7 +2034,9 @@ def main() -> None:
             )
 
         if oracle is not None:
+            debug_print(CONFIG, "UR RTDE FK", "evaluating calibrated TCP FK")
             rtde_tcp_fk = oracle.forward_kinematics(snapshot.q_rad, snapshot.T_F_TCP)
+            debug_print(CONFIG, "UR RTDE FK", "evaluating calibrated magnet FK")
             rtde_magnet_fk = oracle.forward_kinematics(snapshot.q_rad, T_F_M)
             actual_state["T_R_TCP_ur_rtde_calibrated_FK"] = rtde_tcp_fk
             actual_state["T_R_M_ur_rtde_calibrated_FK"] = rtde_magnet_fk
@@ -1239,6 +2050,19 @@ def main() -> None:
                 own_magnet_at_actual, rtde_magnet_fk
             )
             rtde_actual_error = actual_state["reported_tcp_vs_ur_rtde_calibrated_FK"]
+            debug_print(
+                CONFIG,
+                "UR RTDE FK",
+                f"reported TCP vs calibrated FK={rtde_actual_error}",
+            )
+            debug_print(
+                CONFIG,
+                "UR RTDE FK",
+                (
+                    "custom DH vs calibrated magnet FK="
+                    f"{actual_state['own_DH_vs_ur_rtde_calibrated_magnet_FK']}"
+                ),
+            )
             check_threshold(
                 checks,
                 "reported actual TCP versus ur_rtde calibrated FK position",
@@ -1254,6 +2078,7 @@ def main() -> None:
 
         target_rows: list[dict[str, Any]] = []
         target_details: list[dict[str, Any]] = []
+        debug_print(CONFIG, "JACOBIAN", "building actual-joint Jacobian record")
         jacobian_records = [
             build_jacobian_record(
                 "actual_q", snapshot.q_rad, dh, T_F_M, CONFIG, oracle
@@ -1261,7 +2086,57 @@ def main() -> None:
         ]
 
         for target in CONFIG.targets:
+            debug_print(
+                CONFIG,
+                "TARGET",
+                (
+                    f"starting {target.name}: frame={target.frame}, "
+                    f"translation_mm={target.translation_mm}, "
+                    f"rotation_vector_deg={target.rotation_vector_deg}"
+                ),
+            )
             T_R_M_target = apply_target_offset(T_R_M_inferred, target)
+            debug_print(
+                CONFIG,
+                "TARGET",
+                f"{target.name} T_R_M pose [m, rotvec rad]",
+                T_to_pose6(T_R_M_target),
+            )
+            # Every target is defined at the magnet centre.  Convert it to the
+            # active-TCP target only after the magnet translation/orientation
+            # has been applied, so rotations are about M rather than TCP.
+            T_R_TCP_target = tcp_pose_for_magnet_target(
+                T_R_M_target,
+                T_TCP_M,
+                "T_R_TCP_target",
+            )
+            debug_print(
+                CONFIG,
+                "TARGET",
+                f"{target.name}: required TCP target pose [m, rotvec rad]",
+                T_to_pose6(T_R_TCP_target),
+            )
+            target_lever_R_m = T_R_M_target[:3, 3] - T_R_TCP_target[:3, 3]
+            debug_print(
+                CONFIG,
+                "MAGNET TARGET",
+                f"{target.name}: TCP-to-magnet lever in robot base [mm]",
+                1.0e3 * target_lever_R_m,
+            )
+            target_round_trip = magnet_pose_from_tcp(
+                T_R_TCP_target,
+                T_TCP_M,
+                "target round-trip T_R_M",
+            )
+            debug_print(
+                CONFIG,
+                "MAGNET TARGET",
+                (
+                    f"{target.name}: TCP conversion round-trip error="
+                    f"{pose_error_metrics(target_round_trip, T_R_M_target)}"
+                ),
+            )
+            debug_print(CONFIG, "TARGET", f"{target.name}: starting custom IK")
             own_ik = inverse_kinematics_dls(
                 T_R_M_target,
                 snapshot.q_rad,
@@ -1269,20 +2144,38 @@ def main() -> None:
                 T_F_M,
                 CONFIG,
             )
+            debug_print(
+                CONFIG,
+                "TARGET",
+                (
+                    f"{target.name}: custom IK converged={own_ik.converged}, "
+                    f"reason={own_ik.reason}, iterations={own_ik.iterations}"
+                ),
+            )
             q_rtde = None
             rtde_status = "offline_not_requested"
             if oracle is not None:
-                # ur_rtde IK operates on the ACTIVE TCP.  Convert the desired
-                # magnet pose back through T_TCP_M; do not call setTcp().
-                T_R_TCP_target = validate_transform(
-                    T_R_M_target @ inverse_T(T_TCP_M), "T_R_TCP_target"
-                )
+                # ur_rtde IK accepts the active-TCP pose calculated above; do
+                # not call setTcp() or apply another scalar offset.
                 q_rtde, rtde_status = oracle.inverse_kinematics(
                     T_R_TCP_target,
                     snapshot.q_rad,
                     CONFIG.ik_position_tolerance_m,
                     CONFIG.ik_orientation_tolerance_rad,
                 )
+                debug_print(
+                    CONFIG,
+                    "TARGET",
+                    f"{target.name}: ur_rtde IK status={rtde_status}",
+                )
+                if q_rtde is not None:
+                    debug_print(
+                        CONFIG,
+                        "TARGET",
+                        f"{target.name}: custom-minus-ur_rtde wrapped q [rad]",
+                        wrapped_joint_difference(own_ik.q_rad, q_rtde),
+                    )
+            debug_print(CONFIG, "TARGET", f"{target.name}: building comparison row")
             row, detail = ik_result_row(
                 target,
                 T_R_M_target,
@@ -1296,12 +2189,21 @@ def main() -> None:
             )
             target_rows.append(row)
             row["robot_inferred_actual_T_R_M_pose6"] = T_to_pose6(T_R_M_inferred)
+            row["required_T_R_TCP_target_pose6"] = T_to_pose6(T_R_TCP_target)
+            row["target_tcp_to_magnet_lever_R_m"] = target_lever_R_m
+            detail["T_R_TCP_target"] = T_R_TCP_target
+            detail["target_tcp_to_magnet_lever_R_m"] = target_lever_R_m
             if CONFIG.independent_measured_T_robot_magnet_pose6 is not None:
                 row["independent_measured_T_R_M_pose6"] = (
                     CONFIG.independent_measured_T_robot_magnet_pose6
                 )
             target_details.append(detail)
             if CONFIG.calculate_jacobians_at_ik_solutions:
+                debug_print(
+                    CONFIG,
+                    "JACOBIAN",
+                    f"{target.name}: validating Jacobian at custom IK solution",
+                )
                 jacobian_records.append(
                     build_jacobian_record(
                         f"{target.name}:own_solution",
@@ -1313,6 +2215,11 @@ def main() -> None:
                     )
                 )
                 if q_rtde is not None:
+                    debug_print(
+                        CONFIG,
+                        "JACOBIAN",
+                        f"{target.name}: validating Jacobian at ur_rtde IK solution",
+                    )
                     jacobian_records.append(
                         build_jacobian_record(
                             f"{target.name}:ur_rtde_solution",
@@ -1323,6 +2230,39 @@ def main() -> None:
                             oracle,
                         )
                     )
+            debug_print(CONFIG, "TARGET", f"{target.name}: complete")
+
+        motion_records: list[dict[str, Any]] = []
+        if CONFIG.execute_motion:
+            debug_print(CONFIG, "MOTION", "numerical comparison complete; entering motion stage")
+            if oracle is None:
+                raise RuntimeError("Motion execution requires a live URRTDERobot.")
+            # All targets and both IK solutions are computed from the initial
+            # snapshot before any motion occurs.  Hardware execution happens
+            # only after the numerical comparison is complete.
+            motion_records = execute_motion_comparison(
+                oracle,
+                target_details,
+                T_TCP_M,
+                CONFIG,
+            )
+            debug_print(
+                CONFIG,
+                "MOTION",
+                f"motion stage returned statuses={[record['status'] for record in motion_records]}",
+            )
+            for record in motion_records:
+                label = (
+                    f"{record.get('target_name', 'motion_plan')}:"
+                    f"{record.get('solution_source', 'confirmation')}"
+                )
+                checks.append(
+                    {
+                        "name": f"motion execution {label}",
+                        "status": record["status"],
+                        "passed": record["status"] == "completed",
+                    }
+                )
 
         own_fd_error = jacobian_records[0]["comparisons"][
             "own_analytic_vs_own_finite_difference"
@@ -1343,13 +2283,22 @@ def main() -> None:
                 ],
                 CONFIG.maximum_own_vs_rtde_relative_jacobian_error,
             )
+        for check in checks:
+            debug_print(CONFIG, "CHECK", f"{check['name']}: passed={check['passed']}")
 
+        debug_print(CONFIG, "OUTPUT", "flattening Jacobian data for CSV")
         jac_summary_rows, jac_element_rows = jacobian_csv_rows(jacobian_records)
         metadata = {
             "generated_utc": datetime.now(timezone.utc).isoformat(),
-            "hardware_execution_tested_by_this_generation": False,
             "live_robot_connection_used": CONFIG.use_live_robot,
-            "motion_commands_available_in_this_script": False,
+            "motion_commands_available_in_this_script": True,
+            "motion_execution_enabled": CONFIG.execute_motion,
+            "hardware_motion_performed_this_run": any(
+                record.get("status") == "completed" for record in motion_records
+            ),
+            "completed_motion_command_count": sum(
+                record.get("status") == "completed" for record in motion_records
+            ),
             "magnet_pose_classification": (
                 "independently measured"
                 if CONFIG.independent_measured_T_robot_magnet_pose6 is not None
@@ -1357,6 +2306,13 @@ def main() -> None:
             ),
             "transform_chain": "T_R_M = T_R_F(q) @ T_F_TCP @ T_TCP_M",
             "ur_rtde_ik_chain": "T_R_TCP_target = T_R_M_target @ inverse(T_TCP_M)",
+            "magnet_position_equation": (
+                "p_R_M = p_R_TCP + R_R_TCP @ p_TCP_M"
+            ),
+            "magnet_orientation_equation": (
+                "R_R_M = R_R_TCP @ R_TCP_M"
+            ),
+            "configured_T_TCP_M_pose6": T_to_pose6(T_TCP_M),
             "jacobian_convention": (
                 "6x6 base-frame geometric Jacobian; rows [vx,vy,vz,wx,wy,wz]; "
                 "columns UR joints [base,shoulder,elbow,wrist1,wrist2,wrist3]"
@@ -1375,13 +2331,22 @@ def main() -> None:
             "actual_state": actual_state,
             "ik_targets": target_details,
             "jacobian_records": jacobian_records,
+            "motion_records": motion_records,
             "checks": checks,
             "all_checks_passed": bool(all(check["passed"] for check in checks)),
         }
+        debug_print(CONFIG, "OUTPUT", "writing summary.json")
         save_json(output_dir / "summary.json", summary)
+        debug_print(CONFIG, "OUTPUT", "writing ik_comparison.csv")
         write_csv(output_dir / "ik_comparison.csv", target_rows)
+        debug_print(CONFIG, "OUTPUT", "writing jacobian_summary.csv")
         write_csv(output_dir / "jacobian_summary.csv", jac_summary_rows)
+        debug_print(CONFIG, "OUTPUT", "writing jacobian_elements.csv")
         write_csv(output_dir / "jacobian_elements.csv", jac_element_rows)
+        if motion_records:
+            debug_print(CONFIG, "OUTPUT", "writing motion_feedback.csv")
+            write_csv(output_dir / "motion_feedback.csv", motion_records)
+        debug_print(CONFIG, "PLOT", f"plotting enabled={CONFIG.make_plots}")
         plot_results(
             output_dir,
             CONFIG,
@@ -1391,6 +2356,7 @@ def main() -> None:
             target_details,
             jacobian_records,
         )
+        debug_print(CONFIG, "OUTPUT", "all configured output generation complete")
 
         print(f"\nValidation results: {output_dir.resolve()}")
         print(f"All configured checks passed: {summary['all_checks_passed']}")
@@ -1398,12 +2364,23 @@ def main() -> None:
             "Magnet pose used as actual: "
             f"{metadata['magnet_pose_classification']}"
         )
+        if CONFIG.execute_motion:
+            print(
+                "Completed motion commands: "
+                f"{metadata['completed_motion_command_count']}"
+            )
         if CONFIG.strict_validation and not summary["all_checks_passed"]:
             failed = [check["name"] for check in checks if not check["passed"]]
             raise RuntimeError(f"Strict validation failed: {failed}")
-    except (KeyboardInterrupt, Exception):
-        # There is deliberately no recovery motion.  Closing connections is the
-        # only cleanup performed after any failure or keyboard interrupt.
+    except KeyboardInterrupt:
+        debug_print(CONFIG, "FATAL", "keyboard interrupt received; no recovery motion sent")
+        raise
+    except Exception as exc:
+        debug_print(
+            CONFIG,
+            "FATAL",
+            f"{type(exc).__name__}: {exc}; no recovery motion sent",
+        )
         raise
     finally:
         if oracle is not None:

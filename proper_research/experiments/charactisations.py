@@ -95,7 +95,7 @@ class SinglePoseEvalConfig:
     red_roi_path: str = "/home/jack/Proper-Research/red_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
 
-    known_green_distance_mm: float = 40.0
+    known_green_distance_mm: float = 30.0
     pivot_hint: Tuple[float, float] | None = None
 
     results_dir: str = "results_single_pose_forward_validation"
@@ -2926,7 +2926,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="/home/jack/Proper-Research/red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=20,
+        known_green_distance_mm=30,
         pivot_hint=pivot_hint,
         results_dir="results_single_pose_forward_validation_back",
         save_overlay_path="results_single_pose_forward_validation/comparison_back.png",

@@ -69,7 +69,7 @@ class SweepEvalConfig:
     red_roi_path: str = "red_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
 
-    known_green_distance_mm: float = 15.0
+    known_green_distance_mm: float = 30.0
     pivot_hint: Tuple[float, float] | None = None
 
     results_dir: str = "results_sweep_forward_validation"
@@ -968,7 +968,7 @@ if __name__ == "__main__":
         use_reference_frame=True,
         red_roi_path="red_roi_box.json",
         green_roi_path="green_roi_box.json",
-        known_green_distance_mm=28.7,
+        known_green_distance_mm=30.0,
         pivot_hint=(321.200927734375, 331.6798095703125),
         results_dir="results_with_lumen_no_drawing_29",
         show_debug_vision=False,

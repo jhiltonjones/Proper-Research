@@ -111,12 +111,12 @@ class ExperimentConfig:
     pivot_pose6: tuple[float, float, float, float, float, float] = (
         0.84813282,
         -0.68127317,
-        -0.10000000,
+        -0.10000000+0.1,
         float(np.pi),
         1.0e-3,
         1.0e-3,
     )
-    initial_beam_length_m: float = 0.027
+    initial_beam_length_m: float = 0.042
     use_vision_length_in_model: bool = False
     min_vision_length_m: float = 0.010
     max_vision_length_m: float = 0.050

@@ -33,7 +33,7 @@ from typing import Any, Iterable
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-import beam_hardware_experiment_v2 as experiment_v2
+import proper_research.hardware.beam_hardware_experiment_v2 as experiment_v2
 
 
 # =============================================================================
@@ -69,7 +69,7 @@ class FrameValidationConfig:
     # been calibrated at the magnet centre with matching axes, set
     # assume_tcp_is_magnet_frame=True and leave this as None.
     T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = None
-    assume_tcp_is_magnet_frame: bool = False
+    assume_tcp_is_magnet_frame: bool = True
 
     # Camera-plane calibration.  The existing saved ex_img/ey_img values are
     # image-Cartesian vectors (x right, y up).  The signs reproduce the legacy
@@ -77,8 +77,8 @@ class FrameValidationConfig:
     # ey_img.  All sign handling occurs here exactly once.
     camera_calibration_mode: str = "basis_scale"  # "basis_scale" or "homography"
     saved_axis_convention: str = "image_cartesian"  # or "pixel_uv"
-    saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (-1.0, +1.0)
-    known_calibration_distance_mm: float = 20.0
+    saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (1.0, 1.0)
+    known_calibration_distance_mm: float = 30.0
 
     # Optional H_Bxy_I for perspective-aware planar calibration.  It maps
     # homogeneous [u_px, v_px, 1] to [B.x_m, B.y_m, 1].  Set mode="homography"
@@ -478,13 +478,19 @@ def measure_beam_from_image(
     tangent_R = _unit(T_R_B.apply_directions(tangent_B), "measured beam tangent in R")
 
     length_m = float(np.sum(np.linalg.norm(np.diff(centreline_B_m, axis=0), axis=1)))
+    base_px =[
+        311.0,
+        275.0
+    ],
     return {
         "markers_px": markers_px,
         "ordered_points_px": ordered_points_px,
         "centreline_px": centreline_px,
         "centreline_B_m": centreline_B_m,
         "centreline_R_m": centreline_R_m,
-        "detected_base_B_m": calibration.pixels_to_beam(markers_px["base"]),
+        # "detected_base_B_m": calibration.pixels_to_beam(markers_px["base"]),
+        "detected_base_B_m": base_px,
+
         "tip_B_m": tip_B_m,
         "tip_R_m": T_R_B.apply_points(tip_B_m),
         "tangent_B": tangent_B,
@@ -638,16 +644,53 @@ def build_forward_model_in_shared_frame(
     }
 
 
-def _extract_model_centreline(adapter: Any, base_R_m: np.ndarray) -> np.ndarray:
+def _extract_model_centreline(
+    adapter: Any,
+    base_R_m: np.ndarray,
+) -> np.ndarray:
     cache = getattr(adapter.raw_model, "cache", None)
     centreline = None if cache is None else getattr(cache, "centerline", None)
-    if centreline is None:
-        raise RuntimeError("Forward-model cache does not expose a centreline after solve.")
-    centreline = np.asarray(centreline, dtype=float)
-    if centreline.ndim != 2 or centreline.shape[0] < 2 or centreline.shape[1] < 3:
-        raise RuntimeError(f"Invalid model centreline shape: {centreline.shape}.")
-    return _orient_polyline(centreline[:, :3], np.asarray(base_R_m, dtype=float))
 
+    if centreline is None:
+        raise RuntimeError(
+            "Forward-model cache does not expose a centreline after solve."
+        )
+
+    centreline = np.asarray(centreline, dtype=float)
+    print(f"[MODEL CENTRELINE] raw shape: {centreline.shape}")
+
+    if centreline.ndim != 2 or not np.all(np.isfinite(centreline)):
+        raise RuntimeError(
+            f"Invalid model centreline: shape={centreline.shape}"
+        )
+
+    if centreline.shape[1] == 3:
+        # Already point-major: (N, 3)
+        points_R_m = centreline
+    elif centreline.shape[0] == 3:
+        # Coordinate-major: (3, N) -> (N, 3)
+        points_R_m = centreline.T
+    else:
+        raise RuntimeError(
+            "Model centreline must have shape (N, 3) or (3, N); "
+            f"received {centreline.shape}."
+        )
+
+    points_R_m = _orient_polyline(
+        points_R_m,
+        np.asarray(base_R_m, dtype=float),
+    )
+
+    length_mm = 1.0e3 * np.sum(
+        np.linalg.norm(np.diff(points_R_m, axis=0), axis=1)
+    )
+
+    print(f"[MODEL CENTRELINE] normalized shape: {points_R_m.shape}")
+    print(f"[MODEL CENTRELINE] first point: {points_R_m[0]}")
+    print(f"[MODEL CENTRELINE] final point: {points_R_m[-1]}")
+    print(f"[MODEL CENTRELINE] length: {length_mm:.6f} mm")
+
+    return points_R_m
 
 # =============================================================================
 # COMPARISON, CHECKS, PLOTTING AND LOGGING

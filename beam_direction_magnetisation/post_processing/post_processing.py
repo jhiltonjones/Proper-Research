@@ -14,7 +14,7 @@ def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z
     plt.ylabel("Tip y deflection [mm]")
     plt.title("Tip y deflection vs actuation angle")
     plt.grid(True)
-    plt.legend()
+    # plt.legend()
     plt.show()
     plt.figure()
     plt.plot(1e3*np.array(tip_y_front), 1e3*np.array(tip_z_front), marker='o', label="30 deg")
@@ -24,7 +24,7 @@ def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z
     plt.title("Tip trajectory in y–z plane")
     plt.grid(True)
     plt.axis('equal')
-    plt.legend()
+    # plt.legend()
     plt.show()
     plt.figure()
     plt.plot(angles_deg, 1e3*np.array(tip_z_front), marker='o', label="Front magnetised at 30 deg")
@@ -33,7 +33,7 @@ def compare_magnet_plots(angles_deg, tip_y_front, tip_y_over, tip_z_front, tip_z
     plt.ylabel("Tip z deflection [mm]")
     plt.title("Tip z deflection vs actuation angle")
     plt.grid(True)
-    plt.legend()
+    # plt.legend()
     plt.show()
 
 def axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward, vessel_centerline, R_vessel):
@@ -93,7 +93,7 @@ def axis3d(x,y,z,r_src_f, m_src_f, s_out, p_f, q_f, ang_plot, f_toward, vessel_c
     ax.set_zlabel("z [m]")
     ax.set_title(f"Front magnet case: rod shape at angle = {ang_plot:.1f} deg")
     add_tube(ax, vessel_centerline, R_vessel, alpha=0.12)
-    ax.legend()
+    # ax.legend()
     plt.tight_layout()
     plt.show()
     # plt.figure()
@@ -340,7 +340,7 @@ def plot_mpc_state_3d(model, m_body, p_pose7, x_tip, L, mag_len,
     ax.set_zlim(mins[2]-pad, maxs[2]+pad)
     set_axes_equal(ax)
 
-    ax.legend()
+    # ax.legend()
     if show:
         plt.show()
 
@@ -371,7 +371,7 @@ def plot_target_and_final_tip_on_image(image_filename, target_px, tip_px, err_mm
 
     plt.title("Target vs final measured tip")
     plt.axis("off")
-    plt.legend()
+    # plt.legend()
     plt.show()
 def _ensure_centerline_shape(C):
     """
@@ -417,21 +417,21 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     C_energy = _ensure_centerline_shape(p_energy)
     if C_energy is None:
         raise ValueError("p_energy must be (3,N) or (N,3)")
-    ax.plot(C_energy[:, 0], C_energy[:, 1], C_energy[:, 2], "--", label="Energy-min (3D)")
+    ax.plot(C_energy[:, 0], C_energy[:, 1], C_energy[:, 2], "--", )
 
     if p_straight is not None:
         C_st = _ensure_centerline_shape(p_straight)
         if C_st is not None:
-            ax.plot(C_st[:, 0], C_st[:, 1], C_st[:, 2], ":", label="Straight baseline")
+            ax.plot(C_st[:, 0], C_st[:, 1], C_st[:, 2], ":", )
 
     if p0 is not None:
-        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", label="Base")
+        ax.scatter([p0[0]], [p0[1]], [p0[2]], marker="o", )
 
     # --- lumen (active) ---
     if (lumen_C is not None) and (lumen_R is not None):
         C = np.asarray(lumen_C, float)
         R = np.asarray(lumen_R, float)
-        ax.plot(C[:, 0], C[:, 1], C[:, 2], label="Lumen centerline (active)")
+        ax.plot(C[:, 0], C[:, 1], C[:, 2], )
         if show_rings:
             plot_lumen_rings(ax, C, R, n_theta=28, alpha=0.2, linewidth=0.6)
 
@@ -451,7 +451,7 @@ def plot_energy_only_3d(p_energy, lumen_C=None, lumen_R=None, p0=None, p_straigh
     # --- tip marker (your existing) ---
     if tip is not None:
         tip = np.asarray(tip, float).reshape(3,)
-        ax.scatter([tip[0]], [tip[1]], [tip[2]], marker="x", s=60, label="Tip")
+        ax.scatter([tip[0]], [tip[1]], [tip[2]], marker="x", s=60, )
 
     # --- tangent point + tangent segment (NEW) ---
     if show_tangent_segment and C_energy.shape[0] >= 2:

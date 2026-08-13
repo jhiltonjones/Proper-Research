@@ -5,10 +5,12 @@ from proper_research.simulation_controller.constraints import (
     trust_region_bounds,
     box_constraint_from_bounds,
     dL_bounds,
+    cumulative_state_control_matrix,
+    integrated_state_bounds,
+    control_rate_bounds,
     stack_constraints,
 )
 from .diagnostics import mpc_hessian_channel_diagnostics, diagnose_constraints_at_U, classify_constraint_issue
-from .geometry import build_Pm_world
 
 def stack_named_constraints(named_blocks):
     """
@@ -858,9 +860,52 @@ class QPBuilderMixin:
             constraint_blocks.append((name, A_aug, l_b, u_b))
 
         u_max = np.asarray(self.u_max, float).reshape(self.m)
-        if np.all(np.isfinite(u_max)):
+        if np.any(np.isfinite(u_max)):
             A_b, l_b, u_b = input_bounds(u_max=u_max, Np=Np)
             append_control_constraint("input_bounds", A_b, l_b, u_b)
+
+        # Hard bounds on every predicted [q1..q6, insertion] state.  This is
+        # the inverse-kinematic feasibility part of the joint-space MPC: joint
+        # limits are inside the optimization rather than imposed by rollout
+        # clipping or by a second IK solve.
+        if bool(getattr(self, "enable_hard_state_bounds", True)):
+            state_min = np.asarray(self.p_min, float).reshape(self.np)
+            state_max = np.asarray(self.p_max, float).reshape(self.np)
+            if np.any(np.isfinite(state_min)) or np.any(np.isfinite(state_max)):
+                A_b, l_b, u_b = integrated_state_bounds(
+                    state0=p0,
+                    state_min=state_min,
+                    state_max=state_max,
+                    Np=Np,
+                    dt=float(self.dt),
+                    n_control=m,
+                    state_rate_matrix=np.asarray(
+                        getattr(self, "state_rate_matrix", np.eye(self.np, m)),
+                        float,
+                    ),
+                )
+                append_control_constraint(
+                    "joint_insertion_state_bounds", A_b, l_b, u_b
+                )
+
+        # R_d is only a smoothness objective.  These rows are the actual hard
+        # joint-acceleration/insertion-acceleration limits.
+        if bool(getattr(self, "enable_hard_control_rate_bounds", True)):
+            rate_max = np.asarray(
+                getattr(self, "u_rate_max", np.full(m, np.inf)), float
+            ).reshape(m)
+            if np.any(np.isfinite(rate_max)):
+                A_b, l_b, u_b = control_rate_bounds(
+                    u_previous=np.asarray(
+                        getattr(self, "u_prev", np.zeros(m)), float
+                    ).reshape(m),
+                    rate_max=rate_max,
+                    Np=Np,
+                    dt=float(self.dt),
+                )
+                append_control_constraint(
+                    "joint_insertion_rate_change_bounds", A_b, l_b, u_b
+                )
 
         if bool(getattr(self, "use_trust_region", True)):
             tr_l, tr_u = trust_region_bounds(
@@ -1484,13 +1529,16 @@ class QPBuilderMixin:
         U_guess,
     ):
         """
-        Linearised hard minimum distance between external magnet centre and
-        the fixed distal end of the lumen.
+        Joint-space linearised hard minimum distance between the external
+        magnet centre and the fixed distal end of the lumen.
 
         Constraint:
             ||r_m(U) - x_end|| >= d_min
 
-        where x_end is independent of the beam output.
+        The magnet position is obtained from robot FK at each nominal
+        ``[q1..q6,L]`` node.  Its derivative with respect to the complete
+        control horizon is obtained by chaining the magnet geometric Jacobian
+        with the cumulative joint/insertion integrator.
 
         Linearised around U_guess:
 
@@ -1514,9 +1562,9 @@ class QPBuilderMixin:
 
         p0 = np.asarray(p0, float).reshape(self.np)
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
-        U_guess_vec = U_guess.reshape(Nu, 1)
+        U_guess_vec = U_guess.reshape(Nu)
 
-        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.21))
+        d_min = float(getattr(self, "epm_lumen_end_hard_min_m", 0.16))
         # print(f"Constraint d_min is : {d_min}")
         if d_min < 0.0:
             raise ValueError("epm_lumen_end_hard_min_m must be non-negative.")
@@ -1540,25 +1588,19 @@ class QPBuilderMixin:
 
             x_end = Cc[-1, :3].astype(float)
 
-        # Pm maps stacked controls U to stacked magnet positions:
-        #     r_m_stack = r0_stack + Pm @ U
-        Pm = build_Pm_world(
-            dt=float(self.dt),
+        state_nodes = np.asarray(
+            self._p_nodes_from_U(p0, U_guess)[1:], float
+        ).reshape(Np, self.np)
+        state_control = cumulative_state_control_matrix(
             Np=Np,
-            m=m,
+            n_state=self.np,
+            n_control=m,
+            dt=float(self.dt),
+            state_rate_matrix=np.asarray(
+                getattr(self, "state_rate_matrix", np.eye(self.np, m)),
+                float,
+            ),
         )
-
-        Pm = np.asarray(Pm, float)
-
-        expected_shape = (3 * Np, Nu)
-        if Pm.shape != expected_shape:
-            raise ValueError(
-                f"build_Pm_world returned {Pm.shape}, expected {expected_shape}."
-            )
-
-        r0 = p0[:3].reshape(3, 1)
-        r0_stack = np.tile(r0, (Np, 1))
-        r_nom_stack = r0_stack + Pm @ U_guess_vec
 
         A_clear = np.zeros((Np, Nu), float)
         l_clear = np.full(Np, -np.inf, float)
@@ -1567,10 +1609,15 @@ class QPBuilderMixin:
         eps_dist = 1e-9
 
         for k in range(Np):
-            rows_r = slice(3 * k, 3 * (k + 1))
-
-            Pm_k = Pm[rows_r, :]
-            r_nom_k = r_nom_stack[rows_r, 0]
+            state_nom_k = state_nodes[k]
+            r_nom_k = np.asarray(
+                self._eval_magnet_position(state_nom_k), float
+            ).reshape(3)
+            J_r_state = np.asarray(
+                self._eval_magnet_position_jacobian(state_nom_k), float
+            ).reshape(3, self.np)
+            state_rows = slice(k * self.np, (k + 1) * self.np)
+            Pm_k = J_r_state @ state_control[state_rows, :]
 
             v_nom = r_nom_k - x_end
             d_nom = float(np.linalg.norm(v_nom))
@@ -1581,15 +1628,15 @@ class QPBuilderMixin:
             else:
                 direction = v_nom / d_nom
 
-            # r(U) - x_end = r0 + Pm U - x_end
-            #
-            # Linearised norm:
+            # Local magnet model:
+            #   r(U) = r_nom + Pm_k @ (U - U_guess)
+            # Linearised distance:
             # d(U) ≈ d_nom + direction.T @ Pm_k @ (U - U_guess)
             #
             # Rearranged:
             # d(U) ≈ b + a @ U
             a = (direction.reshape(1, 3) @ Pm_k).reshape(Nu)
-            b = d_nom - float(a @ U_guess_vec[:, 0])
+            b = d_nom - float(a @ U_guess_vec)
 
             A_clear[k, :] = a
             l_clear[k] = d_min - b
@@ -1605,7 +1652,8 @@ class QPBuilderMixin:
         Mc,
     ):
         """
-        Linearised hard minimum distance between external magnet centre and tip.
+        Joint-space linearised hard minimum distance between the external
+        magnet centre and beam tip.
 
         Constraint:
             ||r_m(U) - x_tip(U)|| >= d_min
@@ -1632,7 +1680,7 @@ class QPBuilderMixin:
 
         p0 = np.asarray(p0, float).reshape(self.np)
         U_guess = np.asarray(U_guess, float).reshape(Np, m)
-        U_guess_vec = U_guess.reshape(Nu, 1)
+        U_guess_vec = U_guess.reshape(Nu)
 
         X_aff = np.asarray(X_aff, float).reshape(Np * n, 1)
         Mc = np.asarray(Mc, float).reshape(Np * n, Nu)
@@ -1642,27 +1690,19 @@ class QPBuilderMixin:
         if d_min < 0.0:
             raise ValueError("epm_tip_hard_min_m must be non-negative.")
 
-        # Pm maps stacked controls U to stacked magnet positions:
-            # r_m_stack = r0_stack + Pm @ U
-        Pm = build_Pm_world(
-            dt=float(self.dt),
+        state_nodes = np.asarray(
+            self._p_nodes_from_U(p0, U_guess)[1:], float
+        ).reshape(Np, self.np)
+        state_control = cumulative_state_control_matrix(
             Np=Np,
-            m=m,
+            n_state=self.np,
+            n_control=m,
+            dt=float(self.dt),
+            state_rate_matrix=np.asarray(
+                getattr(self, "state_rate_matrix", np.eye(self.np, m)),
+                float,
+            ),
         )
-
-        Pm = np.asarray(Pm, float)
-
-        expected_shape = (3 * Np, Nu)
-        if Pm.shape != expected_shape:
-            raise ValueError(
-                f"build_Pm_world returned {Pm.shape}, "
-                f"expected {expected_shape}."
-            )
-
-        r0 = p0[:3].reshape(3, 1)
-        r0_stack = np.tile(r0, (Np, 1))
-
-        r_nom_stack = r0_stack + Pm @ U_guess_vec
 
         A_clear = np.zeros((Np, Nu), float)
         l_clear = np.full(Np, -np.inf, float)
@@ -1671,19 +1711,24 @@ class QPBuilderMixin:
         eps_dist = 1e-9
 
         for k in range(Np):
-            rows_r = slice(3 * k, 3 * (k + 1))
             rows_x = np.array(
                 [k * n + 0, k * n + 1, k * n + 2],
                 dtype=int,
             )
 
-            Pm_k = Pm[rows_r, :]
+            state_nom_k = state_nodes[k]
+            r_nom_k = np.asarray(
+                self._eval_magnet_position(state_nom_k), float
+            ).reshape(3)
+            J_r_state = np.asarray(
+                self._eval_magnet_position_jacobian(state_nom_k), float
+            ).reshape(3, self.np)
+            state_rows = slice(k * self.np, (k + 1) * self.np)
+            Pm_k = J_r_state @ state_control[state_rows, :]
             Mc_xk = Mc[rows_x, :]
 
-            r_nom_k = r_nom_stack[rows_r, 0]
-
             # Because X_aff + Mc @ U_guess = X_nom
-            x_nom_k = X_aff[rows_x, 0] + (Mc_xk @ U_guess_vec).reshape(3)
+            x_nom_k = X_aff[rows_x, 0] + Mc_xk @ U_guess_vec
 
             v_nom = r_nom_k - x_nom_k
             d_nom = float(np.linalg.norm(v_nom))
@@ -1694,7 +1739,8 @@ class QPBuilderMixin:
             else:
                 direction = v_nom / d_nom
 
-            # r(U) - x(U) = [r0 + Pm U] - [X_aff_x + Mc_x U]
+            # r(U) uses the local joint-space magnet derivative Pm_k, while
+            # x(U) uses the local beam-output prediction Mc_xk.
             #
             # Linearised norm:
             # d(U) ≈ d_nom + direction.T @ (
@@ -1704,7 +1750,7 @@ class QPBuilderMixin:
             # Rearranged as:
             # d(U) ≈ b + a @ U
             a = (direction.reshape(1, 3) @ (Pm_k - Mc_xk)).reshape(Nu)
-            b = d_nom - float(a @ U_guess_vec[:, 0])
+            b = d_nom - float(a @ U_guess_vec)
 
             A_clear[k, :] = a
             l_clear[k] = d_min - b

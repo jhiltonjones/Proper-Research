@@ -1,64 +1,116 @@
 [
   {
+    "lumen": {
+      "length": 0.04,
+      "n_pts": 240,
+      "n_ref_pts": 100,
+      "ds_target": 0.001,
+      "radius": 0.004,
+      "bends": [
+        {
+          "bend_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "bend_angle_rad": 0.0,
+          "bend_start": 0.0,
+          "bend_end": 0.01
+        },
+        {
+          "bend_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "bend_angle_rad": -2.0943951023931953,
+          "bend_start": 0.015,
+          "bend_end": 0.025
+        }
+      ]
+    },
+    "model": {
+      "plant_contact": true,
+      "jacobian_variant": "contact"
+    },
+    "controller": {
+      "controller_kind": "mpc",
+      "solver_mode": "sqp_full",
+      "N_sqp": 50,
+      "rollout_steps": 10,
+      "Np": 15,
+      "max_steps": 40,
+      "adaptive_rollout_enabled": false,
+      "inverse_sequence_mode": "rollout_ltv",
+      "inverse_kp": 0.3,
+      "inverse_desired_step_max_m": 0.004,
+      "inverse_extra_damping": 0.0
+    },
+    "run_root": "experiment3_sim_2",
+    "tag": "bends_+0_-120",
+    "seed": 0,
     "run_name": "bends_p0_m120_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120",
-    "log_csv_path": "experiment3_sim_2/bends_p0_m120_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120/log.csv",
-    "plant_contact": true,
-    "jacobian_variant": "contact",
-    "controller_kind": "mpc",
-    "inverse_sequence_mode": "",
-    "inverse_kp": NaN,
-    "solver_mode": "sqp_full",
-    "rollout_steps": 10,
-    "Np": 15,
-    "N_sqp": 50,
-    "n_steps": 15,
-    "final_status": "primal infeasible inaccurate",
-    "final_infeasible": 1,
-    "final_i_ref": 62,
-    "final_tip": [
-      0.7783727540061413,
-      -0.7031936039022919,
-      -0.10001462076935565
-    ],
-    "num_infeasible_steps": 1,
-    "mean_sqp_iters": 3.6,
-    "mean_jac_cond": 102811269850552.47,
-    "max_jac_cond": 482208423080788.6,
-    "python_success": true,
-    "error": "",
+    "out_root": "experiment3_sim_2/bends_p0_m120_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120",
+    "python_success": false,
+    "error": "ValueError('ControllerDesignConfig.dL_guess is an insertion rate and must satisfy abs(dL_guess) <= u_max[6]; got 0.02 m/s and u_max[6]=0.002 m/s. Use dL_guess=0.0 for the initial joint-space smoke test.')",
     "hierarchical_mpc_enabled": false,
-    "adaptive_rollout_enabled": false,
-    "hierarchy_policy": ""
+    "adaptive_rollout_enabled": false
   },
   {
+    "lumen": {
+      "length": 0.04,
+      "n_pts": 240,
+      "n_ref_pts": 100,
+      "ds_target": 0.001,
+      "radius": 0.004,
+      "bends": [
+        {
+          "bend_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "bend_angle_rad": 0.0,
+          "bend_start": 0.0,
+          "bend_end": 0.01
+        },
+        {
+          "bend_axis": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "bend_angle_rad": -2.0943951023931953,
+          "bend_start": 0.015,
+          "bend_end": 0.025
+        }
+      ]
+    },
+    "model": {
+      "plant_contact": true,
+      "jacobian_variant": "no_contact"
+    },
+    "controller": {
+      "controller_kind": "mpc",
+      "solver_mode": "sqp_full",
+      "N_sqp": 50,
+      "rollout_steps": 10,
+      "Np": 15,
+      "max_steps": 40,
+      "adaptive_rollout_enabled": false,
+      "inverse_sequence_mode": "rollout_ltv",
+      "inverse_kp": 0.3,
+      "inverse_desired_step_max_m": 0.004,
+      "inverse_extra_damping": 0.0
+    },
+    "run_root": "experiment3_sim_2",
+    "tag": "bends_+0_-120",
+    "seed": 0,
     "run_name": "bends_p0_m120_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120",
-    "log_csv_path": "experiment3_sim_2/bends_p0_m120_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120/log.csv",
-    "plant_contact": true,
-    "jacobian_variant": "no_contact",
-    "controller_kind": "mpc",
-    "inverse_sequence_mode": "",
-    "inverse_kp": NaN,
-    "solver_mode": "sqp_full",
-    "rollout_steps": 10,
-    "Np": 15,
-    "N_sqp": 50,
-    "n_steps": 40,
-    "final_status": "solved; using_best_qp_feasible_candidate_with_model_warning",
-    "final_infeasible": 0,
-    "final_i_ref": 59,
-    "final_tip": [
-      0.7788609505393869,
-      -0.705205888774505,
-      -0.09997994242721556
-    ],
-    "num_infeasible_steps": 0,
-    "mean_sqp_iters": 0.1,
-    "mean_jac_cond": 73110195137608.7,
-    "max_jac_cond": 482309709892114.44,
-    "python_success": true,
-    "error": "",
+    "out_root": "experiment3_sim_2/bends_p0_m120_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_-120",
+    "python_success": false,
+    "error": "ValueError('ControllerDesignConfig.dL_guess is an insertion rate and must satisfy abs(dL_guess) <= u_max[6]; got 0.02 m/s and u_max[6]=0.002 m/s. Use dL_guess=0.0 for the initial joint-space smoke test.')",
     "hierarchical_mpc_enabled": false,
-    "adaptive_rollout_enabled": false,
-    "hierarchy_policy": ""
+    "adaptive_rollout_enabled": false
   }
 ]

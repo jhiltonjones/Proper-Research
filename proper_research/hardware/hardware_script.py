@@ -223,7 +223,7 @@ def run_hardware_test(
         jacobian_variant=jacobian_variant,
     )
 
-    L0 = 0.027
+    L0 = 0.044
     dt = 0.01
 
     run_cfg = make_hardware_controller_config(

@@ -19,7 +19,7 @@ from beam_direction_magnetisation.cosserat_w_minimal_energy import make_lumen_ce
 from scipy.stats import skew
 from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_normalize, quat_wxyz_mul, rotvec_to_quat_wxyz, quat_wxyz_to_rotvec, small_rot_quat_wxyz, unit, T_to_p_quat_wxyz
 from pathlib import Path
-
+from proper_research.simulation.simulations.ik_convertor import find_initial_joint_state
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as Rot
@@ -1177,7 +1177,35 @@ def run_experiment(
     out_root = Path("runs") / run_name
     out_root.mkdir(parents=True, exist_ok=True)
 
-    pivot_point, start_point, L0, dt = make_initial_poses()
+    pivot_point, start_point, L_cmd, dt = make_initial_poses()
+
+    # Best choice: actual joints measured from a nearby safe pose.
+    q_seed = np.array(
+        [
+            -0.4124,
+            -1.5810,
+            -1.9740,
+            -1.1403,
+            1.5828,
+            -0.2107,
+        ],
+        dtype=float,
+    )
+
+    state0, ik_result = find_initial_joint_state(
+        start_point=start_point,
+        L_cmd=L_cmd,
+        q_seed=q_seed,
+        active_tcp_pose6=np.zeros(6),
+        tcp_to_magnet_pose6=np.array(
+            [0.0, 0.0, -0.044, 0.0, 0.0, 0.0]
+        ),
+    )
+
+    q0 = state0[:6]
+    L0 = state0[6]
+
+    print(f"MPC initial state: {state0}")
 
     (
         p0_ur,

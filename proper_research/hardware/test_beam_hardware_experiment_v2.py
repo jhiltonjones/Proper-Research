@@ -43,7 +43,7 @@ class LinearForwardModel:
         return self.matrix.copy()
 
 
-def identity_p8(xyz=(0.3, -0.2, 0.1), length=0.027):
+def identity_p8(xyz=(0.3, -0.2, 0.1), length=0.044):
     # [xyz, quaternion_wxyz, insertion]
     return np.array([*xyz, 1.0, 0.0, 0.0, 0.0, length], dtype=float)
 

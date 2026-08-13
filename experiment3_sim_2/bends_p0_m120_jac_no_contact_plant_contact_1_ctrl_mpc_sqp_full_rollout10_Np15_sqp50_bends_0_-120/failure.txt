@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 576, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 121, in run_experiment
+    controller_pack = build_controller(
+                      ^^^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/controller_factory_joint_space.py", line 291, in build_controller
+    _validate_design_vectors(design_cfg)
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/controller_factory_joint_space.py", line 266, in _validate_design_vectors
+    raise ValueError(
+ValueError: ControllerDesignConfig.dL_guess is an insertion rate and must satisfy abs(dL_guess) <= u_max[6]; got 0.02 m/s and u_max[6]=0.002 m/s. Use dL_guess=0.0 for the initial joint-space smoke test.

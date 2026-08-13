@@ -22,7 +22,7 @@ The physical chain is therefore::
     T_R_M = T_R_F(q) @ T_F_TCP @ T_TCP_M
 
 For the configured axis-aligned 27 mm offset,
-``p_R_M = p_R_TCP + R_R_TCP @ [0, 0, +0.027]``.  The local offset is never
+``p_R_M = p_R_TCP + R_R_TCP @ [0, 0, +0.044]``.  The local offset is never
 added directly to robot-base z.  A requested magnet target is converted back
 to the controller's active TCP with
 ``T_R_TCP_target = T_R_M_target @ inverse(T_TCP_M)`` so rotations occur about

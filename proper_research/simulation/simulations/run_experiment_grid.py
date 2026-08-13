@@ -1,5 +1,6 @@
 import json
 import traceback
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,10 @@ from proper_research.simulation.simulations.scenario import (
 )
 from proper_research.simulation.simulations.controller_factory import ControllerDesignConfig
 from proper_research.simulation.simulations.model_factory import build_model_bundle
-from proper_research.simulation.simulations.controller_factory import build_controller
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    JointSpaceRobotConfig,
+    build_controller,
+)
 from proper_research.simulation.simulations.runner import run_simulation
 from proper_research.simulation.simulations.logging_utils import setup_output_dirs
 from proper_research.simulation.simulations.initial_conditions import make_initial_poses
@@ -32,6 +36,7 @@ def save_experiment_metadata(
     p_min,
     p_max,
     u_max,
+    joint_space_setup=None,
 ):
     """
     Save one experiment's full metadata.
@@ -56,6 +61,9 @@ def save_experiment_metadata(
         }
     )
 
+    if joint_space_setup is not None:
+        meta["joint_space_setup"] = joint_space_setup
+
     with open(out_root / "experiment_config.json", "w") as f:
         json.dump(meta, f, indent=2)
 
@@ -64,6 +72,7 @@ def run_experiment(
     exp_cfg: ExperimentConfig,
     design_cfg: ControllerDesignConfig,
     *,
+    robot_cfg: JointSpaceRobotConfig | None = None,
     save_plots: bool = True,
     hierarchical_mpc_enabled: bool = False,
     hierarchical_policy_config=None,
@@ -119,7 +128,26 @@ def run_experiment(
         lumen_R=bundle.lumen_R,
         run_cfg=exp_cfg.controller,
         design_cfg=design_cfg,
+        robot_cfg=robot_cfg,
     )
+    print(
+        "[JOINT INIT] q0_rad="
+        + np.array2string(controller_pack["q0"], precision=8)
+    )
+    print(
+        "[JOINT INIT] magnet IK errors: "
+        f"position={controller_pack['initial_magnet_position_error_m']:.6e} m, "
+        f"orientation={controller_pack['initial_magnet_orientation_error_rad']:.6e} rad"
+    )
+    chain_check = controller_pack.get("chain_rule_validation")
+    if chain_check is not None:
+        print(
+            "[JOINT JACOBIAN CHECK] "
+            f"relative_Frobenius_error="
+            f"{chain_check['relative_frobenius_error']:.6e}, "
+            f"max_abs_element_error="
+            f"{chain_check['maximum_absolute_element_error']:.6e}"
+        )
     J_fn = controller_pack["J_fn"]
     owned_jacobian_model = J_fn.model
 
@@ -186,6 +214,19 @@ def run_experiment(
         p_min=p_min,
         p_max=p_max,
         u_max=u_max,
+        joint_space_setup={
+            "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+            "control_layout": "qd1_qd2_qd3_qd4_qd5_qd6_insertion_rate",
+            "q0_rad": np.asarray(controller_pack["q0"], float).tolist(),
+            "T_F_M": np.asarray(controller_pack["T_F_M"], float).tolist(),
+            "initial_magnet_position_error_m": float(
+                controller_pack["initial_magnet_position_error_m"]
+            ),
+            "initial_magnet_orientation_error_rad": float(
+                controller_pack["initial_magnet_orientation_error_rad"]
+            ),
+            "jacobian_discretisation": "B_k = dt * J_k",
+        },
     )
 
     runtime_solver_mode = (
@@ -204,7 +245,9 @@ def run_experiment(
         design_cfg.trust_radius,
         float,
     ).copy()
-    controller.progress_constraint_mode = "soft_slack"
+    # Keep the mode selected by ControllerDesignConfig.  A hard-coded
+    # soft-slack override here made isolation tests differ from their supplied
+    # configuration and could unexpectedly add another QP decision variable.
     stats = run_simulation(
         mpc=controller,  # Existing runner parameter name.
         forward6d=forward6d,
@@ -433,6 +476,8 @@ def run_experiment_grid(
     adaptive_rollout_enabled: bool = False,
     hierarchical_mpc_enabled: bool = False,
     hierarchical_policy_config=None,
+    robot_cfg: JointSpaceRobotConfig | None = None,
+    design_cfg: ControllerDesignConfig | None = None,
     stop_on_failure: bool = False,
 ):
     """
@@ -520,12 +565,18 @@ def run_experiment_grid(
         )
         print("=" * 100)
 
-        design_cfg = ControllerDesignConfig()
+        # A joint-space design configuration should use joint-velocity units
+        # for the first six control channels.  Deep-copy it because controller
+        # construction may attach run-specific path data.
+        experiment_design_cfg = copy.deepcopy(
+            design_cfg if design_cfg is not None else ControllerDesignConfig()
+        )
 
         try:
             result = run_experiment(
                 exp_cfg,
-                design_cfg,
+                experiment_design_cfg,
+                robot_cfg=robot_cfg,
                 save_plots=save_plots,
                 hierarchical_mpc_enabled=(
                     hierarchical_mpc_enabled
@@ -674,34 +725,103 @@ def make_double_bend_lumen_config(
             ),
         ),
     )
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    JointSpaceRobotConfig,
+)
+from dataclasses import replace
+
+design_cfg = replace(
+    ControllerDesignConfig(),
+    n_out=3,
+    n_p=7,
+    w_tracking=(
+        1000.0,
+        1000.0,
+        0.0,
+    ),
+    u_max=np.array(
+        [
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.2,
+        ]
+    ),
+    
+    trust_radius=np.array(
+        [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.1,
+        ]
+    ),
+    trust_radius_min=np.array(
+        [
+            0.005,
+            0.005,
+            0.005,
+            0.005,
+            0.005,
+            0.005,
+            0.0001,
+        ]
+    ),
+    trust_radius_max=np.array(
+        [
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.50,
+            0.2,
+        ]
+    ),
+    dL_guess=0.0,
+
+    # Explicitly disable progress constraints for isolation.
+    # progress_constraint_mode="none",
+
+    enable_hard_epm_tip_clearance=False,
+    enable_hard_tip_tangent_angle=False,
+)
+robot_cfg = JointSpaceRobotConfig(
+    q_seed_rad=(
+        -0.41239578,
+        -1.58101477,
+        -1.97399163,
+        -1.14026724,
+         1.58276796,
+        -0.21074230,
+    ),
+    insertion_min_m=0.0,
+    insertion_max_m=0.05,
+    debug_initial_ik=True,
+    validate_chain_rule_at_start=True,
+)
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
         first_angle_deg=0.0,
-        second_angle_deg=-120.0,
+        second_angle_deg=20.0,
     )
 
     run_experiment_grid(
-        run_root=Path("experiment3_sim_2"),
-
-        lumen_configs=(
-            double_bend_lumen,
-        ),
-
-        jacobian_variants=(
-             "contact", "no_contact"
-        ),
-        inverse_sequence_modes=("held",),
-        controller_kinds=( "mpc", ),
-        solver_modes=( "sqp_full" ,),
+        run_root=Path("joint_space_smoke_test"),
+        lumen_configs=(double_bend_lumen,),
+        robot_cfg=robot_cfg,
+        design_cfg=design_cfg,
+        controller_kinds=("mpc",),
         rollout_steps_values=(10,),
-
         Np=15,
         N_sqp=50,
-        max_steps=40,
-
-        plant_contact=True,
+        max_steps=25,
         save_plots=True,
-        adaptive_rollout_enabled=False,
-        hierarchical_mpc_enabled=False,
-        stop_on_failure=False,
+        stop_on_failure=True,
     )

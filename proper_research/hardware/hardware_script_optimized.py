@@ -341,7 +341,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--Np", type=int, default=5)
     parser.add_argument("--N-sqp", dest="N_sqp", type=int, default=3)
     parser.add_argument("--dt", type=float, default=0.01)
-    parser.add_argument("--L0", type=float, default=0.027)
+    parser.add_argument("--L0", type=float, default=0.044)
     parser.add_argument("--max-steps", type=int, default=100)
 
     # Continuous path reference and contouring objective. Distances are exposed

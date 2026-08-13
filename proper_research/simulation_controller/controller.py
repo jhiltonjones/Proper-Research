@@ -39,7 +39,17 @@ class MPCControllerTipXY(
     QPBuilderMixin,
 ):
     """
-    Multi-step MPC controller for magnetic beam tip tracking.
+    Multi-step joint-space MPC controller for magnetic beam tip tracking.
+
+    State and input conventions are deliberately explicit:
+
+        p = [q1, q2, q3, q4, q5, q6, insertion_length]
+        u = [qd1, qd2, qd3, qd4, qd5, qd6, insertion_rate]
+
+    ``p`` is retained as the public attribute name for compatibility with the
+    existing experiment code.  It no longer contains a Cartesian magnet pose
+    or quaternion.  The nonlinear output function and Jacobian function must
+    both accept this seven-dimensional joint-plus-insertion state.
 
     Supported solver modes:
         - "lti": fixed first-stage Jacobian, one QP
@@ -60,9 +70,20 @@ class MPCControllerTipXY(
         u_max=None,
         p_min=None,
         p_max=None,
+        joint_lower_bounds=None,
+        joint_upper_bounds=None,
+        insertion_min_m=None,
+        insertion_max_m=None,
+        u_rate_max=None,
+        enable_hard_state_bounds=True,
+        enable_hard_control_rate_bounds=True,
+        state_rate_matrix=None,
+        jacobian_returns_continuous=True,
+        magnet_position_fn=None,
+        magnet_position_jacobian_fn=None,
         N_sqp=3,
         n_out=3,
-        n_p=8,
+        n_p=7,
         n_u=7,
         model_mode="ltv",
         solver_mode="sqp_full",
@@ -78,6 +99,7 @@ class MPCControllerTipXY(
         trust_probe_fraction=1.0,
         trust_probe_stages=1,
         epm_tip_hard_min_m=0.011,
+        epm_lumen_end_hard_min_m=0.21,
         enable_hard_epm_tip_clearance=True,
         dL_index=6,
         dL_back_max=0.002,
@@ -96,10 +118,44 @@ class MPCControllerTipXY(
         self.use_trust_region = use_trust_region
         self.dt = float(dt)
         self.Np = int(Np)
+        if not np.isfinite(self.dt) or self.dt <= 0.0:
+            raise ValueError("dt must be finite and positive.")
+        if self.Np <= 0:
+            raise ValueError("Np must be positive.")
 
         self.np = int(n_p)
         self.n = int(n_out)
         self.m = int(n_u)
+
+        if self.np != 7 or self.m != 7:
+            raise ValueError(
+                "Joint-space beam MPC requires n_p=7 and n_u=7 with "
+                "state [q1..q6, insertion] and control "
+                "[qd1..qd6, insertion_rate]."
+            )
+
+        self.state_layout = "joint_insertion"
+        self.control_channel_names = (
+            "qd1", "qd2", "qd3", "qd4", "qd5", "qd6", "dL"
+        )
+        self.state_rate_matrix = (
+            np.eye(7, dtype=float)
+            if state_rate_matrix is None
+            else np.asarray(state_rate_matrix, float).reshape(7, 7)
+        )
+        if not np.all(np.isfinite(self.state_rate_matrix)):
+            raise ValueError("state_rate_matrix contains non-finite values.")
+
+        # Jxy_fn returns the continuous derivative dy/du by default.  The
+        # controller inserts dt exactly once when constructing the discrete
+        # output prediction matrix B_k.
+        self.jacobian_returns_continuous = bool(jacobian_returns_continuous)
+        self.magnet_position_fn = magnet_position_fn
+        self.magnet_position_jacobian_fn = magnet_position_jacobian_fn
+        self.enable_hard_state_bounds = bool(enable_hard_state_bounds)
+        self.enable_hard_control_rate_bounds = bool(
+            enable_hard_control_rate_bounds
+        )
 
         self.A = np.eye(self.n)
 
@@ -121,6 +177,11 @@ class MPCControllerTipXY(
         self.dL_index = int(dL_index)
         self.dL_back_max = float(dL_back_max)
         self.dL_fwd_max = float(dL_fwd_max)
+        if self.dL_index != 6:
+            raise ValueError(
+                "Joint-space beam MPC requires dL_index=6 because insertion "
+                "is the seventh state and control channel."
+            )
 
         self.trust_radius = None if trust_radius is None else np.asarray(
             trust_radius,
@@ -173,6 +234,15 @@ class MPCControllerTipXY(
 
         self.enable_hard_epm_tip_clearance = bool(enable_hard_epm_tip_clearance)
         self.epm_tip_hard_min_m = float(epm_tip_hard_min_m)
+        # The active QP row in the supplied builder is clearance to the fixed
+        # lumen-end point.  Keep this separate from magnet-to-tip clearance.
+        self.epm_lumen_end_hard_min_m = float(epm_lumen_end_hard_min_m)
+        if self.epm_tip_hard_min_m < 0.0:
+            raise ValueError("epm_tip_hard_min_m must be non-negative.")
+        if self.epm_lumen_end_hard_min_m < 0.0:
+            raise ValueError(
+                "epm_lumen_end_hard_min_m must be non-negative."
+            )
 
         self.enable_hard_tip_tangent_angle = bool(
             enable_hard_tip_tangent_angle
@@ -257,16 +327,46 @@ class MPCControllerTipXY(
 
         if p_min is None:
             p_min = -np.full(self.np, np.inf)
+        else:
+            p_min = np.asarray(p_min, float).reshape(self.np).copy()
 
         if p_max is None:
             p_max = np.full(self.np, np.inf)
+        else:
+            p_max = np.asarray(p_max, float).reshape(self.np).copy()
+
+        if joint_lower_bounds is not None:
+            p_min[:6] = np.asarray(joint_lower_bounds, float).reshape(6)
+        if joint_upper_bounds is not None:
+            p_max[:6] = np.asarray(joint_upper_bounds, float).reshape(6)
+        if insertion_min_m is not None:
+            p_min[6] = float(insertion_min_m)
+        if insertion_max_m is not None:
+            p_max[6] = float(insertion_max_m)
 
         self.u_max = np.asarray(u_max, float).reshape(-1)
         self.p_min = np.asarray(p_min, float).reshape(-1)
         self.p_max = np.asarray(p_max, float).reshape(-1)
 
+        if np.any(np.isnan(self.p_min)) or np.any(np.isnan(self.p_max)):
+            raise ValueError("State bounds may be infinite but not NaN.")
+        if np.any(self.p_min > self.p_max):
+            raise ValueError("Some state lower bounds exceed upper bounds.")
+
+        if u_rate_max is None:
+            u_rate_max = np.full(self.m, np.inf)
+        self.u_rate_max = np.asarray(u_rate_max, float).reshape(-1)
+        if self.u_rate_max.size != self.m:
+            raise ValueError(f"u_rate_max must have length {self.m}.")
+        if np.any(np.isnan(self.u_rate_max)) or np.any(self.u_rate_max < 0.0):
+            raise ValueError(
+                "u_rate_max entries must be non-negative or +inf."
+            )
+
         if self.u_max.size != self.m:
             raise ValueError(f"u_max must have length {self.m}.")
+        if np.any(np.isnan(self.u_max)) or np.any(self.u_max < 0.0):
+            raise ValueError("u_max entries must be non-negative or +inf.")
 
         if self.p_min.size != self.np:
             raise ValueError(f"p_min must have length {self.np}.")
@@ -316,24 +416,155 @@ class MPCControllerTipXY(
             raise ValueError(f"non-finite output bias: {bias}")
         self.output_bias = bias.copy()
     def set_initial_params(self, p0):
-        self.p = np.asarray(p0, float).reshape(self.np,)
+        self.p = self._validate_joint_insertion_state(p0, name="initial state")
         self.u_prev = np.zeros(self.m)
         if hasattr(self.forward_tip_fn, "start_step"):
             self.forward_tip_fn.start_step()
-            self.x = np.asarray(
-                self.forward_tip_fn(self.p, commit=False),
-                float,
-            ).reshape(self.n)
-        else:
-            self.x = np.asarray(
-                self.forward_tip_fn(self.p),
-                float,
-            ).reshape(self.n)
+        self.x = self._eval_forward_tip(self.p)
 
         self.d = np.zeros(self.n, float)
         self.U_warm = None
         if hasattr(self, "reset_path_reference_state"):
             self.reset_path_reference_state()
+
+    def _validate_joint_insertion_state(self, state, *, name="state"):
+        """Validate ``[q1, ..., q6, insertion_length]`` without clipping it."""
+        state = np.asarray(state, float).reshape(-1)
+        if state.size != 7:
+            raise ValueError(
+                f"{name} must have seven entries [q1..q6, insertion], "
+                f"got shape {state.shape}."
+            )
+        if not np.all(np.isfinite(state)):
+            raise ValueError(f"{name} contains non-finite values: {state}.")
+        return state.copy()
+
+    def _validate_joint_insertion_control(self, control, *, name="control"):
+        """Validate ``[qd1, ..., qd6, insertion_rate]``."""
+        control = np.asarray(control, float).reshape(-1)
+        if control.size != 7:
+            raise ValueError(
+                f"{name} must have seven entries [qd1..qd6, dL], "
+                f"got shape {control.shape}."
+            )
+        if not np.all(np.isfinite(control)):
+            raise ValueError(f"{name} contains non-finite values: {control}.")
+        return control.copy()
+
+    def _apply_control_to_p(self, p, u):
+        """Integrate one joint-velocity/insertion-rate command.
+
+        Bounds are intentionally not enforced by clipping here.  They are hard
+        constraints in the QP, so clipping the nonlinear rollout would hide a
+        prediction/constraint error.
+        """
+        state = self._validate_joint_insertion_state(p)
+        control = self._validate_joint_insertion_control(u)
+        return state + self.dt * (self.state_rate_matrix @ control)
+
+    def _p_nodes_from_U(self, p0, U):
+        """Return joint-plus-insertion nodes ``[p0, p1, ..., p_Np]``."""
+        state = self._validate_joint_insertion_state(p0, name="rollout state")
+        U = np.asarray(U, float).reshape(self.Np, self.m)
+        if not np.all(np.isfinite(U)):
+            raise ValueError("Control rollout contains non-finite values.")
+
+        nodes = [state.copy()]
+        for stage in range(self.Np):
+            state = self._apply_control_to_p(state, U[stage])
+            nodes.append(state.copy())
+        return np.asarray(nodes, float)
+
+    def _p_seq_from_U(self, p0, U):
+        """Return post-control joint-plus-insertion states over the horizon."""
+        return self._p_nodes_from_U(p0, U)[1:]
+
+    def _apply_control_sequence(self, U_seq, n_apply):
+        """Apply optimized joint velocities to the internal model state."""
+        if self.p is None:
+            raise ValueError("Cannot apply controls before initialization.")
+
+        U_seq = np.asarray(U_seq, float).reshape(self.Np, self.m)
+        n_apply = int(np.clip(n_apply, 1, self.Np))
+        state = self.p.copy()
+        state_history = []
+        output_history = []
+        control_history = []
+
+        for stage in range(n_apply):
+            control = self._validate_joint_insertion_control(
+                U_seq[stage], name=f"control at stage {stage}"
+            )
+            state = self._apply_control_to_p(state, control)
+            output = self._eval_forward_tip(state)
+            state_history.append(state.copy())
+            output_history.append(np.asarray(output, float).reshape(self.n))
+            control_history.append(control.copy())
+
+        self.p = state_history[-1].copy()
+        self.x = output_history[-1].copy()
+        return {
+            "U_applied": np.asarray(control_history, float),
+            "p_rollout": np.asarray(state_history, float),
+            "joint_insertion_rollout": np.asarray(state_history, float),
+            "x_rollout": np.asarray(output_history, float),
+        }
+
+    def _eval_forward_tip(self, state):
+        """Evaluate the nonlinear beam output from a joint/insertion state."""
+        state = self._validate_joint_insertion_state(
+            state, name="forward-model state"
+        )
+        try:
+            output = self.forward_tip_fn(state, commit=False)
+        except TypeError:
+            output = self.forward_tip_fn(state)
+        output = np.asarray(output, float).reshape(self.n)
+        if not np.all(np.isfinite(output)):
+            raise FloatingPointError("forward_tip_fn returned non-finite values.")
+        return output
+
+    def _stage_input_matrix(self, state):
+        """Return the discrete output matrix used by the MPC prediction."""
+        state = self._validate_joint_insertion_state(
+            state, name="Jacobian linearisation state"
+        )
+        matrix = np.asarray(self.Jxy_fn(state), float).reshape(self.n, self.m)
+        if not np.all(np.isfinite(matrix)):
+            raise FloatingPointError("Jxy_fn returned non-finite values.")
+        if self.jacobian_returns_continuous:
+            matrix = self.dt * matrix
+        return matrix
+
+    def _eval_magnet_position(self, state):
+        """Evaluate the robot-base magnet-centre position from ``[q, L]``."""
+        if not callable(self.magnet_position_fn):
+            raise RuntimeError(
+                "A joint-space magnet_position_fn(state)->(3,) is required "
+                "when a magnet-clearance constraint is enabled."
+            )
+        state = self._validate_joint_insertion_state(state)
+        position = np.asarray(self.magnet_position_fn(state), float).reshape(3)
+        if not np.all(np.isfinite(position)):
+            raise FloatingPointError("magnet_position_fn returned non-finite values.")
+        return position
+
+    def _eval_magnet_position_jacobian(self, state):
+        """Return ``d p_magnet / d[q1..q6,L]`` in the robot base frame."""
+        if not callable(self.magnet_position_jacobian_fn):
+            raise RuntimeError(
+                "A joint-space magnet_position_jacobian_fn(state)->(3,7) "
+                "is required when a magnet-clearance constraint is enabled."
+            )
+        state = self._validate_joint_insertion_state(state)
+        jacobian = np.asarray(
+            self.magnet_position_jacobian_fn(state), float
+        ).reshape(3, 7)
+        if not np.all(np.isfinite(jacobian)):
+            raise FloatingPointError(
+                "magnet_position_jacobian_fn returned non-finite values."
+            )
+        return jacobian
     def set_prediction_horizon(self, Np: int, *, reset_warm: bool = False):
         """
         Safely change the MPC prediction horizon online.
@@ -411,10 +642,7 @@ class MPCControllerTipXY(
             )
             p_seq = p_nodes[1:]
 
-            B0 = np.asarray(
-                self.Jxy_fn(p_nodes[0]),
-                float,
-            ).reshape(n, m)
+            B0 = self._stage_input_matrix(p_nodes[0])
 
             B_sequence = np.repeat(
                 B0.reshape(1, n, m),
@@ -447,10 +675,7 @@ class MPCControllerTipXY(
             B_list = []
 
             for stage in range(Np):
-                B_stage = np.asarray(
-                    self.Jxy_fn(p_nodes[stage]),
-                    float,
-                ).reshape(n, m)
+                B_stage = self._stage_input_matrix(p_nodes[stage])
 
                 B_list.append(B_stage)
 
@@ -1874,29 +2099,22 @@ class MPCControllerTipXY(
             self.model_mode = old_model_mode
     def set_measured_params(self, p_meas):
         """
-        Hardware compatibility hook.
+        Update measured robot joints and beam insertion length.
 
-        The hardware loop estimates the current magnet pose/insertion from the UR
-        pose and camera-derived insertion length, then calls this before solving MPC.
+        ``p_meas`` must be ``[q1, ..., q6, insertion_length]``.  The joint
+        values should come directly from RTDE actual joint feedback; insertion
+        may come from the camera/beam measurement pipeline.
 
-        This updates the controller's internal actuator/magnet state but does not
+        This updates the controller's internal actuator state but does not
         treat the forward model as plant truth. The measured tip state is still
         supplied separately through step(x_meas=...).
         """
         if self.p is None:
             raise ValueError("Call set_initial_params(...) before set_measured_params(...).")
 
-        p_meas = np.asarray(p_meas, float).reshape(-1)
-
-        if p_meas.size != self.np:
-            raise ValueError(
-                f"p_meas must have length {self.np}, got shape {p_meas.shape}."
-            )
-
-        if not np.all(np.isfinite(p_meas)):
-            raise ValueError(f"p_meas contains non-finite values: {p_meas}")
-
-        self.p = p_meas.copy()
+        self.p = self._validate_joint_insertion_state(
+            p_meas, name="measured joint/insertion state"
+        )
 
         # Do not overwrite self.x here using the forward model.
         # Hardware truth comes from camera x_meas in step(...).
@@ -1907,18 +2125,12 @@ class MPCControllerTipXY(
         Hardware compatibility hook for buffered rollout.
 
         Used only for buffered hardware commands after a previous MPC plan.
-        It advances the controller's internal actuator/magnet state by one command.
+        It advances ``[q1..q6,L]`` by one ``[qd1..qd6,dL]`` command.
         """
         if self.p is None:
             raise ValueError("Call set_initial_params(...) before apply_open_loop_control(...).")
 
-        u = np.asarray(u, float).reshape(-1)
-
-        if u.size != self.m:
-            raise ValueError(f"u must have length {self.m}, got shape {u.shape}.")
-
-        if not np.all(np.isfinite(u)):
-            raise ValueError(f"u contains non-finite values: {u}")
+        u = self._validate_joint_insertion_control(u)
 
         p_next = self._apply_control_to_p(self.p, u)
         self.p = np.asarray(p_next, float).reshape(self.np,)
@@ -2205,6 +2417,8 @@ class MPCControllerTipXY(
             "U_seq": U_seq.copy(),
 
             "p_now": self.p.copy(),
+            "q_now_rad": self.p[:6].copy(),
+            "insertion_now_m": float(self.p[6]),
             "x_now": self.x.copy(),
 
             "idx_ref": np.asarray(

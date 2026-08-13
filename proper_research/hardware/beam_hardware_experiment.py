@@ -134,7 +134,7 @@ class ExperimentConfig:
         1.0e-3,
         1.0e-3,
     )
-    initial_beam_length_m: float = 0.027
+    initial_beam_length_m: float = 0.044
     use_vision_length_in_model: bool = False
     min_vision_length_m: float = 0.010
     max_vision_length_m: float = 0.050

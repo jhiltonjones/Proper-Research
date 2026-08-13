@@ -32,6 +32,52 @@ from proper_research.simulation.simulations.logging_utils import save_step_artif
 from proper_research.simulation.simulations.sim_plots import (
     save_step_diagnostic_plots,
 )
+
+
+def _mark_magnet_and_expand_axes(ax, p_mag) -> None:
+    """Draw a visible magnet-centre marker and keep it inside all 3-D limits."""
+    point = np.asarray(p_mag, dtype=float).reshape(3)
+    if not np.all(np.isfinite(point)) or ax is None:
+        return
+
+    required = (
+        "scatter", "get_xlim3d", "get_ylim3d", "get_zlim3d",
+        "set_xlim3d", "set_ylim3d", "set_zlim3d",
+    )
+    if not all(hasattr(ax, name) for name in required):
+        return
+
+    ax.scatter(
+        [point[0]], [point[1]], [point[2]],
+        s=90,
+        marker="D",
+        c="crimson",
+        edgecolors="black",
+        linewidths=0.8,
+        depthshade=False,
+        label="source magnet centre",
+        zorder=20,
+    )
+    if hasattr(ax, "text"):
+        ax.text(point[0], point[1], point[2], "  M", color="crimson")
+
+    axis_specs = (
+        (point[0], ax.get_xlim3d, ax.set_xlim3d),
+        (point[1], ax.get_ylim3d, ax.set_ylim3d),
+        (point[2], ax.get_zlim3d, ax.set_zlim3d),
+    )
+    for coordinate, getter, setter in axis_specs:
+        low, high = map(float, getter())
+        new_low = min(low, float(coordinate))
+        new_high = max(high, float(coordinate))
+        span = max(new_high - new_low, 1.0e-6)
+        pad = 0.04 * span
+        setter(new_low - pad, new_high + pad)
+
+    if hasattr(ax, "legend"):
+        ax.legend(loc="best")
+
+
 def save_geometry_frames(
     *,
     k: int,
@@ -54,7 +100,7 @@ def save_geometry_frames(
     without_mag_dir.mkdir(parents=True, exist_ok=True)
 
     # Complete-scene limits.
-    fig_mag, _, limits = plot_energy_only_3d(
+    fig_mag, ax_mag, limits = plot_energy_only_3d(
         C_beam,
         lumen_C=lumen_C,
         lumen_R=lumen_R,
@@ -67,6 +113,10 @@ def save_geometry_frames(
         fixed_limits=limits, 
         zoom_out=1.2,
     )
+    # The source magnet can be roughly 0.2 m away from a 0.04 m beam.  Some
+    # plot helpers compute limits only from the beam/lumen, so explicitly mark
+    # the centre and expand this figure's axes to include it.
+    _mark_magnet_and_expand_axes(ax_mag, p_mag)
 
     fig_mag.savefig(
         with_mag_dir / f"frame_{k:05d}.png",
@@ -105,7 +155,7 @@ def save_geometry_frames(
         ),
         "fixed_limits": limits,
     }, limits
-def snapshot_forward(forward6d, p8, *, commit=False):
+def snapshot_forward(forward6d, state, *, commit=False):
     """
     Get a consistent forward-model snapshot from a single forward call.
 
@@ -123,7 +173,9 @@ def snapshot_forward(forward6d, p8, *, commit=False):
     y:
         Full output, usually [tip_x, tip_y, tip_z, tx, ty, tz].
     """
-    y = np.asarray(forward6d(p8, commit=commit), float).reshape(-1)
+    # ``state`` is [q1..q6, insertion] in the joint-space simulator.  The
+    # forward adapter performs robot FK and then calls the unchanged beam model.
+    y = np.asarray(forward6d(state, commit=commit), float).reshape(-1)
 
     if y.size < 6:
         raise ValueError(f"forward6d returned {y.size} values, expected at least 6.")
@@ -473,7 +525,7 @@ def _write_tip_tangent_stop_report(
 
     tip = np.asarray(tip_pos, float).reshape(-1)
     tangent = np.asarray(tip_tan, float).reshape(-1)
-    pose = np.asarray(p_state, float).reshape(-1)
+    actuator_state = np.asarray(p_state, float).reshape(-1)
 
     lines = [
         "Runner tip-tangent safety stop",
@@ -495,8 +547,8 @@ def _write_tip_tangent_stop_report(
         "tip_xyz=" + np.array2string(tip[:3], precision=12, separator=","),
         "tip_tangent=" + np.array2string(
             tangent[:3], precision=12, separator=","),
-        "actuator_pose=" + np.array2string(
-            pose, precision=12, separator=","),
+        "actuator_state_q_and_insertion=" + np.array2string(
+            actuator_state, precision=12, separator=","),
     ]
 
     report_path.write_text("\n".join(lines) + "\n")
@@ -904,23 +956,30 @@ def evaluate_jacobian_sequence_along_solution(
         U_seq,
     )
 
-    B0 = np.asarray(
-        controller.Jxy_fn(p_nodes[0]),
-        float,
-    ).reshape(controller.n, controller.m)
+    def discrete_B(state):
+        # Use the same conversion as the optimizer.  The joint-space adapter
+        # returns continuous J = dy/d[qd,dL], while the prediction model uses
+        # B_k = dt*J_k.  Calling Jxy_fn directly here used to omit dt and made
+        # the sequence diagnostics inconsistent with the QP.
+        stage_builder = getattr(controller, "_stage_input_matrix", None)
+        if callable(stage_builder):
+            return np.asarray(
+                stage_builder(state), float
+            ).reshape(controller.n, controller.m)
+
+        matrix = np.asarray(
+            controller.Jxy_fn(state), float
+        ).reshape(controller.n, controller.m)
+        if bool(getattr(controller, "jacobian_returns_continuous", False)):
+            matrix = float(controller.dt) * matrix
+        return matrix
+
+    B0 = discrete_B(p_nodes[0])
 
     if use_ltv:
         B_sequence = np.stack(
             [
-                np.asarray(
-                    controller.Jxy_fn(
-                        p_nodes[stage]
-                    ),
-                    float,
-                ).reshape(
-                    controller.n,
-                    controller.m,
-                )
+                discrete_B(p_nodes[stage])
                 for stage in range(
                     controller.Np
                 )
@@ -1614,9 +1673,20 @@ def run_simulation(
             info["B_sequence_solution"] = (
                 B_solution.copy()
             )
-            info["B_pose_nodes_solution"] = (
+            info["B_state_nodes_solution"] = (
                 B_solution_nodes.copy()
             )
+            # Temporary compatibility alias for existing log readers.
+            info["B_pose_nodes_solution"] = info[
+                "B_state_nodes_solution"
+            ].copy()
+            info["controller_dt_s"] = float(mpc.dt)
+            if B_solution.shape[2] >= 7:
+                B0_insertion = B_solution[0, :, 6].copy()
+                info["B0_insertion_column"] = B0_insertion
+                info["J0_insertion_column"] = (
+                    B0_insertion / float(mpc.dt)
+                )
 
             B_linearisation = np.asarray(
                 info.get(
@@ -1642,18 +1712,11 @@ def run_simulation(
                     )
                     / denominator
                 )
-        channel_names = np.asarray(
-            [
-                "vx",
-                "vy",
-                "vz",
-                "wx",
-                "wy",
-                "wz",
-                "dL",
-            ],
-            dtype="U8",
-        )
+        channel_names = np.asarray([
+            "qd1", "qd2", "qd3",
+            "qd4", "qd5", "qd6",
+            "dL",
+        ])
 
         # Use a fixed scale across controllers and experiments.
         # Do not use the current adaptive trust radius here because that
@@ -2076,12 +2139,12 @@ def run_simulation(
         u0_arr = np.asarray(info.get("u0", np.full(mpc.m, np.nan)), float).reshape(-1)
 
         if u0_arr.size >= 7:
-            info["u0_vx"] = float(u0_arr[0])
-            info["u0_vy"] = float(u0_arr[1])
-            info["u0_vz"] = float(u0_arr[2])
-            info["u0_wx"] = float(u0_arr[3])
-            info["u0_wy"] = float(u0_arr[4])
-            info["u0_wz"] = float(u0_arr[5])
+            info["u0_qd1"] = float(u0_arr[0])
+            info["u0_qd2"] = float(u0_arr[1])
+            info["u0_qd3"] = float(u0_arr[2])
+            info["u0_qd4"] = float(u0_arr[3])
+            info["u0_qd5"] = float(u0_arr[4])
+            info["u0_qd6"] = float(u0_arr[5])
             info["u0_dL"] = float(u0_arr[6])
         # ------------------------------------------------------------
         # Plotting and CSV logging
@@ -2099,13 +2162,9 @@ def run_simulation(
                     info=info,
                     output_root=diagnostic_plot_root,
                     channel_names=(
-                        "vx",
-                        "vy",
-                        "vz",
-                        "wx",
-                        "wy",
-                        "wz",
-                        "dL",
+                    "qd1", "qd2", "qd3",
+                    "qd4", "qd5", "qd6",
+                    "dL",
                     ),
                     dpi=diagnostic_plot_dpi,
                 )
@@ -2117,19 +2176,26 @@ def run_simulation(
 
 
 
+        # Always attach the physical magnet position to logs, even when plots
+        # are disabled.
+        p_mag_post = mpc._eval_magnet_position(p_post)
+        info["magnet_position_R_m"] = np.asarray(
+            p_mag_post, float
+        ).reshape(3).copy()
+        info["insertion_now_m"] = float(np.asarray(p_post, float)[6])
+
         if save_plots:
             if 'limits' not in locals():
                 limits = None
-
             geometry_paths, limits = save_geometry_frames(
                 k=k,
                 frames_dir=frames_dir,
-                C_beam=C_pre,
+                C_beam=C_post if C_post is not None else C_pre,
                 lumen_C=lumen_C,
                 lumen_R=lumen_R,
                 p0=p0_ur,
-                tip=tip_pre,
-                p_mag=p_post,
+                tip=tip_post_vis,
+                p_mag=p_mag_post,
                 limits=limits,  
             )
 

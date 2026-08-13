@@ -36,7 +36,7 @@ class ControllerDesignConfig:
 
     n_out: int = 6
     n_u: int = 7
-    n_p: int = 8
+    n_p: int = 7
 
     # [tip_xyz, tip_tangent]. Zero tangent weights mean no tangent tracking.
     w_tracking: tuple[float, ...] = (
@@ -61,32 +61,58 @@ class ControllerDesignConfig:
     u_max: np.ndarray = field(
         default_factory=lambda: np.array(
             [
-                0.5,                       # vx [m/s]
-                0.5,                       # vy [m/s]
-                0.0,                       # vz locked
-                0.0,                       # wx locked
-                0.5,                       # wy [rad/s]
-                np.deg2rad(30.0) / 0.1,    # wz [rad/s]
-                0.5,                       # insertion rate [m/s]
+                0.10,   # qd1 rad/s
+                0.10,   # qd2 rad/s
+                0.10,   # qd3 rad/s
+                0.10,   # qd4 rad/s
+                0.10,   # qd5 rad/s
+                0.10,   # qd6 rad/s
+                0.002,  # insertion rate m/s
             ],
             dtype=float,
         )
     )
     trust_radius: np.ndarray = field(
         default_factory=lambda: np.array(
-            [0.5, 0.5, 0.0, 0.0, 0.5, np.deg2rad(30.0) / 0.1, 0.5],
+            [
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                0.05,
+                0.001,
+            ],
             dtype=float,
         )
     )
-    trust_radius_max: np.ndarray = field(
-        default_factory=lambda: np.array(
-            [0.5, 0.5, 0.0, 0.0, 0.5, np.deg2rad(30.0) / 0.1, 0.5],
-            dtype=float,
-        )
-    )
+
     trust_radius_min: np.ndarray = field(
         default_factory=lambda: np.array(
-            [0.025, 0.025, 0.0, 0.0, 0.05, 0.05, 0.025],
+            [
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.0001,
+            ],
+            dtype=float,
+        )
+    )
+
+    trust_radius_max: np.ndarray = field(
+        default_factory=lambda: np.array(
+            [
+                0.10,
+                0.10,
+                0.10,
+                0.10,
+                0.10,
+                0.10,
+                0.002,
+            ],
             dtype=float,
         )
     )

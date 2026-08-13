@@ -1,6 +1,159 @@
 import numpy as np
 
 
+def cumulative_state_control_matrix(
+    *,
+    Np,
+    n_state,
+    n_control,
+    dt,
+    state_rate_matrix=None,
+):
+    """Return the stacked discrete integrator from controls to states.
+
+    For
+
+        s[k + 1] = s[k] + dt * E @ u[k],
+
+    this returns ``S`` such that
+
+        [s[1], ..., s[Np]] = tile(s[0], Np) + S @ U.
+
+    ``state_rate_matrix`` is ``E``.  The joint-plus-insertion controller uses
+    ``E = I(7)`` with
+
+        s = [q1, ..., q6, insertion]
+        u = [qd1, ..., qd6, insertion_rate].
+    """
+    Np = int(Np)
+    n_state = int(n_state)
+    n_control = int(n_control)
+    dt = float(dt)
+
+    if Np <= 0:
+        raise ValueError("Np must be positive.")
+    if n_state <= 0 or n_control <= 0:
+        raise ValueError("n_state and n_control must be positive.")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("dt must be finite and positive.")
+
+    if state_rate_matrix is None:
+        if n_state != n_control:
+            raise ValueError(
+                "state_rate_matrix is required when n_state != n_control."
+            )
+        E = np.eye(n_state)
+    else:
+        E = np.asarray(state_rate_matrix, float)
+        if E.shape != (n_state, n_control):
+            raise ValueError(
+                "state_rate_matrix must have shape "
+                f"{(n_state, n_control)}, got {E.shape}."
+            )
+        if not np.all(np.isfinite(E)):
+            raise ValueError("state_rate_matrix contains non-finite values.")
+
+    cumulative = np.tril(np.ones((Np, Np), dtype=float))
+    return dt * np.kron(cumulative, E)
+
+
+def integrated_state_bounds(
+    *,
+    state0,
+    state_min,
+    state_max,
+    Np,
+    dt,
+    n_control=None,
+    state_rate_matrix=None,
+):
+    """Build horizon-wide bounds for an integrated state.
+
+    The returned OSQP block enforces
+
+        state_min <= state[k] <= state_max,  k = 1, ..., Np
+
+    for the discrete integrator used by ``cumulative_state_control_matrix``.
+    Infinite entries are supported, so individual state channels may be left
+    unconstrained.
+    """
+    state0 = np.asarray(state0, float).reshape(-1)
+    state_min = np.asarray(state_min, float).reshape(-1)
+    state_max = np.asarray(state_max, float).reshape(-1)
+
+    if state_min.shape != state0.shape or state_max.shape != state0.shape:
+        raise ValueError(
+            "state0, state_min and state_max must have identical shapes."
+        )
+    if not np.all(np.isfinite(state0)):
+        raise ValueError("state0 contains non-finite values.")
+    if np.any(np.isnan(state_min)) or np.any(np.isnan(state_max)):
+        raise ValueError("state bounds may be infinite but not NaN.")
+    if np.any(state_min > state_max):
+        raise ValueError("Some state lower bounds exceed upper bounds.")
+
+    n_state = state0.size
+    if n_control is None:
+        n_control = n_state
+
+    A = cumulative_state_control_matrix(
+        Np=Np,
+        n_state=n_state,
+        n_control=int(n_control),
+        dt=dt,
+        state_rate_matrix=state_rate_matrix,
+    )
+    state0_stack = np.tile(state0, int(Np))
+    lower = np.tile(state_min, int(Np)) - state0_stack
+    upper = np.tile(state_max, int(Np)) - state0_stack
+    return A, lower, upper
+
+
+def control_rate_bounds(*, u_previous, rate_max, Np, dt):
+    """Build hard bounds on changes of a velocity-like MPC control.
+
+    ``rate_max`` has acceleration units.  The constraints are
+
+        |u[0] - u_previous| <= rate_max * dt
+        |u[k] - u[k - 1]|   <= rate_max * dt.
+
+    For the joint-plus-insertion controller, the first six entries constrain
+    joint acceleration and the seventh constrains insertion acceleration.
+    Infinite entries disable selected channels.
+    """
+    u_previous = np.asarray(u_previous, float).reshape(-1)
+    rate_max = np.asarray(rate_max, float).reshape(-1)
+    Np = int(Np)
+    dt = float(dt)
+
+    if u_previous.shape != rate_max.shape:
+        raise ValueError("u_previous and rate_max must have identical shapes.")
+    if Np <= 0:
+        raise ValueError("Np must be positive.")
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError("dt must be finite and positive.")
+    if not np.all(np.isfinite(u_previous)):
+        raise ValueError("u_previous contains non-finite values.")
+    if np.any(np.isnan(rate_max)) or np.any(rate_max < 0.0):
+        raise ValueError("rate_max entries must be non-negative or +inf.")
+
+    m = u_previous.size
+    Nu = Np * m
+    A = np.zeros((Nu, Nu), dtype=float)
+    for stage in range(Np):
+        rows = slice(stage * m, (stage + 1) * m)
+        cols = slice(stage * m, (stage + 1) * m)
+        A[rows, cols] = np.eye(m)
+        if stage > 0:
+            previous = slice((stage - 1) * m, stage * m)
+            A[rows, previous] = -np.eye(m)
+
+    centre = np.zeros(Nu, dtype=float)
+    centre[:m] = u_previous
+    maximum_change = np.tile(rate_max * dt, Np)
+    return A, centre - maximum_change, centre + maximum_change
+
+
 def trust_region_bounds(U_guess, trust_radius):
     """
     Bounds for the SQP trust region:
@@ -64,6 +217,8 @@ def input_bounds(u_max, Np):
 
     if Np <= 0:
         raise ValueError("Np must be positive.")
+    if np.any(np.isnan(u_max)) or np.any(u_max < 0.0):
+        raise ValueError("u_max entries must be non-negative or +inf.")
 
     Nu = Np * m
 

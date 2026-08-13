@@ -366,7 +366,10 @@ def save_step_artifacts(
     log_csv_path = Path(log_csv_path)
 
     u0 = _pad(u0, 7)
-    p_now = _pad(p_now, 8)
+    # Joint-space state is exactly [q1..q6, insertion].  Padding to the old
+    # pose8 layout placed insertion in the old quaternion-qz column and made
+    # p_now_L (index 7) NaN.
+    state_now = _pad(p_now, 7)
     y_now = _pad(y_now, 6)
 
     idx_ref = np.asarray(info.get("idx_ref", []), int).reshape(-1)
@@ -391,6 +394,17 @@ def save_step_artifacts(
     x_rollout = np.asarray(info.get("x_rollout", []), float)
     X_pred = np.asarray(info.get("X_pred", []), float)
     U_seq = np.asarray(info.get("U_seq", []), float)
+    p_rollout = np.asarray(
+        info.get(
+            "joint_insertion_rollout",
+            info.get("p_rollout", []),
+        ),
+        float,
+    )
+    state_plan_nodes = np.asarray(
+        info.get("B_state_nodes_solution", []),
+        float,
+    )
 
     if U_applied.ndim != 2:
         U_applied = np.empty((0, 7), float)
@@ -403,6 +417,10 @@ def save_step_artifacts(
 
     if U_seq.ndim != 2:
         U_seq = np.empty((0, 7), float)
+    if p_rollout.ndim != 2 or p_rollout.shape[1] != 7:
+        p_rollout = np.empty((0, 7), float)
+    if state_plan_nodes.ndim != 2 or state_plan_nodes.shape[1] != 7:
+        state_plan_nodes = np.empty((0, 7), float)
 
     # Important:
     # Prefer rollout_steps_used because this is the actual number applied
@@ -488,23 +506,26 @@ def save_step_artifacts(
         "idx_ref_terminal": int(idx_ref[-1]) if idx_ref.size > 0 else -1,
 
         # First applied control.
-        "u0_vx": float(u0[0]),
-        "u0_vy": float(u0[1]),
-        "u0_vz": float(u0[2]),
-        "u0_wx": float(u0[3]),
-        "u0_wy": float(u0[4]),
-        "u0_wz": float(u0[5]),
+        "u0_qd1_rad_s": float(u0[0]),
+        "u0_qd2_rad_s": float(u0[1]),
+        "u0_qd3_rad_s": float(u0[2]),
+        "u0_qd4_rad_s": float(u0[3]),
+        "u0_qd5_rad_s": float(u0[4]),
+        "u0_qd6_rad_s": float(u0[5]),
+        "u0_insertion_rate_m_s": float(u0[6]),
         "u0_dL": float(u0[6]),
 
         # Magnet/source state.
-        "p_now_x": float(p_now[0]),
-        "p_now_y": float(p_now[1]),
-        "p_now_z": float(p_now[2]),
-        "p_now_qw": float(p_now[3]),
-        "p_now_qx": float(p_now[4]),
-        "p_now_qy": float(p_now[5]),
-        "p_now_qz": float(p_now[6]),
-        "p_now_L": float(p_now[7]),
+        "state_q1_rad": float(state_now[0]),
+        "state_q2_rad": float(state_now[1]),
+        "state_q3_rad": float(state_now[2]),
+        "state_q4_rad": float(state_now[3]),
+        "state_q5_rad": float(state_now[4]),
+        "state_q6_rad": float(state_now[5]),
+        "state_insertion_m": float(state_now[6]),
+        # Compatibility name used by older analysis notebooks.  It now reads
+        # the correct joint-space index instead of padded pose8 index 7.
+        "p_now_L": float(state_now[6]),
 
         # Tip state.
         "tip_x": float(y_now[0]),
@@ -526,7 +547,49 @@ def save_step_artifacts(
         "sqp_du_rel_final": float(sqp_du_rel_final),
 
         "frame_path": str(fig_path),
+        "frame_with_magnet": str(info.get("frame_with_magnet", "")),
+        "frame_without_magnet": str(info.get("frame_without_magnet", "")),
+        "num_diagnostic_plots_saved": info.get(
+            "num_diagnostic_plots_saved", ""
+        ),
     }
+    magnet_position = _pad(
+        info.get("magnet_position_R_m", np.full(3, np.nan)),
+        3,
+    )
+    row.update(
+        {
+            "magnet_x_m": float(magnet_position[0]),
+            "magnet_y_m": float(magnet_position[1]),
+            "magnet_z_m": float(magnet_position[2]),
+        }
+    )
+
+    # Explicitly log the insertion column of both the discrete MPC matrix B0
+    # and the continuous Jacobian J0=B0/dt.  Rows beyond the active output
+    # dimension remain NaN for a position-only controller.
+    B0_insertion = _pad(
+        info.get("B0_insertion_column", np.full(6, np.nan)), 6
+    )
+    J0_insertion = _pad(
+        info.get("J0_insertion_column", np.full(6, np.nan)), 6
+    )
+    output_names = ("tip_x", "tip_y", "tip_z", "tan_x", "tan_y", "tan_z")
+    for output_index, output_name in enumerate(output_names):
+        row[f"B0_{output_name}_per_insertion_rate"] = float(
+            B0_insertion[output_index]
+        )
+        row[f"J0_{output_name}_per_insertion"] = float(
+            J0_insertion[output_index]
+        )
+    row["B0_insertion_column_norm"] = float(
+        np.linalg.norm(B0_insertion[np.isfinite(B0_insertion)])
+        if np.any(np.isfinite(B0_insertion)) else np.nan
+    )
+    row["J0_insertion_column_norm"] = float(
+        np.linalg.norm(J0_insertion[np.isfinite(J0_insertion)])
+        if np.any(np.isfinite(J0_insertion)) else np.nan
+    )
     row.update(
         safe_progress_log_row(info)
     )
@@ -556,12 +619,13 @@ def save_step_artifacts(
 
     row.update(
         {
-            "trust_vx": float(trust_radius[0]),
-            "trust_vy": float(trust_radius[1]),
-            "trust_vz": float(trust_radius[2]),
-            "trust_wx": float(trust_radius[3]),
-            "trust_wy": float(trust_radius[4]),
-            "trust_wz": float(trust_radius[5]),
+            "trust_qd1_rad_s": float(trust_radius[0]),
+            "trust_qd2_rad_s": float(trust_radius[1]),
+            "trust_qd3_rad_s": float(trust_radius[2]),
+            "trust_qd4_rad_s": float(trust_radius[3]),
+            "trust_qd5_rad_s": float(trust_radius[4]),
+            "trust_qd6_rad_s": float(trust_radius[5]),
+            "trust_insertion_rate_m_s": float(trust_radius[6]),
             "trust_dL": float(trust_radius[6]),
         }
     )
@@ -639,6 +703,11 @@ def save_step_artifacts(
             uj = _pad(U_applied[j], 7)
             xj = _pad(x_rollout[j], 6)
             xpj = _pad(X_pred[j], 6)
+            statej = (
+                _pad(p_rollout[j], 7)
+                if j < p_rollout.shape[0]
+                else np.full(7, np.nan)
+            )
 
             err_xy = float(np.linalg.norm(xj[:2] - xpj[:2]))
             err_xyz = float(np.linalg.norm(xj[:3] - xpj[:3]))
@@ -646,18 +715,28 @@ def save_step_artifacts(
             uj = np.full(7, np.nan)
             xj = np.full(6, np.nan)
             xpj = np.full(6, np.nan)
+            statej = np.full(7, np.nan)
             err_xy = np.nan
             err_xyz = np.nan
 
         row.update(
             {
-                f"u_applied_{j}_vx": float(uj[0]),
-                f"u_applied_{j}_vy": float(uj[1]),
-                f"u_applied_{j}_vz": float(uj[2]),
-                f"u_applied_{j}_wx": float(uj[3]),
-                f"u_applied_{j}_wy": float(uj[4]),
-                f"u_applied_{j}_wz": float(uj[5]),
+                f"u_applied_{j}_qd1_rad_s": float(uj[0]),
+                f"u_applied_{j}_qd2_rad_s": float(uj[1]),
+                f"u_applied_{j}_qd3_rad_s": float(uj[2]),
+                f"u_applied_{j}_qd4_rad_s": float(uj[3]),
+                f"u_applied_{j}_qd5_rad_s": float(uj[4]),
+                f"u_applied_{j}_qd6_rad_s": float(uj[5]),
+                f"u_applied_{j}_insertion_rate_m_s": float(uj[6]),
                 f"u_applied_{j}_dL": float(uj[6]),
+
+                f"state_rollout_{j}_q1_rad": float(statej[0]),
+                f"state_rollout_{j}_q2_rad": float(statej[1]),
+                f"state_rollout_{j}_q3_rad": float(statej[2]),
+                f"state_rollout_{j}_q4_rad": float(statej[3]),
+                f"state_rollout_{j}_q5_rad": float(statej[4]),
+                f"state_rollout_{j}_q6_rad": float(statej[5]),
+                f"state_rollout_{j}_insertion_m": float(statej[6]),
 
                 f"x_rollout_{j}_x": float(xj[0]),
                 f"x_rollout_{j}_y": float(xj[1]),
@@ -687,16 +766,29 @@ def save_step_artifacts(
 
     for j in range(K_plan):
         uj = _pad(U_seq[j], 7)
+        state_node = (
+            _pad(state_plan_nodes[j], 7)
+            if j < state_plan_nodes.shape[0]
+            else np.full(7, np.nan)
+        )
 
         row.update(
             {
-                f"u_plan_{j}_vx": float(uj[0]),
-                f"u_plan_{j}_vy": float(uj[1]),
-                f"u_plan_{j}_vz": float(uj[2]),
-                f"u_plan_{j}_wx": float(uj[3]),
-                f"u_plan_{j}_wy": float(uj[4]),
-                f"u_plan_{j}_wz": float(uj[5]),
+                f"u_plan_{j}_qd1_rad_s": float(uj[0]),
+                f"u_plan_{j}_qd2_rad_s": float(uj[1]),
+                f"u_plan_{j}_qd3_rad_s": float(uj[2]),
+                f"u_plan_{j}_qd4_rad_s": float(uj[3]),
+                f"u_plan_{j}_qd5_rad_s": float(uj[4]),
+                f"u_plan_{j}_qd6_rad_s": float(uj[5]),
+                f"u_plan_{j}_insertion_rate_m_s": float(uj[6]),
                 f"u_plan_{j}_dL": float(uj[6]),
+                f"state_plan_node_{j}_q1_rad": float(state_node[0]),
+                f"state_plan_node_{j}_q2_rad": float(state_node[1]),
+                f"state_plan_node_{j}_q3_rad": float(state_node[2]),
+                f"state_plan_node_{j}_q4_rad": float(state_node[3]),
+                f"state_plan_node_{j}_q5_rad": float(state_node[4]),
+                f"state_plan_node_{j}_q6_rad": float(state_node[5]),
+                f"state_plan_node_{j}_insertion_m": float(state_node[6]),
             }
         )
     row.update(
@@ -777,7 +869,10 @@ def save_step_artifacts(
         "B_sequence",
         "B_sequence_linearisation",
         "B_sequence_solution",
+        "B_state_nodes_solution",
         "B_drift_relative_stage",
+        "p_rollout",
+        "joint_insertion_rollout",
     ):
         value = info.get(key, None)
 

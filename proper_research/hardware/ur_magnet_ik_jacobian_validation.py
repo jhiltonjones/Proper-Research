@@ -102,20 +102,23 @@ class ValidationConfig:
 
     # Live state, ur_rtde kinematics, and motion all share one URRTDERobot
     # instance.  Keep ur_rtde_robot.py next to this script (or on PYTHONPATH).
-    use_live_robot: bool = True
+    use_live_robot: bool = False
     robot_ip: str = "192.168.56.101"
     rtde_frequency_hz: float = 125.0
     robot_model: str = "ur10e"  # ur3e, ur5e/ur7e, ur10e/ur12e, ur16e,
                                   # ur3, ur5, or ur10
-    live_confirmation_phrase: str = "1"
+    live_confirmation_phrase: str = "ready"
 
     # Hardware comparison.  The default sends both solutions for one selected
     # target: custom IK first, then ur_rtde IK.  Set execute_motion=False for a
     # calculation-only run.  Empty motion_target_names means all targets.
-    execute_motion: bool = True
-    motion_confirmation_phrase: str = "1"
+    execute_motion: bool = False
+    motion_confirmation_phrase: str = "MOVE"
     motion_solution_sources: tuple[str, ...] = ("own", "ur_rtde")
-    motion_target_names: tuple[str, ...] = ("robot_x_plus_100mm",)
+    # Only names listed here are actually sent to the robot.  Use a small
+    # magnet-local Y tilt so the 44 mm Z lever arm produces visible TCP motion.
+    # A local-Z spin changes orientation, but cannot move a collinear Z offset.
+    motion_target_names: tuple[str, ...] = ("magnet_y_tilt_minus_10deg",)
     move_joint_speed_rad_s: float = 0.25
     move_joint_acceleration_rad_s2: float = 0.20
     maximum_commanded_joint_delta_norm_rad: float = 0.35
@@ -124,13 +127,13 @@ class ValidationConfig:
     feedback_sample_interval_s: float = 0.05
 
     # T_TCP_M: magnet-centre/body pose expressed in the LOCAL ACTIVE-TCP frame.
-    # The magnet centre is 27 mm along TCP +z and its axes are aligned with the
+    # The magnet centre is 44 mm along TCP +z and its axes are aligned with the
     # TCP axes.  This is not a robot-base z offset: R_R_TCP rotates this lever
     # arm whenever the tool rotates.  Change the final three rotation-vector
     # values if the magnet body axes are not physically aligned with the TCP.
     # The logged downward reference pose shows that TCP +z points toward the
-    # ground, so +0.027 m produces a negative robot-base z displacement.  Do
-    # not enter -0.027 merely because "down" is robot-base -z: this translation
+    # ground, so +0.044 m produces a negative robot-base z displacement.  Do
+    # not enter -0.044 merely because "down" is robot-base -z: this translation
     # is expressed in the rotating TCP frame, not the robot-base frame.
     T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = (
         0.0,
@@ -182,10 +185,25 @@ class ValidationConfig:
     targets: tuple[IKTargetOffset, ...] = field(
         default_factory=lambda: (
             IKTargetOffset("current_pose", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_x_plus_100mm", (-100.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_y_plus_100mm", (0.0, -100.0, 0.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("robot_z_plus_100mm", (0.0, 0.0, -100.0), (0.0, 0.0, 0.0)),
-            IKTargetOffset("magnet_z_rotation_90deg", (0.0, 0.0, 0.0), (0.0, 0.0, -180.0), "magnet_local"),
+            IKTargetOffset("robot_x_minus_100mm", (-100.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            IKTargetOffset("robot_y_minus_100mm", (0.0, -100.0, 0.0), (0.0, 0.0, 0.0)),
+            IKTargetOffset("robot_z_minus_100mm", (0.0, 0.0, -100.0), (0.0, 0.0, 0.0)),
+            # Tilting about local X or Y rotates the Z lever arm and therefore
+            # requires the TCP to move around the fixed magnet centre.
+            IKTargetOffset(
+                "magnet_y_tilt_minus_10deg",
+                (0.0, 0.0, 0.0),
+                (0.0, -10.0, 0.0),
+                "magnet_local",
+            ),
+            # This is a useful control case: it changes magnet orientation but
+            # does not translate a TCP-to-magnet offset lying on local Z.
+            IKTargetOffset(
+                "magnet_z_spin_minus_10deg",
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, -10.0),
+                "magnet_local",
+            ),
         )
     )
 
@@ -371,24 +389,115 @@ def pose_error_metrics(T_actual: Any, T_target: Any) -> dict[str, float]:
     }
 
 
+def compose_rotation_increment(
+    R_current: Any,
+    rotation_vector_deg: Any,
+    frame: str,
+) -> np.ndarray:
+    """Compose an axis-angle increment with an existing orientation.
+
+    A UR rotation vector is an axis-angle parameterisation, not three Euler
+    angles and not a vector that may be added component-by-component.  Convert
+    the requested increment to a rotation matrix, multiply in the requested
+    frame, and only convert the final matrix back to a rotation vector when a
+    UR pose6 value is required.
+
+    ``robot_base`` uses a spatial/world increment (pre-multiplication), while
+    ``magnet_local`` uses a body/local increment (post-multiplication).
+    """
+
+    current = np.asarray(R_current, dtype=float)
+    if current.shape != (3, 3) or not np.all(np.isfinite(current)):
+        raise ValueError("R_current must be a finite 3x3 rotation matrix.")
+    current_check = np.eye(4, dtype=float)
+    current_check[:3, :3] = current
+    current = validate_transform(current_check, "R_current")[:3, :3]
+
+    delta_rotvec_rad = np.radians(
+        finite_vector(rotation_vector_deg, 3, "rotation_vector_deg")
+    )
+    R_delta = Rot.from_rotvec(delta_rotvec_rad).as_matrix()
+    if frame == "robot_base":
+        R_target = R_delta @ current
+    elif frame == "magnet_local":
+        R_target = current @ R_delta
+    else:
+        raise ValueError(f"Unknown target frame {frame!r}.")
+
+    target_check = np.eye(4, dtype=float)
+    target_check[:3, :3] = R_target
+    return validate_transform(target_check, "composed target rotation")[:3, :3]
+
+
+def rotation_increment_diagnostics(
+    T_current: Any,
+    T_target: Any,
+    target: IKTargetOffset,
+) -> dict[str, Any]:
+    """Describe the composed increment using matrices, not raw pose6 subtraction."""
+
+    current = validate_transform(T_current, "rotation diagnostic current")
+    result = validate_transform(T_target, "rotation diagnostic target")
+    R_current = current[:3, :3]
+    R_target = result[:3, :3]
+
+    if target.frame == "robot_base":
+        # R_target = R_delta R_current -> R_delta = R_target R_current^T
+        R_relative = R_target @ R_current.T
+    elif target.frame == "magnet_local":
+        # R_target = R_current R_delta -> R_delta = R_current^T R_target
+        R_relative = R_current.T @ R_target
+    else:
+        raise ValueError(f"Unknown target frame {target.frame!r}.")
+
+    achieved_rotvec_rad = Rot.from_matrix(R_relative).as_rotvec()
+    achieved_angle_rad = float(np.linalg.norm(achieved_rotvec_rad))
+    if achieved_angle_rad > 1.0e-12:
+        achieved_axis = achieved_rotvec_rad / achieved_angle_rad
+    else:
+        achieved_axis = np.zeros(3, dtype=float)
+
+    requested_rotvec_rad = np.radians(
+        finite_vector(target.rotation_vector_deg, 3, "rotation_vector_deg")
+    )
+    R_requested = Rot.from_rotvec(requested_rotvec_rad).as_matrix()
+    composition_error_rad = float(
+        np.linalg.norm(
+            Rot.from_matrix(R_relative @ R_requested.T).as_rotvec()
+        )
+    )
+    return {
+        "requested_rotation_vector_deg": np.asarray(
+            target.rotation_vector_deg, dtype=float
+        ),
+        "achieved_relative_rotation_vector_deg": np.degrees(
+            achieved_rotvec_rad
+        ),
+        "achieved_relative_axis": achieved_axis,
+        "achieved_relative_angle_deg": float(np.degrees(achieved_angle_rad)),
+        "rotation_matrix_composition_error_deg": float(
+            np.degrees(composition_error_rad)
+        ),
+    }
+
+
 def apply_target_offset(T_R_M: Any, target: IKTargetOffset) -> np.ndarray:
     """Displace M about its current centre without rotating its position."""
 
     current = validate_transform(T_R_M, "T_R_M")
     translation = 1.0e-3 * finite_vector(target.translation_mm, 3, "translation_mm")
-    rotation_vector = np.radians(
-        finite_vector(target.rotation_vector_deg, 3, "rotation_vector_deg")
-    )
-    R_delta = Rot.from_rotvec(rotation_vector).as_matrix()
     result = current.copy()
     if target.frame == "robot_base":
         result[:3, 3] = current[:3, 3] + translation
-        result[:3, :3] = R_delta @ current[:3, :3]
     elif target.frame == "magnet_local":
         result[:3, 3] = current[:3, 3] + current[:3, :3] @ translation
-        result[:3, :3] = current[:3, :3] @ R_delta
     else:
         raise ValueError(f"Unknown target frame {target.frame!r}.")
+    result[:3, :3] = compose_rotation_increment(
+        current[:3, :3],
+        target.rotation_vector_deg,
+        target.frame,
+    )
     return validate_transform(result, "target T_R_M")
 
 
@@ -2096,6 +2205,42 @@ def main() -> None:
                 ),
             )
             T_R_M_target = apply_target_offset(T_R_M_inferred, target)
+            rotation_debug = rotation_increment_diagnostics(
+                T_R_M_inferred,
+                T_R_M_target,
+                target,
+            )
+            debug_print(
+                CONFIG,
+                "ROTATION",
+                f"{target.name}: requested rotation vector [deg]",
+                rotation_debug["requested_rotation_vector_deg"],
+            )
+            debug_print(
+                CONFIG,
+                "ROTATION",
+                (
+                    f"{target.name}: achieved {target.frame} relative "
+                    "rotation vector [deg]"
+                ),
+                rotation_debug["achieved_relative_rotation_vector_deg"],
+            )
+            debug_print(
+                CONFIG,
+                "ROTATION",
+                (
+                    f"{target.name}: relative angle="
+                    f"{rotation_debug['achieved_relative_angle_deg']:.9f} deg, "
+                    f"matrix-composition error="
+                    f"{rotation_debug['rotation_matrix_composition_error_deg']:.3e} deg"
+                ),
+            )
+            debug_print(
+                CONFIG,
+                "ROTATION",
+                f"{target.name}: achieved relative rotation axis",
+                rotation_debug["achieved_relative_axis"],
+            )
             debug_print(
                 CONFIG,
                 "TARGET",
@@ -2122,6 +2267,18 @@ def main() -> None:
                 "MAGNET TARGET",
                 f"{target.name}: TCP-to-magnet lever in robot base [mm]",
                 1.0e3 * target_lever_R_m,
+            )
+            tcp_target_displacement_m = (
+                T_R_TCP_target[:3, 3] - snapshot.actual_T_R_TCP[:3, 3]
+            )
+            debug_print(
+                CONFIG,
+                "MAGNET TARGET",
+                (
+                    f"{target.name}: required TCP-centre displacement for "
+                    "this magnet-centre target [mm]"
+                ),
+                1.0e3 * tcp_target_displacement_m,
             )
             target_round_trip = magnet_pose_from_tcp(
                 T_R_TCP_target,
@@ -2191,8 +2348,14 @@ def main() -> None:
             row["robot_inferred_actual_T_R_M_pose6"] = T_to_pose6(T_R_M_inferred)
             row["required_T_R_TCP_target_pose6"] = T_to_pose6(T_R_TCP_target)
             row["target_tcp_to_magnet_lever_R_m"] = target_lever_R_m
+            row["required_tcp_centre_displacement_mm"] = (
+                1.0e3 * tcp_target_displacement_m
+            )
+            row.update(rotation_debug)
             detail["T_R_TCP_target"] = T_R_TCP_target
             detail["target_tcp_to_magnet_lever_R_m"] = target_lever_R_m
+            detail["required_tcp_centre_displacement_m"] = tcp_target_displacement_m
+            detail["rotation_increment_diagnostics"] = rotation_debug
             if CONFIG.independent_measured_T_robot_magnet_pose6 is not None:
                 row["independent_measured_T_R_M_pose6"] = (
                     CONFIG.independent_measured_T_robot_magnet_pose6

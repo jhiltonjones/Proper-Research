@@ -789,7 +789,7 @@ design_cfg = replace(
     # Explicitly disable progress constraints for isolation.
     # progress_constraint_mode="none",
 
-    enable_hard_epm_tip_clearance=False,
+    enable_hard_epm_tip_clearance=True,
     enable_hard_tip_tangent_angle=False,
 )
 robot_cfg = JointSpaceRobotConfig(
@@ -809,11 +809,11 @@ robot_cfg = JointSpaceRobotConfig(
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
         first_angle_deg=0.0,
-        second_angle_deg=20.0,
+        second_angle_deg=-60.0,
     )
 
     run_experiment_grid(
-        run_root=Path("joint_space_smoke_test"),
+        run_root=Path("joint_space_smoke_test_60"),
         lumen_configs=(double_bend_lumen,),
         robot_cfg=robot_cfg,
         design_cfg=design_cfg,

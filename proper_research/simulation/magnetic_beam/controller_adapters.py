@@ -362,6 +362,10 @@ class ControllerForwardAdapter:
     def __init__(self, forward_model):
         self.model = forward_model
         self._baseline_cache = None
+        # Retain the controller-construction equilibrium.  Offline planning
+        # can then replay a saved path from the same physical branch even when
+        # the live model has subsequently advanced to the end of another run.
+        self._initial_cache = self.model.get_cache_copy()
 
         self.last_tip: np.ndarray | None = None
         self.last_p_centerline: np.ndarray | None = None
@@ -372,6 +376,42 @@ class ControllerForwardAdapter:
         Freeze the model state at the start of an MPC/controller step.
         """
         self._baseline_cache = self.model.get_cache_copy()
+
+    def get_baseline_cache_copy(self):
+        """Return an isolated copy of the frozen forward baseline."""
+        if self._baseline_cache is None:
+            self.start_step()
+        return copy.deepcopy(self._baseline_cache)
+
+    def set_baseline_cache(self, cache, *, synchronize_model: bool = True) -> None:
+        """Install a node-specific baseline without sharing mutable arrays."""
+        self._baseline_cache = copy.deepcopy(cache)
+        if synchronize_model:
+            self.model.set_cache(self._baseline_cache)
+
+    def capture_cache_state(self) -> dict:
+        """Snapshot both live and frozen caches for a side-effect-free call."""
+        return {
+            "model_cache": self.model.get_cache_copy(),
+            "baseline_cache": self.get_baseline_cache_copy(),
+        }
+
+    def restore_cache_state(self, snapshot: dict) -> None:
+        """Restore a snapshot produced by :meth:`capture_cache_state`."""
+        if not isinstance(snapshot, dict):
+            raise TypeError("Forward-adapter cache snapshot must be a dict.")
+        if "model_cache" not in snapshot or "baseline_cache" not in snapshot:
+            raise KeyError(
+                "Forward-adapter cache snapshot requires model_cache and "
+                "baseline_cache."
+            )
+        self.model.set_cache(snapshot["model_cache"])
+        self._baseline_cache = copy.deepcopy(snapshot["baseline_cache"])
+
+    def reset_to_initial_baseline(self) -> None:
+        """Restore the equilibrium present when this adapter was constructed."""
+        self.model.set_cache(self._initial_cache)
+        self._baseline_cache = copy.deepcopy(self._initial_cache)
 
     def reset(self) -> None:
         """
@@ -401,6 +441,11 @@ class ControllerForwardAdapter:
             self.start_step()
 
         if commit:
+            # A Jacobian callback may have used the same model and changed its
+            # live cache.  A committed forward evaluation must nevertheless
+            # start from the explicitly frozen step baseline, exactly as a
+            # commit=False evaluation does.
+            self.model.set_cache(self._baseline_cache)
             result = self.model.solve(p7, commit=True)
             self._baseline_cache = self.model.get_cache_copy()
         else:

@@ -199,34 +199,57 @@ def _make_beam_forward_callback(model):
     beam_output.start_step = forward_adapter.start_step
     if callable(getattr(forward_adapter, "reset", None)):
         beam_output.reset = forward_adapter.reset
+    beam_output.capture_cache_state = forward_adapter.capture_cache_state
+    beam_output.restore_cache_state = forward_adapter.restore_cache_state
+    beam_output.get_baseline_cache_copy = (
+        forward_adapter.get_baseline_cache_copy
+    )
+    beam_output.set_baseline_cache = forward_adapter.set_baseline_cache
+    beam_output.reset_to_initial_baseline = (
+        forward_adapter.reset_to_initial_baseline
+    )
     beam_output.forward_adapter = forward_adapter
     beam_output.model = model
     return beam_output, forward_adapter
 
 
-def _make_beam_jacobian_callback(model, *, jacobian_mode: str):
+def _make_beam_jacobian_callback(
+    model,
+    *,
+    forward_adapter,
+    jacobian_mode: str,
+):
     """Return d[tip,tangent]/d[world translation, world rotation,L]."""
     if jacobian_mode not in {"fast", "accurate"}:
         raise ValueError("jacobian_mode must be 'fast' or 'accurate'.")
 
     def beam_jacobian(T_R_M, insertion_m):
         p7 = _pose7_from_transform(T_R_M, insertion_m)
-        model.solve(p7, commit=True, reuse_cache=True)
+        # The forward and Jacobian callbacks deliberately share one model so
+        # the derivative is formed at the same equilibrium.  Preserve both
+        # caches around this calculation: otherwise a Jacobian request changes
+        # the warm start used by the next forward evaluation.
+        snapshot = forward_adapter.capture_cache_state()
+        try:
+            model.set_cache(forward_adapter.get_baseline_cache_copy())
+            model.solve(p7, commit=True, reuse_cache=True)
 
-        if hasattr(model, "jacobian_output_actuation_tangent"):
-            result = model.jacobian_output_actuation_tangent(
+            if hasattr(model, "jacobian_output_actuation_tangent"):
+                result = model.jacobian_output_actuation_tangent(
+                    p7,
+                    solve_if_needed=False,
+                    mode=jacobian_mode,
+                )
+                return np.asarray(result, dtype=float).reshape(6, 7)
+
+            result = model.jacobian_tip_actuation_tangent(
                 p7,
                 solve_if_needed=False,
                 mode=jacobian_mode,
             )
-            return np.asarray(result, dtype=float).reshape(6, 7)
-
-        result = model.jacobian_tip_actuation_tangent(
-            p7,
-            solve_if_needed=False,
-            mode=jacobian_mode,
-        )
-        return np.asarray(result, dtype=float).reshape(3, 7)
+            return np.asarray(result, dtype=float).reshape(3, 7)
+        finally:
+            forward_adapter.restore_cache_state(snapshot)
 
     return beam_jacobian
 
@@ -355,10 +378,14 @@ def build_controller(
         owned_jacobian_model
     )
     plant_beam_jacobian = _make_beam_jacobian_callback(
-        owned_plant_model, jacobian_mode="fast"
+        owned_plant_model,
+        forward_adapter=plant_forward_adapter,
+        jacobian_mode="fast",
     )
     jacobian_beam_jacobian = _make_beam_jacobian_callback(
-        owned_jacobian_model, jacobian_mode="fast"
+        owned_jacobian_model,
+        forward_adapter=jacobian_forward_adapter,
+        jacobian_mode="fast",
     )
 
     # The MPC may deliberately use only tip position (n_out=3), while the

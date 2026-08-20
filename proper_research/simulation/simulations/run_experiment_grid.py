@@ -130,24 +130,135 @@ def run_experiment(
         design_cfg=design_cfg,
         robot_cfg=robot_cfg,
     )
-    print(
-        "[JOINT INIT] q0_rad="
-        + np.array2string(controller_pack["q0"], precision=8)
+    from proper_research.planning.offline_inverse_configuration import (
+        InverseConfigurationPlannerConfig,
+        solve_from_controller_pack,
     )
-    print(
-        "[JOINT INIT] magnet IK errors: "
-        f"position={controller_pack['initial_magnet_position_error_m']:.6e} m, "
-        f"orientation={controller_pack['initial_magnet_orientation_error_rad']:.6e} rad"
+    from proper_research.planning.global_constrained_configuration_path import (
+        GlobalConfigurationOptimizerConfig,
+        optimize_from_inverse_result,
     )
-    chain_check = controller_pack.get("chain_rule_validation")
-    if chain_check is not None:
-        print(
-            "[JOINT JACOBIAN CHECK] "
-            f"relative_Frobenius_error="
-            f"{chain_check['relative_frobenius_error']:.6e}, "
-            f"max_abs_element_error="
-            f"{chain_check['maximum_absolute_element_error']:.6e}"
+
+    planner_config = InverseConfigurationPlannerConfig(
+        position_tolerance_m=1.5e-3,
+        tangent_tolerance_rad=np.deg2rad(90.0),
+
+        initial_path_step_m=5.0e-4,
+        minimum_path_step_m=2.5e-4,
+        maximum_path_step_m=5.0e-4,
+        grow_step_after_successes=999,
+
+        maximum_function_evaluations=300,
+        maximum_multistart_attempts=12,
+
+        maximum_joint_step_rad=(0.25,) * 6,
+        maximum_insertion_step_m=3.0e-3,
+
+        solve_initial_node=False,
+        insertion_non_decreasing=False,
+
+        require_contact_model=True,
+        finite_difference_validation_at_start=True,
+        debug=True,
+    )
+
+    inverse_result = solve_from_controller_pack(
+        controller_pack=controller_pack,
+        lumen_C=bundle.lumen_C,
+        config=planner_config,
+        output_dir=(
+            out_root
+            / "offline_inverse_configuration"
+        ),
+    )
+
+    global_mode = (
+        "refine_complete"
+        if inverse_result.all_nodes_feasible
+        else "recover_partial"
+    )
+
+    global_config = GlobalConfigurationOptimizerConfig(
+        mode=global_mode,
+
+        position_tolerance_m=(
+            planner_config.position_tolerance_m
+        ),
+        tangent_tolerance_rad=(
+            planner_config.tangent_tolerance_rad
+        ),
+
+        path_step_m=5.0e-4,
+        minimum_path_step_m=2.5e-4,
+        dense_validation_samples_per_interval=5,
+        maximum_refinement_rounds=4,
+        maximum_nodes=200,
+
+        configuration_scale=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0e-2,
+        ),
+
+        first_difference_weight=(1.0e-5,) * 7,
+        second_difference_weight=(1.0e-8,) * 7,
+        seed_deviation_weight=(1.0e-5,) * 7,
+
+        joint_centre_weight=(
+            1.0e-8,
+            1.0e-8,
+            1.0e-8,
+            1.0e-8,
+            1.0e-8,
+            1.0e-8,
+            0.0,
+        ),
+
+        maximum_adjacent_joint_change_rad=(0.25,) * 6,
+        maximum_adjacent_insertion_change_m=3.0e-3,
+
+        insertion_non_decreasing=False,
+        fix_initial_state=True,
+        require_contact_model=True,
+
+        feasibility_restoration_enabled=True,
+        feasibility_restoration_maximum_slack=1.0e3,
+        feasibility_restoration_slack_weight=1.0e4,
+
+        maximum_iterations=300,
+        feasibility_restoration_iterations=200,
+        maximum_multistart_attempts=1,
+
+        debug=True,
+    )
+
+    global_result = optimize_from_inverse_result(
+        inverse_result=inverse_result,
+        controller_pack=controller_pack,
+        lumen_C=bundle.lumen_C,
+        config=global_config,
+        output_dir=(
+            out_root
+            / "global_configuration_path"
+        ),
+    )
+
+    if not global_result.globally_feasible:
+        raise RuntimeError(
+            "No globally feasible configuration path was found. "
+            f"reason={global_result.termination_reason}"
         )
+
+    return {
+        "config": exp_cfg,
+        "inverse_result": inverse_result,
+        "global_result": global_result,
+        "out_root": out_root,
+    }
     J_fn = controller_pack["J_fn"]
     owned_jacobian_model = J_fn.model
 
@@ -809,7 +920,7 @@ robot_cfg = JointSpaceRobotConfig(
 if __name__ == "__main__":
     double_bend_lumen = make_double_bend_lumen_config(
         first_angle_deg=0.0,
-        second_angle_deg=-60.0,
+        second_angle_deg=-20.0,
     )
 
     run_experiment_grid(

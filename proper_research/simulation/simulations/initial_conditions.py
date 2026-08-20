@@ -39,7 +39,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
 
     base_point = np.array(
         [
-            pivot_point[0] - (L_cmd+0.22),
+            pivot_point[0] - (L_cmd+0.16),
             pivot_point[1],
             -0.1,
             np.pi,
@@ -50,7 +50,7 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     )
 
     start_point = np.asarray(
-        get_point(0, 0, base_point, pivot_point),
+        get_point(0, 20, base_point, pivot_point),
         dtype=float,
     )
 

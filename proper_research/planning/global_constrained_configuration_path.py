@@ -11,7 +11,7 @@ differences, seed proximity, and joint centering are only secondary objectives.
 
 Two modes are supported:
 
-``refine_complete``
+``refine_complete``f
     Smooth a complete feasible sequential inverse path.
 
 ``recover_partial``

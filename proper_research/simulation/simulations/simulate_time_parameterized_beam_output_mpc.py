@@ -9,6 +9,17 @@ evaluated at every saved reference configuration::
 
     J_p[k] = d p_tip / d z | z_ref[k],   J_p[k] in R^(3 x 7)
 
+The Jacobian is taken from the same exact interface used by
+``offline_inverse_configuration.py``::
+
+    controller_pack["plant_diagnostic_joint_adapter"]\
+        .continuous_output_jacobian(z_ref[k])[:3, :]
+
+The adapter returns the continuous 6-by-7 derivative of
+``[tip_xyz, tangent_xyz]`` with respect to
+``[q1, q2, q3, q4, q5, q6, insertion]``.  The MPC uses its first three rows,
+not the tolerance-scaled inverse-objective Jacobian and not ``dt * J``.
+
 Online, the controller measures the actuator configuration and beam-tip
 position.  It estimates the local simulation-to-measurement residual and uses
 the affine output model
@@ -29,9 +40,9 @@ Jacobian is a hard error.
 Typical project use
 -------------------
 Place this file beside ``simulate_time_parameterized_configuration_mpc.py``
-and run it as a module.  If the analytical Jacobian is already exposed in the
-planning ``controller_pack`` under a standard beam-Jacobian name, it is found
-automatically.  Otherwise pass its import path explicitly::
+and run it as a module.  The normal project route uses
+``controller_pack['plant_diagnostic_joint_adapter']`` automatically.  An
+explicit import path remains available only as an integration override::
 
     --beam-jacobian-provider package.module:function_name
 
@@ -200,9 +211,36 @@ def resolve_analytical_beam_jacobian(
     controller_pack: dict[str, Any],
     explicit_import_path: str | None = None,
 ) -> tuple[Callable[..., Any], str]:
-    """Resolve only an analytical beam Jacobian; never use finite differences."""
+    """Resolve the inverse planner's analytical Jacobian interface.
+
+    The primary route is deliberately identical to
+    ``offline_inverse_configuration._NodeObjective.output_jacobian``:
+    ``plant_diagnostic_joint_adapter.continuous_output_jacobian(state)``.
+    """
     if explicit_import_path:
         return _load_explicit_provider(explicit_import_path), explicit_import_path
+
+    adapter = controller_pack.get("plant_diagnostic_joint_adapter")
+    if adapter is not None:
+        provider = getattr(adapter, "continuous_output_jacobian", None)
+        if not callable(provider):
+            raise TypeError(
+                "controller_pack['plant_diagnostic_joint_adapter'] does not "
+                "expose continuous_output_jacobian(state), which is the "
+                "analytical Jacobian used by the inverse-path planner."
+            )
+        output_count = int(getattr(adapter, "n_out", 6))
+        if output_count != 6:
+            raise ValueError(
+                "Beam-output MPC requires the full six-output diagnostic "
+                "adapter used by the inverse-path planner; "
+                f"received n_out={output_count}."
+            )
+        return (
+            provider,
+            "controller_pack['plant_diagnostic_joint_adapter']."
+            "continuous_output_jacobian",
+        )
 
     keys = (
         "analytical_beam_position_jacobian",
@@ -250,9 +288,11 @@ def resolve_analytical_beam_jacobian(
         else ""
     )
     raise KeyError(
-        "The analytical beam-position Jacobian was not exposed by the planning "
-        "context. Add it to controller_pack as 'beam_position_jacobian', or pass "
-        "--beam-jacobian-provider package.module:function_name. Numerical "
+        "controller_pack does not contain the inverse planner's "
+        "'plant_diagnostic_joint_adapter'. Add that adapter to the planning "
+        "context, expose an analytical beam-position Jacobian under a supported "
+        "key, or pass --beam-jacobian-provider package.module:function_name. "
+        "Numerical "
         f"differentiation is intentionally disabled.{suffix}"
     )
 
@@ -1173,18 +1213,27 @@ def run_self_test() -> None:
     )
     jacobian_calls: list[Array] = []
 
-    def analytical_position_jacobian(value: Array) -> dict[str, Array]:
-        jacobian_calls.append(np.asarray(value, dtype=float).copy())
-        matrix = np.zeros((3, 7), dtype=float)
-        matrix[0, 0] = 1.0
-        return {"position_jacobian": matrix}
+    class AnalyticalDiagnosticAdapter:
+        """Mirror the inverse planner's full six-output adapter API."""
+
+        n_out = 6
+
+        def continuous_output_jacobian(self, value: Array) -> Array:
+            jacobian_calls.append(np.asarray(value, dtype=float).copy())
+            matrix = np.zeros((6, 7), dtype=float)
+            matrix[0, 0] = 1.0
+            return matrix
 
     self_test_pack = {
-        "beam_position_jacobian": analytical_position_jacobian
+        "plant_diagnostic_joint_adapter": AnalyticalDiagnosticAdapter()
     }
-    provider, _ = resolve_analytical_beam_jacobian(
+    provider, provider_source = resolve_analytical_beam_jacobian(
         controller_pack=self_test_pack
     )
+    if "plant_diagnostic_joint_adapter" not in provider_source:
+        raise AssertionError(
+            "Self-test did not select the inverse planner's analytical adapter."
+        )
     jacobians = precompute_reference_beam_jacobians(
         reference=reference,
         provider=provider,

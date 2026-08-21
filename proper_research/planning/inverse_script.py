@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import time
+from dataclasses import replace
 
 from proper_research.planning.planning_context import (
     build_planning_context,
@@ -18,11 +20,71 @@ from proper_research.planning.global_constrained_configuration_path import (
 )
 
 
+def _parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run the offline inverse configuration planner, optionally with "
+            "a hard source-magnet tube constraint around the lumen centreline."
+        )
+    )
+    parser.add_argument(
+        "--source-magnet-lumen-radius-m",
+        type=float,
+        default=None,
+        help=(
+            "maximum source-magnet-centre distance from the closest lumen "
+            "segment [m]. Supplying this enables the hard tube constraint. "
+            "No scientific default is assumed."
+        ),
+    )
+    parser.add_argument(
+        "--require-analytical-magnet-jacobian",
+        action="store_true",
+        help=(
+            "fail if the adapter does not expose an analytical 3x7 (or 3x6) "
+            "source-magnet position Jacobian; otherwise bound-safe central "
+            "differences of magnet FK are used for this constraint only"
+        ),
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    arguments = _parse_arguments()
     _, bundle, controller_pack, out_root = (
         build_planning_context()
     )
     planner_config = make_inverse_config()
+    if arguments.source_magnet_lumen_radius_m is not None:
+        if arguments.source_magnet_lumen_radius_m <= 0.0:
+            raise ValueError(
+                "--source-magnet-lumen-radius-m must be positive."
+            )
+        planner_config = replace(
+            planner_config,
+            source_magnet_lumen_tube_radius_m=(
+                arguments.source_magnet_lumen_radius_m
+            ),
+            require_analytical_magnet_position_jacobian=(
+                arguments.require_analytical_magnet_jacobian
+            ),
+        )
+        print(
+            "[SAME-PROCESS TEST] Hard EPM/lumen tube enabled: "
+            f"distance <= {arguments.source_magnet_lumen_radius_m:.6f} m",
+            flush=True,
+        )
+    elif arguments.require_analytical_magnet_jacobian:
+        raise ValueError(
+            "--require-analytical-magnet-jacobian only applies when "
+            "--source-magnet-lumen-radius-m is supplied."
+        )
+    else:
+        print(
+            "[SAME-PROCESS TEST] EPM/lumen tube constraint disabled; pass "
+            "--source-magnet-lumen-radius-m to enable it.",
+            flush=True,
+        )
 
     # Keep this diagnostic run separate from the original saved result.
     inverse_output_dir = (

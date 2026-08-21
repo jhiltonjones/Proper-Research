@@ -25,6 +25,7 @@ Typical use from the existing experiment construction is::
     config = InverseConfigurationPlannerConfig(
         position_tolerance_m=1.0e-3,
         tangent_tolerance_rad=np.deg2rad(5.0),
+        source_magnet_lumen_tube_radius_m=0.12,  # apparatus-specific
     )
     result = solve_from_controller_pack(
         controller_pack=controller_pack,
@@ -34,7 +35,9 @@ Typical use from the existing experiment construction is::
     )
 
 The two task tolerances are required scientific inputs.  Defaults are not
-silently assigned for them.
+silently assigned for them.  The source-magnet/lumen tube radius is likewise a
+scientific geometry choice; leaving it as ``None`` preserves the original
+unconstrained behaviour.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import Bounds, minimize, least_squares
 from scipy.spatial.transform import Rotation as Rot
 
 
@@ -158,6 +161,23 @@ class InverseConfigurationPlannerConfig:
     insertion_non_decreasing: bool = False
     require_contact_model: bool = True
 
+    # Optional hard source-magnet workspace constraint.  When supplied, the
+    # source-magnet centre must remain inside the capsule-like tube formed by
+    # sweeping this radius around every segment of ``lumen_C``.  This is a
+    # centre-to-centre distance; account for the source-magnet body radius in
+    # the configured value if a surface-to-lumen requirement is intended.
+    source_magnet_lumen_tube_radius_m: float | None = None
+    source_magnet_lumen_constraint_tolerance_m: float = 1.0e-6
+
+    # Prefer an analytical translational magnet Jacobian supplied by the
+    # adapter.  A central-difference FK fallback is available because the
+    # existing diagnostic adapter is only guaranteed to expose
+    # ``magnet_transform``.  This setting does not alter the analytical beam
+    # output Jacobian used by the inverse objective.
+    require_analytical_magnet_position_jacobian: bool = False
+    magnet_jacobian_joint_step_rad: float = 1.0e-6
+    magnet_jacobian_insertion_step_m: float = 1.0e-6
+
     finite_difference_validation_at_start: bool = True
     finite_difference_validation_stride: int = 0
     finite_difference_joint_step_rad: float = 1.0e-6
@@ -183,6 +203,12 @@ class InverseConfigurationPlannerConfig:
             ),
             "maximum_chain_rule_relative_error": (
                 self.maximum_chain_rule_relative_error
+            ),
+            "magnet_jacobian_joint_step_rad": (
+                self.magnet_jacobian_joint_step_rad
+            ),
+            "magnet_jacobian_insertion_step_m": (
+                self.magnet_jacobian_insertion_step_m
             ),
             "ftol": self.ftol,
             "xtol": self.xtol,
@@ -212,6 +238,21 @@ class InverseConfigurationPlannerConfig:
             raise ValueError("step_growth_factor must be finite and >= 1.")
         if self.finite_difference_validation_stride < 0:
             raise ValueError("finite_difference_validation_stride must be >= 0.")
+
+        radius = self.source_magnet_lumen_tube_radius_m
+        if radius is not None and (
+            not np.isfinite(radius) or float(radius) <= 0.0
+        ):
+            raise ValueError(
+                "source_magnet_lumen_tube_radius_m must be finite and positive "
+                "when the hard tube constraint is enabled."
+            )
+        tolerance = float(self.source_magnet_lumen_constraint_tolerance_m)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError(
+                "source_magnet_lumen_constraint_tolerance_m must be finite and "
+                "non-negative."
+            )
 
         joint_step = np.asarray(self.maximum_joint_step_rad, dtype=float).reshape(-1)
         if joint_step.size != 6 or np.any(~np.isfinite(joint_step)):
@@ -259,6 +300,11 @@ class InverseNodeResult:
     minimum_state_margin: float
     minimum_clearance_m: float
     contact_active: bool
+    source_magnet_lumen_distance_m: float
+    source_magnet_lumen_tube_radius_m: float
+    source_magnet_lumen_margin_m: float
+    source_magnet_lumen_segment_index: int
+    source_magnet_lumen_constraint_satisfied: bool
     delta_q_norm_rad: float
     delta_insertion_m: float
     attempt_count: int
@@ -329,8 +375,16 @@ class CentrelinePath:
     def reference(self, s_query: float) -> tuple[Array, Array]:
         return self.position(s_query), self.tangent(s_query)
 
-    def project(self, point: Any) -> tuple[float, Array, float]:
-        """Return the closest polyline coordinate, point and Euclidean distance."""
+    def closest_geometry(
+        self, point: Any
+    ) -> tuple[float, Array, float, int, float, Array]:
+        """Return continuous nearest-segment geometry for a query point.
+
+        Returns ``(s, closest_point, distance, segment_index,
+        segment_fraction, displacement)``.  The displacement points from the
+        closest lumen point to the query point.  Using segment projection
+        avoids the false distance jumps caused by nearest-node lookup.
+        """
         query = _finite_vector(point, 3, "projection point")
         starts = self.C[:-1]
         vectors = self.C[1:] - starts
@@ -341,7 +395,20 @@ class CentrelinePath:
         distances = np.linalg.norm(candidates - query, axis=1)
         index = int(np.argmin(distances))
         s_value = float(self.s[index] + fractions[index] * self.segment_lengths[index])
-        return s_value, candidates[index].copy(), float(distances[index])
+        displacement = query - candidates[index]
+        return (
+            s_value,
+            candidates[index].copy(),
+            float(distances[index]),
+            index,
+            float(fractions[index]),
+            displacement.copy(),
+        )
+
+    def project(self, point: Any) -> tuple[float, Array, float]:
+        """Return the closest polyline coordinate, point and Euclidean distance."""
+        s_value, closest, distance, _, _, _ = self.closest_geometry(point)
+        return s_value, closest, distance
 
 
 def _physical_task_errors(
@@ -480,6 +547,204 @@ def _magnet_pose6(adapter: Any, state: Array) -> Array:
     if not np.all(np.isfinite(T)):
         return np.full(6, np.nan, dtype=float)
     return np.concatenate((T[:3, 3], Rot.from_matrix(T[:3, :3]).as_rotvec()))
+
+
+class _MagnetLumenTubeConstraint:
+    """Hard EPM-centre containment in a tube around the lumen polyline.
+
+    The dimensionless SLSQP constraint is
+
+        g(state) = 1 - distance(state)^2 / radius^2 >= 0.
+
+    On a fixed closest segment its exact configuration gradient is
+
+        dg/dstate = -2 displacement.T @ J_magnet / radius^2.
+
+    The closest-segment distance is continuous and piecewise differentiable.
+    At the measure-zero boundaries where two segments are equally close, the
+    gradient of the selected active segment is used.
+    """
+
+    _ANALYTICAL_METHOD_NAMES = (
+        "magnet_position_jacobian",
+        "continuous_magnet_position_jacobian",
+        "source_magnet_position_jacobian",
+    )
+
+    def __init__(
+        self,
+        *,
+        adapter: Any,
+        path: CentrelinePath,
+        state_min: Array,
+        state_max: Array,
+        config: InverseConfigurationPlannerConfig,
+    ):
+        radius = config.source_magnet_lumen_tube_radius_m
+        if radius is None:
+            raise ValueError("A tube constraint requires a configured radius.")
+        self.adapter = adapter
+        self.path = path
+        self.state_min = _finite_vector(state_min, 7, "state_min")
+        self.state_max = _finite_vector(state_max, 7, "state_max")
+        self.config = config
+        self.radius_m = float(radius)
+        self._analytical_method = self._find_analytical_method()
+        if (
+            self._analytical_method is None
+            and config.require_analytical_magnet_position_jacobian
+        ):
+            expected = ", ".join(self._ANALYTICAL_METHOD_NAMES)
+            raise TypeError(
+                "The hard source-magnet/lumen tube constraint was configured "
+                "to require an analytical magnet-position Jacobian, but the "
+                f"adapter exposes none of: {expected}."
+            )
+
+        self.jacobian_source = (
+            str(
+                getattr(
+                    self._analytical_method,
+                    "__name__",
+                    type(self._analytical_method).__name__,
+                )
+            )
+            if self._analytical_method is not None
+            else "central_difference_of_magnet_transform"
+        )
+        self._x_position: Array | None = None
+        self._position: Array | None = None
+        self._x_jacobian: Array | None = None
+        self._position_jacobian: Array | None = None
+
+    def _find_analytical_method(self) -> Any | None:
+        for name in self._ANALYTICAL_METHOD_NAMES:
+            method = getattr(self.adapter, name, None)
+            if callable(method):
+                return method
+        return None
+
+    @staticmethod
+    def _same(left: Array | None, right: Array) -> bool:
+        return left is not None and np.array_equal(left, right)
+
+    def position(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "magnet-position state")
+        if not self._same(self._x_position, state):
+            pose = _magnet_pose6(self.adapter, state)
+            if not np.all(np.isfinite(pose[:3])):
+                raise FloatingPointError(
+                    "magnet_transform returned a non-finite source-magnet "
+                    "position."
+                )
+            self._x_position = state.copy()
+            self._position = pose[:3].copy()
+        return np.asarray(self._position, dtype=float).copy()
+
+    def _coerce_analytical_jacobian(self, value: Any) -> Array:
+        matrix = np.asarray(value, dtype=float)
+        if matrix.shape == (3, 6):
+            matrix = np.column_stack((matrix, np.zeros(3, dtype=float)))
+        if matrix.shape != (3, 7) or not np.all(np.isfinite(matrix)):
+            raise FloatingPointError(
+                "An analytical magnet-position Jacobian must be finite with "
+                f"shape (3, 7) or (3, 6); got {matrix.shape}."
+            )
+        return matrix.copy()
+
+    def _finite_difference_jacobian(self, state: Array) -> Array:
+        steps = np.full(
+            7, float(self.config.magnet_jacobian_joint_step_rad), dtype=float
+        )
+        steps[6] = float(self.config.magnet_jacobian_insertion_step_m)
+        centre = self.position(state)
+        matrix = np.zeros((3, 7), dtype=float)
+        for coordinate, nominal_step in enumerate(steps):
+            plus_step = min(
+                nominal_step,
+                max(0.0, self.state_max[coordinate] - state[coordinate]),
+            )
+            minus_step = min(
+                nominal_step,
+                max(0.0, state[coordinate] - self.state_min[coordinate]),
+            )
+            if plus_step > 1.0e-15 and minus_step > 1.0e-15:
+                plus = state.copy()
+                minus = state.copy()
+                plus[coordinate] += plus_step
+                minus[coordinate] -= minus_step
+                # The configured steps are normally equal.  This secant form
+                # remains bound-safe when an iterate is very near one limit.
+                matrix[:, coordinate] = (
+                    self.position(plus) - self.position(minus)
+                ) / (plus_step + minus_step)
+            elif plus_step > 1.0e-15:
+                plus = state.copy()
+                plus[coordinate] += plus_step
+                matrix[:, coordinate] = (
+                    self.position(plus) - centre
+                ) / plus_step
+            elif minus_step > 1.0e-15:
+                minus = state.copy()
+                minus[coordinate] -= minus_step
+                matrix[:, coordinate] = (
+                    centre - self.position(minus)
+                ) / minus_step
+            else:
+                matrix[:, coordinate] = 0.0
+        if not np.all(np.isfinite(matrix)):
+            raise FloatingPointError(
+                "Finite-difference magnet-position Jacobian is non-finite."
+            )
+        return matrix
+
+    def position_jacobian(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "magnet-Jacobian state")
+        if not self._same(self._x_jacobian, state):
+            if self._analytical_method is not None:
+                matrix = self._coerce_analytical_jacobian(
+                    self._analytical_method(state)
+                )
+            else:
+                matrix = self._finite_difference_jacobian(state)
+            self._x_jacobian = state.copy()
+            self._position_jacobian = matrix.copy()
+        return np.asarray(self._position_jacobian, dtype=float).copy()
+
+    def geometry(
+        self, state: Any
+    ) -> tuple[float, Array, int, float, Array]:
+        position = self.position(state)
+        _, closest, distance, segment, fraction, displacement = (
+            self.path.closest_geometry(position)
+        )
+        return distance, closest, segment, fraction, displacement
+
+    def value(self, state: Any) -> float:
+        distance, _, _, _, _ = self.geometry(state)
+        return float(1.0 - (distance / self.radius_m) ** 2)
+
+    def jacobian(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "tube-constraint state")
+        _, _, _, _, displacement = self.geometry(state)
+        J_magnet = self.position_jacobian(state)
+        gradient = (-2.0 / self.radius_m**2) * (displacement @ J_magnet)
+        if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
+            raise FloatingPointError(
+                "Source-magnet/lumen tube constraint Jacobian is invalid."
+            )
+        return gradient
+
+    def physical_metrics(
+        self, state: Any
+    ) -> tuple[float, float, int, bool]:
+        distance, _, segment, _, _ = self.geometry(state)
+        margin = self.radius_m - distance
+        satisfied = bool(
+            margin
+            >= -float(self.config.source_magnet_lumen_constraint_tolerance_m)
+        )
+        return float(distance), float(margin), int(segment), satisfied
 
 
 class _NodeObjective:
@@ -647,6 +912,17 @@ class _NodeObjective:
             )
         )
 
+    def scalar_objective(self, state: Any) -> float:
+        residual = self.residual(state)
+        return float(residual @ residual)
+
+    def scalar_objective_gradient(self, state: Any) -> Array:
+        residual = self.residual(state)
+        gradient = 2.0 * self.jacobian(state).T @ residual
+        if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
+            raise FloatingPointError("Inverse scalar-objective gradient is invalid.")
+        return gradient
+
 
 def _strictly_feasible_initial_guess(
     guess: Array, lower: Array, upper: Array
@@ -780,6 +1056,7 @@ def _build_node_result(
     desired_tangent: Array,
     adapter: Any,
     objective: _NodeObjective,
+    tube_constraint: _MagnetLumenTubeConstraint | None,
     config: InverseConfigurationPlannerConfig,
     state_min: Array,
     state_max: Array,
@@ -799,10 +1076,22 @@ def _build_node_result(
         np.all(state >= state_min - 1.0e-12)
         and np.all(state <= state_max + 1.0e-12)
     )
+    if tube_constraint is None:
+        tube_distance = np.nan
+        tube_radius = np.nan
+        tube_margin = np.nan
+        tube_segment = -1
+        tube_satisfied = True
+    else:
+        tube_distance, tube_margin, tube_segment, tube_satisfied = (
+            tube_constraint.physical_metrics(state)
+        )
+        tube_radius = float(tube_constraint.radius_m)
     feasible = bool(
         within_bounds
         and position_error <= float(config.position_tolerance_m)
         and tangent_error <= float(config.tangent_tolerance_rad)
+        and tube_satisfied
     )
 
     task_jacobian = objective.task_jacobian(state)
@@ -836,6 +1125,11 @@ def _build_node_result(
         minimum_state_margin=float(np.min(state_margin)),
         minimum_clearance_m=float(minimum_clearance),
         contact_active=bool(contact_active),
+        source_magnet_lumen_distance_m=float(tube_distance),
+        source_magnet_lumen_tube_radius_m=float(tube_radius),
+        source_magnet_lumen_margin_m=float(tube_margin),
+        source_magnet_lumen_segment_index=int(tube_segment),
+        source_magnet_lumen_constraint_satisfied=bool(tube_satisfied),
         delta_q_norm_rad=float(np.linalg.norm(state[:6] - previous_state[:6])),
         delta_insertion_m=float(state[6] - previous_state[6]),
         attempt_count=int(attempt_count),
@@ -856,6 +1150,7 @@ def _solve_one_node(
     state_min: Array,
     state_max: Array,
     config: InverseConfigurationPlannerConfig,
+    tube_constraint: _MagnetLumenTubeConstraint | None,
 ) -> InverseNodeResult:
     start_step = getattr(adapter, "start_step", None)
     if callable(start_step):
@@ -888,21 +1183,63 @@ def _solve_one_node(
     candidates: list[InverseNodeResult] = []
     for attempt_index, guess in enumerate(guesses, start=1):
         try:
-            solved = least_squares(
-                objective.residual,
-                guess,
-                jac=objective.jacobian,
-                bounds=(local_lower, local_upper),
-                method="trf",
-                x_scale="jac",
-                ftol=float(config.ftol),
-                xtol=float(config.xtol),
-                gtol=float(config.gtol),
-                max_nfev=int(config.maximum_function_evaluations),
-                verbose=0,
-            )
-            state = np.asarray(solved.x, dtype=float).reshape(7)
-            reason = f"scipy_status_{solved.status}: {solved.message}"
+            if tube_constraint is None:
+                solved = least_squares(
+                    objective.residual,
+                    guess,
+                    jac=objective.jacobian,
+                    bounds=(local_lower, local_upper),
+                    method="trf",
+                    x_scale="jac",
+                    ftol=float(config.ftol),
+                    xtol=float(config.xtol),
+                    gtol=float(config.gtol),
+                    max_nfev=int(config.maximum_function_evaluations),
+                    verbose=0,
+                )
+                state = np.asarray(solved.x, dtype=float).reshape(7)
+                reason = f"scipy_status_{solved.status}: {solved.message}"
+                solver_objective = float(2.0 * solved.cost)
+            else:
+                # Tolerance-normalized task residuals can make the raw scalar
+                # objective very large when a continuation guess is several
+                # position tolerances from the next node.  Positive constant
+                # scaling leaves the constrained minimizer unchanged and
+                # avoids poor SLSQP line-search conditioning.
+                objective_scale = max(
+                    1.0, float(objective.scalar_objective(guess))
+                )
+                solved = minimize(
+                    lambda state_value: (
+                        objective.scalar_objective(state_value)
+                        / objective_scale
+                    ),
+                    guess,
+                    jac=lambda state_value: (
+                        objective.scalar_objective_gradient(state_value)
+                        / objective_scale
+                    ),
+                    bounds=Bounds(local_lower, local_upper),
+                    constraints=(
+                        {
+                            "type": "ineq",
+                            "fun": tube_constraint.value,
+                            "jac": tube_constraint.jacobian,
+                        },
+                    ),
+                    method="SLSQP",
+                    options={
+                        "maxiter": int(config.maximum_function_evaluations),
+                        "ftol": float(config.ftol),
+                        "disp": False,
+                    },
+                )
+                state = np.asarray(solved.x, dtype=float).reshape(7)
+                reason = (
+                    f"scipy_slsqp_status_{solved.status}: {solved.message}; "
+                    f"tube_jacobian={tube_constraint.jacobian_source}"
+                )
+                solver_objective = float(objective.scalar_objective(state))
 
             # Do not certify the node from the residual callback's cached
             # output.  Re-run the physical forward model from this node's
@@ -917,13 +1254,14 @@ def _solve_one_node(
                 desired_tangent=desired_tangent,
                 adapter=adapter,
                 objective=objective,
+                tube_constraint=tube_constraint,
                 config=config,
                 state_min=state_min,
                 state_max=state_max,
                 solver_success=bool(solved.success),
                 termination_reason=reason,
                 function_evaluations=int(solved.nfev),
-                objective_value=float(2.0 * solved.cost),
+                objective_value=solver_objective,
                 attempt_count=attempt_index,
             )
         except Exception as exc:
@@ -941,6 +1279,7 @@ def _solve_one_node(
                     desired_tangent=desired_tangent,
                     adapter=adapter,
                     objective=objective,
+                    tube_constraint=tube_constraint,
                     config=config,
                     state_min=state_min,
                     state_max=state_max,
@@ -973,6 +1312,7 @@ def _solve_one_node(
                 desired_tangent=desired_tangent,
                 adapter=adapter,
                 objective=objective,
+                tube_constraint=tube_constraint,
                 config=config,
                 state_min=state_min,
                 state_max=state_max,
@@ -1010,6 +1350,9 @@ def _solve_one_node(
     return min(
         candidates,
         key=lambda item: (
+            0.0
+            if item.source_magnet_lumen_constraint_satisfied
+            else max(0.0, -item.source_magnet_lumen_margin_m),
             item.position_error_m / float(config.position_tolerance_m)
             + item.tangent_error_rad / float(config.tangent_tolerance_rad),
             item.objective_value,
@@ -1028,6 +1371,7 @@ def _fixed_initial_node(
     state_max: Array,
     config: InverseConfigurationPlannerConfig,
     chain_rule_relative_error: float,
+    tube_constraint: _MagnetLumenTubeConstraint | None,
 ) -> InverseNodeResult:
     objective = _NodeObjective(
         adapter=adapter,
@@ -1053,6 +1397,7 @@ def _fixed_initial_node(
         desired_tangent=desired_tangent,
         adapter=adapter,
         objective=objective,
+        tube_constraint=tube_constraint,
         config=config,
         state_min=state_min,
         state_max=state_max,
@@ -1075,6 +1420,7 @@ def _fixed_initial_node(
             desired_tangent=desired_tangent,
             adapter=adapter,
             objective=objective,
+            tube_constraint=tube_constraint,
             config=config,
             state_min=state_min,
             state_max=state_max,
@@ -1108,6 +1454,15 @@ def _print_node(node: InverseNodeResult) -> None:
         if np.isfinite(node.jacobian_condition)
         else "inf"
     )
+    tube_text = ""
+    if np.isfinite(node.source_magnet_lumen_distance_m):
+        tube_text = (
+            "\n  EPM-lumen distance="
+            f"{1.0e3 * node.source_magnet_lumen_distance_m:.3f} mm "
+            "margin="
+            f"{1.0e3 * node.source_magnet_lumen_margin_m:.3f} mm "
+            f"segment={node.source_magnet_lumen_segment_index}"
+        )
     print(
         f"[INVERSE PATH] node={node.node_index:04d} s={node.s_m:.6f} m\n"
         f"  position_error={1.0e3 * node.position_error_m:.4f} mm\n"
@@ -1117,6 +1472,7 @@ def _print_node(node: InverseNodeResult) -> None:
         f"delta_L={1.0e3 * node.delta_insertion_m:.4f} mm\n"
         f"  cond_eff(J)={condition_text} rank={node.jacobian_effective_rank}\n"
         f"  contact_active={node.contact_active} feasible={node.feasible}"
+        f"{tube_text}"
     )
 
 
@@ -1147,7 +1503,10 @@ def solve_offline_inverse_configuration(
         returned by the current joint-space controller factory.
 
     lumen_C:
-        Centreline array in the same robot-base/world frame as the beam output.
+        Centreline array in the same robot-base/world frame as the beam output
+        and source-magnet transform.  When
+        ``source_magnet_lumen_tube_radius_m`` is set, the complete polyline is
+        also the axis of the hard source-magnet containment tube.
 
     output_dir:
         Optional diagnostics directory.  When supplied, CSV, JSON, NPZ and PNG
@@ -1193,6 +1552,15 @@ def solve_offline_inverse_configuration(
             )
 
     path = CentrelinePath(lumen_C)
+    tube_constraint = None
+    if config.source_magnet_lumen_tube_radius_m is not None:
+        tube_constraint = _MagnetLumenTubeConstraint(
+            adapter=adapter,
+            path=path,
+            state_min=lower,
+            state_max=upper,
+            config=config,
+        )
     alternative_states = [
         _finite_vector(value, 7, "alternative initial state")
         for value in alternative_initial_states
@@ -1235,6 +1603,7 @@ def solve_offline_inverse_configuration(
         state_max=upper,
         config=config,
         chain_rule_relative_error=chain_relative_start,
+        tube_constraint=tube_constraint,
     )
 
     if not initial_node.feasible and config.solve_initial_node:
@@ -1250,6 +1619,7 @@ def solve_offline_inverse_configuration(
             state_min=lower,
             state_max=upper,
             config=config,
+            tube_constraint=tube_constraint,
         )
         initial_node.chain_rule_relative_error = chain_relative_start
         if initial_node.feasible:
@@ -1270,13 +1640,27 @@ def solve_offline_inverse_configuration(
             "all_nodes_feasible": False,
             "termination_reason": (
                 "The fixed initial state does not satisfy the configured tip "
-                "position and tangent tolerances. Set solve_initial_node=True "
-                "only if moving the initial state is scientifically intended."
+                "position/tangent tolerances and all enabled hard geometric "
+                "constraints. Set solve_initial_node=True only if moving the "
+                "initial state is scientifically intended."
             ),
             "path_total_length_m": path.total_length_m,
             "initial_progress_m": s_start,
             "initial_projection_distance_m": projection_distance,
             "contact_model": contact_flags,
+            "source_magnet_lumen_tube_constraint": {
+                "enabled": tube_constraint is not None,
+                "radius_m": (
+                    None
+                    if tube_constraint is None
+                    else tube_constraint.radius_m
+                ),
+                "jacobian_source": (
+                    None
+                    if tube_constraint is None
+                    else tube_constraint.jacobian_source
+                ),
+            },
             "chain_rule_start": chain_rule_start,
         }
         result = InversePathResult(
@@ -1324,6 +1708,7 @@ def solve_offline_inverse_configuration(
             state_min=lower,
             state_max=upper,
             config=config,
+            tube_constraint=tube_constraint,
         )
 
         stride = int(config.finite_difference_validation_stride)
@@ -1386,6 +1771,10 @@ def solve_offline_inverse_configuration(
 
     position_errors = np.array([node.position_error_m for node in nodes], dtype=float)
     tangent_errors = np.array([node.tangent_error_rad for node in nodes], dtype=float)
+    tube_distances = np.array(
+        [node.source_magnet_lumen_distance_m for node in nodes], dtype=float
+    )
+    finite_tube_distances = tube_distances[np.isfinite(tube_distances)]
     summary = {
         "all_nodes_feasible": all_feasible,
         "termination_reason": termination_reason,
@@ -1399,6 +1788,35 @@ def solve_offline_inverse_configuration(
         "maximum_position_error_m": float(np.max(position_errors)),
         "maximum_tangent_error_rad": float(np.max(tangent_errors)),
         "contact_model": contact_flags,
+        "source_magnet_lumen_tube_constraint": {
+            "enabled": tube_constraint is not None,
+            "radius_m": (
+                None if tube_constraint is None else tube_constraint.radius_m
+            ),
+            "jacobian_source": (
+                None
+                if tube_constraint is None
+                else tube_constraint.jacobian_source
+            ),
+            "maximum_distance_m": (
+                None
+                if finite_tube_distances.size == 0
+                else float(np.max(finite_tube_distances))
+            ),
+            "minimum_margin_m": (
+                None
+                if tube_constraint is None or finite_tube_distances.size == 0
+                else float(
+                    tube_constraint.radius_m - np.max(finite_tube_distances)
+                )
+            ),
+            "all_nodes_satisfied": bool(
+                all(
+                    node.source_magnet_lumen_constraint_satisfied
+                    for node in nodes
+                )
+            ),
+        },
         "chain_rule_start": chain_rule_start,
         "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
         "jacobian_definition": "continuous d[tip_xyz,tangent_xyz]/d[q1..q6,L]",
@@ -1543,6 +1961,19 @@ def _node_csv_record(node: InverseNodeResult) -> dict[str, Any]:
         "minimum_state_margin": node.minimum_state_margin,
         "minimum_clearance_m": node.minimum_clearance_m,
         "contact_active": int(node.contact_active),
+        "source_magnet_lumen_distance_m": (
+            node.source_magnet_lumen_distance_m
+        ),
+        "source_magnet_lumen_tube_radius_m": (
+            node.source_magnet_lumen_tube_radius_m
+        ),
+        "source_magnet_lumen_margin_m": node.source_magnet_lumen_margin_m,
+        "source_magnet_lumen_segment_index": (
+            node.source_magnet_lumen_segment_index
+        ),
+        "source_magnet_lumen_constraint_satisfied": int(
+            node.source_magnet_lumen_constraint_satisfied
+        ),
         "delta_q_norm_rad": node.delta_q_norm_rad,
         "delta_insertion_m": node.delta_insertion_m,
         "attempt_count": node.attempt_count,
@@ -1627,6 +2058,29 @@ def save_inverse_path_result(
         contact_active=np.array(
             [node.contact_active for node in result.nodes], dtype=bool
         ),
+        source_magnet_lumen_distance_m=np.array(
+            [node.source_magnet_lumen_distance_m for node in result.nodes],
+            dtype=float,
+        ),
+        source_magnet_lumen_tube_radius_m=np.array(
+            [node.source_magnet_lumen_tube_radius_m for node in result.nodes],
+            dtype=float,
+        ),
+        source_magnet_lumen_margin_m=np.array(
+            [node.source_magnet_lumen_margin_m for node in result.nodes],
+            dtype=float,
+        ),
+        source_magnet_lumen_segment_index=np.array(
+            [node.source_magnet_lumen_segment_index for node in result.nodes],
+            dtype=int,
+        ),
+        source_magnet_lumen_constraint_satisfied=np.array(
+            [
+                node.source_magnet_lumen_constraint_satisfied
+                for node in result.nodes
+            ],
+            dtype=bool,
+        ),
         feasible=np.array([node.feasible for node in result.nodes], dtype=bool),
     )
 
@@ -1659,6 +2113,9 @@ def _save_inverse_path_plot(result: InversePathResult, plot_path: Path) -> None:
     s = np.array([node.s_m for node in nodes], dtype=float)
     desired = np.array([node.desired_position_m for node in nodes], dtype=float)
     achieved = np.array([node.tip_position_m for node in nodes], dtype=float)
+    magnet_position = np.array(
+        [node.magnet_pose6[:3] for node in nodes], dtype=float
+    )
     q = np.array([node.q_rad for node in nodes], dtype=float)
     insertion = np.array([node.insertion_m for node in nodes], dtype=float)
     position_error = 1.0e3 * np.array(
@@ -1671,6 +2128,9 @@ def _save_inverse_path_plot(result: InversePathResult, plot_path: Path) -> None:
         [node.jacobian_condition for node in nodes], dtype=float
     )
     contact = np.array([node.contact_active for node in nodes], dtype=float)
+    tube_margin = 1.0e3 * np.array(
+        [node.source_magnet_lumen_margin_m for node in nodes], dtype=float
+    )
     feasible = np.array([node.feasible for node in nodes], dtype=bool)
 
     figure = plt.figure(figsize=(15, 16), constrained_layout=True)
@@ -1678,6 +2138,13 @@ def _save_inverse_path_plot(result: InversePathResult, plot_path: Path) -> None:
     axis_path = figure.add_subplot(grid[0, 0], projection="3d")
     axis_path.plot(*desired.T, "k--", linewidth=2.0, label="desired tip path")
     axis_path.plot(*achieved.T, color="tab:blue", linewidth=1.5, label="achieved")
+    if np.all(np.isfinite(magnet_position)):
+        axis_path.plot(
+            *magnet_position.T,
+            color="tab:green",
+            linewidth=1.2,
+            label="source-magnet centre",
+        )
     if np.any(~feasible):
         axis_path.scatter(
             *achieved[~feasible].T,
@@ -1739,7 +2206,12 @@ def _save_inverse_path_plot(result: InversePathResult, plot_path: Path) -> None:
     axis_contact.set_ylim(-0.1, 1.1)
     axis_contact.set_yticks([0, 1], labels=["inactive", "active"])
     axis_contact.set_xlabel("path coordinate s [m]")
-    axis_contact.set_title("Contact-state diagnostic")
+    axis_contact.set_title("Contact and EPM/lumen-tube diagnostics")
+    if np.any(np.isfinite(tube_margin)):
+        axis_tube = axis_contact.twinx()
+        axis_tube.plot(s, tube_margin, color="tab:green")
+        axis_tube.axhline(0.0, color="black", linestyle="--", alpha=0.6)
+        axis_tube.set_ylabel("EPM tube margin [mm]", color="tab:green")
 
     axis_feasible = figure.add_subplot(grid[3, 1])
     axis_feasible.step(s, feasible.astype(float), where="post", color="tab:blue")
@@ -1793,6 +2265,14 @@ class _LinearMockAdapter:
         T[:3, 3] = [state[0], state[1], state[6]]
         return T
 
+    def magnet_position_jacobian(self, state: Any) -> Array:
+        _finite_vector(state, 7, "mock state")
+        J = np.zeros((3, 7), dtype=float)
+        J[0, 0] = 1.0
+        J[1, 1] = 1.0
+        J[2, 6] = 1.0
+        return J
+
     def get_last_diag(self) -> dict[str, Any]:
         return {"contact_active": False, "minimum_gap_m": np.inf}
 
@@ -1822,6 +2302,24 @@ class _LinearMockAdapter:
             ),
             "maximum_absolute_element_error": float(np.max(np.abs(difference))),
         }
+
+
+class _OffsetMagnetMockAdapter(_LinearMockAdapter):
+    """Mock with a beam-nullspace joint controlling EPM radial distance."""
+
+    def magnet_transform(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "offset-magnet mock state")
+        T = np.eye(4)
+        T[:3, 3] = [state[0], state[4], state[6]]
+        return T
+
+    def magnet_position_jacobian(self, state: Any) -> Array:
+        _finite_vector(state, 7, "offset-magnet mock state")
+        J = np.zeros((3, 7), dtype=float)
+        J[0, 0] = 1.0
+        J[1, 4] = 1.0
+        J[2, 6] = 1.0
+        return J
 
 
 def run_self_test() -> None:
@@ -1867,9 +2365,52 @@ def run_self_test() -> None:
         raise AssertionError(
             f"Known mock solution q1=0.02 was not recovered: {final_state[0]}"
         )
+
+    constrained_config = InverseConfigurationPlannerConfig(
+        position_tolerance_m=1.0e-6,
+        tangent_tolerance_rad=1.0e-5,
+        initial_path_step_m=5.0e-3,
+        minimum_path_step_m=1.0e-3,
+        maximum_path_step_m=5.0e-3,
+        maximum_joint_step_rad=(0.1,) * 6,
+        maximum_insertion_step_m=0.01,
+        continuity_weight=(1.0e-8,) * 7,
+        joint_centre_weight=(0.0,) * 7,
+        maximum_multistart_attempts=2,
+        require_contact_model=False,
+        solve_initial_node=True,
+        source_magnet_lumen_tube_radius_m=5.0e-3,
+        require_analytical_magnet_position_jacobian=True,
+        debug=False,
+    )
+    constrained_initial = np.zeros(7, dtype=float)
+    constrained_initial[4] = 2.0e-2
+    constrained_result = solve_offline_inverse_configuration(
+        adapter=_OffsetMagnetMockAdapter(),
+        initial_state=constrained_initial,
+        state_min=np.array([-1.0] * 6 + [0.0]),
+        state_max=np.array([1.0] * 6 + [0.1]),
+        lumen_C=centreline,
+        config=constrained_config,
+    )
+    if not constrained_result.all_nodes_feasible:
+        raise AssertionError(
+            "Hard EPM/lumen tube self-test failed: "
+            f"{constrained_result.summary}"
+        )
+    maximum_distance = max(
+        node.source_magnet_lumen_distance_m
+        for node in constrained_result.nodes
+    )
+    if maximum_distance > 5.0e-3 + 1.0e-6:
+        raise AssertionError(
+            "Hard EPM/lumen tube was violated: "
+            f"maximum distance={maximum_distance:.6e} m."
+        )
     print(
-        "[SELF TEST] PASS: known linear inverse path recovered with "
-        f"{len(result.nodes)} feasible nodes."
+        "[SELF TEST] PASS: known linear inverse path and hard EPM/lumen "
+        f"tube recovered ({len(result.nodes)} unconstrained nodes, "
+        f"{len(constrained_result.nodes)} constrained nodes)."
     )
 
 

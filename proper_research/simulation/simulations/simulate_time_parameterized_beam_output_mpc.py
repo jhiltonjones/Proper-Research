@@ -70,6 +70,7 @@ from typing import Any, Callable
 
 import numpy as np
 import scipy.sparse as sp
+from scipy.linalg import solve_discrete_are
 from scipy.optimize import LinearConstraint, minimize
 
 
@@ -91,6 +92,9 @@ def _load_configuration_mpc_module() -> ModuleType:
             ),
             Path(__file__).with_name(
                 "simulate_time_parameterized_configuration_mpc(3).py"
+            ),
+            Path(__file__).with_name(
+                "simulate_time_parameterized_configuration_mpc(4).py"
             ),
         )
         for path in candidates:
@@ -124,6 +128,35 @@ def _finite_vector(value: Any, size: int, name: str) -> Array:
     return _base._finite_vector(value, size, name)
 
 
+def _validate_reference_provenance(
+    reference: ConfigurationReference,
+    *,
+    require_feasible: bool,
+) -> None:
+    """Reject an explicitly infeasible selected global-path candidate.
+
+    Global optimizer convergence and candidate feasibility are deliberately
+    separate.  A non-converged optimizer candidate may be used after exact
+    node/dense validation, but an explicitly infeasible selected candidate may
+    not enter beam-output MPC.  Older references without this additive
+    metadata remain supported by the existing feasibility checks.
+    """
+    if not require_feasible:
+        return
+    metadata = getattr(reference, "metadata", {})
+    summary = metadata.get("summary", {}) if isinstance(metadata, dict) else {}
+    selected_feasible = (
+        summary.get("source_selected_candidate_feasible")
+        if isinstance(summary, dict)
+        else None
+    )
+    if selected_feasible is not None and not bool(selected_feasible):
+        raise RuntimeError(
+            "The time reference was generated from an infeasible selected "
+            "global-path candidate."
+        )
+
+
 @dataclass(frozen=True)
 class BeamOutputMPCConfig:
     """Weights and estimation settings for beam-tip position feedback."""
@@ -134,7 +167,11 @@ class BeamOutputMPCConfig:
         0.5e-3,
     )
     position_tracking_weight: float = 1.0
+    # Used only when ``use_dare_terminal_cost`` is false.
     terminal_weight_multiplier: float = 20.0
+    use_dare_terminal_cost: bool = True
+    # Infinity norm of final velocity divided componentwise by input scale.
+    terminal_equilibrium_tolerance: float = 1.0e-6
     disturbance_filter_alpha: float = 0.0
     joint_trust_region_rad: float | None = None
     insertion_trust_region_m: float | None = None
@@ -151,6 +188,11 @@ class BeamOutputMPCConfig:
                 raise ValueError(f"{name} must be finite and positive.")
         if self.terminal_weight_multiplier < 1.0:
             raise ValueError("terminal_weight_multiplier must be at least one.")
+        equilibrium_tolerance = float(self.terminal_equilibrium_tolerance)
+        if not np.isfinite(equilibrium_tolerance) or equilibrium_tolerance <= 0.0:
+            raise ValueError(
+                "terminal_equilibrium_tolerance must be finite and positive."
+            )
         alpha = float(self.disturbance_filter_alpha)
         if not np.isfinite(alpha) or not 0.0 <= alpha < 1.0:
             raise ValueError("disturbance_filter_alpha must lie in [0, 1).")
@@ -465,18 +507,284 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         self.beam_config = beam_config
         self.reference_position_jacobians = jacobians.copy()
         self.nominal_reference_positions_m = nominal_positions.copy()
-        self._base_hessian = np.asarray(self.H, dtype=float).copy()
         self._filtered_output_residual: Array | None = None
 
         scale = _finite_vector(
             beam_config.position_error_scale_m, 3, "position_error_scale_m"
         )
         Qp = float(beam_config.position_tracking_weight) * np.diag(1.0 / scale**2)
+
+        # ``ConfigurationTrackingMPC`` normally applies a heuristic multiplier
+        # to its last state block.  In Riccati mode the last predicted state is
+        # instead assigned the cost-to-go P[k + N], so retaining that block
+        # would double-count the terminal state cost.  The input and increment
+        # stage costs remain present for every optimized input.
+        self.terminal_cost_schedule: Array | None = None
+        self.terminal_feedback_schedule: Array | None = None
+        self.terminal_dare_residual_norm = np.nan
+        self.terminal_closed_loop_spectral_radius = np.nan
+        self.terminal_equilibrium_normalized_input = np.nan
+        self.last_terminal_cost_index: int | None = None
+        if beam_config.use_dare_terminal_cost:
+            Q = np.asarray(self.Qbar[: self.n, : self.n], dtype=float).copy()
+            R = np.asarray(self.Rbar[: self.m, : self.m], dtype=float).copy()
+            Rd = np.asarray(self.Rdbar[: self.m, : self.m], dtype=float).copy()
+            terminal_slice = slice(
+                (self.N - 1) * self.n,
+                self.N * self.n,
+            )
+            self.Qbar[terminal_slice, terminal_slice] = 0.0
+            base_hessian = 2.0 * (
+                self.S.T @ self.Qbar @ self.S
+                + self.Rbar
+                + self.D.T @ self.Rdbar @ self.D
+            )
+            base_hessian += float(self.config.hessian_regularization) * np.eye(
+                self.nu
+            )
+            self.H = 0.5 * (base_hessian + base_hessian.T)
+        else:
+            Q = np.asarray(self.Qbar[: self.n, : self.n], dtype=float).copy()
+            R = np.asarray(self.Rbar[: self.m, : self.m], dtype=float).copy()
+            Rd = np.asarray(self.Rdbar[: self.m, : self.m], dtype=float).copy()
+
+        self._base_hessian = np.asarray(self.H, dtype=float).copy()
         blocks = [Qp.copy() for _ in range(self.N)]
-        blocks[-1] *= float(beam_config.terminal_weight_multiplier)
+        if beam_config.use_dare_terminal_cost:
+            blocks[-1] = np.zeros_like(Qp)
+        else:
+            blocks[-1] *= float(beam_config.terminal_weight_multiplier)
         self.Qpbar = sp.block_diag(blocks, format="csc").toarray()
+        if beam_config.use_dare_terminal_cost:
+            (
+                self.terminal_cost_schedule,
+                self.terminal_feedback_schedule,
+            ) = self._build_ltv_riccati_schedule(
+                Q=Q,
+                Qp=Qp,
+                R=R,
+                Rd=Rd,
+            )
         if self.backend == "osqp":
             self._setup_variable_hessian_osqp()
+
+    def _augmented_riccati_matrices(
+        self,
+        *,
+        Q_effective: Array,
+        R: Array,
+        Rd: Array,
+    ) -> tuple[Array, Array, Array, Array, Array]:
+        """Return the Markov model/cost for input-increment LQR.
+
+        The augmented error state is ``[z - z_ref, u_previous - u_ref]`` and
+        the tail input is ``w = u - u_previous``.  The cross term is required
+        because the input-tracking cost is on ``u_previous + w``.
+        """
+        identity = np.eye(self.n, dtype=float)
+        zero = np.zeros((self.n, self.n), dtype=float)
+        A_aug = np.block(
+            [
+                [identity, self.dt * identity],
+                [zero, identity],
+            ]
+        )
+        B_aug = np.vstack((self.dt * identity, identity))
+        Q_aug = np.block(
+            [
+                [Q_effective, zero],
+                [zero, R],
+            ]
+        )
+        N_aug = np.vstack((zero, R))
+        R_aug = R + Rd
+        minimum_r = float(np.min(np.linalg.eigvalsh(0.5 * (R_aug + R_aug.T))))
+        if minimum_r <= 0.0:
+            raise ValueError(
+                "DARE terminal cost requires R + Rd to be positive definite; "
+                f"minimum eigenvalue={minimum_r:.3e}."
+            )
+        return A_aug, B_aug, Q_aug, N_aug, R_aug
+
+    @staticmethod
+    def _symmetric(value: Array) -> Array:
+        matrix = np.asarray(value, dtype=float)
+        return 0.5 * (matrix + matrix.T)
+
+    def _build_ltv_riccati_schedule(
+        self,
+        *,
+        Q: Array,
+        Qp: Array,
+        R: Array,
+        Rd: Array,
+    ) -> tuple[Array, Array]:
+        """Build P[i] backwards, seeded by a DARE at the final equilibrium.
+
+        Only the quadratic cost-to-go is scheduled here.  Reference motion,
+        nominal beam error and the estimated output residual create affine LQT
+        terms; those remain handled explicitly over the online MPC horizon.
+        """
+        final_input = np.asarray(self.reference.input[-1], dtype=float)
+        input_scale = _finite_vector(
+            self.config.input_error_scale, self.m, "input_error_scale"
+        )
+        self.terminal_equilibrium_normalized_input = float(
+            np.max(np.abs(final_input) / input_scale)
+        )
+        if (
+            self.terminal_equilibrium_normalized_input
+            > float(self.beam_config.terminal_equilibrium_tolerance)
+        ):
+            raise ValueError(
+                "The final reference sample is not an equilibrium of "
+                "z[k+1] = z[k] + dt*u[k]: its scaled final input infinity "
+                "norm is "
+                f"{self.terminal_equilibrium_normalized_input:.3e}, above "
+                "terminal_equilibrium_tolerance="
+                f"{self.beam_config.terminal_equilibrium_tolerance:.3e}. "
+                "Append a zero-velocity terminal sample/hold before forming "
+                "the DARE terminal cost."
+            )
+
+        sample_count = self.reference.sample_count
+        augmented_size = 2 * self.n
+        P_schedule = np.empty(
+            (sample_count, augmented_size, augmented_size), dtype=float
+        )
+        K_schedule = np.empty(
+            (sample_count, self.m, augmented_size), dtype=float
+        )
+
+        effective_weights = np.empty((sample_count, self.n, self.n), dtype=float)
+        for index, jacobian in enumerate(self.reference_position_jacobians):
+            effective_weights[index] = self._symmetric(
+                Q + jacobian.T @ Qp @ jacobian
+            )
+
+        A_aug, B_aug, Q_final, N_aug, R_aug = (
+            self._augmented_riccati_matrices(
+                Q_effective=effective_weights[-1],
+                R=R,
+                Rd=Rd,
+            )
+        )
+        try:
+            P_final = solve_discrete_are(
+                A_aug,
+                B_aug,
+                Q_final,
+                R_aug,
+                s=N_aug,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not solve the augmented terminal DARE at the final "
+                "reference equilibrium."
+            ) from exc
+        P_schedule[-1] = self._symmetric(P_final)
+
+        final_control_hessian = self._symmetric(
+            R_aug + B_aug.T @ P_schedule[-1] @ B_aug
+        )
+        final_control_gradient = B_aug.T @ P_schedule[-1] @ A_aug + N_aug.T
+        K_schedule[-1] = np.linalg.solve(
+            final_control_hessian, final_control_gradient
+        )
+        closed_loop = A_aug - B_aug @ K_schedule[-1]
+        self.terminal_closed_loop_spectral_radius = float(
+            np.max(np.abs(np.linalg.eigvals(closed_loop)))
+        )
+        if self.terminal_closed_loop_spectral_radius >= 1.0:
+            raise RuntimeError(
+                "The final DARE solution is not stabilizing: closed-loop "
+                "spectral radius="
+                f"{self.terminal_closed_loop_spectral_radius:.6f}."
+            )
+
+        dare_residual = (
+            A_aug.T @ P_schedule[-1] @ A_aug
+            - P_schedule[-1]
+            - (A_aug.T @ P_schedule[-1] @ B_aug + N_aug)
+            @ K_schedule[-1]
+            + Q_final
+        )
+        self.terminal_dare_residual_norm = float(
+            np.linalg.norm(dare_residual, ord="fro")
+        )
+
+        for index in range(sample_count - 2, -1, -1):
+            _, _, Q_aug, _, _ = self._augmented_riccati_matrices(
+                Q_effective=effective_weights[index],
+                R=R,
+                Rd=Rd,
+            )
+            P_next = P_schedule[index + 1]
+            control_hessian = self._symmetric(
+                R_aug + B_aug.T @ P_next @ B_aug
+            )
+            control_gradient = B_aug.T @ P_next @ A_aug + N_aug.T
+            gain = np.linalg.solve(control_hessian, control_gradient)
+            P_current = (
+                Q_aug
+                + A_aug.T @ P_next @ A_aug
+                - (A_aug.T @ P_next @ B_aug + N_aug) @ gain
+            )
+            P_schedule[index] = self._symmetric(P_current)
+            K_schedule[index] = gain
+
+        if not np.all(np.isfinite(P_schedule)):
+            raise FloatingPointError(
+                "The backward LTV Riccati schedule contains non-finite values."
+            )
+        minimum_p = min(
+            float(np.min(np.linalg.eigvalsh(matrix))) for matrix in P_schedule
+        )
+        tolerance = 1.0e-8 * max(
+            1.0,
+            max(float(np.linalg.norm(matrix, ord=2)) for matrix in P_schedule),
+        )
+        if minimum_p < -tolerance:
+            raise RuntimeError(
+                "The backward LTV Riccati schedule is not positive "
+                f"semidefinite; minimum eigenvalue={minimum_p:.3e}."
+            )
+        return P_schedule, K_schedule
+
+    def _terminal_riccati_qp_terms(
+        self,
+        *,
+        state: Array,
+        state_reference: Array,
+        input_reference: Array,
+        control_index: int,
+    ) -> tuple[Array, Array]:
+        """Condense x_N' P[k + N] x_N into the current input sequence."""
+        if self.terminal_cost_schedule is None:
+            return np.zeros_like(self._base_hessian), np.zeros(self.nu)
+        terminal_index = int(
+            np.clip(
+                int(control_index) + self.N,
+                0,
+                self.reference.sample_count - 1,
+            )
+        )
+        self.last_terminal_cost_index = terminal_index
+        P_terminal = self.terminal_cost_schedule[terminal_index]
+
+        state_map = self.S[-self.n :, :]
+        previous_input_map = np.zeros((self.m, self.nu), dtype=float)
+        previous_input_map[:, -self.m :] = np.eye(self.m)
+        terminal_map = np.vstack((state_map, previous_input_map))
+        terminal_offset = np.concatenate(
+            (
+                state - np.asarray(state_reference[-1], dtype=float),
+                -np.asarray(input_reference[-1], dtype=float),
+            )
+        )
+        hessian = 2.0 * terminal_map.T @ P_terminal @ terminal_map
+        linear = 2.0 * terminal_map.T @ P_terminal @ terminal_offset
+        return self._symmetric(hessian), linear
 
     def _reference_indices(
         self, control_index: int, *, future: bool
@@ -577,8 +885,19 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             estimated_residual=estimated_residual,
         )
         hessian = self._base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
-        hessian = 0.5 * (hessian + hessian.T)
         linear = base_linear + 2.0 * (G.T @ self.Qpbar @ constant_error)
+        if self.beam_config.use_dare_terminal_cost:
+            terminal_hessian, terminal_linear = (
+                self._terminal_riccati_qp_terms(
+                    state=state,
+                    state_reference=state_reference,
+                    input_reference=input_reference,
+                    control_index=control_index,
+                )
+            )
+            hessian = hessian + terminal_hessian
+            linear = linear + terminal_linear
+        hessian = 0.5 * (hessian + hessian.T)
         return hessian, linear, {
             "G": G,
             "constant_error": constant_error,
@@ -961,6 +1280,10 @@ def simulate_time_parameterized_beam_output_mpc(
             simulation_config.require_planned_beam_feasible
         )
     )
+    _validate_reference_provenance(
+        reference,
+        require_feasible=simulation_config.require_planned_beam_feasible,
+    )
     mpc_config.validate()
     beam_config.validate()
     if not simulation_config.evaluate_nonlinear_beam:
@@ -1209,7 +1532,7 @@ def run_self_test() -> None:
     beam_config = BeamOutputMPCConfig(
         position_error_scale_m=(0.25e-3, 0.25e-3, 0.25e-3),
         position_tracking_weight=1.0,
-        terminal_weight_multiplier=5.0,
+        use_dare_terminal_cost=True,
     )
     jacobian_calls: list[Array] = []
 
@@ -1249,6 +1572,26 @@ def run_self_test() -> None:
         beam_config=beam_config,
         reference_position_jacobians=jacobians,
     )
+    expected_schedule_shape = (sample_count, 14, 14)
+    if (
+        controller.terminal_cost_schedule is None
+        or controller.terminal_cost_schedule.shape != expected_schedule_shape
+    ):
+        raise AssertionError(
+            "Riccati schedule has the wrong shape; expected "
+            f"{expected_schedule_shape}."
+        )
+    residual_scale = max(
+        1.0,
+        float(np.linalg.norm(controller.terminal_cost_schedule[-1], ord="fro")),
+    )
+    if controller.terminal_dare_residual_norm > 1.0e-7 * residual_scale:
+        raise AssertionError(
+            "The terminal DARE residual is too large: "
+            f"{controller.terminal_dare_residual_norm:.3e}."
+        )
+    if controller.terminal_closed_loop_spectral_radius >= 1.0:
+        raise AssertionError("The terminal DARE feedback is not stabilizing.")
 
     # The real beam has a 1 mm additive offset and an 0.8 slope, whereas the
     # analytical nominal Jacobian supplied to the MPC is 1.0 m/rad.
@@ -1283,9 +1626,18 @@ def run_self_test() -> None:
         )
     if maximum_velocity_ratio > 1.0 + 1.0e-6:
         raise AssertionError("Self-test violated a configured velocity limit.")
+    expected_terminal_index = sample_count - 1
+    if controller.last_terminal_cost_index != expected_terminal_index:
+        raise AssertionError(
+            "The controller did not select the clipped P[k + N] terminal "
+            f"weight; expected index {expected_terminal_index}, received "
+            f"{controller.last_terminal_cost_index}."
+        )
     print(
         "[BEAM OUTPUT MPC SELF TEST] PASS "
         f"backend={controller.backend} "
+        f"rho={controller.terminal_closed_loop_spectral_radius:.6f} "
+        f"DARE_residual={controller.terminal_dare_residual_norm:.3e} "
         f"initial_error={1.0e3 * initial_error:.6f} mm "
         f"final_error={1.0e3 * final_error:.6f} mm"
     )
@@ -1311,7 +1663,17 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--tangent-tolerance-deg", type=float, default=90.0)
     parser.add_argument("--beam-position-scale-mm", type=float, nargs=3, default=(0.5, 0.5, 0.5))
     parser.add_argument("--beam-position-weight", type=float, default=1.0)
-    parser.add_argument("--beam-terminal-multiplier", type=float, default=20.0)
+    parser.add_argument(
+        "--beam-terminal-multiplier",
+        type=float,
+        default=20.0,
+        help="Legacy last-stage multiplier, used only with --disable-dare-terminal-cost.",
+    )
+    parser.add_argument(
+        "--disable-dare-terminal-cost",
+        action="store_true",
+        help="Use the legacy last-stage multipliers instead of the scheduled Riccati tail.",
+    )
     parser.add_argument("--state-tracking-weight", type=float, default=1.0e-2)
     parser.add_argument("--input-tracking-weight", type=float, default=1.0e-3)
     parser.add_argument("--input-increment-weight", type=float, default=1.0e-3)
@@ -1367,6 +1729,10 @@ def main() -> None:
         reference_source,
         require_planned_beam_feasible=not arguments.allow_planned_beam_failure,
     )
+    _validate_reference_provenance(
+        reference,
+        require_feasible=not arguments.allow_planned_beam_failure,
+    )
     controller_period = _base._controller_period(controller_pack)
     if controller_period is not None and not np.isclose(
         controller_period,
@@ -1417,6 +1783,7 @@ def main() -> None:
         ),
         position_tracking_weight=float(arguments.beam_position_weight),
         terminal_weight_multiplier=float(arguments.beam_terminal_multiplier),
+        use_dare_terminal_cost=not bool(arguments.disable_dare_terminal_cost),
         disturbance_filter_alpha=float(arguments.disturbance_filter_alpha),
         joint_trust_region_rad=(
             None

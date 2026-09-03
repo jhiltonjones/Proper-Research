@@ -158,6 +158,16 @@ class InverseConfigurationPlannerConfig:
     start_at_initial_tip_projection: bool = True
     solve_initial_node: bool = False
     use_extrapolated_guess: bool = True
+
+    # Analytical-Jacobian first-order continuation predictor for the next
+    # node's initial guess.  Tried before the secant ``2 x_k - x_{k-1}``.
+    # See offline_inverse_configuration_head_exclusion._jacobian_predicted_state.
+    # Kept here as well so run_inverse_head_exclusion._upgrade_planner_config
+    # carries any override across to the head-exclusion planner config.
+    use_jacobian_predictor_guess: bool = True
+    jacobian_predictor_damping: float = 1.0e-3
+    jacobian_predictor_use_tangent: bool = False
+
     insertion_non_decreasing: bool = False
     require_contact_model: bool = True
 

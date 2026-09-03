@@ -1,0 +1,367 @@
+--- global_constrained_configuration_path.orig.py	2026-08-26 17:11:17.167048346 +0000
++++ global_constrained_configuration_path.py	2026-08-26 17:14:03.246256501 +0000
+@@ -54,6 +54,19 @@
+         save_inverse_path_result,
+     )
+ 
++try:
++    from proper_research.planning.global_upgrades import (
++        NodeExclusionConstraints,
++        effective_task_tolerances,
++        tip_centring_quadratic,
++    )
++except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
++    from global_upgrades import (  # type: ignore
++        NodeExclusionConstraints,
++        effective_task_tolerances,
++        tip_centring_quadratic,
++    )
++
+ 
+ Array = np.ndarray
+ 
+@@ -182,6 +195,29 @@
+     debug: bool = True
+     trust_constr_verbose: int = 0
+ 
++    # ---------------------------------------------------------------- safety
++    # The source-magnet / lumen keep-out that layer 1 enforces.  Leaving this
++    # at None reproduces the previous behaviour exactly: no exclusion
++    # constraint.  Set it to the same radius the inverse planner used and the
++    # smoother can no longer walk the magnet into the head.
++    source_magnet_lumen_exclusion_radius_m: float | None = None
++    source_magnet_lumen_constraint_tolerance_m: float = 1.0e-6
++    require_analytical_magnet_position_jacobian: bool = False
++    magnet_jacobian_joint_step_rad: float = 1.0e-6
++    magnet_jacobian_insertion_step_m: float = 1.0e-6
++
++    # ------------------------------------------------------------ task space
++    # Fraction of the physical task tolerance the smoother is allowed to
++    # spend.  1.0 is the previous behaviour.  Below 1.0 the constraint the
++    # optimiser sees is tighter than the tolerance it is reported against, so
++    # the remainder survives as margin for the controller instead of being
++    # consumed by joint smoothing.
++    tolerance_spend_fraction: float = 1.0
++
++    # Optional quadratic pull toward the centre of the tolerance ball,
++    # linearised at the seed.  0.0 keeps the objective exactly as it was.
++    tip_centring_weight: float = 0.0
++
+     def validate(self) -> None:
+         if self.mode not in {"refine_complete", "recover_partial"}:
+             raise ValueError("mode must be 'refine_complete' or 'recover_partial'.")
+@@ -264,6 +300,25 @@
+         for name, value in nonnegative.items():
+             if not np.isfinite(value) or float(value) < 0.0:
+                 raise ValueError(f"{name} must be finite and non-negative.")
++        radius = self.source_magnet_lumen_exclusion_radius_m
++        if radius is not None and (not np.isfinite(radius) or float(radius) <= 0.0):
++            raise ValueError(
++                "source_magnet_lumen_exclusion_radius_m must be positive when set."
++            )
++        for name in (
++            "source_magnet_lumen_constraint_tolerance_m",
++            "magnet_jacobian_joint_step_rad",
++            "magnet_jacobian_insertion_step_m",
++        ):
++            value = float(getattr(self, name))
++            if not np.isfinite(value) or value <= 0.0:
++                raise ValueError(f"{name} must be finite and positive.")
++        fraction = float(self.tolerance_spend_fraction)
++        if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
++            raise ValueError("tolerance_spend_fraction must lie in (0, 1].")
++        centring = float(self.tip_centring_weight)
++        if not np.isfinite(centring) or centring < 0.0:
++            raise ValueError("tip_centring_weight must be finite and non-negative.")
+ 
+ 
+ @dataclass
+@@ -863,6 +918,7 @@
+     bounds: Bounds,
+     adjacent: LinearConstraint | None,
+     config: GlobalConfigurationOptimizerConfig,
++    exclusion: NodeExclusionConstraints | None = None,
+ ) -> tuple[Array, float, Any]:
+     node_count = tasks.node_count
+     state_size = 7 * node_count
+@@ -919,6 +975,31 @@
+             format="csc",
+         )
+         constraints.append(LinearConstraint(A_aug, adjacent.lb, adjacent.ub))
++    if exclusion is not None:
++        # Restoration is allowed to relax the *task* constraints through their
++        # slacks; it is never allowed to relax the keep-out.  Recovering
++        # tracking feasibility by moving the magnet into the head would be a
++        # worse outcome than failing to recover it.
++        def exclusion_values(z: Array) -> Array:
++            return exclusion.values(z[:state_size])
++
++        def exclusion_jacobian(z: Array) -> Any:
++            return bmat(
++                [[
++                    csc_matrix(exclusion.jacobian(z[:state_size])),
++                    csc_matrix((exclusion.node_count, slack_size)),
++                ]],
++                format="csc",
++            )
++
++        constraints.append(
++            NonlinearConstraint(
++                exclusion_values,
++                np.zeros(exclusion.node_count),
++                np.full(exclusion.node_count, np.inf),
++                jac=exclusion_jacobian,
++            )
++        )
+     solved = minimize(
+         value,
+         z0,
+@@ -955,6 +1036,7 @@
+     bounds: Bounds,
+     adjacent: LinearConstraint | None,
+     config: GlobalConfigurationOptimizerConfig,
++    exclusion: NodeExclusionConstraints | None = None,
+ ) -> Any:
+     initial_task_values = tasks.values(x0)
+     initial_task_feasible = bool(np.all(initial_task_values >= 0.0))
+@@ -982,6 +1064,28 @@
+     ]
+     if adjacent is not None:
+         constraints.append(adjacent)
++    if exclusion is not None:
++        # The keep-out is a physical safety constraint, so it is never given
++        # slack and never traded against smoothness.  keep_feasible is set
++        # only when the seed already satisfies it, which is the normal case
++        # for a layer-1 path that enforced the same inequality.
++        initial_exclusion = exclusion.values(x0)
++        constraints.append(
++            NonlinearConstraint(
++                exclusion.values,
++                np.zeros(exclusion.node_count),
++                np.full(exclusion.node_count, np.inf),
++                jac=exclusion.jacobian,
++                keep_feasible=bool(np.all(initial_exclusion >= 0.0)),
++            )
++        )
++        if config.debug:
++            print(
++                "[GLOBAL SEED] "
++                f"minimum_exclusion_constraint={np.min(initial_exclusion):.6e} "
++                f"jacobian_source={exclusion.jacobian_source}",
++                flush=True,
++            )
+     return minimize(
+         objective.value,
+         x0,
+@@ -1032,6 +1136,7 @@
+     adjacent: LinearConstraint | None,
+     bounds: Bounds,
+     x: Array,
++    exclusion: NodeExclusionConstraints | None = None,
+ ) -> float:
+     """Re-evaluate every hard constraint on the serialized candidate.
+ 
+@@ -1045,6 +1150,7 @@
+             _task_violation(tasks, x),
+             _linear_constraint_violation(adjacent, x),
+             _bound_constraint_violation(bounds, x),
++            0.0 if exclusion is None else exclusion.violation(x),
+         )
+     )
+ 
+@@ -1117,6 +1223,7 @@
+     state_min: Array,
+     state_max: Array,
+     config: GlobalConfigurationOptimizerConfig,
++    path: CentrelinePath | None = None,
+ ) -> tuple[_SolveOutcome, _QuadraticPathObjective, _TaskConstraints]:
+     node_count = seed.s.size
+     objective = _QuadraticPathObjective(
+@@ -1142,13 +1249,73 @@
+         node_count,
+         node_baselines=node_baselines,
+     )
++    # The optimiser is constrained against the tolerance it is *allowed to
++    # spend*; reporting elsewhere still uses the physical tolerance, so the
++    # difference becomes margin rather than budget.
++    spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
++        position_tolerance_m=config.position_tolerance_m,
++        tangent_tolerance_rad=config.tangent_tolerance_rad,
++        spend_fraction=config.tolerance_spend_fraction,
++    )
++    if config.debug and config.tolerance_spend_fraction < 1.0:
++        print(
++            "[GLOBAL TOLERANCE] "
++            f"spend_fraction={config.tolerance_spend_fraction:.3f} "
++            f"position={1.0e3 * spend_position_tolerance:.6f} mm of "
++            f"{1.0e3 * config.position_tolerance_m:.6f} mm",
++            flush=True,
++        )
+     tasks = _TaskConstraints(
+         evaluator=evaluator,
+         desired_position=seed.desired_position,
+         desired_tangent=seed.desired_tangent,
+-        position_tolerance_m=config.position_tolerance_m,
+-        tangent_tolerance_rad=config.tangent_tolerance_rad,
++        position_tolerance_m=spend_position_tolerance,
++        tangent_tolerance_rad=spend_tangent_tolerance,
+     )
++    exclusion: NodeExclusionConstraints | None = None
++    if config.source_magnet_lumen_exclusion_radius_m is not None:
++        if path is None:
++            raise ValueError(
++                "A source-magnet/lumen keep-out radius is configured but no "
++                "CentrelinePath was supplied to the global solve. Pass "
++                "path=CentrelinePath(lumen_C)."
++            )
++        exclusion = NodeExclusionConstraints(
++            adapter=adapter,
++            path=path,
++            state_min=state_min,
++            state_max=state_max,
++            node_count=node_count,
++            radius_m=float(config.source_magnet_lumen_exclusion_radius_m),
++            constraint_tolerance_m=float(
++                config.source_magnet_lumen_constraint_tolerance_m
++            ),
++            require_analytical_jacobian=bool(
++                config.require_analytical_magnet_position_jacobian
++            ),
++            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
++            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
++        )
++    if config.tip_centring_weight > 0.0:
++        # One extra block-diagonal quadratic in the same QP.  Linearised at
++        # the seed, which is also where this round's beam baselines are
++        # frozen, so the cost and the constraints see the same model.
++        H_tip, f_tip, constant_tip = tip_centring_quadratic(
++            evaluator=evaluator,
++            seed_states=seed.states,
++            desired_position=seed.desired_position,
++            position_tolerance_m=config.position_tolerance_m,
++            weight=float(config.tip_centring_weight),
++        )
++        objective.H = csc_matrix(objective.H + H_tip)
++        objective.f = np.asarray(objective.f, dtype=float) + f_tip
++        objective.constant = float(objective.constant) + constant_tip
++        if config.debug:
++            print(
++                "[GLOBAL TIP COST] "
++                f"weight={config.tip_centring_weight:.6g} linearised at seed",
++                flush=True,
++            )
+     bounds = _decision_bounds(
+         node_count=node_count,
+         state_min=state_min,
+@@ -1162,10 +1329,18 @@
+     base_task_violation = _task_violation(tasks, base_x)
+     base_adjacent_violation = _linear_constraint_violation(adjacent, base_x)
+     base_bound_violation = _bound_constraint_violation(bounds, base_x)
++    # The keep-out belongs in this total too.  Without it, a seed that is
++    # tracking-feasible but sits inside the exclusion region reads as
++    # violation-free, and preserve_feasible_seed_on_failure would then retain
++    # an unsafe path in preference to the optimiser's safe one.
++    base_exclusion_violation = (
++        0.0 if exclusion is None else exclusion.violation(base_x)
++    )
+     base_violation = max(
+         base_task_violation,
+         base_adjacent_violation,
+         base_bound_violation,
++        base_exclusion_violation,
+     )
+     if config.debug:
+         _print_seed_physical_audit(
+@@ -1178,7 +1353,8 @@
+             "[GLOBAL SEED AUDIT] "
+             f"task_violation={base_task_violation:.6e} "
+             f"adjacent_violation={base_adjacent_violation:.6e} "
+-            f"bound_violation={base_bound_violation:.6e}",
++            f"bound_violation={base_bound_violation:.6e} "
++            f"exclusion_violation={base_exclusion_violation:.6e}",
+             flush=True,
+         )
+ 
+@@ -1243,6 +1419,7 @@
+                 bounds=bounds,
+                 adjacent=adjacent,
+                 config=config,
++                exclusion=exclusion,
+             )
+ 
+         if config.debug:
+@@ -1257,6 +1434,7 @@
+             bounds=bounds,
+             adjacent=adjacent,
+             config=config,
++            exclusion=exclusion,
+         )
+         x = np.asarray(solved.x, dtype=float)
+         if config.fix_initial_state:
+@@ -1272,6 +1450,7 @@
+             adjacent=adjacent,
+             bounds=bounds,
+             x=x,
++            exclusion=exclusion,
+         )
+         message = str(solved.message)
+         if restoration_result is not None and not bool(restoration_result.success):
+@@ -2065,6 +2244,7 @@
+             state_min=state_min,
+             state_max=state_max,
+             config=config,
++            path=path,
+         )
+         states = outcome.x.reshape(seed.s.size, 7)
+         result_baselines, _result_replay_outputs = _replay_node_baselines(
+@@ -2178,8 +2358,50 @@
+             + [sample.tangent_error_rad for sample in dense_samples]
+         )
+     )
++    exclusion_summary: dict[str, Any] = {
++        "enabled": config.source_magnet_lumen_exclusion_radius_m is not None,
++        "radius_m": config.source_magnet_lumen_exclusion_radius_m,
++    }
++    if config.source_magnet_lumen_exclusion_radius_m is not None:
++        _final_exclusion = NodeExclusionConstraints(
++            adapter=adapter,
++            path=path,
++            state_min=state_min,
++            state_max=state_max,
++            node_count=len(final_nodes),
++            radius_m=float(config.source_magnet_lumen_exclusion_radius_m),
++            constraint_tolerance_m=float(
++                config.source_magnet_lumen_constraint_tolerance_m
++            ),
++            require_analytical_jacobian=bool(
++                config.require_analytical_magnet_position_jacobian
++            ),
++            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
++            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
++        )
++        _metrics = _final_exclusion.metrics(final_states.reshape(-1))
++        exclusion_summary.update(
++            {
++                "minimum_distance_m": float(np.min(_metrics["distance_m"])),
++                "minimum_margin_m": float(_metrics["minimum_margin_m"]),
++                "all_nodes_satisfied": bool(_metrics["all_satisfied"]),
++                "violating_node_count": int(
++                    np.sum(~np.asarray(_metrics["satisfied"], dtype=bool))
++                ),
++                "jacobian_source": str(_metrics["jacobian_source"]),
++            }
++        )
++        if config.debug:
++            print(
++                "[GLOBAL EXCLUSION] "
++                f"minimum_margin={1.0e3 * exclusion_summary['minimum_margin_m']:.6f} mm "
++                f"satisfied={exclusion_summary['all_nodes_satisfied']}",
++                flush=True,
++            )
++
+     summary = {
+         "globally_feasible": globally_feasible,
++        "source_magnet_lumen_exclusion": exclusion_summary,
+         "dense_validation_feasible": dense_feasible,
+         "optimizer_success": final_outcome.success,
+         "termination_reason": termination_reason,

@@ -29,8 +29,9 @@ import csv
 import json
 import math
 import tempfile
+import time
 import warnings
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -40,18 +41,33 @@ from scipy.sparse import bmat, block_diag, csc_matrix, diags, eye, lil_matrix
 from scipy.spatial.transform import Rotation as Rot
 
 try:
-    from proper_research.planning.offline_inverse_configuration import (
+    from proper_research.planning.offline_inverse_configuration_head_exclusion import (
         CentrelinePath,
         InverseNodeResult,
         InversePathResult,
         save_inverse_path_result,
     )
 except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
-    from offline_inverse_configuration import (  # type: ignore
+    from offline_inverse_configuration_head_exclusion import (  # type: ignore
         CentrelinePath,
         InverseNodeResult,
         InversePathResult,
         save_inverse_path_result,
+    )
+
+try:
+    from proper_research.planning.global_upgrades import (
+        NodeExclusionConstraints,
+        effective_task_tolerances,
+        tip_centring_quadratic,
+        tip_curvature_quadratic,
+    )
+except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
+    from global_upgrades import (  # type: ignore
+        NodeExclusionConstraints,
+        effective_task_tolerances,
+        tip_centring_quadratic,
+        tip_curvature_quadratic,
     )
 
 
@@ -116,7 +132,7 @@ class GlobalConfigurationOptimizerConfig:
     tangent_tolerance_rad: float
     mode: str = "refine_complete"
 
-    path_step_m: float = 5.0e-4
+    path_step_m: float = 1e-3
     minimum_path_step_m: float = 2.5e-4
     dense_validation_samples_per_interval: int = 5
     maximum_refinement_rounds: int = 4
@@ -148,21 +164,29 @@ class GlobalConfigurationOptimizerConfig:
     )
     quadratic_regularization: float = 1.0e-12
 
-    maximum_adjacent_joint_change_rad: tuple[float, ...] = (0.25,) * 6
+    maximum_adjacent_joint_change_rad: tuple[float, ...] = (0.5,) * 6
     maximum_adjacent_insertion_change_m: float = 3.0e-3
     insertion_non_decreasing: bool = False
     fix_initial_state: bool = True
     require_contact_model: bool = True
-    allow_tolerance_override: bool = False
+    allow_tolerance_override: bool = True
 
     maximum_iterations: int = 10
-    constraint_tolerance: float = 1.0e-8
-    optimality_tolerance: float = 1.0e-8
-    step_tolerance: float = 1.0e-10
+    constraint_tolerance: float = 1.0e-6
+    optimality_tolerance: float = 1.0e-6
+    step_tolerance: float = 1.0e-6
     maximum_multistart_attempts: int = 1
     multistart_joint_perturbation_rad: float = 0.03
     multistart_insertion_perturbation_m: float = 2.5e-4
     random_seed: int = 13
+
+    # A full task-Jacobian evaluation requires one contact-aware beam
+    # sensitivity solve per path node.  Bound the nonlinear solve by wall time
+    # and by the number of new full-path evaluations that fail to improve the
+    # best feasible objective.  ``None``/zero disables the corresponding stop.
+    maximum_wall_time_s: float | None = None
+    stagnation_function_evaluations: int = 0
+    stagnation_relative_improvement: float = 1.0e-6
 
     feasibility_restoration_enabled: bool = True
     feasibility_restoration_maximum_slack: float = 1.0e3
@@ -176,11 +200,54 @@ class GlobalConfigurationOptimizerConfig:
     # disable them temporarily to isolate the nonlinear optimizer itself.
     dense_validation_enabled: bool = True
     compute_node_jacobian_diagnostics: bool = True
+    coarsen_complete_seed: bool = False
     keep_feasible_complete_seed: bool = True
     preserve_feasible_seed_on_failure: bool = True
 
+    # When True the retained-seed fallback arms whenever the inverse seed
+    # satisfies the *physical* task tolerance (position_tolerance_m /
+    # tangent_tolerance_rad) and the other hard constraints -- even if the
+    # tighter spent tolerance the optimiser is driving toward would reject it.
+    # This is what makes "if the global solve does not beat the seed, return
+    # the seed" actually hold: without it, any tolerance_spend_fraction < 1
+    # (or a partial/degraded inverse prefix) disarms the safety net and a
+    # failed 2-hour solve returns its infeasible last iterate instead of the
+    # inverse path.  Set False to require the seed to meet the spent tolerance.
+    preserve_feasible_seed_against_physical_tolerance: bool = True
+
     debug: bool = True
     trust_constr_verbose: int = 0
+
+    # ---------------------------------------------------------------- safety
+    # The source-magnet / lumen keep-out that layer 1 enforces.  Leaving this
+    # at None reproduces the previous behaviour exactly: no exclusion
+    # constraint.  Set it to the same radius the inverse planner used and the
+    # smoother can no longer walk the magnet into the head.
+    source_magnet_lumen_exclusion_radius_m: float | None = None
+    source_magnet_lumen_constraint_tolerance_m: float = 1.0e-6
+    require_analytical_magnet_position_jacobian: bool = False
+    magnet_jacobian_joint_step_rad: float = 1.0e-6
+    magnet_jacobian_insertion_step_m: float = 1.0e-6
+
+    # ------------------------------------------------------------ task space
+    # Fraction of the physical task tolerance the smoother is allowed to
+    # spend.  1.0 is the previous behaviour.  Below 1.0 the constraint the
+    # optimiser sees is tighter than the tolerance it is reported against, so
+    # the remainder survives as margin for the controller instead of being
+    # consumed by joint smoothing.
+    tolerance_spend_fraction: float = 1.0
+
+    # Optional quadratic pull toward the centre of the tolerance ball,
+    # linearised at the seed.  0.0 keeps the objective exactly as it was.
+    tip_centring_weight: float = 0.0
+
+    # Optional quadratic penalty on the curvature (second difference) of the
+    # *achieved* tip position, linearised at the seed.  Unlike
+    # tip_centring_weight (which pulls each node toward its own static
+    # target) this couples adjacent nodes in tip space directly, which is
+    # what first/second_difference_weight already do for chi but nothing did
+    # for p(chi).  0.0 keeps the objective exactly as it was.
+    tip_curvature_weight: float = 0.0
 
     def validate(self) -> None:
         if self.mode not in {"refine_complete", "recover_partial"}:
@@ -209,7 +276,7 @@ class GlobalConfigurationOptimizerConfig:
         if not 0.0 < self.tangent_tolerance_rad < math.pi:
             raise ValueError("tangent_tolerance_rad must lie in (0, pi).")
         if self.minimum_path_step_m > self.path_step_m:
-            raise ValueError("minimum_path_step_m cannot exceed path_step_m.")
+            raise ValueError(f"minimum_path_step_m cannot exceed path_step_m. {self.path_step_m}")
         if self.dense_validation_samples_per_interval < 1:
             raise ValueError("dense_validation_samples_per_interval must be >= 1.")
         if self.maximum_refinement_rounds < 0:
@@ -220,6 +287,18 @@ class GlobalConfigurationOptimizerConfig:
             raise ValueError("Optimizer iteration limits must be >= 1.")
         if self.maximum_multistart_attempts < 1:
             raise ValueError("maximum_multistart_attempts must be >= 1.")
+        if self.stagnation_function_evaluations < 0:
+            raise ValueError("stagnation_function_evaluations must be >= 0.")
+        wall_time = self.maximum_wall_time_s
+        if wall_time is not None and (
+            not np.isfinite(wall_time) or float(wall_time) <= 0.0
+        ):
+            raise ValueError("maximum_wall_time_s must be positive when set.")
+        improvement = float(self.stagnation_relative_improvement)
+        if not np.isfinite(improvement) or improvement < 0.0:
+            raise ValueError(
+                "stagnation_relative_improvement must be finite and non-negative."
+            )
         if self.trust_constr_verbose not in {0, 1, 2, 3}:
             raise ValueError("trust_constr_verbose must be 0, 1, 2 or 3.")
 
@@ -264,6 +343,28 @@ class GlobalConfigurationOptimizerConfig:
         for name, value in nonnegative.items():
             if not np.isfinite(value) or float(value) < 0.0:
                 raise ValueError(f"{name} must be finite and non-negative.")
+        radius = self.source_magnet_lumen_exclusion_radius_m
+        if radius is not None and (not np.isfinite(radius) or float(radius) <= 0.0):
+            raise ValueError(
+                "source_magnet_lumen_exclusion_radius_m must be positive when set."
+            )
+        for name in (
+            "source_magnet_lumen_constraint_tolerance_m",
+            "magnet_jacobian_joint_step_rad",
+            "magnet_jacobian_insertion_step_m",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive.")
+        fraction = float(self.tolerance_spend_fraction)
+        if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
+            raise ValueError("tolerance_spend_fraction must lie in (0, 1].")
+        centring = float(self.tip_centring_weight)
+        if not np.isfinite(centring) or centring < 0.0:
+            raise ValueError("tip_centring_weight must be finite and non-negative.")
+        curvature = float(self.tip_curvature_weight)
+        if not np.isfinite(curvature) or curvature < 0.0:
+            raise ValueError("tip_curvature_weight must be finite and non-negative.")
 
 
 @dataclass
@@ -281,6 +382,9 @@ class DenseValidationSample:
     position_margin_m: float
     tangent_margin_rad: float
     feasible: bool
+    source_magnet_lumen_distance_m: float = np.nan
+    source_magnet_lumen_margin_m: float = np.nan
+    source_magnet_lumen_constraint_satisfied: bool = True
 
 
 @dataclass
@@ -855,6 +959,105 @@ def _trust_options(config: GlobalConfigurationOptimizerConfig, maxiter: int) -> 
     }
 
 
+def _exclusion_lower_bound(config: GlobalConfigurationOptimizerConfig) -> float:
+    """Dimensionless keep-out lower bound including its physical tolerance.
+
+    ``NodeExclusionConstraints.values`` returns ``distance**2 / radius**2 - 1``.
+    Layer 1 certifies distance down to ``radius - tolerance``; using a zero
+    lower bound here made that same saved seed microscopically infeasible and
+    disabled ``keep_feasible`` at every active keep-out node.
+    """
+    radius = config.source_magnet_lumen_exclusion_radius_m
+    if radius is None:
+        return 0.0
+    radius = float(radius)
+    tolerance = min(
+        float(config.source_magnet_lumen_constraint_tolerance_m),
+        0.5 * radius,
+    )
+    return float(((radius - tolerance) / radius) ** 2 - 1.0)
+
+
+def _exclusion_violation(
+    exclusion: NodeExclusionConstraints | None,
+    x: Array,
+    config: GlobalConfigurationOptimizerConfig,
+) -> float:
+    if exclusion is None:
+        return 0.0
+    lower = _exclusion_lower_bound(config)
+    values = np.asarray(exclusion.values(x), dtype=float).reshape(-1)
+    return float(max(0.0, lower - float(np.min(values))))
+
+
+class _ProgressMonitor:
+    """Retain the best feasible iterate and stop expensive stagnation."""
+
+    def __init__(self, config: GlobalConfigurationOptimizerConfig):
+        self.config = config
+        self.started = time.perf_counter()
+        self.best_feasible_x: Array | None = None
+        self.best_feasible_objective = np.inf
+        self.best_feasible_iteration = 0
+        self.best_feasible_nfev = 0
+        self.last_improvement_nfev = 0
+        self.stop_reason: str | None = None
+
+    def __call__(self, xk: Array, state: Any) -> bool:
+        iteration = int(getattr(state, "nit", 0))
+        nfev = int(getattr(state, "nfev", 0))
+        objective = float(getattr(state, "fun", np.nan))
+        violation = float(getattr(state, "constr_violation", np.inf))
+        elapsed = time.perf_counter() - self.started
+        feasible = bool(
+            np.isfinite(violation)
+            and violation <= float(self.config.constraint_tolerance)
+        )
+        threshold = float(self.config.stagnation_relative_improvement)
+        required = threshold * max(1.0, abs(self.best_feasible_objective))
+        if feasible and (
+            self.best_feasible_x is None
+            or objective < self.best_feasible_objective - required
+        ):
+            self.best_feasible_x = np.asarray(xk, dtype=float).copy()
+            self.best_feasible_objective = objective
+            self.best_feasible_iteration = iteration
+            self.best_feasible_nfev = nfev
+            self.last_improvement_nfev = nfev
+
+        if self.config.debug:
+            print(
+                "[TRUST-CONSTR] "
+                f"iteration={iteration} objective={objective:.6e} "
+                f"optimality={float(getattr(state, 'optimality', np.nan)):.3e} "
+                f"violation={violation:.3e} "
+                f"radius={float(getattr(state, 'tr_radius', np.nan)):.3e} "
+                f"nfev={nfev} elapsed_s={elapsed:.1f}",
+                flush=True,
+            )
+
+        wall_time = self.config.maximum_wall_time_s
+        if wall_time is not None and elapsed >= float(wall_time):
+            self.stop_reason = (
+                f"wall_time_limit_reached: {elapsed:.1f}s >= {float(wall_time):.1f}s"
+            )
+        stagnation = int(self.config.stagnation_function_evaluations)
+        if (
+            self.stop_reason is None
+            and stagnation > 0
+            and self.best_feasible_x is not None
+            and nfev - self.last_improvement_nfev >= stagnation
+        ):
+            self.stop_reason = (
+                "feasible_objective_stagnation: "
+                f"no relative improvement >= {threshold:.3e} in "
+                f"{stagnation} full-path evaluations"
+            )
+        if self.stop_reason is not None and self.config.debug:
+            print(f"[TRUST-CONSTR STOP] {self.stop_reason}", flush=True)
+        return self.stop_reason is not None
+
+
 def _run_restoration(
     *,
     x0: Array,
@@ -863,6 +1066,7 @@ def _run_restoration(
     bounds: Bounds,
     adjacent: LinearConstraint | None,
     config: GlobalConfigurationOptimizerConfig,
+    exclusion: NodeExclusionConstraints | None = None,
 ) -> tuple[Array, float, Any]:
     node_count = tasks.node_count
     state_size = 7 * node_count
@@ -919,6 +1123,36 @@ def _run_restoration(
             format="csc",
         )
         constraints.append(LinearConstraint(A_aug, adjacent.lb, adjacent.ub))
+    if exclusion is not None:
+        # Restoration is allowed to relax the *task* constraints through their
+        # slacks; it is never allowed to relax the keep-out.  Recovering
+        # tracking feasibility by moving the magnet into the head would be a
+        # worse outcome than failing to recover it.
+        def exclusion_values(z: Array) -> Array:
+            return exclusion.values(z[:state_size])
+
+        def exclusion_jacobian(z: Array) -> Any:
+            return bmat(
+                [[
+                    csc_matrix(exclusion.jacobian(z[:state_size])),
+                    csc_matrix((exclusion.node_count, slack_size)),
+                ]],
+                format="csc",
+            )
+
+        constraints.append(
+            NonlinearConstraint(
+                exclusion_values,
+                np.full(
+                    exclusion.node_count,
+                    _exclusion_lower_bound(config),
+                    dtype=float,
+                ),
+                np.full(exclusion.node_count, np.inf),
+                jac=exclusion_jacobian,
+            )
+        )
+    monitor = _ProgressMonitor(config)
     solved = minimize(
         value,
         z0,
@@ -927,25 +1161,13 @@ def _run_restoration(
         hess=hessian,
         bounds=Bounds(lower, upper),
         constraints=constraints,
-        callback=progress_callback if config.debug else None,
+        callback=monitor,
         options=_trust_options(config, config.feasibility_restoration_iterations),
     )
+    if monitor.stop_reason is not None:
+        solved.message = f"{solved.message}; {monitor.stop_reason}"
     sigma = np.asarray(solved.x[state_size:], dtype=float)
     return np.asarray(solved.x[:state_size], dtype=float), float(np.max(sigma)), solved
-
-def progress_callback(_xk: Array, state: Any) -> bool:
-    print(
-        "[TRUST-CONSTR] "
-        f"iteration={int(getattr(state, 'nit', 0))} "
-        f"objective={float(getattr(state, 'fun', np.nan)):.6e} "
-        f"optimality={float(getattr(state, 'optimality', np.nan)):.3e} "
-        f"violation={float(getattr(state, 'constr_violation', np.nan)):.3e} "
-        f"radius={float(getattr(state, 'tr_radius', np.nan)):.3e} "
-        f"nfev={int(getattr(state, 'nfev', 0))}",
-        flush=True,
-    )
-    return False
-
 
 def _run_hard_solve(
     *,
@@ -955,7 +1177,8 @@ def _run_hard_solve(
     bounds: Bounds,
     adjacent: LinearConstraint | None,
     config: GlobalConfigurationOptimizerConfig,
-) -> Any:
+    exclusion: NodeExclusionConstraints | None = None,
+) -> tuple[Any, _ProgressMonitor]:
     initial_task_values = tasks.values(x0)
     initial_task_feasible = bool(np.all(initial_task_values >= 0.0))
     keep_task_feasible = bool(
@@ -982,7 +1205,31 @@ def _run_hard_solve(
     ]
     if adjacent is not None:
         constraints.append(adjacent)
-    return minimize(
+    if exclusion is not None:
+        # The keep-out is a physical safety constraint, so it is never given
+        # slack and never traded against smoothness.  keep_feasible is set
+        # only when the seed already satisfies it, which is the normal case
+        # for a layer-1 path that enforced the same inequality.
+        initial_exclusion = exclusion.values(x0)
+        exclusion_lower = _exclusion_lower_bound(config)
+        constraints.append(
+            NonlinearConstraint(
+                exclusion.values,
+                np.full(exclusion.node_count, exclusion_lower, dtype=float),
+                np.full(exclusion.node_count, np.inf),
+                jac=exclusion.jacobian,
+                keep_feasible=bool(np.all(initial_exclusion >= exclusion_lower)),
+            )
+        )
+        if config.debug:
+            print(
+                "[GLOBAL SEED] "
+                f"minimum_exclusion_constraint={np.min(initial_exclusion):.6e} "
+                f"jacobian_source={exclusion.jacobian_source}",
+                flush=True,
+            )
+    monitor = _ProgressMonitor(config)
+    solved = minimize(
         objective.value,
         x0,
         method="trust-constr",
@@ -990,9 +1237,12 @@ def _run_hard_solve(
         hess=objective.hessian,
         bounds=bounds,
         constraints=constraints,
-        callback=progress_callback if config.debug else None,
+        callback=monitor,
         options=_trust_options(config, config.maximum_iterations),
     )
+    if monitor.stop_reason is not None:
+        solved.message = f"{solved.message}; {monitor.stop_reason}"
+    return solved, monitor
 
 
 def _task_violation(tasks: _TaskConstraints, x: Array) -> float:
@@ -1012,6 +1262,67 @@ def _linear_constraint_violation(
     below = np.where(np.isfinite(lower), lower - values, 0.0)
     above = np.where(np.isfinite(upper), values - upper, 0.0)
     return float(max(0.0, np.max(below), np.max(above)))
+
+
+def _bound_constraint_violation(bounds: Bounds, x: Array) -> float:
+    """Return the maximum violation of the final decision-vector bounds."""
+    values = np.asarray(x, dtype=float).reshape(-1)
+    lower = np.asarray(bounds.lb, dtype=float).reshape(-1)
+    upper = np.asarray(bounds.ub, dtype=float).reshape(-1)
+    if values.size != lower.size or values.size != upper.size:
+        raise ValueError("Decision vector and bound dimensions differ.")
+    below = np.where(np.isfinite(lower), lower - values, 0.0)
+    above = np.where(np.isfinite(upper), values - upper, 0.0)
+    return float(max(0.0, np.max(below), np.max(above)))
+
+
+def _recomputed_constraint_violation(
+    *,
+    tasks: _TaskConstraints,
+    adjacent: LinearConstraint | None,
+    bounds: Bounds,
+    x: Array,
+    config: GlobalConfigurationOptimizerConfig,
+    exclusion: NodeExclusionConstraints | None = None,
+) -> float:
+    """Re-evaluate every hard constraint on the serialized candidate.
+
+    ``trust-constr`` reports its aggregate violation at its own final iterate.
+    The fixed initial state is restored exactly after that iterate is returned,
+    so the solver-reported value can be stale.  Candidate acceptance must use
+    the state that will actually be validated and saved.
+    """
+    return float(
+        max(
+            _task_violation(tasks, x),
+            _linear_constraint_violation(adjacent, x),
+            _bound_constraint_violation(bounds, x),
+            _exclusion_violation(exclusion, x, config),
+        )
+    )
+
+
+def _outcome_selection_key(
+    outcome: _SolveOutcome,
+    acceptance_tolerance: float,
+) -> tuple[bool, float, float]:
+    """Rank feasible outcomes by objective and infeasible ones by violation."""
+    feasible = bool(outcome.constraint_violation <= acceptance_tolerance)
+    if feasible:
+        return (False, float(outcome.objective), float(outcome.constraint_violation))
+    return (True, float(outcome.constraint_violation), float(outcome.objective))
+
+
+def _select_best_outcome(
+    outcomes: Sequence[_SolveOutcome],
+    acceptance_tolerance: float,
+) -> _SolveOutcome:
+    if not outcomes:
+        raise ValueError("At least one solve outcome is required.")
+    return min(
+        outcomes,
+        key=lambda item: _outcome_selection_key(item, acceptance_tolerance),
+    )
 
 
 def _print_seed_physical_audit(
@@ -1059,6 +1370,7 @@ def _solve_global_problem(
     state_min: Array,
     state_max: Array,
     config: GlobalConfigurationOptimizerConfig,
+    path: CentrelinePath | None = None,
 ) -> tuple[_SolveOutcome, _QuadraticPathObjective, _TaskConstraints]:
     node_count = seed.s.size
     objective = _QuadraticPathObjective(
@@ -1084,13 +1396,93 @@ def _solve_global_problem(
         node_count,
         node_baselines=node_baselines,
     )
+    # The optimiser is constrained against the tolerance it is *allowed to
+    # spend*; reporting elsewhere still uses the physical tolerance, so the
+    # difference becomes margin rather than budget.
+    spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
+        position_tolerance_m=config.position_tolerance_m,
+        tangent_tolerance_rad=config.tangent_tolerance_rad,
+        spend_fraction=config.tolerance_spend_fraction,
+    )
+    if config.debug and config.tolerance_spend_fraction < 1.0:
+        print(
+            "[GLOBAL TOLERANCE] "
+            f"spend_fraction={config.tolerance_spend_fraction:.3f} "
+            f"position={1.0e3 * spend_position_tolerance:.6f} mm of "
+            f"{1.0e3 * config.position_tolerance_m:.6f} mm",
+            flush=True,
+        )
     tasks = _TaskConstraints(
         evaluator=evaluator,
         desired_position=seed.desired_position,
         desired_tangent=seed.desired_tangent,
-        position_tolerance_m=config.position_tolerance_m,
-        tangent_tolerance_rad=config.tangent_tolerance_rad,
+        position_tolerance_m=spend_position_tolerance,
+        tangent_tolerance_rad=spend_tangent_tolerance,
     )
+    exclusion: NodeExclusionConstraints | None = None
+    if config.source_magnet_lumen_exclusion_radius_m is not None:
+        if path is None:
+            raise ValueError(
+                "A source-magnet/lumen keep-out radius is configured but no "
+                "CentrelinePath was supplied to the global solve. Pass "
+                "path=CentrelinePath(lumen_C)."
+            )
+        exclusion = NodeExclusionConstraints(
+            adapter=adapter,
+            path=path,
+            state_min=state_min,
+            state_max=state_max,
+            node_count=node_count,
+            radius_m=float(config.source_magnet_lumen_exclusion_radius_m),
+            constraint_tolerance_m=float(
+                config.source_magnet_lumen_constraint_tolerance_m
+            ),
+            require_analytical_jacobian=bool(
+                config.require_analytical_magnet_position_jacobian
+            ),
+            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
+    if config.tip_centring_weight > 0.0:
+        # One extra block-diagonal quadratic in the same QP.  Linearised at
+        # the seed, which is also where this round's beam baselines are
+        # frozen, so the cost and the constraints see the same model.
+        H_tip, f_tip, constant_tip = tip_centring_quadratic(
+            evaluator=evaluator,
+            seed_states=seed.states,
+            desired_position=seed.desired_position,
+            position_tolerance_m=config.position_tolerance_m,
+            weight=float(config.tip_centring_weight),
+        )
+        objective.H = csc_matrix(objective.H + H_tip)
+        objective.f = np.asarray(objective.f, dtype=float) + f_tip
+        objective.constant = float(objective.constant) + constant_tip
+        if config.debug:
+            print(
+                "[GLOBAL TIP COST] "
+                f"weight={config.tip_centring_weight:.6g} linearised at seed",
+                flush=True,
+            )
+    if config.tip_curvature_weight > 0.0:
+        # Couples adjacent nodes' *achieved* tip positions, linearised at the
+        # same seed and beam baselines as everything else this round.  This is
+        # the term that makes the tip path itself smooth; tip_centring_weight
+        # above only pulls each node toward its own static target.
+        H_curve, f_curve, constant_curve = tip_curvature_quadratic(
+            evaluator=evaluator,
+            seed_states=seed.states,
+            s=seed.s,
+            weight=float(config.tip_curvature_weight),
+        )
+        objective.H = csc_matrix(objective.H + H_curve)
+        objective.f = np.asarray(objective.f, dtype=float) + f_curve
+        objective.constant = float(objective.constant) + constant_curve
+        if config.debug:
+            print(
+                "[GLOBAL TIP CURVATURE] "
+                f"weight={config.tip_curvature_weight:.6g} linearised at seed",
+                flush=True,
+            )
     bounds = _decision_bounds(
         node_count=node_count,
         state_min=state_min,
@@ -1103,7 +1495,42 @@ def _solve_global_problem(
 
     base_task_violation = _task_violation(tasks, base_x)
     base_adjacent_violation = _linear_constraint_violation(adjacent, base_x)
-    base_violation = max(base_task_violation, base_adjacent_violation)
+    base_bound_violation = _bound_constraint_violation(bounds, base_x)
+    # The keep-out belongs in this total too.  Without it, a seed that is
+    # tracking-feasible but sits inside the exclusion region reads as
+    # violation-free, and preserve_feasible_seed_on_failure would then retain
+    # an unsafe path in preference to the optimiser's safe one.
+    base_exclusion_violation = _exclusion_violation(exclusion, base_x, config)
+    base_violation = max(
+        base_task_violation,
+        base_adjacent_violation,
+        base_bound_violation,
+        base_exclusion_violation,
+    )
+
+    # Violation of the seed against the *physical* task tolerance (never the
+    # spent one).  Used only to decide whether the retained-seed fallback is
+    # armed; the spent tolerance still governs what the optimiser drives to.
+    if (
+        config.preserve_feasible_seed_against_physical_tolerance
+        and config.tolerance_spend_fraction < 1.0
+    ):
+        physical_tasks = _TaskConstraints(
+            evaluator=evaluator,
+            desired_position=seed.desired_position,
+            desired_tangent=seed.desired_tangent,
+            position_tolerance_m=config.position_tolerance_m,
+            tangent_tolerance_rad=config.tangent_tolerance_rad,
+        )
+        base_task_violation_physical = _task_violation(physical_tasks, base_x)
+    else:
+        base_task_violation_physical = base_task_violation
+    base_violation_for_fallback = max(
+        base_task_violation_physical,
+        base_adjacent_violation,
+        base_bound_violation,
+        base_exclusion_violation,
+    )
     if config.debug:
         _print_seed_physical_audit(
             tasks=tasks,
@@ -1114,7 +1541,9 @@ def _solve_global_problem(
         print(
             "[GLOBAL SEED AUDIT] "
             f"task_violation={base_task_violation:.6e} "
-            f"adjacent_violation={base_adjacent_violation:.6e}",
+            f"adjacent_violation={base_adjacent_violation:.6e} "
+            f"bound_violation={base_bound_violation:.6e} "
+            f"exclusion_violation={base_exclusion_violation:.6e}",
             flush=True,
         )
 
@@ -1122,17 +1551,24 @@ def _solve_global_problem(
     outcomes: list[_SolveOutcome] = []
     if (
         config.preserve_feasible_seed_on_failure
-        and base_violation <= config.constraint_tolerance
+        and base_violation_for_fallback <= config.constraint_tolerance
     ):
+        retained_note = (
+            "feasible inverse seed retained as optimizer fallback"
+            if base_violation <= config.constraint_tolerance
+            else "inverse seed retained as optimizer fallback "
+            "(meets physical tolerance; spent tolerance not required for the "
+            "fallback)"
+        )
         outcomes.append(
             _SolveOutcome(
                 x=base_x.copy(),
                 success=False,
                 status=-1,
-                message="feasible inverse seed retained as optimizer fallback",
+                message=retained_note,
                 iterations=0,
                 objective=float(objective.value(base_x)),
-                constraint_violation=float(base_violation),
+                constraint_violation=float(base_violation_for_fallback),
                 restoration_slack_maximum=0.0,
             )
         )
@@ -1179,6 +1615,7 @@ def _solve_global_problem(
                 bounds=bounds,
                 adjacent=adjacent,
                 config=config,
+                exclusion=exclusion,
             )
 
         if config.debug:
@@ -1186,13 +1623,14 @@ def _solve_global_problem(
                 f"[GLOBAL PATH] phase=hard_constrained attempt={attempt + 1} "
                 f"restoration_slack_max={restoration_slack:.6e}"
             )
-        solved = _run_hard_solve(
+        solved, monitor = _run_hard_solve(
             x0=x0,
             objective=objective,
             tasks=tasks,
             bounds=bounds,
             adjacent=adjacent,
             config=config,
+            exclusion=exclusion,
         )
         x = np.asarray(solved.x, dtype=float)
         if config.fix_initial_state:
@@ -1200,7 +1638,17 @@ def _solve_global_problem(
             # feasibility tolerance.  Restore the explicitly fixed state
             # exactly before physical validation and serialization.
             x[:7] = seed.initial_state
-        violation = _task_violation(tasks, x)
+        # Do not use ``solved.constr_violation`` here.  It describes SciPy's
+        # pre-correction iterate and can remain nonzero after the fixed first
+        # state has been restored exactly above.
+        violation = _recomputed_constraint_violation(
+            tasks=tasks,
+            adjacent=adjacent,
+            bounds=bounds,
+            x=x,
+            config=config,
+            exclusion=exclusion,
+        )
         message = str(solved.message)
         if restoration_result is not None and not bool(restoration_result.success):
             message = (
@@ -1215,23 +1663,69 @@ def _solve_global_problem(
                 message=message,
                 iterations=int(getattr(solved, "nit", 0)),
                 objective=float(objective.value(x)),
-                constraint_violation=max(
-                    violation, float(getattr(solved, "constr_violation", 0.0))
-                ),
+                constraint_violation=float(violation),
                 restoration_slack_maximum=float(restoration_slack),
             )
         )
-        if outcomes[-1].success and violation <= config.constraint_tolerance:
+        if monitor.best_feasible_x is not None:
+            monitored_x = np.asarray(monitor.best_feasible_x, dtype=float).copy()
+            if config.fix_initial_state:
+                monitored_x[:7] = seed.initial_state
+            if not np.allclose(monitored_x, x, atol=0.0, rtol=0.0):
+                monitored_violation = _recomputed_constraint_violation(
+                    tasks=tasks,
+                    adjacent=adjacent,
+                    bounds=bounds,
+                    x=monitored_x,
+                    config=config,
+                    exclusion=exclusion,
+                )
+                outcomes.append(
+                    _SolveOutcome(
+                        x=monitored_x,
+                        success=False,
+                        status=3,
+                        message=(
+                            "best feasible iterate retained by progress monitor"
+                            + (
+                                f"; {monitor.stop_reason}"
+                                if monitor.stop_reason is not None
+                                else ""
+                            )
+                        ),
+                        iterations=int(monitor.best_feasible_iteration),
+                        objective=float(objective.value(monitored_x)),
+                        constraint_violation=float(monitored_violation),
+                        restoration_slack_maximum=float(restoration_slack),
+                    )
+                )
+        if bool(solved.success) and violation <= config.constraint_tolerance:
             break
 
-    best = min(
+    acceptance_tolerance = float(config.constraint_tolerance)
+    best = _select_best_outcome(
         outcomes,
-        key=lambda item: (
-            item.constraint_violation > config.constraint_tolerance,
-            item.constraint_violation,
-            item.objective,
-        ),
+        acceptance_tolerance,
     )
+    if config.debug:
+        for index, outcome in enumerate(outcomes):
+            print(
+                "[GLOBAL CANDIDATE] "
+                f"index={index} "
+                f"feasible={outcome.constraint_violation <= acceptance_tolerance} "
+                f"objective={outcome.objective:.6e} "
+                f"violation={outcome.constraint_violation:.6e} "
+                f"solver_success={outcome.success}",
+                flush=True,
+            )
+        print(
+            "[GLOBAL SELECTION] "
+            "rule=feasible_then_objective_else_violation "
+            f"acceptance_tolerance={acceptance_tolerance:.6e} "
+            f"selected_objective={best.objective:.6e} "
+            f"selected_violation={best.constraint_violation:.6e}",
+            flush=True,
+        )
     return best, objective, tasks
 
 
@@ -1329,6 +1823,46 @@ def _validate_inverse_result(
     return state_min, state_max, initial_state
 
 
+def _coarsened_complete_coordinates(
+    *,
+    inverse_result: InversePathResult,
+    config: GlobalConfigurationOptimizerConfig,
+) -> Array:
+    """Return a smaller exact subset of a complete inverse grid.
+
+    The previous implementation retained all 113 inverse nodes even when
+    ``path_step_m`` requested a 0.5 mm optimization grid.  Every nonlinear
+    iteration therefore evaluated 113 contact-aware beam Jacobians.  This
+    routine keeps exact saved states at a roughly uniform spacing, always keeps
+    both endpoints, and also retains nodes on the source-magnet keep-out
+    boundary.  Dense validation/refinement fills back any interval that needs
+    more resolution.
+    """
+    inverse_s = np.asarray([node.s_m for node in inverse_result.nodes], dtype=float)
+    if not config.coarsen_complete_seed or inverse_s.size <= 2:
+        return inverse_s.copy()
+
+    selected = {0, inverse_s.size - 1}
+    last = 0
+    target = float(config.path_step_m)
+    for index in range(1, inverse_s.size - 1):
+        if inverse_s[index] - inverse_s[last] >= target * (1.0 - 1.0e-9):
+            selected.add(index)
+            last = index
+
+    if config.source_magnet_lumen_exclusion_radius_m is not None:
+        active_threshold = max(
+            2.0 * float(config.source_magnet_lumen_constraint_tolerance_m),
+            1.0e-9,
+        )
+        for index, node in enumerate(inverse_result.nodes):
+            margin = float(node.source_magnet_lumen_margin_m)
+            if np.isfinite(margin) and margin <= active_threshold:
+                selected.add(index)
+
+    return inverse_s[np.asarray(sorted(selected), dtype=int)]
+
+
 def _make_seed_path(
     *,
     inverse_result: InversePathResult,
@@ -1349,10 +1883,13 @@ def _make_seed_path(
 
     start_s = float(inverse_s[0])
     if config.mode == "refine_complete":
-        # Preserve the complete inverse path exactly.  Adding a second uniform
-        # grid can almost double the node count when its floating-point
-        # coordinates differ slightly from the serialized inverse coordinates.
-        coordinates = inverse_s[feasible_mask].copy()
+        complete_coordinates = _coarsened_complete_coordinates(
+            inverse_result=inverse_result,
+            config=config,
+        )
+        coordinates = complete_coordinates[
+            np.isin(complete_coordinates, inverse_s[feasible_mask])
+        ]
     else:
         uniform = _uniform_path_coordinates(
             start_s,
@@ -1788,11 +2325,34 @@ def _dense_validate(
 ) -> list[DenseValidationSample]:
     samples: list[DenseValidationSample] = []
     sample_count = int(config.dense_validation_samples_per_interval)
+    spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
+        position_tolerance_m=config.position_tolerance_m,
+        tangent_tolerance_rad=config.tangent_tolerance_rad,
+        spend_fraction=config.tolerance_spend_fraction,
+    )
     interval_evaluator = _BatchBeamEvaluator(
         adapter,
         s_nodes.size - 1,
         node_baselines=interval_baselines,
     )
+    dense_exclusion: NodeExclusionConstraints | None = None
+    if config.source_magnet_lumen_exclusion_radius_m is not None:
+        dense_exclusion = NodeExclusionConstraints(
+            adapter=adapter,
+            path=path,
+            state_min=state_min,
+            state_max=state_max,
+            node_count=1,
+            radius_m=float(config.source_magnet_lumen_exclusion_radius_m),
+            constraint_tolerance_m=float(
+                config.source_magnet_lumen_constraint_tolerance_m
+            ),
+            require_analytical_jacobian=bool(
+                config.require_analytical_magnet_position_jacobian
+            ),
+            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
     for interval in range(s_nodes.size - 1):
         for sample_index in range(1, sample_count + 1):
             fraction = sample_index / (sample_count + 1.0)
@@ -1809,11 +2369,26 @@ def _dense_validate(
             position_error, tangent_error, achieved_position, achieved_tangent = (
                 _physical_errors(output, desired_position, desired_tangent)
             )
+            exclusion_distance = np.nan
+            exclusion_margin = np.nan
+            exclusion_satisfied = True
+            if dense_exclusion is not None:
+                exclusion_metrics = dense_exclusion.metrics(state.reshape(-1))
+                exclusion_distance = float(
+                    np.asarray(exclusion_metrics["distance_m"], dtype=float).reshape(-1)[0]
+                )
+                exclusion_margin = exclusion_distance - float(
+                    config.source_magnet_lumen_exclusion_radius_m
+                )
+                exclusion_satisfied = bool(
+                    np.asarray(exclusion_metrics["satisfied"], dtype=bool).reshape(-1)[0]
+                )
             feasible = bool(
-                position_error <= config.position_tolerance_m
-                and tangent_error <= config.tangent_tolerance_rad
+                position_error <= spend_position_tolerance
+                and tangent_error <= spend_tangent_tolerance
                 and np.all(state >= state_min - 1.0e-10)
                 and np.all(state <= state_max + 1.0e-10)
+                and exclusion_satisfied
             )
             samples.append(
                 DenseValidationSample(
@@ -1827,9 +2402,12 @@ def _dense_validate(
                     achieved_tangent=achieved_tangent,
                     position_error_m=position_error,
                     tangent_error_rad=tangent_error,
-                    position_margin_m=config.position_tolerance_m - position_error,
-                    tangent_margin_rad=config.tangent_tolerance_rad - tangent_error,
+                    position_margin_m=spend_position_tolerance - position_error,
+                    tangent_margin_rad=spend_tangent_tolerance - tangent_error,
                     feasible=feasible,
+                    source_magnet_lumen_distance_m=exclusion_distance,
+                    source_magnet_lumen_margin_m=exclusion_margin,
+                    source_magnet_lumen_constraint_satisfied=exclusion_satisfied,
                 )
             )
     return samples
@@ -1842,11 +2420,23 @@ def _worst_dense_sample(
     failures = [sample for sample in samples if not sample.feasible]
     if not failures:
         return None
+    spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
+        position_tolerance_m=config.position_tolerance_m,
+        tangent_tolerance_rad=config.tangent_tolerance_rad,
+        spend_fraction=config.tolerance_spend_fraction,
+    )
     return max(
         failures,
         key=lambda sample: max(
-            sample.position_error_m / config.position_tolerance_m,
-            sample.tangent_error_rad / config.tangent_tolerance_rad,
+            sample.position_error_m / spend_position_tolerance,
+            sample.tangent_error_rad / spend_tangent_tolerance,
+            (
+                1.0
+                + max(0.0, -sample.source_magnet_lumen_margin_m)
+                / float(config.source_magnet_lumen_constraint_tolerance_m)
+                if not sample.source_magnet_lumen_constraint_satisfied
+                else 0.0
+            ),
         ),
     )
 
@@ -1949,7 +2539,11 @@ def optimize_from_inverse_result(
             f"requested_path_step={config.path_step_m:.6e} m\n"
             + (
                 "  Complete refinement uses the saved inverse coordinates "
-                "exactly."
+                + (
+                    "on an adaptive coarse grid; keep-out boundary nodes are retained."
+                    if config.coarsen_complete_seed
+                    else "exactly."
+                )
                 if config.mode == "refine_complete"
                 else "  Recovery retains feasible inverse coordinates and "
                 "adds missing uniform coordinates."
@@ -1965,6 +2559,7 @@ def optimize_from_inverse_result(
             flush=True,
         )
 
+    optimization_started = time.perf_counter()
     final_outcome: _SolveOutcome | None = None
     final_objective: _QuadraticPathObjective | None = None
     final_states: Array | None = None
@@ -1973,12 +2568,25 @@ def optimize_from_inverse_result(
     refinement_round = 0
     termination_reason = "maximum_refinement_rounds_reached"
     for refinement_round in range(config.maximum_refinement_rounds + 1):
+        round_config = config
+        if config.maximum_wall_time_s is not None:
+            remaining_wall_time = float(config.maximum_wall_time_s) - (
+                time.perf_counter() - optimization_started
+            )
+            if remaining_wall_time <= 0.0 and final_outcome is not None:
+                termination_reason = "maximum_wall_time_reached"
+                break
+            round_config = replace(
+                config,
+                maximum_wall_time_s=max(1.0, remaining_wall_time),
+            )
         outcome, objective, _tasks = _solve_global_problem(
             adapter=adapter,
             seed=seed,
             state_min=state_min,
             state_max=state_max,
-            config=config,
+            config=round_config,
+            path=path,
         )
         states = outcome.x.reshape(seed.s.size, 7)
         result_baselines, _result_replay_outputs = _replay_node_baselines(
@@ -2045,6 +2653,13 @@ def optimize_from_inverse_result(
         if worst is None:
             termination_reason = "node_constraints_not_satisfied"
             break
+        if (
+            config.maximum_wall_time_s is not None
+            and time.perf_counter() - optimization_started
+            >= float(config.maximum_wall_time_s)
+        ):
+            termination_reason = "maximum_wall_time_reached_after_validation"
+            break
         if refinement_round >= config.maximum_refinement_rounds:
             termination_reason = "maximum_refinement_rounds_reached"
             break
@@ -2066,7 +2681,13 @@ def optimize_from_inverse_result(
         config.dense_validation_enabled
         and all(sample.feasible for sample in dense_samples)
     )
-    globally_feasible = bool(nodes_feasible and dense_feasible)
+    selection_acceptance_tolerance = float(config.constraint_tolerance)
+    selected_candidate_feasible = bool(
+        final_outcome.constraint_violation <= selection_acceptance_tolerance
+    )
+    globally_feasible = bool(
+        selected_candidate_feasible and nodes_feasible and dense_feasible
+    )
     first, second = final_objective.derivatives(final_states)
     maximum_first = (
         np.max(np.abs(first), axis=0) if first.size else np.zeros(7, dtype=float)
@@ -2086,8 +2707,77 @@ def optimize_from_inverse_result(
             + [sample.tangent_error_rad for sample in dense_samples]
         )
     )
+    exclusion_summary: dict[str, Any] = {
+        "enabled": config.source_magnet_lumen_exclusion_radius_m is not None,
+        "radius_m": config.source_magnet_lumen_exclusion_radius_m,
+    }
+    if config.source_magnet_lumen_exclusion_radius_m is not None:
+        _final_exclusion = NodeExclusionConstraints(
+            adapter=adapter,
+            path=path,
+            state_min=state_min,
+            state_max=state_max,
+            node_count=len(final_nodes),
+            radius_m=float(config.source_magnet_lumen_exclusion_radius_m),
+            constraint_tolerance_m=float(
+                config.source_magnet_lumen_constraint_tolerance_m
+            ),
+            require_analytical_jacobian=bool(
+                config.require_analytical_magnet_position_jacobian
+            ),
+            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
+        _metrics = _final_exclusion.metrics(final_states.reshape(-1))
+        exclusion_summary.update(
+            {
+                "minimum_distance_m": float(np.min(_metrics["distance_m"])),
+                "minimum_margin_m": float(_metrics["minimum_margin_m"]),
+                "all_nodes_satisfied": bool(_metrics["all_satisfied"]),
+                "violating_node_count": int(
+                    np.sum(~np.asarray(_metrics["satisfied"], dtype=bool))
+                ),
+                "jacobian_source": str(_metrics["jacobian_source"]),
+                "dense_minimum_margin_m": (
+                    float(
+                        np.nanmin(
+                            [
+                                sample.source_magnet_lumen_margin_m
+                                for sample in dense_samples
+                            ]
+                        )
+                    )
+                    if dense_samples
+                    else np.nan
+                ),
+                "all_dense_samples_satisfied": bool(
+                    all(
+                        sample.source_magnet_lumen_constraint_satisfied
+                        for sample in dense_samples
+                    )
+                ),
+            }
+        )
+        if config.debug:
+            print(
+                "[GLOBAL EXCLUSION] "
+                f"minimum_margin={1.0e3 * exclusion_summary['minimum_margin_m']:.6f} mm "
+                f"satisfied={exclusion_summary['all_nodes_satisfied']}",
+                flush=True,
+            )
+
+    normalized_state_change = (
+        final_states - seed.states
+    ) / np.asarray(config.configuration_scale, dtype=float)[None, :]
+    maximum_normalized_state_change = float(
+        np.max(np.linalg.norm(normalized_state_change, axis=1))
+    )
+    selected_seed_fallback = bool(
+        "inverse seed retained" in final_outcome.message
+    )
     summary = {
         "globally_feasible": globally_feasible,
+        "source_magnet_lumen_exclusion": exclusion_summary,
         "dense_validation_feasible": dense_feasible,
         "optimizer_success": final_outcome.success,
         "termination_reason": termination_reason,
@@ -2095,7 +2785,14 @@ def optimize_from_inverse_result(
         "optimizer_status": final_outcome.status,
         "optimizer_iterations": final_outcome.iterations,
         "objective_value": final_outcome.objective,
+        "selected_seed_fallback": selected_seed_fallback,
+        "maximum_normalized_state_change_from_seed": (
+            maximum_normalized_state_change
+        ),
         "normalized_constraint_violation": final_outcome.constraint_violation,
+        "selected_candidate_feasible": selected_candidate_feasible,
+        "candidate_selection_rule": "feasible_then_objective_else_violation",
+        "candidate_acceptance_tolerance": selection_acceptance_tolerance,
         "restoration_slack_maximum": final_outcome.restoration_slack_maximum,
         "number_nodes": len(nodes),
         "number_dense_samples": len(dense_samples),
@@ -2156,6 +2853,24 @@ def _inverse_node_from_json(data: dict[str, Any]) -> InverseNodeResult:
         minimum_state_margin=_float_or_nan(data.get("minimum_state_margin")),
         minimum_clearance_m=_float_or_nan(data.get("minimum_clearance_m")),
         contact_active=bool(data.get("contact_active", False)),
+        # Head-exclusion diagnostics were added after the original saved-path
+        # schema.  ``get`` keeps older inverse results loadable; NaN/-1 means
+        # the historical file contains no exclusion-distance diagnostic.
+        source_magnet_lumen_distance_m=_float_or_nan(
+            data.get("source_magnet_lumen_distance_m")
+        ),
+        source_magnet_lumen_exclusion_radius_m=_float_or_nan(
+            data.get("source_magnet_lumen_exclusion_radius_m")
+        ),
+        source_magnet_lumen_margin_m=_float_or_nan(
+            data.get("source_magnet_lumen_margin_m")
+        ),
+        source_magnet_lumen_segment_index=int(
+            data.get("source_magnet_lumen_segment_index", -1)
+        ),
+        source_magnet_lumen_constraint_satisfied=bool(
+            data.get("source_magnet_lumen_constraint_satisfied", True)
+        ),
         delta_q_norm_rad=_float_or_nan(data.get("delta_q_norm_rad")),
         delta_insertion_m=_float_or_nan(data.get("delta_insertion_m")),
         attempt_count=int(data.get("attempt_count", 0)),
@@ -2288,6 +3003,13 @@ def _dense_csv_record(sample: DenseValidationSample) -> dict[str, Any]:
         "tangent_error_deg": np.degrees(sample.tangent_error_rad),
         "position_margin_m": sample.position_margin_m,
         "tangent_margin_rad": sample.tangent_margin_rad,
+        "source_magnet_lumen_distance_m": (
+            sample.source_magnet_lumen_distance_m
+        ),
+        "source_magnet_lumen_margin_m": sample.source_magnet_lumen_margin_m,
+        "source_magnet_lumen_constraint_satisfied": int(
+            sample.source_magnet_lumen_constraint_satisfied
+        ),
         "feasible": int(sample.feasible),
     }
     for index, value in enumerate(sample.state, start=1):
@@ -2452,14 +3174,24 @@ def _save_plot(result: GlobalConfigurationPathResult, plot_path: Path) -> None:
 
     axis_dense = figure.add_subplot(grid[4, 1])
     if result.dense_samples:
+        spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
+            position_tolerance_m=result.configuration["position_tolerance_m"],
+            tangent_tolerance_rad=result.configuration["tangent_tolerance_rad"],
+            spend_fraction=result.configuration["tolerance_spend_fraction"],
+        )
         dense_s = np.array([sample.s_m for sample in result.dense_samples])
         dense_score = np.array(
             [
                 max(
                     sample.position_error_m
-                    / result.configuration["position_tolerance_m"],
+                    / spend_position_tolerance,
                     sample.tangent_error_rad
-                    / result.configuration["tangent_tolerance_rad"],
+                    / spend_tangent_tolerance,
+                    (
+                        1.0
+                        if not sample.source_magnet_lumen_constraint_satisfied
+                        else 0.0
+                    ),
                 )
                 for sample in result.dense_samples
             ]
@@ -2540,6 +3272,11 @@ def _make_mock_inverse_result(partial: bool) -> tuple[InversePathResult, Array, 
                 minimum_state_margin=0.1,
                 minimum_clearance_m=np.nan,
                 contact_active=False,
+                source_magnet_lumen_distance_m=np.nan,
+                source_magnet_lumen_exclusion_radius_m=np.nan,
+                source_magnet_lumen_margin_m=np.nan,
+                source_magnet_lumen_segment_index=-1,
+                source_magnet_lumen_constraint_satisfied=True,
                 delta_q_norm_rad=0.0 if index == 0 else 0.005,
                 delta_insertion_m=0.0,
                 attempt_count=1,
@@ -2612,6 +3349,54 @@ def run_self_test() -> None:
         debug=False,
     )
 
+    # Feasibility is a category, not a continuously ranked objective.  Once
+    # two candidates are within the acceptance tolerance, the lower path
+    # objective must win even if the seed has an exactly zero residual.
+    fallback = _SolveOutcome(
+        x=np.zeros(1),
+        success=False,
+        status=-1,
+        message="test fallback",
+        iterations=0,
+        objective=100.0,
+        constraint_violation=0.0,
+        restoration_slack_maximum=0.0,
+    )
+    feasible_improvement = _SolveOutcome(
+        x=np.ones(1),
+        success=False,
+        status=0,
+        message="test feasible improvement",
+        iterations=1,
+        objective=40.0,
+        constraint_violation=0.5 * config.constraint_tolerance,
+        restoration_slack_maximum=0.0,
+    )
+    selected = _select_best_outcome(
+        [fallback, feasible_improvement],
+        config.constraint_tolerance,
+    )
+    if selected is not feasible_improvement:
+        raise AssertionError(
+            "Feasible candidate selection did not prioritize the lower objective."
+        )
+    infeasible_low_objective = _SolveOutcome(
+        x=np.full(1, 2.0),
+        success=False,
+        status=0,
+        message="test infeasible low objective",
+        iterations=1,
+        objective=1.0,
+        constraint_violation=10.0 * config.constraint_tolerance,
+        restoration_slack_maximum=0.0,
+    )
+    selected = _select_best_outcome(
+        [fallback, infeasible_low_objective],
+        config.constraint_tolerance,
+    )
+    if selected is not fallback:
+        raise AssertionError("An infeasible low-objective candidate was selected.")
+
     # Exact sparse objective derivative check.
     s = np.array([0.0, 0.005, 0.01])
     seed_states = np.zeros((3, 7))
@@ -2650,6 +3435,80 @@ def run_self_test() -> None:
     )
     if jacobian_error > 5.0e-5:
         raise AssertionError(f"Constraint Jacobian error too large: {jacobian_error}")
+
+    # tip_curvature_quadratic: exact quadratic against the real evaluator, and
+    # its gradient against a brute-force finite-difference of the same
+    # second-difference-of-achieved-tip-position quantity it is meant to model.
+    curvature_evaluator = _BatchBeamEvaluator(
+        controller_pack["plant_diagnostic_joint_adapter"], 3
+    )
+    curvature_weight = 3.7
+    H_curve, f_curve, constant_curve = tip_curvature_quadratic(
+        evaluator=curvature_evaluator,
+        seed_states=seed_states,
+        s=s,
+        weight=curvature_weight,
+    )
+
+    def _brute_force_tip_curvature(flat_state: Array) -> float:
+        states = np.asarray(flat_state, dtype=float).reshape(3, 7)
+        left, right = s[1] - s[0], s[2] - s[1]
+        common = 2.0 / (left + right)
+        p = np.array(
+            [curvature_evaluator.output(i, states[i])[:3] for i in range(3)]
+        )
+        d2 = common * (p[0] / left - p[1] * (1.0 / left + 1.0 / right) + p[2] / right)
+        return float(0.5 * curvature_weight * (d2 @ d2))
+
+    seed_flat = seed_states.reshape(-1)
+    quad_value = float(
+        0.5 * seed_flat @ (H_curve @ seed_flat) + f_curve @ seed_flat + constant_curve
+    )
+    brute_value = _brute_force_tip_curvature(seed_flat)
+    # Linearised at seed_states, so this must be EXACT at the seed itself,
+    # regardless of how nonlinear the underlying adapter is away from it.
+    if abs(quad_value - brute_value) > 1.0e-9 * max(1.0, abs(brute_value)):
+        raise AssertionError(
+            f"tip_curvature_quadratic value diverged from brute force at the "
+            f"seed: quad={quad_value:.6e} brute={brute_value:.6e}"
+        )
+    # The gradient check needs the *true* (nonlinear-adapter) curvature at the
+    # linearisation point to be non-degenerate, or a near-zero true gradient
+    # makes the relative-error metric meaningless. seed_states is q1-linear-
+    # in-s and everything else zero, which can be exactly straight in the
+    # mock adapter; perturb off it non-uniformly per node/coordinate first.
+    curvature_probe = seed_states + np.array(
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [2.0e-3, -1.5e-3, 1.0e-3, -5.0e-4, 3.0e-4, -2.0e-4, 1.0e-4],
+            [-1.0e-3, 2.5e-3, -5.0e-4, 1.0e-3, -3.0e-4, 4.0e-4, -2.0e-4],
+        ]
+    )
+    H_probe, f_probe, _ = tip_curvature_quadratic(
+        evaluator=curvature_evaluator,
+        seed_states=curvature_probe,
+        s=s,
+        weight=curvature_weight,
+    )
+    probe_flat = curvature_probe.reshape(-1)
+    numerical_curvature_gradient = _finite_difference_gradient(
+        _brute_force_tip_curvature, probe_flat
+    )
+    # grad(0.5 x'Hx + f'x) = Hx + f, evaluated at the point it was linearised
+    # around (that is where the offset terms inside H/f were taken).
+    analytical_curvature_gradient = np.asarray(
+        H_probe @ probe_flat + f_probe, dtype=float
+    )
+    curvature_gradient_error = np.linalg.norm(
+        analytical_curvature_gradient - numerical_curvature_gradient
+    ) / max(np.linalg.norm(numerical_curvature_gradient), 1.0e-12)
+    if curvature_gradient_error > 5.0e-5:
+        raise AssertionError(
+            f"tip_curvature_quadratic gradient error too large: "
+            f"{curvature_gradient_error}"
+        )
+    if not np.allclose(H_curve.toarray(), H_curve.toarray().T):
+        raise AssertionError("tip_curvature_quadratic Hessian is not symmetric.")
 
     with tempfile.TemporaryDirectory(prefix="global_path_self_test_") as directory:
         inverse_directory = Path(directory) / "inverse"
@@ -2717,6 +3576,51 @@ def run_self_test() -> None:
     if not complete_result.globally_feasible:
         raise AssertionError("Complete-path refinement mode failed its known solution.")
 
+    # tip_curvature_weight end-to-end: the same known-feasible problem must
+    # still solve through trust-constr with the new term's sparse Hessian and
+    # gradient wired in, not just in isolation above.
+    curvature_config = replace(complete_config, tip_curvature_weight=1.0e-3)
+    curvature_result = optimize_from_inverse_result(
+        inverse_result=complete_inverse,
+        controller_pack=controller_pack,
+        lumen_C=centreline,
+        config=curvature_config,
+        output_dir=None,
+    )
+    if not curvature_result.globally_feasible:
+        raise AssertionError(
+            "Complete-path refinement with tip_curvature_weight > 0 failed."
+        )
+
+    # Retained-seed fallback under a spent tolerance: the known-feasible seed
+    # must never be dropped in favour of an infeasible optimiser iterate just
+    # because tolerance_spend_fraction < 1 tightened the constraint the solver
+    # drives to.  With a very small iteration budget the solver cannot beat the
+    # seed, so the result must either be globally feasible or an explicit seed
+    # fallback -- never a silent infeasible failure.
+    spent_config = replace(
+        complete_config,
+        tolerance_spend_fraction=0.5,
+        maximum_iterations=1,
+        preserve_feasible_seed_on_failure=True,
+    )
+    spent_result = optimize_from_inverse_result(
+        inverse_result=complete_inverse,
+        controller_pack=controller_pack,
+        lumen_C=centreline,
+        config=spent_config,
+        output_dir=None,
+    )
+    if not (
+        spent_result.globally_feasible
+        or spent_result.summary.get("selected_seed_fallback")
+    ):
+        raise AssertionError(
+            "A spent-tolerance solve that could not beat the seed returned "
+            "neither a feasible path nor a seed fallback: "
+            f"{spent_result.summary}"
+        )
+
     # Verify construction of insertion monotonicity rows.
     monotonic_config = GlobalConfigurationOptimizerConfig(
         position_tolerance_m=1.0e-5,
@@ -2730,9 +3634,10 @@ def run_self_test() -> None:
     ):
         raise AssertionError("Insertion monotonicity rows were not constructed.")
     print(
-        "[SELF TEST] PASS: sparse derivatives, saved-result loading, partial "
-        "recovery, complete refinement, hard constraints, dense validation, "
-        "monotonicity, and serialization."
+        "[SELF TEST] PASS: feasible-first candidate selection, sparse "
+        "derivatives, saved-result loading, partial recovery, complete "
+        "refinement, hard constraints, dense validation, monotonicity, and "
+        "serialization."
     )
 
 

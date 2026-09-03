@@ -34,32 +34,32 @@ from proper_research.simulation.simulations.scenario import (
 )
 
 
-DEFAULT_RUN_ROOT = Path("joint_space_testing_v_bend")
+DEFAULT_RUN_ROOT = Path("uprgrade_configuration")
 
 
 def make_double_bend_lumen_config(
-    first_angle_deg: float = 0.0,
-    second_angle_deg: float = -20.0,
+    first_angle_deg: float = 20.0,
+    second_angle_deg: float = -40.0,
 ) -> LumenConfig:
     """Return the lumen geometry used by the saved inverse-planning run."""
     return LumenConfig(
         length=0.04,
         n_pts=240,
         n_ref_pts=100,
-        radius=0.004,
+        radius=0.003,
         ds_target=1.0e-3,
         bends=(
             LumenBend(
                 bend_axis=(0.0, 0.0, 1.0),
                 bend_angle_rad=np.deg2rad(first_angle_deg),
-                bend_start=0.0,
-                bend_end=0.01,
+                bend_start=0.015,
+                bend_end=0.02,
             ),
             LumenBend(
                 bend_axis=(0.0, 0.0, 1.0),
                 bend_angle_rad=np.deg2rad(second_angle_deg),
-                bend_start=0.015,
-                bend_end=0.025,
+                bend_start=0.025,
+                bend_end=0.03,
             ),
         ),
     )
@@ -151,12 +151,12 @@ def make_robot_config() -> JointSpaceRobotConfig:
 def make_inverse_config() -> InverseConfigurationPlannerConfig:
     """Return the exact inverse-planner configuration from the saved run."""
     return InverseConfigurationPlannerConfig(
-        position_tolerance_m=1.5e-3,
+        position_tolerance_m=0.5e-3,
         tangent_tolerance_rad=np.deg2rad(80.0),
 
-        initial_path_step_m=2.5e-4,
+        initial_path_step_m=5.0e-4,
         minimum_path_step_m=1.25e-4,
-        maximum_path_step_m=2.5e-4,
+        maximum_path_step_m=2.5e-3,
         grow_step_after_successes=999,
 
         maximum_function_evaluations=300,
@@ -189,9 +189,11 @@ def make_experiment_config(
     run_root: Path = DEFAULT_RUN_ROOT,
 ):
     """Recreate the single ExperimentConfig used by the working script."""
+    # Radius-axis contact study (2026-09): centre point is the +30/-50 geometry,
+    # which already has a complete L1->L2->L3 reference under full_control_stack.
     lumen_config = make_double_bend_lumen_config(
-        first_angle_deg=20.0,
-        second_angle_deg=-70.0,
+        first_angle_deg=30.0,
+        second_angle_deg=-30.0,
     )
 
     experiments = make_curvature_jacobian_grid(

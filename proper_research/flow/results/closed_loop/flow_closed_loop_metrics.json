@@ -1,0 +1,147 @@
+{
+  "runs": {
+    "riccati_flow": {
+      "controller": "riccati_flow",
+      "description": "DARE inverse Jacobian, simulated flow feedback",
+      "samples": 776,
+      "max_beam_position_error_mm": 0.6664439432963436,
+      "rms_beam_position_error_mm": 0.17223177616030996,
+      "p95_beam_position_error_mm": 0.38927516638179277,
+      "final_beam_position_error_mm": 0.033380332721708775,
+      "max_beam_tangent_error_deg": 24.219046944330948,
+      "beam_feasible_fraction": 1.0,
+      "flow_estimate_error_rms_mm": 0.05979883667655665,
+      "flow_estimate_error_max_mm": 0.2787328129780492,
+      "flow_low_gain_held_fraction": 0.0,
+      "sample_period_s": 0.009999999999999898,
+      "position_tolerance_m": 0.0015,
+      "mpc_configuration": {
+        "sample_period_s": 0.009999999999999898,
+        "velocity_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.16000000000000003
+        ],
+        "acceleration_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.016
+        ]
+      },
+      "simulation_configuration": {
+        "position_tolerance_m": 0.0015,
+        "tangent_tolerance_rad": 1.5707963267948966
+      }
+    },
+    "riccati_vision": {
+      "controller": "riccati_vision",
+      "description": "DARE inverse Jacobian, perfect tip feedback (upper bound)",
+      "samples": 776,
+      "max_beam_position_error_mm": 0.6664439432963436,
+      "rms_beam_position_error_mm": 0.14105016116123809,
+      "p95_beam_position_error_mm": 0.35774335549531155,
+      "final_beam_position_error_mm": 0.01125883767770352,
+      "max_beam_tangent_error_deg": 24.014110869231992,
+      "beam_feasible_fraction": 1.0,
+      "sample_period_s": 0.009999999999999898,
+      "position_tolerance_m": 0.0015,
+      "mpc_configuration": {
+        "sample_period_s": 0.009999999999999898,
+        "velocity_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.16000000000000003
+        ],
+        "acceleration_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.016
+        ]
+      },
+      "simulation_configuration": {
+        "position_tolerance_m": 0.0015,
+        "tangent_tolerance_rad": 1.5707963267948966
+      }
+    },
+    "feedforward_only": {
+      "controller": "feedforward_only",
+      "description": "feedforward only (no feedback) -- the uncorrected mismatch",
+      "samples": 776,
+      "max_beam_position_error_mm": 2.0036090154553,
+      "rms_beam_position_error_mm": 1.780936109643612,
+      "p95_beam_position_error_mm": 2.0012415620743673,
+      "final_beam_position_error_mm": 1.9661599161797487,
+      "max_beam_tangent_error_deg": 29.966180557363693,
+      "beam_feasible_fraction": 0.21520618556701032,
+      "sample_period_s": 0.009999999999999898,
+      "position_tolerance_m": 0.0015,
+      "mpc_configuration": {
+        "sample_period_s": 0.009999999999999898,
+        "velocity_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.16000000000000003
+        ],
+        "acceleration_limit": [
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.4,
+          0.016
+        ]
+      },
+      "simulation_configuration": {
+        "position_tolerance_m": 0.0015,
+        "tangent_tolerance_rad": 1.5707963267948966
+      }
+    }
+  },
+  "reference": "flow_path_planning/bends_p30_p0_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_0/time_parameterized_configuration_path",
+  "jacobian": "no_contact: bundle.models['no_contact'] via a dedicated diagnostic adapter | contact-free",
+  "flow_feedback": {
+    "a_ring_m": 0.0009,
+    "sigma_over_vmean": 0.02,
+    "heart_rate_bpm": 72.0,
+    "note": "sigma_s uncharacterised; reported as sigma_s/v_mean"
+  },
+  "riccati": {
+    "tip_tracking_weight": 300.0,
+    "integral_weight": 2.0,
+    "tip_velocity_weight": 8.0,
+    "nullspace_gain": 0.1
+  },
+  "findings": [
+    {
+      "level": "ok",
+      "title": "Flow feedback vs perfect vision",
+      "detail": "flow-fed tip rms 0.172 mm vs vision 0.141 mm (gap +0.031 mm) -- the cost of replacing the camera with the ring."
+    },
+    {
+      "level": "ok",
+      "title": "DARE + flow vs open loop",
+      "detail": "open loop (feedforward only, same start) never removes the initial offset -- final tip error 1.966 mm; the flow-fed DARE brings the final error to 0.033 mm."
+    }
+  ]
+}

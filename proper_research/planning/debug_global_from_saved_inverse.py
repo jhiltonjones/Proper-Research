@@ -48,7 +48,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--maxiter",
         type=int,
-        default=20,
+        default=100,
         help="Maximum trust-constr iterations in --full mode (default: 20).",
     )
     parser.add_argument(
@@ -60,7 +60,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--refinement-rounds",
         type=int,
-        default=0,
+        default=5,
         help="Adaptive refinement rounds in --full mode (default: 0).",
     )
     parser.add_argument(

@@ -89,7 +89,7 @@ class ValidationConfig:
     # Terminal diagnostics.  Leave debug_enabled=True while bringing the
     # validator up.  IK progress is printed at iteration 0, every N iterations,
     # and at termination.  Matrix dumps are optional because they are verbose.
-    debug_enabled: bool = True
+    debug_enabled: bool = False
     debug_ik_iteration_interval: int = 10
     debug_rtde_call_interval: int = 1
     debug_print_matrices: bool = False
@@ -102,7 +102,7 @@ class ValidationConfig:
 
     # Live state, ur_rtde kinematics, and motion all share one URRTDERobot
     # instance.  Keep ur_rtde_robot.py next to this script (or on PYTHONPATH).
-    use_live_robot: bool = False
+    use_live_robot: bool = True
     robot_ip: str = "192.168.56.101"
     rtde_frequency_hz: float = 125.0
     robot_model: str = "ur10e"  # ur3e, ur5e/ur7e, ur10e/ur12e, ur16e,
@@ -112,13 +112,13 @@ class ValidationConfig:
     # Hardware comparison.  The default sends both solutions for one selected
     # target: custom IK first, then ur_rtde IK.  Set execute_motion=False for a
     # calculation-only run.  Empty motion_target_names means all targets.
-    execute_motion: bool = False
+    execute_motion: bool = True
     motion_confirmation_phrase: str = "MOVE"
     motion_solution_sources: tuple[str, ...] = ("own", "ur_rtde")
     # Only names listed here are actually sent to the robot.  Use a small
     # magnet-local Y tilt so the 44 mm Z lever arm produces visible TCP motion.
     # A local-Z spin changes orientation, but cannot move a collinear Z offset.
-    motion_target_names: tuple[str, ...] = ("magnet_y_tilt_minus_10deg",)
+    motion_target_names: tuple[str, ...] = ("magnet_y_tilt_minus_30deg",)
     move_joint_speed_rad_s: float = 0.25
     move_joint_acceleration_rad_s2: float = 0.20
     maximum_commanded_joint_delta_norm_rad: float = 0.35
@@ -138,7 +138,7 @@ class ValidationConfig:
     T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = (
         0.0,
         0.0,
-        0.044,
+        0.47,
         0.0,
         0.0,
         0.0,
@@ -191,9 +191,9 @@ class ValidationConfig:
             # Tilting about local X or Y rotates the Z lever arm and therefore
             # requires the TCP to move around the fixed magnet centre.
             IKTargetOffset(
-                "magnet_y_tilt_minus_10deg",
+                "magnet_y_tilt_minus_30deg",
                 (0.0, 0.0, 0.0),
-                (0.0, -10.0, 0.0),
+                (-10.0, 0.0, 0.0),
                 "magnet_local",
             ),
             # This is a useful control case: it changes magnet orientation but
@@ -244,7 +244,50 @@ class ValidationConfig:
 
 CONFIG = ValidationConfig()
 
+def pivot_ab_experiment(T_R_TCP0, T_TCP_M, angle_deg=-10.0):
+    T_R_M0 = magnet_pose_from_tcp(T_R_TCP0, T_TCP_M)
 
+    rotation = IKTargetOffset(
+        "pivot_ab_test",
+        (0.0, 0.0, 0.0),
+        (0.0, angle_deg, 0.0),
+        "magnet_local",
+    )
+
+    # Case A: your implementation — rotate about magnet origin.
+    T_R_M_magnet_pivot = apply_target_offset(T_R_M0, rotation)
+    T_R_TCP_magnet_pivot = tcp_pose_for_magnet_target(
+        T_R_M_magnet_pivot, T_TCP_M
+    )
+
+    # Case B: control — keep TCP position fixed while applying
+    # the same final magnet orientation.
+    T_R_TCP_tcp_pivot = T_R_TCP0.copy()
+    T_R_TCP_tcp_pivot[:3, :3] = (
+        T_R_M_magnet_pivot[:3, :3] @ T_TCP_M[:3, :3].T
+    )
+    T_R_M_tcp_pivot = magnet_pose_from_tcp(
+        T_R_TCP_tcp_pivot, T_TCP_M
+    )
+
+    def travel_mm(T0, T1):
+        return 1000.0 * np.linalg.norm(T1[:3, 3] - T0[:3, 3])
+
+    print("\nPIVOT A/B EXPERIMENT")
+    print(
+        "Magnet-pivot: M travel =",
+        travel_mm(T_R_M0, T_R_M_magnet_pivot),
+        "mm; TCP travel =",
+        travel_mm(T_R_TCP0, T_R_TCP_magnet_pivot),
+        "mm",
+    )
+    print(
+        "TCP-pivot control: TCP travel =",
+        travel_mm(T_R_TCP0, T_R_TCP_tcp_pivot),
+        "mm; M travel =",
+        travel_mm(T_R_M0, T_R_M_tcp_pivot),
+        "mm",
+    )
 def debug_print(
     cfg: ValidationConfig,
     stage: str,
@@ -2092,6 +2135,7 @@ def main() -> None:
         joint_snapshot_drift = float(
             np.linalg.norm(wrapped_joint_difference(snapshot.q_after_rad, snapshot.q_before_rad))
         )
+        pivot_ab_experiment(snapshot.actual_T_R_TCP, T_TCP_M, -10.0)
 
         actual_state: dict[str, Any] = {
             "q_actual_rad": snapshot.q_rad,

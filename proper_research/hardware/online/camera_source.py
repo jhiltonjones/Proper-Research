@@ -102,10 +102,17 @@ class CameraSource:
         robot_pose_getter: Optional[Callable[[], Optional[np.ndarray]]] = None,
         insertion_length_getter: Optional[Callable[[], float]] = None,
         robot_joints_getter: Optional[Callable[[], Optional[np.ndarray]]] = None,
+        frame_processor: Optional[Callable[[np.ndarray], Optional[np.ndarray]]] = None,
         on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         self.config = config
         self.pivot_point_pose6 = np.asarray(pivot_point_pose6, dtype=float).reshape(6)
+        # Optional full override of the vision middle: given the raw BGR frame,
+        # return the x_meas vector ([tip_xyz(3), tangent_xyz(3), ...]) or None to
+        # skip the frame.  When set, the default reconstruct_beam_within_vessel +
+        # vision_result_to_x_meas_robot path (and the /dev/shm JPG round-trip) is
+        # bypassed -- used for the fast tip-only new-frame pipeline.
+        self._frame_processor = frame_processor
         self.lumen_C_robot_m = (
             None if lumen_C_robot_m is None else np.asarray(lumen_C_robot_m, dtype=float)
         )
@@ -274,46 +281,62 @@ class CameraSource:
             return  # nothing new since the last reconstruction
 
         cfg = self.config
-        # Atomic RAM-backed handoff: the vision pipeline reads a file path.
-        tmp_path = f"{cfg.image_filename}.tmp"
-        cv2.imwrite(tmp_path, frame)
-        os.replace(tmp_path, cfg.image_filename)
-
-        overlay_path = None
-        if cfg.overlay_dir:
-            overlay_path = os.path.join(
-                cfg.overlay_dir, f"frame_{self.frames_reconstructed:06d}.png"
-            )
+        vision_result: Optional[dict] = None
 
         try:
-            vision_result = self._reconstruct_fn(
-                image_filename=cfg.image_filename,
-                red_roi_polygon=self._roi_polygon,
-                blue_roi_path=cfg.blue_roi_path,
-                green_roi_path=cfg.green_roi_path,
-                pivot_hint=tuple(cfg.pivot_hint),
-                show=bool(cfg.show_vision),
-                save_overlay_path=overlay_path,
-                base_px_ref=self._manual["base_px"],
-                ex_ref=self._manual["ex_img"],
-                ey_ref=self._manual["ey_img"],
-            )
-            vision_result["base_px_ref"] = self._manual["base_px"]
-            vision_result["ex_ref"] = self._manual["ex_img"]
-            vision_result["ey_ref"] = self._manual["ey_img"]
-            if self.lumen_C_robot_m is not None:
-                vision_result["lumen_C_robot_m"] = self.lumen_C_robot_m
-            if self.lumen_R_robot_m is not None:
-                vision_result["lumen_R_robot_m"] = self.lumen_R_robot_m
+            if self._frame_processor is not None:
+                # Fast path: caller maps the raw frame straight to x_meas.
+                raw = self._frame_processor(frame)
+                if raw is None:
+                    self.reconstruct_failures += 1
+                    self.last_error = "frame_processor returned None"
+                    self._processed_frame_stamp = stamp
+                    return
+                x_meas = np.asarray(raw, dtype=float).reshape(-1)
+            else:
+                # Default path: RAM-backed JPG handoff -> file-based pipeline.
+                # Keep the image extension on the temp file -- cv2.imwrite picks
+                # the encoder from the extension and has no writer for ".tmp".
+                root, ext = os.path.splitext(cfg.image_filename)
+                tmp_path = f"{root}.tmp{ext or '.png'}"
+                if not cv2.imwrite(tmp_path, frame):
+                    raise RuntimeError(f"cv2.imwrite failed for {tmp_path}")
+                os.replace(tmp_path, cfg.image_filename)
 
-            x_meas = np.asarray(
-                self._to_x_meas_fn(
-                    vision_result,
-                    pivot_point_pose6=self.pivot_point_pose6,
-                    align_tangent_with_lumen=bool(cfg.align_tangent_with_lumen),
-                ),
-                dtype=float,
-            ).reshape(-1)
+                overlay_path = None
+                if cfg.overlay_dir:
+                    overlay_path = os.path.join(
+                        cfg.overlay_dir, f"frame_{self.frames_reconstructed:06d}.png"
+                    )
+
+                vision_result = self._reconstruct_fn(
+                    image_filename=cfg.image_filename,
+                    red_roi_polygon=self._roi_polygon,
+                    blue_roi_path=cfg.blue_roi_path,
+                    green_roi_path=cfg.green_roi_path,
+                    pivot_hint=tuple(cfg.pivot_hint),
+                    show=bool(cfg.show_vision),
+                    save_overlay_path=overlay_path,
+                    base_px_ref=self._manual["base_px"],
+                    ex_ref=self._manual["ex_img"],
+                    ey_ref=self._manual["ey_img"],
+                )
+                vision_result["base_px_ref"] = self._manual["base_px"]
+                vision_result["ex_ref"] = self._manual["ex_img"]
+                vision_result["ey_ref"] = self._manual["ey_img"]
+                if self.lumen_C_robot_m is not None:
+                    vision_result["lumen_C_robot_m"] = self.lumen_C_robot_m
+                if self.lumen_R_robot_m is not None:
+                    vision_result["lumen_R_robot_m"] = self.lumen_R_robot_m
+
+                x_meas = np.asarray(
+                    self._to_x_meas_fn(
+                        vision_result,
+                        pivot_point_pose6=self.pivot_point_pose6,
+                        align_tangent_with_lumen=bool(cfg.align_tangent_with_lumen),
+                    ),
+                    dtype=float,
+                ).reshape(-1)
         except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the loop
             self.reconstruct_failures += 1
             self.last_error = repr(exc)
@@ -352,12 +375,15 @@ class CameraSource:
                 robot_joints = None
 
         beam_len_mm = float("nan")
-        try:
-            raw = vision_result.get("beam_length_mm")
-            if raw is not None:
-                beam_len_mm = float(raw)
-        except Exception:
-            pass
+        if vision_result is not None:
+            try:
+                raw = vision_result.get("beam_length_mm")
+                if raw is not None:
+                    beam_len_mm = float(raw)
+            except Exception:
+                pass
+        elif x_meas.size > 6 and np.isfinite(x_meas[6]):
+            beam_len_mm = 1.0e3 * float(x_meas[6])  # fast path may append length (m)
 
         estimate = StateEstimate(
             t_monotonic=stamp,

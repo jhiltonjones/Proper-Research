@@ -48,6 +48,25 @@ EXPERIMENT_CONFIG = copy.deepcopy(experiment_v2.CONFIG)
 EXPERIMENT_CONFIG.send_commands = False
 
 
+# ---------------------------------------------------------------------------
+# PLACEHOLDER -- physical offset from the UR TCP to the source-magnet centre.
+# The magnet is rigidly mounted BELOW the end effector by a fixed amount.
+# The tool points down (pivot orientation ~pi about X), so "below the tool"
+# is the TCP +Z direction.  MEASURE THIS and replace the value below.
+#   e.g. magnet centre 30 mm below the TCP, body axes aligned with the TCP:
+#        SOURCE_MAGNET_OFFSET_BELOW_TCP_M = 0.030
+# Verify with the [DEBUG] "magnet - TCP in TCP frame" line printed at run
+# time: it should read approximately [0.00 0.00 +<offset>] mm, and the 3-D
+# plot should show the magnet box below the TCP triad.  Flip the sign here
+# if the magnet ends up on the wrong side.
+# ---------------------------------------------------------------------------
+SOURCE_MAGNET_OFFSET_BELOW_TCP_M: float = 0.030  # <-- PLACEHOLDER: set to the real value
+# Extra body-axis rotation of the magnet frame M relative to the TCP frame,
+# as a rotation vector (rad).  Leave at zeros if the magnet body axes are
+# mounted parallel to the TCP axes.
+SOURCE_MAGNET_BODY_ROTVEC_IN_TCP: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
 @dataclass
 class FrameValidationConfig:
     # Acquisition.  In offline mode the existing image is used and
@@ -56,11 +75,20 @@ class FrameValidationConfig:
     capture_new_image: bool = True
     offline_robot_tcp_pose6: tuple[float, float, float, float, float, float] | None = None
 
-    # T_R_B: pose of the fixed beam/model frame B in robot-base frame R.
-    # This defaults to the model pivot pose so camera measurements and theory
-    # share one fixed base frame.
-    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = field(
-        default_factory=lambda: tuple(EXPERIMENT_CONFIG.pivot_pose6)
+    # T_R_B: pose of the FIXED beam/model frame B in robot-base frame R.
+    # Baked from the reference capture (magnet in its calibrated spot, TCP at
+    # [0.52615, -0.67020, 0.31343, ...], magnet 30 mm below it, pivot 300 mm
+    # back along +B.x).  The beam base does NOT move -- only the source magnet
+    # moves with the robot.  With derive_beam_frame_from_axes the rotation here
+    # is informational; the translation is used when
+    # pivot_behind_magnet_along_axial_mm is None.
+    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
+        0.525575,
+        -0.670028,
+        -0.016567,
+        0.0,
+        -1.5707963,
+        0.0,
     )
 
     # T_TCP_M: pose of source-magnet frame M in the UR TCP frame.
@@ -68,8 +96,20 @@ class FrameValidationConfig:
     # It intentionally has no guessed default.  If the UR TCP has physically
     # been calibrated at the magnet centre with matching axes, set
     # assume_tcp_is_magnet_frame=True and leave this as None.
-    T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = None
-    assume_tcp_is_magnet_frame: bool = True
+    #
+    # Default here: build T_TCP_M from the measured SOURCE_MAGNET_OFFSET_BELOW_TCP_M
+    # placeholder above (magnet centre along TCP +Z, optional body rotation).
+    T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = field(
+        default_factory=lambda: (
+            0.0,
+            0.0,
+            float(SOURCE_MAGNET_OFFSET_BELOW_TCP_M),
+            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[0]),
+            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[1]),
+            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[2]),
+        )
+    )
+    assume_tcp_is_magnet_frame: bool = False
 
     # Camera-plane calibration.  The existing saved ex_img/ey_img values are
     # image-Cartesian vectors (x right, y up).  The signs reproduce the legacy
@@ -77,8 +117,24 @@ class FrameValidationConfig:
     # ey_img.  All sign handling occurs here exactly once.
     camera_calibration_mode: str = "basis_scale"  # "basis_scale" or "homography"
     saved_axis_convention: str = "image_cartesian"  # or "pixel_uv"
-    saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (1.0, 1.0)
-    known_calibration_distance_mm: float = 30.0
+    # (-1, +1): +B.x is opposite ex_img (the saved ex_img points anti-axially,
+    # from the beam back through the base), +B.y follows ey_img.  This matches
+    # the documented convention above.  Check the [DEBUG] "+B.x(10mm) -> pixel
+    # delta" line and camera_overlay.png (measured cyan vs model magenta must
+    # overlie) before changing these.
+    saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (-1.0, 1.0)
+    # 30 mm matches the rest of the codebase (bounds_beam.compute_mm_per_pixel
+    # default and its use of this same calibration_points.json).  Only change
+    # this if the two saved calibration points were physically clicked at a
+    # different known separation.
+    known_calibration_distance_mm: float = 38.0
+
+    # The planar calibration origin is manual_frame["base_px"], which rarely
+    # matches the detected base red marker exactly (a few px = ~1 mm).  That
+    # gap biases every measured point, incl. the tip.  When True, all measured
+    # B points are shifted so the DETECTED base marker sits at the B origin,
+    # i.e. exactly where the forward model starts.
+    anchor_beam_origin_to_detected_base: bool = True
 
     # Optional H_Bxy_I for perspective-aware planar calibration.  It maps
     # homogeneous [u_px, v_px, 1] to [B.x_m, B.y_m, 1].  Set mode="homography"
@@ -103,7 +159,71 @@ class FrameValidationConfig:
 
     # Model length.  If enabled, the calibrated measured centreline length is
     # clipped by the limits already present in EXPERIMENT_CONFIG.
-    use_measured_beam_length_for_model: bool = False
+    # (Set False to fix the model length and isolate frame errors from a
+    # vision scale/detection error.)
+    use_measured_beam_length_for_model: bool = True
+
+    # -- Fixed beam-frame B pose in R -------------------------------------
+    # T_robot_beam_pose6 is the ONLY camera<->robot calibration in the system,
+    # and its saved value was wrong (wrong axial axis, wrong Z, +0.3 m in X).
+    # When derive_beam_frame_from_axes is True the B frame is rebuilt from two
+    # explicit robot-frame axes instead:
+    #   * B.x  = beam_axial_axis_R          (the beam grows along +B.x)
+    #   * B.z  = beam_plane_normal_axis_R   (out of the vision/bending plane,
+    #                                        i.e. the camera viewing axis),
+    #            re-orthogonalised against B.x
+    #   * B.y  = B.z x B.x                  (right-handed)
+    # The equivalent pose6 is printed at run time -- paste it back into
+    # EXPERIMENT_CONFIG.pivot_pose6 once you are happy with it.
+    derive_beam_frame_from_axes: bool = True
+    # Direction the beam grows in, in robot base coordinates.  The rig has the
+    # beam standing vertically, so +Z.
+    beam_axial_axis_R: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    # Camera viewing axis / beam-plane normal in robot base coordinates.  Only
+    # the component perpendicular to beam_axial_axis_R is used.  Flip the sign
+    # if the modelled beam / vessel / magnet come out left-right mirrored in
+    # camera_overlay.png (this sign is not observable from a planar measurement).
+    beam_plane_normal_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+
+    # Put the B-frame ORIGIN a fixed distance behind the source magnet along
+    # -B.x.  Use this ONCE, at the reference/calibration pose, to derive the
+    # fixed beam base (read the printed ">>> equivalent pivot_pose6" and paste
+    # it into T_robot_beam_pose6).  Then set this to None so the beam base stays
+    # fixed and only the source magnet moves with the robot.
+    pivot_behind_magnet_along_axial_mm: float | None = None
+
+    # -- Model base orientation ------------------------------------------------
+    # The Cosserat forward model extends its rod along  R0 @ [-1, 0, 0]  where
+    # R0 is the model base rotation.  Feeding it the raw pivot_pose6 rotation
+    # made the rod start OPPOSITE the real beam (the "mirror across the y axis"
+    # you saw -- the modelled beam, and anything drawn from it, pointed the
+    # wrong way).  When True, R0 is rebuilt from the measured beam so the rod
+    # starts along the observed proximal tangent, inside the observed beam
+    # plane.  Set False to use the raw pivot_pose6 rotation (old behaviour).
+    align_model_base_with_measured_beam: bool = True
+    # Fraction of the measured centreline (from the base) used to estimate the
+    # proximal tangent that the model rod is aligned to.
+    model_base_tangent_fraction: float = 0.25
+    # When True the model rod starts exactly along +B.x (the nominal axial
+    # axis) instead of the measured proximal tangent.  The reconstruction is
+    # noisy right at the base (it is anchored to the base marker), so aligning
+    # to it injects a few degrees of spurious start tilt into the model -- which
+    # then shows up as a tip offset and a tangent-angle error even when the
+    # source dipole is perfectly axial.  Use this to check whether an axial
+    # dipole keeps the modelled beam straight (it should).
+    model_rod_along_nominal_axial: bool = True
+
+    # -- Source-magnet dipole direction -------------------------------------
+    # With source_dipole_along_beam_axial=False (the normal case) the source
+    # moment is source_dipole_unit_in_magnet_body expressed in the magnet body
+    # (== TCP) frame, carried into the world by the LIVE TCP rotation -- so as
+    # you move/rotate the robot the modelled dipole rotates with it.  The
+    # magnet is poled along its body -Z (that is what "forced axial" resolved
+    # to at the reference pose: dipole in TCP frame = [-0.02, 0.00, -1.00]).
+    # magnet_yaw_calibration_deg is applied on top in the body XY plane.
+    # Set True only to pin the dipole exactly along +B.x regardless of the TCP.
+    source_dipole_along_beam_axial: bool = False
+    source_dipole_unit_in_magnet_body: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
     # Source-magnet drawing dimensions in its body frame M.
     source_magnet_dimensions_mm: tuple[float, float, float] = (20.0, 20.0, 20.0)
@@ -148,6 +268,52 @@ def _unit(vector: Iterable[float], name: str) -> np.ndarray:
     if norm < 1.0e-12:
         raise ValueError(f"Cannot normalize zero-length {name}.")
     return vector / norm
+
+
+def beam_frame_rotation_from_axes(
+    axial_axis_R: Iterable[float],
+    normal_axis_R: Iterable[float],
+) -> np.ndarray:
+    """Rotation R_R_B with B.x = axial, B.z ~ normal, B.y = B.z x B.x.
+
+    ``normal_axis_R`` is re-orthogonalised against the axial axis, so only its
+    perpendicular component matters.
+    """
+
+    b_x = _unit(axial_axis_R, "beam_axial_axis_R")
+    normal = _finite_array(normal_axis_R, (3,), "beam_plane_normal_axis_R")
+    b_z = normal - float(np.dot(normal, b_x)) * b_x
+    if float(np.linalg.norm(b_z)) < 1.0e-6:
+        raise ValueError(
+            "beam_plane_normal_axis_R is parallel to beam_axial_axis_R; "
+            "pick a normal axis that is not along the beam."
+        )
+    b_z = _unit(b_z, "beam-plane normal")
+    b_y = np.cross(b_z, b_x)
+    return np.column_stack([b_x, b_y, b_z])
+
+
+def model_base_rotation_from_beam(
+    tangent_R: Iterable[float],
+    plane_normal_R: Iterable[float],
+) -> np.ndarray:
+    """Rotation R0 whose rod axis (R0 @ [-1, 0, 0]) is the measured tangent.
+
+    The Cosserat forward model grows its rod along ``R0 @ [-1, 0, 0]``.  Given
+    the measured proximal tangent and the beam-plane normal (both in R), return
+    a right-handed R0 with that rod axis and its third column aligned as closely
+    as possible with ``plane_normal_R``.
+    """
+
+    x_axis = -_unit(tangent_R, "measured proximal beam tangent")
+    normal = _unit(plane_normal_R, "beam-plane normal")
+    y_axis = np.cross(normal, x_axis)
+    y_norm = float(np.linalg.norm(y_axis))
+    if y_norm < 1.0e-9:
+        raise ValueError("Measured beam tangent is parallel to the beam-plane normal.")
+    y_axis = y_axis / y_norm
+    z_axis = np.cross(x_axis, y_axis)
+    return np.column_stack([x_axis, y_axis, z_axis])
 
 
 @dataclass(frozen=True)
@@ -469,28 +635,36 @@ def measure_beam_from_image(
         )
 
     centreline_px = _orient_polyline(centreline_px, markers_px["base"])
-    centreline_B_m = calibration.pixels_to_beam(centreline_px)
+
+    # Detected base marker in B, before any anchoring.  With the calibration
+    # origin at manual_frame["base_px"], this is how far the clicked base pixel
+    # and the detected red marker disagree -- a constant bias on every measured
+    # point.  If anchoring is on, shift all measured B points by it so the beam
+    # base sits exactly at the B origin (= T_R_B.translation), matching where
+    # the forward model starts.
+    raw_detected_base_B = calibration.pixels_to_beam(markers_px["base"])
+    origin_offset_B = (
+        raw_detected_base_B if cfg.anchor_beam_origin_to_detected_base else np.zeros(3)
+    )
+
+    centreline_B_m = calibration.pixels_to_beam(centreline_px) - origin_offset_B
     centreline_R_m = T_R_B.apply_points(centreline_B_m)
 
-    tip_B_m = calibration.pixels_to_beam(markers_px["tip"])
-    tangent_start_B_m = calibration.pixels_to_beam(markers_px["tangent_start"])
+    tip_B_m = calibration.pixels_to_beam(markers_px["tip"]) - origin_offset_B
+    tangent_start_B_m = calibration.pixels_to_beam(markers_px["tangent_start"]) - origin_offset_B
     tangent_B = _unit(tip_B_m - tangent_start_B_m, "measured beam tangent in B")
     tangent_R = _unit(T_R_B.apply_directions(tangent_B), "measured beam tangent in R")
 
     length_m = float(np.sum(np.linalg.norm(np.diff(centreline_B_m, axis=0), axis=1)))
-    base_px =[
-        311.0,
-        275.0
-    ],
     return {
         "markers_px": markers_px,
         "ordered_points_px": ordered_points_px,
         "centreline_px": centreline_px,
         "centreline_B_m": centreline_B_m,
         "centreline_R_m": centreline_R_m,
-        # "detected_base_B_m": calibration.pixels_to_beam(markers_px["base"]),
-        "detected_base_B_m": base_px,
-
+        "detected_base_B_m": raw_detected_base_B - origin_offset_B,
+        "raw_detected_base_B_m": raw_detected_base_B,
+        "origin_offset_B_m": origin_offset_B,
         "tip_B_m": tip_B_m,
         "tip_R_m": T_R_B.apply_points(tip_B_m),
         "tangent_B": tangent_B,
@@ -504,13 +678,15 @@ def build_lumen_in_shared_frames(
     manual_frame: dict[str, Any],
     calibration: PlanarPixelCalibration,
     T_R_B: FrameTransform,
+    origin_offset_B: Iterable[float] = (0.0, 0.0, 0.0),
 ) -> dict[str, np.ndarray]:
     left_px = np.asarray(manual_frame["left_boundary_px"], dtype=float)
     right_px = np.asarray(manual_frame["right_boundary_px"], dtype=float)
     if left_px.shape != right_px.shape or left_px.ndim != 2 or left_px.shape[1] != 2:
         raise ValueError("Left/right lumen boundaries must have matching shape (N, 2).")
-    left_B = calibration.pixels_to_beam(left_px)
-    right_B = calibration.pixels_to_beam(right_px)
+    offset = _finite_array(origin_offset_B, (3,), "origin_offset_B")
+    left_B = calibration.pixels_to_beam(left_px) - offset
+    right_B = calibration.pixels_to_beam(right_px) - offset
     centre_B = 0.5 * (left_B + right_B)
     radius_m = 0.5 * np.linalg.norm(right_B - left_B, axis=1)
     if np.linalg.norm(centre_B[-1]) < np.linalg.norm(centre_B[0]):
@@ -583,8 +759,20 @@ def build_forward_model_in_shared_frame(
     experiment_cfg: experiment_v2.ExperimentConfig,
     T_R_B: FrameTransform,
     lumen: dict[str, np.ndarray],
+    model_base_rotation_R: np.ndarray | None = None,
+    dipole_unit_in_magnet_body: Iterable[float] = (-1.0, 0.0, 0.0),
+    T_R_TCP: FrameTransform | None = None,
+    force_dipole_axis_R: Iterable[float] | None = None,
 ) -> tuple[experiment_v2.DirectForwardModelAdapter, dict[str, Any]]:
-    """Build the same composite model using lumen geometry already in R."""
+    """Build the same composite model using lumen geometry already in R.
+
+    ``model_base_rotation_R`` overrides the rod base rotation (see
+    ``model_base_rotation_from_beam``); when None the raw ``T_R_B`` rotation is
+    used.  If ``force_dipole_axis_R`` is given (with ``T_R_TCP``) the source
+    moment is set so it points exactly along that world axis; otherwise
+    ``dipole_unit_in_magnet_body`` sets the direction in the magnet body frame
+    before ``magnet_yaw_calibration_deg`` is applied.
+    """
 
     base = experiment_v2._base_module()
     from proper_research.parameters import default_magnet_params
@@ -600,11 +788,24 @@ def build_forward_model_in_shared_frame(
         raise TypeError("Composite magnetisation and stiffness factories must be callable.")
 
     magnet_params = default_magnet_params()
-    nominal_m_body = np.array([-float(magnet_params.mag_epm), 0.0, 0.0])
-    m_body = base.rotate_body_xy(
-        nominal_m_body,
-        experiment_cfg.magnet_yaw_calibration_deg,
-    )
+    if force_dipole_axis_R is not None:
+        if T_R_TCP is None:
+            raise ValueError("force_dipole_axis_R requires T_R_TCP.")
+        dipole_dir_body = _unit(
+            T_R_TCP.rotation.T @ _unit(force_dipole_axis_R, "force_dipole_axis_R"),
+            "forced dipole direction in magnet body frame",
+        )
+        nominal_m_body = float(magnet_params.mag_epm) * dipole_dir_body
+        m_body = nominal_m_body
+        dipole_mode = "forced along beam axial (+B.x)"
+    else:
+        dipole_dir_body = _unit(dipole_unit_in_magnet_body, "dipole_unit_in_magnet_body")
+        nominal_m_body = float(magnet_params.mag_epm) * dipole_dir_body
+        m_body = base.rotate_body_xy(
+            nominal_m_body,
+            experiment_cfg.magnet_yaw_calibration_deg,
+        )
+        dipole_mode = "from source_dipole_unit_in_magnet_body + yaw"
     use_contact = experiment_cfg.jacobian_variant == "contact"
     contact = ContactParams(
         r_beam=experiment_cfg.beam_contact_radius_m,
@@ -615,9 +816,15 @@ def build_forward_model_in_shared_frame(
         smooth_eps=experiment_cfg.contact_smooth_epsilon_m,
         window=experiment_cfg.contact_window,
     )
+    if model_base_rotation_R is None:
+        base_rotation_R = T_R_B.rotation
+    else:
+        base_rotation_R = _finite_array(
+            model_base_rotation_R, (3, 3), "model_base_rotation_R"
+        )
     raw_model = build_forward_model(
         p0_ur=T_R_B.translation,
-        q0_ur=_rotation_to_quaternion_wxyz(T_R_B.rotation),
+        q0_ur=_rotation_to_quaternion_wxyz(base_rotation_R),
         Kinv_fun=Kinv_fun,
         m_body=m_body,
         lumen_C=lumen["centre_R_m"],
@@ -639,6 +846,13 @@ def build_forward_model_in_shared_frame(
         "composite_inputs": asdict(experiment_cfg.composite),
         "composite_calculated": calculated,
         "external_source_magnet_body_moment": np.asarray(m_body, dtype=float),
+        "dipole_unit_in_magnet_body": dipole_dir_body,
+        "dipole_mode": dipole_mode,
+        "magnet_moment_magnitude": float(magnet_params.mag_epm),
+        "magnet_yaw_calibration_deg": float(experiment_cfg.magnet_yaw_calibration_deg),
+        "model_base_rotation_R": base_rotation_R,
+        "model_base_rod_axis_R": base_rotation_R @ np.array([-1.0, 0.0, 0.0]),
+        "model_base_rotation_overridden": model_base_rotation_R is not None,
         "contact_enabled": use_contact,
         "model_type": type(raw_model).__name__,
     }
@@ -691,6 +905,199 @@ def _extract_model_centreline(
     print(f"[MODEL CENTRELINE] length: {length_mm:.6f} mm")
 
     return points_R_m
+
+
+# =============================================================================
+# RUN-TIME DEBUG DUMP -- verify calibration, frames and the magnet offset
+# =============================================================================
+
+
+def _pose6_str(transform: FrameTransform) -> str:
+    pose = transform.as_pose6()
+    return (
+        f"t=[{pose[0]:+.5f} {pose[1]:+.5f} {pose[2]:+.5f}] m  "
+        f"rotvec=[{pose[3]:+.4f} {pose[4]:+.4f} {pose[5]:+.4f}] rad"
+    )
+
+
+def _screen_dir(delta_px: np.ndarray) -> str:
+    horizontal = "right" if delta_px[0] > 0 else "left"
+    vertical = "down" if delta_px[1] > 0 else "up"
+    return f"{horizontal}+{vertical}"
+
+
+def print_frame_debug(
+    *,
+    calibration: PlanarPixelCalibration,
+    T_R_B: FrameTransform,
+    T_R_TCP: FrameTransform,
+    T_TCP_M: FrameTransform,
+    T_R_M: FrameTransform,
+    measurement: dict[str, Any],
+    model: dict[str, Any],
+    model_metadata: dict[str, Any],
+    insertion_length_m: float,
+    cfg: FrameValidationConfig,
+) -> None:
+    """One consolidated dump so each stage of the chain can be eyeballed."""
+
+    rule = "-" * 78
+    meta = calibration.metadata
+
+    print(f"\n{rule}\n[DEBUG] CAMERA-PLANE CALIBRATION\n{rule}")
+    print(f"[DEBUG]   mode                      : {calibration.mode}")
+    if meta.get("metres_per_pixel"):
+        print(f"[DEBUG]   mm_per_pixel               : {1.0e3 * meta['metres_per_pixel']:.6f}")
+    print(f"[DEBUG]   origin_px (maps to B 0,0)  : {calibration.origin_px}")
+    print(f"[DEBUG]   raw_basis_px_from_B        : {meta.get('raw_basis_px_from_B')}")
+    print(f"[DEBUG]   fitted_basis_px_from_B     : {meta.get('fitted_basis_px_from_B')}")
+    print(f"[DEBUG]   H_Bxy_I                    : {calibration.H_Bxy_I.tolist()}")
+    probe_B = np.array([[0.0, 0.0, 0.0], [0.010, 0.0, 0.0], [0.0, 0.010, 0.0]])
+    probe_px = calibration.beam_to_pixels(probe_B)
+    dx_px = probe_px[1] - probe_px[0]
+    dy_px = probe_px[2] - probe_px[0]
+    print(f"[DEBUG]   +B.x 10mm -> pixel delta   : {np.round(dx_px, 2)}  (screen {_screen_dir(dx_px)})")
+    print(f"[DEBUG]   +B.y 10mm -> pixel delta   : {np.round(dy_px, 2)}  (screen {_screen_dir(dy_px)})")
+    print(f"[DEBUG]     (the visible beam runs base->tip; +B.x should point along it)")
+    round_trip = calibration.beam_to_pixels(
+        calibration.pixels_to_beam(measurement["centreline_px"])
+    )
+    round_trip_px = float(
+        np.max(np.linalg.norm(round_trip - measurement["centreline_px"], axis=1))
+    )
+    print(f"[DEBUG]   pixel<->B round-trip error : {round_trip_px:.3e} px")
+
+    print(f"\n{rule}\n[DEBUG] RIGID FRAMES  (T_A_B maps coords from B into A)\n{rule}")
+    print(f"[DEBUG]   T_R_B    {_pose6_str(T_R_B)}")
+    print(f"[DEBUG]   T_R_TCP  {_pose6_str(T_R_TCP)}")
+    print(f"[DEBUG]   T_TCP_M  {_pose6_str(T_TCP_M)}")
+    print(f"[DEBUG]   T_R_M    {_pose6_str(T_R_M)}")
+    tcp_R = T_R_TCP.translation
+    magnet_R = T_R_M.translation
+    delta_R = magnet_R - tcp_R
+    delta_tcp = T_R_TCP.rotation.T @ delta_R
+    print(f"[DEBUG]   TCP position in R          : [{tcp_R[0]:+.5f} {tcp_R[1]:+.5f} {tcp_R[2]:+.5f}] m")
+    print(f"[DEBUG]   magnet position in R       : [{magnet_R[0]:+.5f} {magnet_R[1]:+.5f} {magnet_R[2]:+.5f}] m")
+    print(
+        f"[DEBUG]   magnet - TCP in R           : "
+        f"[{delta_R[0] * 1e3:+.2f} {delta_R[1] * 1e3:+.2f} {delta_R[2] * 1e3:+.2f}] mm"
+    )
+    print(
+        f"[DEBUG]   magnet - TCP in TCP frame   : "
+        f"[{delta_tcp[0] * 1e3:+.2f} {delta_tcp[1] * 1e3:+.2f} {delta_tcp[2] * 1e3:+.2f}] mm  "
+        f"(expect ~[0 0 +{SOURCE_MAGNET_OFFSET_BELOW_TCP_M * 1e3:.0f}] = magnet along TCP +Z)"
+    )
+    print(f"[DEBUG]   magnet below TCP in base Z : {(-delta_R[2]) * 1e3:+.2f} mm")
+    print(
+        f"[DEBUG]   source position in B        : "
+        f"[{model['source_position_B_m'][0] * 1e3:+.2f} "
+        f"{model['source_position_B_m'][1] * 1e3:+.2f} "
+        f"{model['source_position_B_m'][2] * 1e3:+.2f}] mm  (B.z = out-of-beam-plane)"
+    )
+    print(f"[DEBUG]   dipole direction in R      : {np.round(model['dipole_R'], 4)}")
+
+    print(f"\n{rule}\n[DEBUG] SOURCE DIPOLE / MODEL BASE\n{rule}")
+    dipole_R = _unit(model["dipole_R"], "dipole_R")
+    dipole_B = _unit(T_R_B.rotation.T @ dipole_R, "dipole in B")
+    dipole_tcp = _unit(T_R_TCP.rotation.T @ dipole_R, "dipole in TCP")
+    beam_axis_R = _unit(
+        np.asarray(measurement["tip_R_m"], float)
+        - np.asarray(measurement["centreline_R_m"], float)[0],
+        "measured beam axial in R",
+    )
+    field_dir_R = _unit(
+        np.asarray(model["source_position_R_m"], float)
+        - np.asarray(measurement["centreline_R_m"], float)[0],
+        "base->magnet direction in R",
+    )
+    print(f"[DEBUG]   |mag_epm|                  : {model_metadata.get('magnet_moment_magnitude'):.4g} A m^2")
+    print(f"[DEBUG]   dipole mode                : {model_metadata.get('dipole_mode')}")
+    print(f"[DEBUG]   dipole unit in magnet body : {np.round(model_metadata.get('dipole_unit_in_magnet_body'), 4).tolist()}")
+    print(f"[DEBUG]   dipole in R                : {np.round(dipole_R, 4).tolist()}")
+    print(f"[DEBUG]   dipole in B                : {np.round(dipole_B, 4).tolist()}  (target from your spec: [1, 0, 0])")
+    print(f"[DEBUG]   dipole in TCP frame        : {np.round(dipole_tcp, 4).tolist()}")
+    print(f"[DEBUG]   angle(dipole, beam axial)  : {vector_angle_deg(dipole_R, beam_axis_R):.2f} deg  (0=along beam, 180=anti)")
+    print(f"[DEBUG]   angle(dipole, base->magnet): {vector_angle_deg(dipole_R, field_dir_R):.2f} deg")
+    base_to_magnet_mm = 1e3 * float(
+        np.linalg.norm(
+            np.asarray(model["source_position_R_m"], float)
+            - np.asarray(measurement["centreline_R_m"], float)[0]
+        )
+    )
+    mu0 = 4.0e-7 * np.pi
+    m_mag = float(model_metadata.get("magnet_moment_magnitude", 0.0))
+    b_axial_mt = (
+        1e3 * mu0 / (4.0 * np.pi) * 2.0 * m_mag / (base_to_magnet_mm / 1e3) ** 3
+        if base_to_magnet_mm > 1.0
+        else float("nan")
+    )
+    print(
+        f"[DEBUG]   base->magnet distance      : {base_to_magnet_mm:.1f} mm  "
+        f"-> point-dipole |B| ~ {b_axial_mt:.3f} mT axial"
+    )
+    rod_axis_R = np.asarray(model_metadata.get("model_base_rod_axis_R"), float)
+    print(
+        f"[DEBUG]   model rod axis (R0@[-1,0,0]): {np.round(rod_axis_R, 4).tolist()}  "
+        f"overridden={model_metadata.get('model_base_rotation_overridden')}"
+    )
+    print(
+        f"[DEBUG]   angle(model rod, measured) : "
+        f"{vector_angle_deg(rod_axis_R, beam_axis_R):.2f} deg  (should be ~0)"
+    )
+
+    print(f"\n{rule}\n[DEBUG] MARKERS / MEASURED BEAM\n{rule}")
+    for name, point in measurement["markers_px"].items():
+        print(f"[DEBUG]   marker {name:16s} px  : {None if point is None else np.round(point, 1)}")
+    print(f"[DEBUG]   reconstruction_method      : {measurement['reconstruction_method']}")
+    detected_base = np.asarray(measurement["detected_base_B_m"], dtype=float).reshape(-1)
+    print(
+        f"[DEBUG]   detected base in B          : "
+        f"[{detected_base[0] * 1e3:+.2f} {detected_base[1] * 1e3:+.2f} "
+        f"{detected_base[2] * 1e3:+.2f}] mm  (expect ~[0 0 0])"
+    )
+    print(f"[DEBUG]   detected base error norm   : {1e3 * float(np.linalg.norm(detected_base)):.2f} mm")
+    print(
+        f"[DEBUG]   measured tip in B           : "
+        f"[{measurement['tip_B_m'][0] * 1e3:+.2f} {measurement['tip_B_m'][1] * 1e3:+.2f} "
+        f"{measurement['tip_B_m'][2] * 1e3:+.2f}] mm"
+    )
+    print(f"[DEBUG]   measured tip in R          : {np.round(measurement['tip_R_m'], 5)} m")
+    print(f"[DEBUG]   measured tangent in B      : {np.round(measurement['tangent_B'], 4)}")
+    print(f"[DEBUG]   measured centreline length : {1e3 * measurement['length_m']:.2f} mm")
+    print(
+        f"[DEBUG]   length used for model       : {1e3 * insertion_length_m:.2f} mm  "
+        f"(use_measured_beam_length_for_model={cfg.use_measured_beam_length_for_model})"
+    )
+
+    print(f"\n{rule}\n[DEBUG] MODEL vs MEASURED\n{rule}")
+    tip_error_R = np.asarray(measurement["tip_R_m"], dtype=float) - np.asarray(
+        model["tip_R_m"], dtype=float
+    )
+    print(
+        f"[DEBUG]   model tip in B             : "
+        f"[{model['tip_B_m'][0] * 1e3:+.2f} {model['tip_B_m'][1] * 1e3:+.2f} "
+        f"{model['tip_B_m'][2] * 1e3:+.2f}] mm"
+    )
+    print(
+        f"[DEBUG]   measured tip in B          : "
+        f"[{measurement['tip_B_m'][0] * 1e3:+.2f} {measurement['tip_B_m'][1] * 1e3:+.2f} "
+        f"{measurement['tip_B_m'][2] * 1e3:+.2f}] mm"
+    )
+    print(
+        f"[DEBUG]   tip error (measured-model) : "
+        f"[{tip_error_R[0] * 1e3:+.2f} {tip_error_R[1] * 1e3:+.2f} {tip_error_R[2] * 1e3:+.2f}] mm  "
+        f"|.|={1e3 * float(np.linalg.norm(tip_error_R)):.2f} mm"
+    )
+    model_length_mm = 1e3 * float(
+        np.sum(np.linalg.norm(np.diff(model["centreline_R_m"], axis=0), axis=1))
+    )
+    print(f"[DEBUG]   model centreline length    : {model_length_mm:.2f} mm")
+    print(
+        f"[DEBUG]   tangent angle error        : "
+        f"{vector_angle_deg(measurement['tangent_R'], model['tangent_R']):.2f} deg"
+    )
+    print(f"{rule}\n")
+
 
 # =============================================================================
 # COMPARISON, CHECKS, PLOTTING AND LOGGING
@@ -1095,6 +1502,19 @@ def load_planar_calibration(
         point_2,
         cfg.known_calibration_distance_mm,
     )
+    distance_px = float(
+        np.linalg.norm(np.asarray(point_2, float) - np.asarray(point_1, float))
+    )
+    print(
+        f"[DEBUG] 2-point scale calib: p1={point_1} p2={point_2} "
+        f"|p2-p1|={distance_px:.2f} px  known={cfg.known_calibration_distance_mm} mm "
+        f"-> {1.0e3 * metres_per_pixel:.6f} mm/px"
+    )
+    print(
+        f"[DEBUG] calib origin_px (B 0,0) = {list(manual_frame['base_px'])}  "
+        f"ex_img={list(manual_frame['ex_img'])}  ey_img={list(manual_frame['ey_img'])}  "
+        f"signs(Bx,By)={cfg.saved_axis_signs_for_positive_beam_xy}"
+    )
     return PlanarPixelCalibration.from_basis_scale(
         origin_px=manual_frame["base_px"],
         ex_saved=manual_frame["ex_img"],
@@ -1141,6 +1561,13 @@ def main() -> None:
             pose_after = pose_before.copy()
         robot_tcp_pose6 = midpoint_pose6(pose_before, pose_after)
         translation_drift_mm, rotation_drift_deg = pose_drift(pose_before, pose_after)
+        print(
+            f"[DEBUG] UR TCP pose before : {np.round(pose_before, 5).tolist()}\n"
+            f"[DEBUG] UR TCP pose after  : {np.round(pose_after, 5).tolist()}\n"
+            f"[DEBUG] UR TCP pose used   : {np.round(robot_tcp_pose6, 5).tolist()}\n"
+            f"[DEBUG] capture drift      : {translation_drift_mm:.3f} mm / "
+            f"{rotation_drift_deg:.3f} deg"
+        )
 
         image_bgr = cv2.imread(EXPERIMENT_CONFIG.image_filename)
         if image_bgr is None:
@@ -1151,9 +1578,55 @@ def main() -> None:
         roi_polygon = base.load_polygon(EXPERIMENT_CONFIG.roi_polygon_path)
         calibration = load_planar_calibration(base, manual_frame, CONFIG)
 
-        T_R_B = FrameTransform.from_pose6("R", "B", CONFIG.T_robot_beam_pose6)
-        T_B_R = T_R_B.inverse()
         T_R_TCP, T_TCP_M, T_R_M = source_transform_from_tcp(robot_tcp_pose6, CONFIG)
+
+        saved_T_R_B = FrameTransform.from_pose6("R", "B", CONFIG.T_robot_beam_pose6)
+        if CONFIG.derive_beam_frame_from_axes:
+            R_R_B = beam_frame_rotation_from_axes(
+                CONFIG.beam_axial_axis_R,
+                CONFIG.beam_plane_normal_axis_R,
+            )
+            orientation_note = "derived from beam_axial_axis_R + beam_plane_normal_axis_R"
+        else:
+            R_R_B = saved_T_R_B.rotation
+            orientation_note = "using saved T_robot_beam_pose6 orientation"
+
+        if CONFIG.pivot_behind_magnet_along_axial_mm is not None:
+            b_x = R_R_B[:, 0]
+            beam_origin_R = (
+                T_R_M.translation
+                + (CONFIG.pivot_behind_magnet_along_axial_mm / 1.0e3) * b_x
+            )
+            origin_note = (
+                f"magnet + {CONFIG.pivot_behind_magnet_along_axial_mm:.1f} mm along +B.x"
+            )
+        else:
+            beam_origin_R = saved_T_R_B.translation
+            origin_note = "saved T_robot_beam_pose6 translation"
+
+        beam_matrix = np.eye(4)
+        beam_matrix[:3, :3] = R_R_B
+        beam_matrix[:3, 3] = beam_origin_R
+        T_R_B = FrameTransform("R", "B", beam_matrix)
+        T_B_R = T_R_B.inverse()
+
+        saved_rotvec = Rot.from_matrix(saved_T_R_B.rotation).as_rotvec()
+        used_pose6 = np.r_[T_R_B.translation, Rot.from_matrix(T_R_B.rotation).as_rotvec()]
+        magnet_B_check = T_B_R.apply_points(T_R_M.translation)
+        print(
+            f"[DEBUG] beam frame B: orientation {orientation_note}\n"
+            f"[DEBUG]             : origin {origin_note}\n"
+            f"[DEBUG]   saved pivot_pose6          : {np.round(np.asarray(CONFIG.T_robot_beam_pose6, float), 5).tolist()}\n"
+            f"[DEBUG]   >>> equivalent pivot_pose6 : {np.round(used_pose6, 6).tolist()}\n"
+            f"[DEBUG]       (paste into EXPERIMENT_CONFIG.pivot_pose6 to bake it in)\n"
+            f"[DEBUG]   T_R_B columns  B.x/B.y/B.z : "
+            f"{np.round(T_R_B.rotation[:, 0], 3).tolist()} / "
+            f"{np.round(T_R_B.rotation[:, 1], 3).tolist()} / "
+            f"{np.round(T_R_B.rotation[:, 2], 3).tolist()}\n"
+            f"[DEBUG]   source magnet centre in B  : "
+            f"[{magnet_B_check[0] * 1e3:+.1f} {magnet_B_check[1] * 1e3:+.1f} "
+            f"{magnet_B_check[2] * 1e3:+.1f}] mm  (live position relative to the fixed beam base)"
+        )
 
         measurement = measure_beam_from_image(
             image_bgr=image_bgr,
@@ -1164,7 +1637,14 @@ def main() -> None:
             cfg=CONFIG,
             bounds_beam=base.bounds_beam,
         )
-        lumen = build_lumen_in_shared_frames(manual_frame, calibration, T_R_B)
+        lumen = build_lumen_in_shared_frames(
+            manual_frame, calibration, T_R_B, measurement["origin_offset_B_m"]
+        )
+        if CONFIG.anchor_beam_origin_to_detected_base:
+            print(
+                f"[DEBUG] beam origin anchored to detected base marker; shift applied "
+                f"{np.round(measurement['raw_detected_base_B_m'] * 1e3, 2).tolist()} mm in B"
+            )
 
         if CONFIG.use_measured_beam_length_for_model:
             insertion_length_m = float(
@@ -1177,10 +1657,56 @@ def main() -> None:
         else:
             insertion_length_m = float(EXPERIMENT_CONFIG.initial_beam_length_m)
 
+        # Model base rotation.  Align the rod with the observed beam so the
+        # model does not start pointing the opposite way (the mirror effect).
+        centreline_R = np.asarray(measurement["centreline_R_m"], dtype=float)
+        tangent_count = max(
+            2,
+            int(round(CONFIG.model_base_tangent_fraction * len(centreline_R))),
+        )
+        measured_base_tangent_R = _unit(
+            centreline_R[min(tangent_count, len(centreline_R)) - 1] - centreline_R[0],
+            "measured proximal beam tangent",
+        )
+        unaligned_rod_axis_R = T_R_B.rotation @ np.array([-1.0, 0.0, 0.0])
+        nominal_axial_R = T_R_B.rotation[:, 0]
+        if CONFIG.model_rod_along_nominal_axial:
+            model_base_rotation_R = model_base_rotation_from_beam(
+                nominal_axial_R,
+                T_R_B.rotation[:, 2],
+            )
+            rod_source = "nominal +B.x axis"
+        elif CONFIG.align_model_base_with_measured_beam:
+            model_base_rotation_R = model_base_rotation_from_beam(
+                measured_base_tangent_R,
+                T_R_B.rotation[:, 2],
+            )
+            rod_source = "measured proximal tangent"
+        else:
+            model_base_rotation_R = None
+            rod_source = "raw T_R_B rotation"
+        print(
+            f"[DEBUG] model rod axis  source        : {rod_source}\n"
+            f"[DEBUG] model rod axis  nominal +B.x  : {np.round(nominal_axial_R, 4).tolist()}\n"
+            f"[DEBUG] model rod axis  measured prox : {np.round(measured_base_tangent_R, 4).tolist()}\n"
+            f"[DEBUG] measured-prox vs nominal axis : "
+            f"{vector_angle_deg(nominal_axial_R, measured_base_tangent_R):.2f} deg"
+            f"  (spurious start tilt if the beam is really straight)"
+        )
+
+        force_dipole_axis_R = (
+            T_R_B.rotation[:, 0]
+            if CONFIG.source_dipole_along_beam_axial
+            else None
+        )
         adapter, model_metadata = build_forward_model_in_shared_frame(
             experiment_cfg=EXPERIMENT_CONFIG,
             T_R_B=T_R_B,
             lumen=lumen,
+            model_base_rotation_R=model_base_rotation_R,
+            dipole_unit_in_magnet_body=CONFIG.source_dipole_unit_in_magnet_body,
+            T_R_TCP=T_R_TCP,
+            force_dipole_axis_R=force_dipole_axis_R,
         )
         p8 = transform_to_p8(T_R_M, insertion_length_m)
         p7, model_output = adapter.commit_nominal(p8)
@@ -1205,6 +1731,19 @@ def main() -> None:
             "source_axes_B": source_axes_B,
             "dipole_R": dipole_R,
         }
+
+        print_frame_debug(
+            calibration=calibration,
+            T_R_B=T_R_B,
+            T_R_TCP=T_R_TCP,
+            T_TCP_M=T_TCP_M,
+            T_R_M=T_R_M,
+            measurement=measurement,
+            model=model,
+            model_metadata=model_metadata,
+            insertion_length_m=insertion_length_m,
+            cfg=CONFIG,
+        )
 
         metrics, checks = compute_metrics_and_checks(
             measurement=measurement,

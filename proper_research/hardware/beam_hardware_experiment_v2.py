@@ -80,7 +80,7 @@ class ExperimentConfig:
 
     # Robot and external source magnet.
     robot_ip: str = "192.168.56.101"
-    z_offset_m: float = 0.27
+    z_offset_m: float = 0.0
     robot_speed_m_s: float = 0.03
     robot_acceleration_m_s2: float = 0.10
     workspace_xyz_min_m: tuple[float, float, float] = (0.20, -1.50, -0.30)
@@ -103,21 +103,21 @@ class ExperimentConfig:
     )
     blue_roi_path: str = "blue_roi_box.json"
     green_roi_path: str = "green_roi_box.json"
-    pivot_hint_px: tuple[int, int] = (309, 330)
+    pivot_hint_px: tuple[int, int] = (318, 292)
     vision_samples_per_point: int = 1
     settle_time_s: float = 1.0
 
     # Beam base/model frame and fixed insertion length for these experiments.
     pivot_pose6: tuple[float, float, float, float, float, float] = (
-        0.84813282,
-        -0.68127317,
-        -0.10000000+0.1,
+        0.5261705543740489+0.3,
+        -0.6702,
+        0,
         float(np.pi),
         1.0e-3,
         1.0e-3,
     )
-    initial_beam_length_m: float = 0.042
-    use_vision_length_in_model: bool = False
+    initial_beam_length_m: float = 0.01
+    use_vision_length_in_model: bool = True
     min_vision_length_m: float = 0.010
     max_vision_length_m: float = 0.050
     magnet_yaw_calibration_deg: float = -10.0

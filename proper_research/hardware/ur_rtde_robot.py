@@ -158,6 +158,15 @@ class URRTDERobot:
             assert self._receive is not None
             return list(self._receive.getActualQ())
 
+    def get_forward_kinematics(self, joints: Optional[Sequence[float]] = None):
+        """Base-frame TCP pose [x,y,z,rx,ry,rz] for ``joints`` (or the live config)."""
+        with self._lock:
+            self._require_connected_unlocked()
+            assert self._control is not None
+            if joints is None:
+                return list(self._control.getForwardKinematics())
+            return list(self._control.getForwardKinematics(self._vector6(joints, "joints")))
+
     def get_robot_mode(self):
         with self._lock:
             self._require_connected_unlocked()
@@ -312,6 +321,38 @@ class URRTDERobot:
             except Exception:
                 return False
 
+    def servo_j(
+        self,
+        joints: Sequence[float],
+        speed: float = 0.0,
+        acceleration: float = 0.0,
+        time_s: float = 0.1,
+        lookahead_time: float = 0.1,
+        gain: int = 300,
+    ) -> bool:
+        """Position-servo the joints toward ``joints`` (rad); blocks for ``time_s``.
+
+        ``speed``/``acceleration`` are unused by servoJ but must be passed.
+        Tolerant of an irregular call rate -- ``lookahead_time`` bridges gaps --
+        so it does not need a hard real-time streaming thread the way speedJ
+        does.  Call it repeatedly from the control loop.
+        """
+        target = self._vector6(joints, "joints")
+        time_s = self._positive(time_s, "time_s")
+        lookahead_time = self._positive(lookahead_time, "lookahead_time")
+        gain = int(gain)
+        if not 100 <= gain <= 2000:
+            raise ValueError("gain must be between 100 and 2000")
+        with self._lock:
+            self._require_connected_unlocked()
+            assert self._control is not None
+            return bool(
+                self._control.servoJ(
+                    target, float(speed), float(acceleration),
+                    time_s, lookahead_time, gain,
+                )
+            )
+
     def servo_l(
         self,
         pose: Sequence[float],
@@ -359,19 +400,24 @@ class URRTDERobot:
             assert self._receive is not None
             return list(self._receive.getActualTCPSpeed())
 
-    def init_period(self) -> float:
-        """Mark the start of a control period; feed the result to :meth:`wait_period`."""
+    def init_period(self):
+        """Mark the start of a control period; feed the result to :meth:`wait_period`.
+
+        The value is opaque -- ur_rtde >= 1.6 returns a ``datetime.timedelta``,
+        older builds a float of seconds.  Pass it straight back to
+        :meth:`wait_period`; do not coerce it.
+        """
         with self._lock:
             self._require_connected_unlocked()
             assert self._control is not None
-            return float(self._control.initPeriod())
+            return self._control.initPeriod()
 
-    def wait_period(self, t_start: float) -> None:
+    def wait_period(self, t_start) -> None:
         """Sleep so the period that began at ``t_start`` lasts ``1 / frequency``."""
         with self._lock:
             if self._control is None:
                 return
-            self._control.waitPeriod(float(t_start))
+            self._control.waitPeriod(t_start)
 
     def _disconnect_unlocked(self, stop_script: bool):
         control, receive = self._control, self._receive

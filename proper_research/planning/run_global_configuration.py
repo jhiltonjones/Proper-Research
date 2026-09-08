@@ -85,13 +85,13 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=None)
 
     convergence = parser.add_argument_group("convergence")
-    convergence.add_argument("--maxiter", type=int, default=1000)
+    convergence.add_argument("--maxiter", type=int, default=100)
     convergence.add_argument("--refinement-rounds", type=int, default=2)
     convergence.add_argument("--dense-samples", type=int, default=3)
     convergence.add_argument("--maximum-nodes", type=int, default=300)
     convergence.add_argument("--multistart-attempts", type=int, default=1)
     convergence.add_argument("--path-step-mm", type=float, default=1)
-    convergence.add_argument("--max-runtime-minutes", type=float, default=120.0)
+    convergence.add_argument("--max-runtime-minutes", type=float, default=45.0)
     convergence.add_argument("--stagnation-evaluations", type=int, default=8)
     convergence.add_argument(
         "--preserve-all-inverse-nodes",
@@ -150,6 +150,32 @@ def _arguments() -> argparse.Namespace:
              "behaviour, which enforces no keep-out at all.",
     )
     safety.add_argument("--exclusion-tolerance", type=float, default=1.0e-6)
+    safety.add_argument(
+        "--dense-exclusion-acceptance-slack-mm", type=float, default=0.3,
+        help="The keep-out is enforced as a hard constraint at the decision "
+             "nodes only; dense validation between nodes can then fail by a "
+             "hair even when every node clears it comfortably. A round whose "
+             "ONLY dense-validation failure is a source-magnet keep-out "
+             "margin within this slack (default 0.3 mm, negligible against "
+             "a typically >=100 mm exclusion radius) is still accepted "
+             "instead of triggering the all-or-nothing inverse-path "
+             "fallback. Position/tangent tolerances and the box constraint "
+             "are never loosened by this. Set to 0 to reproduce the old "
+             "strict all-or-nothing behaviour exactly.",
+    )
+    safety.add_argument(
+        "--dense-position-acceptance-slack-mm", type=float, default=0.0,
+        help="Same idea as --dense-exclusion-acceptance-slack-mm, for the "
+             "position task tolerance: a round whose only dense-validation "
+             "position failure is within this many mm of the spent tolerance "
+             "is still accepted. 0 (default) reproduces strict behaviour. "
+             "Watch the '[GLOBAL DENSE GAP]' debug line first to see whether "
+             "position is actually what's failing before reaching for this.",
+    )
+    safety.add_argument(
+        "--dense-tangent-acceptance-slack-deg", type=float, default=0.0,
+        help="Same idea, for the tangent task tolerance, in degrees.",
+    )
     safety.add_argument("--require-analytical-magnet-jacobian", action="store_true")
     safety.add_argument("--tolerance-spend-fraction", type=float, default=1.0)
     safety.add_argument("--tip-centring-weight", type=float, default=0.0)
@@ -166,12 +192,33 @@ def _arguments() -> argparse.Namespace:
              "raise it until the tip trace is smooth without eating the whole "
              "iteration budget; 0.0 keeps the old behaviour.",
     )
+    safety.add_argument(
+        "--magnet-path-weight",
+        type=float,
+        default=0.0,
+        help="Penalise the SOURCE-MAGNET path length (first difference of the "
+             "magnet position, linearised at each round's seed). Nothing else "
+             "in the objective touches the magnet -- it only appears as the "
+             "keep-out inequality -- so without this the optimiser is free to "
+             "swing the external magnet far out and sharply back as long as "
+             "chi stays smooth. Raise it until the magnet path/straight-line "
+             "ratio (printed as [GLOBAL MAGNET PATH]) drops; 0.0 keeps the old "
+             "behaviour.",
+    )
+    safety.add_argument(
+        "--magnet-curvature-weight",
+        type=float,
+        default=0.0,
+        help="Penalise the source-magnet path CURVATURE (second difference). "
+             "Use with or instead of --magnet-path-weight to kill an "
+             "out-and-back swing without shortening the whole path.",
+    )
 
     weights = parser.add_argument_group("smoothing weights")
     weights.add_argument("--balance-smoothing-weights", action="store_true")
     weights.add_argument("--first-difference-weight", type=float, default=1.0e-5)
     weights.add_argument("--second-difference-weight", type=float, default=1.0e-5)
-    weights.add_argument("--seed-deviation-weight", type=float, default=1.0e-8)
+    weights.add_argument("--seed-deviation-weight", type=float, default=1.0e-10)
 
     parser.add_argument(
         "--trace-after",
@@ -201,6 +248,10 @@ def _arguments() -> argparse.Namespace:
         parser.error("--exclusion-radius must be positive")
     if arguments.tip_curvature_weight < 0.0:
         parser.error("--tip-curvature-weight must be non-negative")
+    if arguments.magnet_path_weight < 0.0:
+        parser.error("--magnet-path-weight must be non-negative")
+    if arguments.magnet_curvature_weight < 0.0:
+        parser.error("--magnet-curvature-weight must be non-negative")
     return arguments
 
 
@@ -447,12 +498,23 @@ def main() -> None:
         ),
         source_magnet_lumen_exclusion_radius_m=args.exclusion_radius,
         source_magnet_lumen_constraint_tolerance_m=float(args.exclusion_tolerance),
+        dense_magnet_exclusion_acceptance_slack_m=(
+            1.0e-3 * float(args.dense_exclusion_acceptance_slack_mm)
+        ),
+        dense_position_acceptance_slack_m=(
+            1.0e-3 * float(args.dense_position_acceptance_slack_mm)
+        ),
+        dense_tangent_acceptance_slack_rad=(
+            math.radians(float(args.dense_tangent_acceptance_slack_deg))
+        ),
         require_analytical_magnet_position_jacobian=bool(
             args.require_analytical_magnet_jacobian
         ),
         tolerance_spend_fraction=spend_fraction,
         tip_centring_weight=float(args.tip_centring_weight),
         tip_curvature_weight=float(args.tip_curvature_weight),
+        magnet_path_weight=float(args.magnet_path_weight),
+        magnet_curvature_weight=float(args.magnet_curvature_weight),
         debug=not args.quiet,
         trust_constr_verbose=0 if args.quiet else 1,
     )
@@ -467,6 +529,8 @@ def main() -> None:
         f"spend_fraction={config.tolerance_spend_fraction:.3f} "
         f"tip_centring_weight={config.tip_centring_weight:g} "
         f"tip_curvature_weight={config.tip_curvature_weight:g}\n"
+        f"             magnet_path_weight={config.magnet_path_weight:g} "
+        f"magnet_curvature_weight={config.magnet_curvature_weight:g}\n"
         f"             wall_limit={args.max_runtime_minutes:.1f} min "
         f"stagnation_evals={config.stagnation_function_evaluations} "
         f"node_jacobian_diagnostics={config.compute_node_jacobian_diagnostics}\n"
@@ -499,6 +563,8 @@ def main() -> None:
     print(f"Refinement rounds:      {result.refinement_rounds} / {config.maximum_refinement_rounds}")
     print(f"Constraint violation:   {summary.get('normalized_constraint_violation')}")
     print(f"Seed fallback selected: {summary.get('selected_seed_fallback')}")
+    print(f"Fell back to inverse:   {summary.get('fallback_to_inverse_path')}")
+    print(f"Any feasible round:     {summary.get('any_feasible_global_round')}")
     print(
         "Maximum normalized change: "
         f"{summary.get('maximum_normalized_state_change_from_seed')}"
@@ -521,6 +587,17 @@ def main() -> None:
                 "hit_iteration_cap": bool(
                     result.iterations >= config.maximum_iterations
                 ),
+                "globally_feasible": bool(result.globally_feasible),
+                "fallback_to_inverse_path": bool(
+                    summary.get("fallback_to_inverse_path")
+                ),
+                "selected_seed_fallback": bool(
+                    summary.get("selected_seed_fallback")
+                ),
+                "any_feasible_global_round": bool(
+                    summary.get("any_feasible_global_round")
+                ),
+                "termination_reason": str(result.termination_reason),
             },
             indent=2,
         ),
@@ -535,7 +612,19 @@ def main() -> None:
             flush=True,
         )
 
-    if summary.get("selected_seed_fallback"):
+    if summary.get("fallback_to_inverse_path"):
+        print(
+            "\nNOTE: no global refinement round produced a feasible path, so "
+            "the written-out path IS the exact inverse configuration path, "
+            "unchanged. Layer 2 never returns something worse than Layer 1. "
+            "The tip may still be jagged (that is Layer 1's path); to actually "
+            "smooth it, loosen what the optimiser must hit -- "
+            "--tolerance-spend-fraction below 1, a larger --auto-tolerance-"
+            "margin, fewer/looser hard constraints -- so a round can land "
+            "feasible.",
+            flush=True,
+        )
+    elif summary.get("selected_seed_fallback"):
         print(
             "\nNOTE: the global solve did not beat the inverse seed, so the "
             "written-out path IS the inverse configuration path (its best "
@@ -545,11 +634,9 @@ def main() -> None:
         )
     elif not result.globally_feasible:
         print(
-            "\nWARNING: the result is NOT globally feasible and the seed "
-            "fallback did not fire. Check normalized_constraint_violation and "
-            "the dense-validation CSV; consider --tolerance-spend-fraction "
-            "below 1, --auto-tolerance, or (if Layer 1 was partial) accept "
-            "that the path ends where Layer 1 ended.",
+            "\nWARNING: the result is NOT globally feasible even though no "
+            "fallback fired -- this should not happen; please report the "
+            "run_preflight.json and global_configuration_summary.json.",
             flush=True,
         )
 

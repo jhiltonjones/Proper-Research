@@ -59,6 +59,7 @@ try:
     from proper_research.planning.global_upgrades import (
         NodeExclusionConstraints,
         effective_task_tolerances,
+        magnet_path_quadratic,
         tip_centring_quadratic,
         tip_curvature_quadratic,
     )
@@ -66,12 +67,21 @@ except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
     from global_upgrades import (  # type: ignore
         NodeExclusionConstraints,
         effective_task_tolerances,
+        magnet_path_quadratic,
         tip_centring_quadratic,
         tip_curvature_quadratic,
     )
 
 
 Array = np.ndarray
+
+# The beam forward model rejects insertion L <= 0 outright
+# (forward_model._validate_p7).  trust-constr may evaluate the task constraint
+# -- which calls that model -- at trial points a hair outside the box (finite
+# differences, an early-stopped iterate), so the insertion component is floored
+# just above zero everywhere a state reaches the beam model, and kept strictly
+# feasible in the decision bounds.
+_MIN_INSERTION_M = 1.0e-6
 
 
 def _finite_vector(value: Any, size: int, name: str) -> Array:
@@ -229,6 +239,27 @@ class GlobalConfigurationOptimizerConfig:
     magnet_jacobian_joint_step_rad: float = 1.0e-6
     magnet_jacobian_insertion_step_m: float = 1.0e-6
 
+    # Every hard constraint here (the keep-out, and the position/tangent task
+    # tolerances) is enforced by the optimizer at the discrete decision NODES
+    # only. Dense validation then re-checks all three at extra samples
+    # strictly BETWEEN nodes; the smooth interpolation between two node states
+    # that each individually clear a constraint can still cross back over it
+    # by a hair -- a collocation gap, not a real path failure. A round that
+    # fails dense validation for no reason other than one of these gaps being
+    # within the matching acceptance slack below is still accepted
+    # (round_feasible=True), instead of triggering the all-or-nothing
+    # inverse-path fallback over a near-miss. 0.0 (the default for all three)
+    # reproduces the previous strict behaviour exactly. None of these ever
+    # loosen what the optimizer itself is asked to satisfy at the nodes, and
+    # never change the reported per-sample margins/diagnostics -- only
+    # whether a round this close counts as a usable result. See
+    # _dense_sample_excusable and the "[GLOBAL DENSE GAP]" debug print, which
+    # reports exactly which constraint(s) a rejected round missed by and how
+    # much, every round -- read that before reaching for these.
+    dense_magnet_exclusion_acceptance_slack_m: float = 0.0
+    dense_position_acceptance_slack_m: float = 0.0
+    dense_tangent_acceptance_slack_rad: float = 0.0
+
     # ------------------------------------------------------------ task space
     # Fraction of the physical task tolerance the smoother is allowed to
     # spend.  1.0 is the previous behaviour.  Below 1.0 the constraint the
@@ -248,6 +279,18 @@ class GlobalConfigurationOptimizerConfig:
     # what first/second_difference_weight already do for chi but nothing did
     # for p(chi).  0.0 keeps the objective exactly as it was.
     tip_curvature_weight: float = 0.0
+
+    # Optional quadratic penalty on the SOURCE-MAGNET path -- its arc length
+    # (magnet_path_weight, a first-difference term) and/or its curvature
+    # (magnet_curvature_weight, a second-difference term), linearised at the
+    # seed via the analytical magnet-position Jacobian.  Nothing else in the
+    # objective touches the magnet: it only appears as the hard keep-out
+    # inequality.  So without these a solution that swings the external magnet
+    # far out and sharply back is free as long as chi is smooth.  Set
+    # magnet_path_weight > 0 to make the optimiser prefer a short, direct
+    # magnet path.  0.0 keeps the objective exactly as it was.
+    magnet_path_weight: float = 0.0
+    magnet_curvature_weight: float = 0.0
 
     def validate(self) -> None:
         if self.mode not in {"refine_complete", "recover_partial"}:
@@ -356,6 +399,40 @@ class GlobalConfigurationOptimizerConfig:
             value = float(getattr(self, name))
             if not np.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{name} must be finite and positive.")
+        slack = float(self.dense_magnet_exclusion_acceptance_slack_m)
+        if not np.isfinite(slack) or slack < 0.0:
+            raise ValueError(
+                "dense_magnet_exclusion_acceptance_slack_m must be finite and non-negative."
+            )
+        if radius is not None and slack >= 0.1 * float(radius):
+            raise ValueError(
+                "dense_magnet_exclusion_acceptance_slack_m is >= 10% of the "
+                "exclusion radius -- that is no longer a near-miss tolerance, "
+                "it is disabling the constraint. Use a smaller slack."
+            )
+        position_slack = float(self.dense_position_acceptance_slack_m)
+        if not np.isfinite(position_slack) or position_slack < 0.0:
+            raise ValueError(
+                "dense_position_acceptance_slack_m must be finite and non-negative."
+            )
+        if position_slack >= 0.1 * float(self.position_tolerance_m):
+            raise ValueError(
+                "dense_position_acceptance_slack_m is >= 10% of "
+                "position_tolerance_m -- that is no longer a near-miss "
+                "tolerance, it is loosening the tolerance itself. Use a "
+                "smaller slack, or lower --tolerance-spend-fraction instead."
+            )
+        tangent_slack = float(self.dense_tangent_acceptance_slack_rad)
+        if not np.isfinite(tangent_slack) or tangent_slack < 0.0:
+            raise ValueError(
+                "dense_tangent_acceptance_slack_rad must be finite and non-negative."
+            )
+        if tangent_slack >= 0.1 * float(self.tangent_tolerance_rad):
+            raise ValueError(
+                "dense_tangent_acceptance_slack_rad is >= 10% of "
+                "tangent_tolerance_rad -- use a smaller slack, or lower "
+                "--tolerance-spend-fraction instead."
+            )
         fraction = float(self.tolerance_spend_fraction)
         if not np.isfinite(fraction) or not 0.0 < fraction <= 1.0:
             raise ValueError("tolerance_spend_fraction must lie in (0, 1].")
@@ -365,6 +442,10 @@ class GlobalConfigurationOptimizerConfig:
         curvature = float(self.tip_curvature_weight)
         if not np.isfinite(curvature) or curvature < 0.0:
             raise ValueError("tip_curvature_weight must be finite and non-negative.")
+        for name in ("magnet_path_weight", "magnet_curvature_weight"):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative.")
 
 
 @dataclass
@@ -535,6 +616,75 @@ def _magnet_pose6(adapter: Any, state: Array) -> Array:
     return np.concatenate((T[:3, 3], Rot.from_matrix(T[:3, :3]).as_rotvec()))
 
 
+_MAGNET_JACOBIAN_METHOD_NAMES = (
+    "magnet_position_jacobian",
+    "continuous_magnet_position_jacobian",
+    "source_magnet_position_jacobian",
+)
+
+
+def _magnet_position_jacobian(
+    adapter: Any, state: Array, *, joint_step: float, insertion_step: float
+) -> Array:
+    """3x7 d(magnet position)/d(state), analytical if the adapter exposes it.
+
+    Falls back to bound-safe central differences of ``magnet_transform`` (cheap
+    forward kinematics -- no beam solve).  The insertion column is typically ~0:
+    the external magnet rides the robot flange, insertion advances the beam.
+    """
+    state = _finite_vector(state, 7, "magnet-Jacobian state")
+    for name in _MAGNET_JACOBIAN_METHOD_NAMES:
+        method = getattr(adapter, name, None)
+        if callable(method):
+            matrix = np.asarray(method(state), dtype=float)
+            if matrix.shape == (3, 6):
+                matrix = np.column_stack((matrix, np.zeros(3, dtype=float)))
+            if matrix.shape == (3, 7) and np.all(np.isfinite(matrix)):
+                return np.ascontiguousarray(matrix, dtype=float)
+    steps = np.full(7, float(joint_step), dtype=float)
+    steps[6] = float(insertion_step)
+    matrix = np.zeros((3, 7), dtype=float)
+    centre = _magnet_pose6(adapter, state)[:3]
+    for axis, step in enumerate(steps):
+        plus = min(step, max(0.0, step))
+        forward = state.copy()
+        backward = state.copy()
+        forward[axis] += step
+        backward[axis] -= step
+        matrix[:, axis] = (
+            _magnet_pose6(adapter, forward)[:3]
+            - _magnet_pose6(adapter, backward)[:3]
+        ) / (2.0 * step)
+        if not np.all(np.isfinite(matrix[:, axis])):
+            matrix[:, axis] = (
+                _magnet_pose6(adapter, forward)[:3] - centre
+            ) / step
+    return matrix
+
+
+def _magnet_path_terms(
+    *,
+    adapter: Any,
+    states: Array,
+    config: GlobalConfigurationOptimizerConfig,
+) -> tuple[Array, Array]:
+    """Per-node magnet position (N,3) and position Jacobian (N,3,7)."""
+    states = np.asarray(states, dtype=float).reshape(-1, 7)
+    positions = np.empty((states.shape[0], 3), dtype=float)
+    jacobians = np.empty((states.shape[0], 3, 7), dtype=float)
+    for index, state in enumerate(states):
+        positions[index] = _magnet_pose6(adapter, state)[:3]
+        jacobians[index] = _magnet_position_jacobian(
+            adapter,
+            state,
+            joint_step=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step=float(config.magnet_jacobian_insertion_step_m),
+        )
+    if not np.all(np.isfinite(positions)) or not np.all(np.isfinite(jacobians)):
+        raise FloatingPointError("Magnet forward kinematics returned non-finite values.")
+    return positions, jacobians
+
+
 def _normalized_tangent_jacobian(tangent_raw: Array, J_raw: Array) -> Array:
     tangent_raw = _finite_vector(tangent_raw, 3, "beam tangent")
     J_raw = np.asarray(J_raw, dtype=float).reshape(3, 7)
@@ -585,7 +735,8 @@ def _replay_node_baselines(
     Replaying is isolated: the caller's live model and frozen baseline are
     restored before this function returns.
     """
-    states = np.asarray(states, dtype=float).reshape(-1, 7)
+    states = np.asarray(states, dtype=float).reshape(-1, 7).copy()
+    states[:, 6] = np.maximum(states[:, 6], _MIN_INSERTION_M)
     forward_adapter = _branch_forward_adapter(adapter)
     if forward_adapter is None:
         return None, None
@@ -662,6 +813,12 @@ class _BatchBeamEvaluator:
 
     def output(self, index: int, state: Array) -> Array:
         state = _finite_vector(state, 7, f"state at node {index}")
+        if state[6] < _MIN_INSERTION_M:
+            # The beam model rejects L <= 0.  keep_feasible on the bounds should
+            # stop trust-constr trialing here, but a finite-difference probe or
+            # a not-quite-converged iterate can still land a hair below.
+            state = state.copy()
+            state[6] = _MIN_INSERTION_M
         if not self._same(self._state_output[index], state):
             value = np.asarray(
                 self._at_node_baseline(
@@ -681,6 +838,9 @@ class _BatchBeamEvaluator:
 
     def jacobian(self, index: int, state: Array) -> Array:
         state = _finite_vector(state, 7, f"Jacobian state at node {index}")
+        if state[6] < _MIN_INSERTION_M:
+            state = state.copy()
+            state[6] = _MIN_INSERTION_M
         if not self._same(self._state_jacobian[index], state):
             value = np.asarray(
                 self._at_node_baseline(
@@ -940,12 +1100,21 @@ def _decision_bounds(
     initial_state: Array,
     fix_initial_state: bool,
 ) -> Bounds:
-    lower = np.tile(state_min, node_count)
-    upper = np.tile(state_max, node_count)
+    lower = np.tile(np.asarray(state_min, dtype=float), node_count)
+    upper = np.tile(np.asarray(state_max, dtype=float), node_count)
+    insertion_indices = np.arange(6, lower.size, 7)
+    lower[insertion_indices] = np.maximum(
+        lower[insertion_indices], _MIN_INSERTION_M
+    )
+    keep_feasible = np.zeros(lower.size, dtype=bool)
+    keep_feasible[insertion_indices] = True
     if fix_initial_state:
         lower[:7] = initial_state
         upper[:7] = initial_state
-    return Bounds(lower, upper, keep_feasible=False)
+        # An equality-bounded component (lb == ub) has no interior; keeping it
+        # "strictly feasible" is meaningless and trips scipy's x0 check.
+        keep_feasible[:7] = False
+    return Bounds(lower, upper, keep_feasible=keep_feasible)
 
 
 def _trust_options(config: GlobalConfigurationOptimizerConfig, maxiter: int) -> dict:
@@ -1071,6 +1240,11 @@ def _run_restoration(
     node_count = tasks.node_count
     state_size = 7 * node_count
     slack_size = 2 * node_count
+    x0 = np.clip(
+        np.asarray(x0, dtype=float),
+        np.asarray(bounds.lb, dtype=float),
+        np.asarray(bounds.ub, dtype=float),
+    )
     initial_task = tasks.values(x0)
     slack0 = np.clip(
         np.maximum(0.0, -initial_task) + 1.0e-8,
@@ -1108,6 +1282,12 @@ def _run_restoration(
             np.asarray(bounds.ub, float),
             np.full(slack_size, float(config.feasibility_restoration_maximum_slack)),
         )
+    )
+    state_keep_feasible = np.broadcast_to(
+        np.asarray(bounds.keep_feasible, dtype=bool), (state_size,)
+    )
+    keep_feasible = np.concatenate(
+        (state_keep_feasible, np.zeros(slack_size, dtype=bool))
     )
     constraints: list[Any] = [
         NonlinearConstraint(
@@ -1159,7 +1339,7 @@ def _run_restoration(
         method="trust-constr",
         jac=gradient,
         hess=hessian,
-        bounds=Bounds(lower, upper),
+        bounds=Bounds(lower, upper, keep_feasible=keep_feasible),
         constraints=constraints,
         callback=monitor,
         options=_trust_options(config, config.feasibility_restoration_iterations),
@@ -1179,6 +1359,14 @@ def _run_hard_solve(
     config: GlobalConfigurationOptimizerConfig,
     exclusion: NodeExclusionConstraints | None = None,
 ) -> tuple[Any, _ProgressMonitor]:
+    # keep_feasible on the bounds requires a feasible start; a multistart
+    # perturbation or an inserted refinement node can push a component (most
+    # dangerously the insertion) a hair outside the box.
+    x0 = np.clip(
+        np.asarray(x0, dtype=float),
+        np.asarray(bounds.lb, dtype=float),
+        np.asarray(bounds.ub, dtype=float),
+    )
     initial_task_values = tasks.values(x0)
     initial_task_feasible = bool(np.all(initial_task_values >= 0.0))
     keep_task_feasible = bool(
@@ -1483,6 +1671,41 @@ def _solve_global_problem(
                 f"weight={config.tip_curvature_weight:.6g} linearised at seed",
                 flush=True,
             )
+    if config.magnet_path_weight > 0.0 or config.magnet_curvature_weight > 0.0:
+        # Prefer a short, direct external-magnet path.  Linearised at the seed
+        # via the analytical magnet-position Jacobian; the keep-out inequality
+        # still holds the magnet outside the head, this only stops it wandering
+        # inside the space the keep-out and the tip-tracking null space leave.
+        magnet_positions, magnet_jacobians = _magnet_path_terms(
+            adapter=adapter, states=seed.states, config=config
+        )
+        H_mag, f_mag, constant_mag = magnet_path_quadratic(
+            magnet_positions=magnet_positions,
+            magnet_jacobians=magnet_jacobians,
+            seed_states=seed.states,
+            s=seed.s,
+            first_weight=float(config.magnet_path_weight),
+            second_weight=float(config.magnet_curvature_weight),
+        )
+        objective.H = csc_matrix(objective.H + H_mag)
+        objective.f = np.asarray(objective.f, dtype=float) + f_mag
+        objective.constant = float(objective.constant) + constant_mag
+        if config.debug:
+            seed_length = float(
+                np.sum(np.linalg.norm(np.diff(magnet_positions, axis=0), axis=1))
+            )
+            straight = float(
+                np.linalg.norm(magnet_positions[-1] - magnet_positions[0])
+            )
+            print(
+                "[GLOBAL MAGNET PATH] "
+                f"path_weight={config.magnet_path_weight:.6g} "
+                f"curvature_weight={config.magnet_curvature_weight:.6g} "
+                f"seed magnet length={1.0e3 * seed_length:.3f} mm "
+                f"straight-line={1.0e3 * straight:.3f} mm "
+                f"(ratio {seed_length / max(straight, 1.0e-9):.2f})",
+                flush=True,
+            )
     bounds = _decision_bounds(
         node_count=node_count,
         state_min=state_min,
@@ -1593,6 +1816,7 @@ def _solve_global_problem(
             untrusted = ~seed.trusted_seed_mask
             states[untrusted] += perturbation[untrusted]
             states[:] = np.clip(states, state_min, state_max)
+            states[:, 6] = np.maximum(states[:, 6], _MIN_INSERTION_M)
             if config.fix_initial_state:
                 states[0] = seed.initial_state
             x0 = states.reshape(-1)
@@ -1952,6 +2176,9 @@ def _make_seed_path(
 
     states[0] = initial_state
     states[:] = np.clip(states, state_min, state_max)
+    # The beam model rejects insertion L <= 0; state_min[6] is exactly 0, so an
+    # interpolated/extrapolated seed node can land on it.  Floor it.
+    states[:, 6] = np.maximum(states[:, 6], _MIN_INSERTION_M)
     # Interpolated states within the all-feasible prefix are useful trusted
     # seeds, while extrapolated/recovered states beyond it should not be held
     # near an arbitrary initial guess by the seed-deviation objective.
@@ -2413,11 +2640,86 @@ def _dense_validate(
     return samples
 
 
+def _dense_sample_violations(
+    sample: DenseValidationSample,
+    config: GlobalConfigurationOptimizerConfig,
+) -> dict[str, float]:
+    """Per-constraint excess over tolerance for one dense sample, >0 = violated.
+
+    Box constraints are excluded on purpose: every dense sample is a convex
+    combination of two box-feasible node states, and the box is itself
+    convex, so a dense sample can never violate it -- position/tangent/
+    exclusion are the only ways a dense sample fails.
+    """
+    spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
+        position_tolerance_m=config.position_tolerance_m,
+        tangent_tolerance_rad=config.tangent_tolerance_rad,
+        spend_fraction=config.tolerance_spend_fraction,
+    )
+    margin = sample.source_magnet_lumen_margin_m
+    return {
+        "position_m": sample.position_error_m - spend_position_tolerance,
+        "tangent_rad": sample.tangent_error_rad - spend_tangent_tolerance,
+        "exclusion_m": (
+            -margin if np.isfinite(margin) and not sample.source_magnet_lumen_constraint_satisfied
+            else float("-inf")
+        ),
+    }
+
+
+def _dense_sample_excusable(
+    sample: DenseValidationSample,
+    config: GlobalConfigurationOptimizerConfig,
+) -> bool:
+    """Is every constraint this sample violates within its acceptance slack?
+
+    ``sample.feasible`` (and the reported per-sample margin diagnostics) are
+    computed against the strict, zero-slack constraints and are never touched
+    by this -- this only decides whether such a sample should still block
+    round-acceptance. Each of the three slacks defaults to 0.0, reproducing
+    the previous strict all-or-nothing behaviour exactly.
+    """
+    violations = _dense_sample_violations(sample, config)
+    if violations["position_m"] > float(config.dense_position_acceptance_slack_m):
+        return False
+    if violations["tangent_rad"] > float(config.dense_tangent_acceptance_slack_rad):
+        return False
+    if violations["exclusion_m"] > float(config.dense_magnet_exclusion_acceptance_slack_m):
+        return False
+    return True
+
+
+def _describe_dense_failure(
+    sample: DenseValidationSample,
+    config: GlobalConfigurationOptimizerConfig,
+) -> str:
+    """A one-line, human-readable breakdown of why the worst dense sample failed."""
+    violations = _dense_sample_violations(sample, config)
+    parts = []
+    if violations["position_m"] > 0.0:
+        parts.append(f"position over by {1.0e3 * violations['position_m']:.4f} mm")
+    if violations["tangent_rad"] > 0.0:
+        parts.append(f"tangent over by {math.degrees(violations['tangent_rad']):.4f} deg")
+    if violations["exclusion_m"] > 0.0:
+        parts.append(
+            f"magnet-exclusion margin negative by {1.0e3 * violations['exclusion_m']:.4f} mm"
+        )
+    if not parts:
+        parts.append("no violation (this sample should be feasible -- check sample.feasible directly)")
+    return (
+        f"interval={sample.interval_index} fraction={sample.fraction:.2f} "
+        f"s={1.0e3 * sample.s_m:.2f}mm: " + "; ".join(parts)
+    )
+
+
 def _worst_dense_sample(
     samples: Sequence[DenseValidationSample],
     config: GlobalConfigurationOptimizerConfig,
 ) -> DenseValidationSample | None:
-    failures = [sample for sample in samples if not sample.feasible]
+    failures = [
+        sample for sample in samples
+        if not sample.feasible and not _dense_sample_excusable(sample, config)
+    ]
     if not failures:
         return None
     spend_position_tolerance, spend_tangent_tolerance = effective_task_tolerances(
@@ -2483,6 +2785,56 @@ def _insert_refinement_node(
     )
 
 
+# A round whose recomputed task-constraint violation exceeds this has driven
+# the seed well outside the tolerance ball (|error| > ~10 tol).  More
+# refinement rounds only compound it, and the inverse-path fallback below is
+# strictly better, so the loop stops.
+_DIVERGENCE_VIOLATION = 100.0
+
+
+def _exact_inverse_seed_path(
+    *,
+    inverse_result: InversePathResult,
+    path: CentrelinePath,
+    state_min: Array,
+    state_max: Array,
+    initial_state: Array,
+    config: GlobalConfigurationOptimizerConfig,
+) -> _SeedPath:
+    """The un-coarsened feasible inverse path, for use as the last-resort output.
+
+    This is what "fall back to the inverse configuration path" means: every
+    feasible saved node, at its own coordinate, with no coarsening and no
+    extrapolated tail.  Built the same way regardless of the requested mode so
+    a ``recover_partial`` run that fails still returns its feasible prefix.
+    """
+    return _make_seed_path(
+        inverse_result=inverse_result,
+        path=path,
+        state_min=state_min,
+        state_max=state_max,
+        initial_state=initial_state,
+        config=replace(
+            config,
+            mode="refine_complete",
+            coarsen_complete_seed=False,
+            use_failed_nodes_as_warm_start=False,
+        ),
+    )
+
+
+def _copy_seed(seed: _SeedPath) -> _SeedPath:
+    return _SeedPath(
+        s=seed.s.copy(),
+        states=seed.states.copy(),
+        desired_position=seed.desired_position.copy(),
+        desired_tangent=seed.desired_tangent.copy(),
+        trusted_seed_mask=seed.trusted_seed_mask.copy(),
+        initial_state=seed.initial_state.copy(),
+        last_feasible_progress_m=seed.last_feasible_progress_m,
+    )
+
+
 def optimize_from_inverse_result(
     *,
     inverse_result: InversePathResult,
@@ -2491,7 +2843,13 @@ def optimize_from_inverse_result(
     config: GlobalConfigurationOptimizerConfig,
     output_dir: str | Path | None,
 ) -> GlobalConfigurationPathResult:
-    """Globally refine/recover and smooth an inverse configuration path."""
+    """Globally refine/recover and smooth an inverse configuration path.
+
+    Guarantee: this never returns a path worse than the inverse feasible seed.
+    The refinement loop keeps the best (feasible-then-least-violating) round it
+    has seen; if no round produces a feasible path, the exact inverse feasible
+    path is returned unchanged, flagged ``fallback_to_inverse_path``.
+    """
     config.validate()
     required = ("p0", "p_min", "p_max", "plant_diagnostic_joint_adapter")
     missing = [key for key in required if key not in controller_pack]
@@ -2560,11 +2918,13 @@ def optimize_from_inverse_result(
         )
 
     optimization_started = time.perf_counter()
-    final_outcome: _SolveOutcome | None = None
-    final_objective: _QuadraticPathObjective | None = None
-    final_states: Array | None = None
-    final_nodes: list[GlobalConfigurationNodeResult] | None = None
-    dense_samples: list[DenseValidationSample] = []
+    # Best round seen so far, ranked (feasible first, then least task violation,
+    # then least tip error).  The optimiser output of a single round is never
+    # returned directly -- only the best round is, and only if it is feasible;
+    # otherwise the inverse-path fallback below wins.
+    best_key: tuple[int, float, float] | None = None
+    best_round: dict[str, Any] | None = None
+    any_feasible_round = False
     refinement_round = 0
     termination_reason = "maximum_refinement_rounds_reached"
     for refinement_round in range(config.maximum_refinement_rounds + 1):
@@ -2573,7 +2933,7 @@ def optimize_from_inverse_result(
             remaining_wall_time = float(config.maximum_wall_time_s) - (
                 time.perf_counter() - optimization_started
             )
-            if remaining_wall_time <= 0.0 and final_outcome is not None:
+            if remaining_wall_time <= 0.0 and best_round is not None:
                 termination_reason = "maximum_wall_time_reached"
                 break
             round_config = replace(
@@ -2588,7 +2948,15 @@ def optimize_from_inverse_result(
             config=round_config,
             path=path,
         )
-        states = outcome.x.reshape(seed.s.size, 7)
+        # A solve that stopped early (wall time / stagnation) can return an
+        # iterate a hair outside the box; the beam model rejects L <= 0, so
+        # clamp before it is replayed or validated.
+        states = np.clip(
+            outcome.x.reshape(seed.s.size, 7),
+            np.asarray(state_min, dtype=float),
+            np.asarray(state_max, dtype=float),
+        )
+        states[:, 6] = np.maximum(states[:, 6], _MIN_INSERTION_M)
         result_baselines, _result_replay_outputs = _replay_node_baselines(
             adapter,
             states,
@@ -2610,12 +2978,14 @@ def optimize_from_inverse_result(
                 interval_baselines=interval_baselines,
             )
             worst = _worst_dense_sample(dense_samples, config)
+            dense_excused_samples = [
+                sample for sample in dense_samples
+                if not sample.feasible and _dense_sample_excusable(sample, config)
+            ]
         else:
             dense_samples = []
             worst = None
-        final_outcome = outcome
-        final_objective = objective
-        final_states = states
+            dense_excused_samples = []
         node_results_for_check = _build_node_results(
             adapter=adapter,
             seed=seed,
@@ -2625,8 +2995,79 @@ def optimize_from_inverse_result(
             config=config,
             node_baselines=result_baselines,
         )
-        final_nodes = node_results_for_check
         nodes_feasible = all(node.feasible for node in node_results_for_check)
+        dense_ok = (not config.dense_validation_enabled) or (worst is None)
+        round_feasible = bool(
+            float(outcome.constraint_violation) <= float(config.constraint_tolerance)
+            and nodes_feasible
+            and dense_ok
+        )
+        if config.debug and not dense_ok:
+            # worst is the sample that will actually block this round (i.e. it
+            # is NOT within any configured slack) -- say exactly why, in the
+            # same units the CLI's slack/tolerance flags use, every round.
+            # This is the answer to "why did dense validation fail", instead
+            # of needing to reload the run and guess from the summary JSON.
+            print(f"[GLOBAL DENSE GAP] {_describe_dense_failure(worst, config)}", flush=True)
+        if round_feasible and dense_excused_samples:
+            if config.debug:
+                for label, key, slack, unit, scale in (
+                    ("magnet-exclusion", "exclusion_m",
+                     config.dense_magnet_exclusion_acceptance_slack_m, "mm", 1.0e3),
+                    ("position", "position_m",
+                     config.dense_position_acceptance_slack_m, "mm", 1.0e3),
+                    ("tangent", "tangent_rad",
+                     config.dense_tangent_acceptance_slack_rad, "deg", 180.0 / math.pi),
+                ):
+                    worst_violation = max(
+                        (_dense_sample_violations(s, config)[key] for s in dense_excused_samples),
+                        default=float("-inf"),
+                    )
+                    if worst_violation > 0.0:
+                        print(
+                            f"[GLOBAL DENSE SLACK] round accepted with a {label} "
+                            f"near-miss excused (worst excess {scale * worst_violation:.4f} "
+                            f"{unit}, slack {scale * slack:.4f} {unit})",
+                            flush=True,
+                        )
+        any_feasible_round = any_feasible_round or round_feasible
+        max_round_error = max(
+            [node.position_error_m for node in node_results_for_check]
+            + [sample.position_error_m for sample in dense_samples]
+            + [0.0]
+        )
+        round_key = (
+            0 if round_feasible else 1,
+            float(outcome.constraint_violation),
+            float(max_round_error),
+        )
+        if best_key is None or round_key < best_key:
+            best_key = round_key
+            best_round = {
+                "outcome": outcome,
+                "objective": objective,
+                "states": states,
+                "nodes": node_results_for_check,
+                "dense_samples": dense_samples,
+                "seed": _copy_seed(seed),
+                "feasible": round_feasible,
+                "dense_slack_excused_count": len(dense_excused_samples),
+                "dense_slack_excused_worst_position_m": max(
+                    (_dense_sample_violations(s, config)["position_m"]
+                     for s in dense_excused_samples),
+                    default=float("nan"),
+                ),
+                "dense_slack_excused_worst_tangent_rad": max(
+                    (_dense_sample_violations(s, config)["tangent_rad"]
+                     for s in dense_excused_samples),
+                    default=float("nan"),
+                ),
+                "dense_slack_excused_worst_exclusion_m": max(
+                    (_dense_sample_violations(s, config)["exclusion_m"]
+                     for s in dense_excused_samples),
+                    default=float("nan"),
+                ),
+            }
         if config.debug:
             max_position = max(node.position_error_m for node in node_results_for_check)
             max_tangent = max(node.tangent_error_rad for node in node_results_for_check)
@@ -2638,20 +3079,30 @@ def optimize_from_inverse_result(
             print(
                 f"[GLOBAL PATH] refinement={refinement_round} "
                 f"solver_success={outcome.success} nodes_feasible={nodes_feasible} "
-                f"dense_feasible={dense_status}\n"
+                f"dense_feasible={dense_status} round_feasible={round_feasible}\n"
                 f"  objective={outcome.objective:.6e} "
                 f"constraint_violation={outcome.constraint_violation:.6e}\n"
                 f"  max_position_error={1.0e3 * max_position:.4f} mm "
                 f"max_tangent_error={np.degrees(max_tangent):.4f} deg"
             )
-        if nodes_feasible and not config.dense_validation_enabled:
-            termination_reason = "node_constraints_satisfied_dense_validation_disabled"
-            break
-        if nodes_feasible and worst is None:
-            termination_reason = "hard_constraints_and_dense_validation_satisfied"
+        if round_feasible:
+            if dense_excused_samples:
+                termination_reason = "hard_constraints_satisfied_dense_exclusion_excused"
+            else:
+                termination_reason = (
+                    "node_constraints_satisfied_dense_validation_disabled"
+                    if not config.dense_validation_enabled
+                    else "hard_constraints_and_dense_validation_satisfied"
+                )
             break
         if worst is None:
             termination_reason = "node_constraints_not_satisfied"
+            break
+        if float(outcome.constraint_violation) > _DIVERGENCE_VIOLATION:
+            # The optimiser drove this seed far outside the tolerance ball.
+            # Refining from that iterate only compounds it; stop and let the
+            # inverse-path fallback take over.
+            termination_reason = "optimizer_diverged_from_seed"
             break
         if (
             config.maximum_wall_time_s is not None
@@ -2670,6 +3121,103 @@ def optimize_from_inverse_result(
             path=path,
             config=config,
         )
+
+    assert best_round is not None
+    fallback_to_inverse_path = not any_feasible_round
+    if fallback_to_inverse_path:
+        # No global round produced a feasible path.  Return the exact inverse
+        # feasible path unchanged rather than a stalled/diverged iterate.
+        fb_seed = _exact_inverse_seed_path(
+            inverse_result=inverse_result,
+            path=path,
+            state_min=state_min,
+            state_max=state_max,
+            initial_state=initial_state,
+            config=config,
+        )
+        fb_baselines, _fb_replay = _replay_node_baselines(adapter, fb_seed.states)
+        fb_nodes = _build_node_results(
+            adapter=adapter,
+            seed=fb_seed,
+            states=fb_seed.states,
+            state_min=state_min,
+            state_max=state_max,
+            config=config,
+            node_baselines=fb_baselines,
+            compute_jacobian_diagnostics=False,
+        )
+        if config.dense_validation_enabled:
+            fb_dense = _dense_validate(
+                adapter=adapter,
+                path=path,
+                s_nodes=fb_seed.s,
+                states=fb_seed.states,
+                state_min=state_min,
+                state_max=state_max,
+                config=config,
+                interval_baselines=(
+                    None if fb_baselines is None else fb_baselines[1:]
+                ),
+            )
+        else:
+            fb_dense = []
+        fb_objective = _QuadraticPathObjective(
+            s=fb_seed.s,
+            seed_states=fb_seed.states,
+            trusted_seed_mask=fb_seed.trusted_seed_mask,
+            state_min=state_min,
+            state_max=state_max,
+            config=config,
+        )
+        fb_flat = fb_seed.states.reshape(-1)
+        fb_tasks = _TaskConstraints(
+            evaluator=_BatchBeamEvaluator(
+                adapter, fb_seed.s.size, node_baselines=fb_baselines
+            ),
+            desired_position=fb_seed.desired_position,
+            desired_tangent=fb_seed.desired_tangent,
+            position_tolerance_m=config.position_tolerance_m,
+            tangent_tolerance_rad=config.tangent_tolerance_rad,
+        )
+        final_outcome = _SolveOutcome(
+            x=fb_flat.copy(),
+            success=False,
+            status=-2,
+            message=(
+                "inverse configuration path returned unchanged: no global "
+                "round produced a feasible path (inverse seed retained)"
+            ),
+            iterations=0,
+            objective=float(fb_objective.value(fb_flat)),
+            constraint_violation=float(_task_violation(fb_tasks, fb_flat)),
+            restoration_slack_maximum=0.0,
+        )
+        final_objective = fb_objective
+        final_states = fb_seed.states
+        final_nodes = fb_nodes
+        dense_samples = fb_dense
+        seed = fb_seed
+        if termination_reason not in (
+            "optimizer_diverged_from_seed",
+            "maximum_wall_time_reached",
+            "maximum_wall_time_reached_after_validation",
+        ):
+            termination_reason = "inverse_path_fallback_no_feasible_global_round"
+        if config.debug:
+            print(
+                "[GLOBAL FALLBACK] no feasible global round; returning the "
+                f"exact inverse feasible path ({fb_seed.s.size} nodes, "
+                f"worst tip error "
+                f"{1.0e3 * max(n.position_error_m for n in fb_nodes):.4f} mm)",
+                flush=True,
+            )
+    else:
+        final_outcome = best_round["outcome"]
+        final_objective = best_round["objective"]
+        final_states = best_round["states"]
+        final_nodes = best_round["nodes"]
+        dense_samples = best_round["dense_samples"]
+        seed = best_round["seed"]
 
     assert final_outcome is not None
     assert final_objective is not None
@@ -2786,6 +3334,29 @@ def optimize_from_inverse_result(
         "optimizer_iterations": final_outcome.iterations,
         "objective_value": final_outcome.objective,
         "selected_seed_fallback": selected_seed_fallback,
+        "fallback_to_inverse_path": bool(fallback_to_inverse_path),
+        "any_feasible_global_round": bool(any_feasible_round),
+        "dense_magnet_exclusion_acceptance_slack_m": float(
+            config.dense_magnet_exclusion_acceptance_slack_m
+        ),
+        "dense_position_acceptance_slack_m": float(
+            config.dense_position_acceptance_slack_m
+        ),
+        "dense_tangent_acceptance_slack_rad": float(
+            config.dense_tangent_acceptance_slack_rad
+        ),
+        "best_round_dense_slack_excused_count": int(
+            best_round.get("dense_slack_excused_count", 0)
+        ),
+        "best_round_dense_slack_excused_worst_position_m": float(
+            best_round.get("dense_slack_excused_worst_position_m", float("nan"))
+        ),
+        "best_round_dense_slack_excused_worst_tangent_rad": float(
+            best_round.get("dense_slack_excused_worst_tangent_rad", float("nan"))
+        ),
+        "best_round_dense_slack_excused_worst_exclusion_m": float(
+            best_round.get("dense_slack_excused_worst_exclusion_m", float("nan"))
+        ),
         "maximum_normalized_state_change_from_seed": (
             maximum_normalized_state_change
         ),
@@ -3401,6 +3972,7 @@ def run_self_test() -> None:
     s = np.array([0.0, 0.005, 0.01])
     seed_states = np.zeros((3, 7))
     seed_states[:, 0] = s
+    seed_states[:, 6] = 5.0e-3  # positive insertion: the beam model rejects L <= 0
     objective = _QuadraticPathObjective(
         s=s,
         seed_states=seed_states,
@@ -3592,6 +4164,86 @@ def run_self_test() -> None:
             "Complete-path refinement with tip_curvature_weight > 0 failed."
         )
 
+    # magnet_path_weight / magnet_curvature_weight: exact quadratic vs a
+    # brute-force magnet path-length + curvature cost on the mock adapter, and
+    # end-to-end through trust-constr.
+    magnet_adapter = controller_pack["plant_diagnostic_joint_adapter"]
+    magnet_seed = _make_seed_path(
+        inverse_result=complete_inverse,
+        path=CentrelinePath(centreline),
+        state_min=controller_pack["p_min"],
+        state_max=controller_pack["p_max"],
+        initial_state=np.zeros(7),
+        config=complete_config,
+    )
+    m_pos, m_jac = _magnet_path_terms(
+        adapter=magnet_adapter, states=magnet_seed.states, config=complete_config
+    )
+    from global_upgrades import magnet_path_quadratic as _mpq
+    H_m, f_m, c_m = _mpq(
+        magnet_positions=m_pos,
+        magnet_jacobians=m_jac,
+        seed_states=magnet_seed.states,
+        s=magnet_seed.s,
+        first_weight=3.0,
+        second_weight=2.0,
+    )
+
+    def _brute_magnet_cost(flat_state: Array) -> float:
+        st = np.asarray(flat_state, dtype=float).reshape(magnet_seed.s.size, 7)
+        p = m_pos + np.einsum("nij,nj->ni", m_jac, st - magnet_seed.states)
+        total = 0.0
+        s_nodes = magnet_seed.s
+        for j in range(s_nodes.size - 1):
+            d1 = (p[j + 1] - p[j]) / (s_nodes[j + 1] - s_nodes[j])
+            total += 0.5 * 3.0 * float(d1 @ d1)
+        for j in range(1, s_nodes.size - 1):
+            left = s_nodes[j] - s_nodes[j - 1]
+            right = s_nodes[j + 1] - s_nodes[j]
+            common = 2.0 / (left + right)
+            d2 = common * (
+                p[j - 1] / left
+                - p[j] * (1.0 / left + 1.0 / right)
+                + p[j + 1] / right
+            )
+            total += 0.5 * 2.0 * float(d2 @ d2)
+        return total
+
+    seed_flat = magnet_seed.states.reshape(-1)
+    quad_at_seed = float(
+        0.5 * seed_flat @ (H_m @ seed_flat) + f_m @ seed_flat + c_m
+    )
+    if abs(quad_at_seed - _brute_magnet_cost(seed_flat)) > 1.0e-9 * max(
+        1.0, abs(quad_at_seed)
+    ):
+        raise AssertionError(
+            "magnet_path_quadratic value diverged from brute force at the seed."
+        )
+    probe = seed_flat + 1.0e-4
+    grad_numeric = _finite_difference_gradient(_brute_magnet_cost, probe)
+    grad_analytic = np.asarray(H_m @ probe + f_m, dtype=float)
+    grad_error = np.linalg.norm(grad_analytic - grad_numeric) / max(
+        np.linalg.norm(grad_numeric), 1.0e-12
+    )
+    if grad_error > 5.0e-5:
+        raise AssertionError(
+            f"magnet_path_quadratic gradient error too large: {grad_error}"
+        )
+    magnet_config = replace(
+        complete_config, magnet_path_weight=1.0e-4, magnet_curvature_weight=1.0e-4
+    )
+    magnet_result = optimize_from_inverse_result(
+        inverse_result=complete_inverse,
+        controller_pack=controller_pack,
+        lumen_C=centreline,
+        config=magnet_config,
+        output_dir=None,
+    )
+    if not magnet_result.globally_feasible:
+        raise AssertionError(
+            "Complete-path refinement with magnet path/curvature weights failed."
+        )
+
     # Retained-seed fallback under a spent tolerance: the known-feasible seed
     # must never be dropped in favour of an infeasible optimiser iterate just
     # because tolerance_spend_fraction < 1 tightened the constraint the solver
@@ -3614,12 +4266,75 @@ def run_self_test() -> None:
     if not (
         spent_result.globally_feasible
         or spent_result.summary.get("selected_seed_fallback")
+        or spent_result.summary.get("fallback_to_inverse_path")
     ):
         raise AssertionError(
             "A spent-tolerance solve that could not beat the seed returned "
             "neither a feasible path nor a seed fallback: "
             f"{spent_result.summary}"
         )
+
+    # Inverse-path fallback: an adapter whose tip y is stuck 2 mm off and
+    # uncontrollable (zero Jacobian row) makes every node infeasible for ANY
+    # tolerance the optimiser could reach.  optimize_from_inverse_result must
+    # then return the EXACT inverse feasible path unchanged -- never a
+    # stalled/diverged optimiser iterate.
+    class _StuckTipAdapter(_LinearMockAdapter):
+        def forward_output(self, state: Any, commit: bool = False) -> Array:
+            out = np.array(super().forward_output(state, commit), dtype=float)
+            out[1] = 2.0e-3
+            return out
+
+        def continuous_output_jacobian(self, state: Any) -> Array:
+            J = np.array(super().continuous_output_jacobian(state), dtype=float)
+            J[1, :] = 0.0
+            return J
+
+    stuck_pack = dict(controller_pack)
+    stuck_pack["plant_diagnostic_joint_adapter"] = _StuckTipAdapter()
+    impossible_config = replace(
+        complete_config,
+        position_tolerance_m=1.0e-4,
+        tangent_tolerance_rad=1.0e-2,
+        maximum_refinement_rounds=1,
+        maximum_iterations=5,
+    )
+    impossible_result = optimize_from_inverse_result(
+        inverse_result=complete_inverse,
+        controller_pack=stuck_pack,
+        lumen_C=centreline,
+        config=impossible_config,
+        output_dir=None,
+    )
+    if not impossible_result.summary.get("fallback_to_inverse_path"):
+        raise AssertionError(
+            "An unachievable tolerance did not trigger the inverse-path "
+            f"fallback: {impossible_result.summary}"
+        )
+    if impossible_result.summary.get("any_feasible_global_round"):
+        raise AssertionError("A feasible round was reported for an impossible tolerance.")
+    inverse_states = np.array(
+        [
+            np.concatenate((node.q_rad, [node.insertion_m]))
+            for node in complete_inverse.nodes
+            if node.feasible
+        ]
+    )
+    # The fallback floors insertion to _MIN_INSERTION_M (the beam model rejects
+    # L <= 0); this mock's inverse insertion is exactly 0, so floor the target.
+    inverse_states[:, 6] = np.maximum(inverse_states[:, 6], _MIN_INSERTION_M)
+    returned_states = np.array(
+        [np.concatenate((node.q_rad, [node.insertion_m])) for node in impossible_result.nodes]
+    )
+    if returned_states.shape != inverse_states.shape or not np.allclose(
+        returned_states, inverse_states, atol=1.0e-9
+    ):
+        raise AssertionError(
+            "The inverse-path fallback did not return the exact inverse feasible "
+            f"states: shapes {returned_states.shape} vs {inverse_states.shape}."
+        )
+    if impossible_result.globally_feasible:
+        raise AssertionError("The inverse-path fallback was reported globally feasible.")
 
     # Verify construction of insertion monotonicity rows.
     monotonic_config = GlobalConfigurationOptimizerConfig(

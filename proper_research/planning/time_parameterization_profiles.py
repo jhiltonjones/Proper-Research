@@ -94,6 +94,48 @@ def standard_trapezoidal_parameterization(
     if start_x > caps[0] + tolerance or end_x > caps[-1] + tolerance:
         raise RuntimeError("An endpoint path speed exceeds its velocity cap.")
 
+    # The velocity caps only bound each actuator's *speed*. On a sharply
+    # curved path the centripetal term (path_second * x, the acceleration
+    # needed just to stay ON the path at squared-speed x) can already bust an
+    # actuator's acceleration limit at a speed the velocity cap still allows,
+    # leaving _acceleration_interval_at_speed with no feasible path
+    # acceleration at all. The optimal profile handles that by slowing down
+    # locally; the honest trapezoid handles it by choosing a lower global
+    # cruise speed. So cap the cruise speed at each point by the largest
+    # squared-speed that still admits some path acceleration, found by
+    # bisection, and take the global minimum.
+    def _acceleration_feasible_cap(index: int, ceiling: float) -> float:
+        try:
+            _tp._acceleration_interval_at_speed(
+                path_first=first[index], path_second=second[index],
+                squared_speed=ceiling, acceleration_limit=acceleration_limit,
+                maximum_path_acceleration=config.maximum_path_acceleration_m_s2,
+                tolerance=tolerance,
+            )
+            return ceiling
+        except RuntimeError:
+            pass
+        low, high = 0.0, ceiling
+        for _ in range(60):
+            mid = 0.5 * (low + high)
+            try:
+                _tp._acceleration_interval_at_speed(
+                    path_first=first[index], path_second=second[index],
+                    squared_speed=mid, acceleration_limit=acceleration_limit,
+                    maximum_path_acceleration=config.maximum_path_acceleration_m_s2,
+                    tolerance=tolerance,
+                )
+                low = mid
+            except RuntimeError:
+                high = mid
+        return low
+
+    accel_caps = np.array([
+        _acceleration_feasible_cap(index, float(caps[index]))
+        for index in range(s_grid.size)
+    ])
+    caps = np.minimum(caps, accel_caps)
+
     cruise_x = float(np.min(caps))
     if cruise_x <= max(start_x, end_x) + tolerance:
         # The path cannot go faster anywhere than it must at its endpoints:

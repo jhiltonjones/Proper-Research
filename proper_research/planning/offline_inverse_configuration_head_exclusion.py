@@ -889,9 +889,9 @@ class _NodeObjective:
         position_residual = (
             output[:3] - self.desired_position
         ) / float(self.config.position_tolerance_m)
-        tangent_residual = (
+        tangent_residual = ((
             tangent - self.desired_tangent
-        ) / self.tangent_scale
+        ) / self.tangent_scale)*0
         continuity_residual = self.continuity_sqrt * (
             (state - self.previous_state) / self.step_scale
         )

@@ -360,6 +360,105 @@ def tip_curvature_quadratic(
     return csc_matrix(H), f, float(constant)
 
 
+def magnet_path_quadratic(
+    *,
+    magnet_positions: Array,
+    magnet_jacobians: Array,
+    seed_states: Array,
+    s: Array,
+    first_weight: float,
+    second_weight: float,
+) -> tuple[Any, Array, float]:
+    """Penalise the *source-magnet* path length and/or curvature.
+
+    Returns ``(H, f, constant)`` for ``0.5 x^T H x + f^T x + constant`` in the
+    stacked variable ``x = [chi_0; ...; chi_{N-1}]``.
+
+    Why this term exists
+    ---------------------
+    The path objective (first/second differences of ``chi``), the seed term,
+    and the joint-centre term are all in *configuration* space.  The only
+    place the source magnet enters the problem at all is the hard keep-out
+    inequality ``distance(magnet, lumen) >= radius`` -- a lower bound, never a
+    cost.  So a solution in which the external magnet swings far out and
+    sharply back is invisible to the objective as long as ``chi`` itself is
+    smooth (the magnet forward kinematics are nonlinear, and the tip-tracking
+    task leaves a 4-D redundant null space the magnet is free to wander in).
+
+    This adds an explicit preference for a short, direct magnet path, the
+    magnet-space analogue of ``_first_difference_matrix`` /
+    ``_second_difference_matrix``:
+
+        first_weight  * sum_j || (p_{j+1} - p_j) / ds_j ||^2      (arc length)
+        second_weight * sum_j || D2 p_j ||^2                       (curvature)
+
+    with ``p_j = p_magnet(chi_j)`` linearised at the seed,
+    ``p_magnet(chi_j) ~ J_j chi_j + c_j``, ``c_j = p_j^0 - J_j chi_j^0``.
+    Each contributes one small block (14x14 for the first difference, 21x21
+    for the second) per interval / interior node to the same sparse QP.
+
+    ``magnet_positions`` is ``(N, 3)`` and ``magnet_jacobians`` ``(N, 3, 7)``,
+    both evaluated at ``seed_states`` by the caller (the 7th column of the
+    magnet Jacobian is normally ~0: insertion moves the beam, not the magnet).
+    """
+    first_weight = float(first_weight)
+    second_weight = float(second_weight)
+    if first_weight < 0.0 or second_weight < 0.0:
+        raise ValueError("magnet path/curvature weights must be non-negative.")
+    if first_weight == 0.0 and second_weight == 0.0:
+        raise ValueError("at least one magnet weight must be positive.")
+    seed_states = np.asarray(seed_states, dtype=float).reshape(-1, 7)
+    s = np.asarray(s, dtype=float).reshape(-1)
+    positions = np.asarray(magnet_positions, dtype=float).reshape(-1, 3)
+    jacobians = np.asarray(magnet_jacobians, dtype=float).reshape(-1, 3, 7)
+    node_count = seed_states.shape[0]
+    if not (positions.shape[0] == jacobians.shape[0] == node_count == s.size):
+        raise ValueError("magnet_positions / magnet_jacobians / s / seed_states disagree on N.")
+    size = 7 * node_count
+    if node_count < 2:
+        return csc_matrix((size, size)), np.zeros(size), 0.0
+    ds = np.diff(s)
+    if np.any(ds <= 0.0):
+        raise ValueError("s must be strictly increasing.")
+
+    offsets = positions - np.einsum("nij,nj->ni", jacobians, seed_states)
+    H = lil_matrix((size, size), dtype=float)
+    f = np.zeros(size, dtype=float)
+    constant = 0.0
+
+    def _accumulate(A: Array, b: Array, node_indices: Sequence[int], weight: float) -> None:
+        nonlocal constant
+        block = weight * (A.T @ A)
+        linear = weight * (A.T @ b)
+        constant += 0.5 * weight * float(b @ b)
+        columns = np.concatenate(
+            [np.arange(7 * n, 7 * (n + 1)) for n in node_indices]
+        )
+        H[np.ix_(columns, columns)] += block
+        f[columns] += linear
+
+    if first_weight > 0.0:
+        for j in range(node_count - 1):
+            inv = 1.0 / float(ds[j])
+            A_j = np.hstack((-inv * jacobians[j], inv * jacobians[j + 1]))
+            b_j = inv * (offsets[j + 1] - offsets[j])
+            _accumulate(A_j, b_j, (j, j + 1), first_weight)
+
+    if second_weight > 0.0 and node_count >= 3:
+        for j in range(1, node_count - 1):
+            left = float(ds[j - 1])
+            right = float(ds[j])
+            common = 2.0 / (left + right)
+            cl, cc, cr = common / left, -common * (1.0 / left + 1.0 / right), common / right
+            A_j = np.hstack(
+                (cl * jacobians[j - 1], cc * jacobians[j], cr * jacobians[j + 1])
+            )
+            b_j = cl * offsets[j - 1] + cc * offsets[j] + cr * offsets[j + 1]
+            _accumulate(A_j, b_j, (j - 1, j, j + 1), second_weight)
+
+    return csc_matrix(H), f, float(constant)
+
+
 def effective_task_tolerances(
     *,
     position_tolerance_m: float,
@@ -424,6 +523,7 @@ __all__ = [
     "NodeExclusionConstraints",
     "balanced_second_difference_weights",
     "effective_task_tolerances",
+    "magnet_path_quadratic",
     "tip_centring_quadratic",
     "tip_curvature_quadratic",
 ]

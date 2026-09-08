@@ -1441,6 +1441,10 @@ def _arguments() -> argparse.Namespace:
         help="List the cells and stop. Do this before a long study.",
     )
     parser.add_argument("--self-test", action="store_true")
+    from proper_research.experiments.pinned_planning_context import (
+        add_geometry_arguments,
+    )
+    add_geometry_arguments(parser)
     return parser.parse_args()
 
 
@@ -1501,12 +1505,19 @@ def main() -> int:
     base_module = harness.load_base_module()
     beam_module = harness.load_beam_output_module()
 
-    from proper_research.planning.planning_context import build_planning_context
+    from proper_research.experiments.pinned_planning_context import (
+        resolve_planning_context_from_args,
+    )
 
-    context_cfg, bundle, controller_pack, out_root = build_planning_context()
+    context_cfg, bundle, controller_pack, out_root = resolve_planning_context_from_args(args)
     _assert_plant_contact(bundle, "the baseline planning context")
 
-    reference_dir = args.reference or (out_root / "time_parameterized_configuration_path")
+    # Checked here, before any anatomy is built, and it auto-detects the
+    # --from-inverse / --profile both time-param outputs if the standard
+    # directory is missing (raises a clear SystemExit otherwise).
+    from proper_research.experiments.pinned_planning_context import resolve_reference_dir
+
+    reference_dir = resolve_reference_dir(out_root, args.reference)
     output_dir = Path(args.output_dir or (out_root / "contact_study"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1516,24 +1527,6 @@ def main() -> int:
         f"[study] design config resolved from {base_context.pop('resolved_from')}",
         flush=True,
     )
-
-    # Checked here, before any anatomy is built. Each anatomy assembles a full
-    # beam model, so discovering a missing reference four bundles later would
-    # waste minutes and tell you nothing you could not have known now.
-    if not reference_dir.exists():
-        present = (
-            sorted(entry.name for entry in out_root.iterdir() if entry.is_dir())
-            if out_root.exists() else []
-        )
-        raise SystemExit(
-            f"\nNo reference trajectory at:\n  {reference_dir}\n\n"
-            "Stage 1 evaluates both Jacobians AT THE STATES THE PLANNER PRODUCED, "
-            "so layers 1-3 (inverse configuration, global smoothing, time "
-            "parameterisation) must have run before any stage of this study.\n\n"
-            f"Directories under {out_root}:\n  "
-            + ("\n  ".join(present) if present else "(none)")
-            + "\n\nIf your reference lives elsewhere, point at it with --reference."
-        )
 
     print(f"[study] anatomies: {', '.join(spec.name for spec in anatomies)}", flush=True)
 

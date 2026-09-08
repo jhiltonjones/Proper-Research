@@ -168,6 +168,16 @@ class TimeParameterizationConfig:
     require_saved_global_feasible: bool = False
     require_saved_dense_feasible: bool = False
 
+    # Tolerances the time-parameterised spline's beam tip path is checked
+    # against.  ``None`` uses the tolerances stored in the source global
+    # summary -- which, after ``--auto-tolerance``, is the *optimiser target*
+    # (deliberately tighter than the physical tolerance to leave margin), not
+    # what the path satisfies.  When the global layer fell back to the inverse
+    # path, or whenever the spline is only meant to meet the layer-1 physical
+    # tolerance, set these explicitly (e.g. from make_inverse_config()).
+    beam_validation_position_tolerance_m: float | None = None
+    beam_validation_tangent_tolerance_rad: float | None = None
+
     interpolation: str = "natural_cubic"
     linear_program_tolerance: float = 1.0e-10
     constraint_tolerance: float = 1.0e-8
@@ -208,6 +218,21 @@ class TimeParameterizationConfig:
             raise ValueError("timing_subdivisions_per_interval must be >= 1.")
         if self.beam_validation_samples_per_interval < 1:
             raise ValueError("beam_validation_samples_per_interval must be >= 1.")
+        position_override = self.beam_validation_position_tolerance_m
+        if position_override is not None and (
+            not np.isfinite(position_override) or float(position_override) <= 0.0
+        ):
+            raise ValueError(
+                "beam_validation_position_tolerance_m must be finite and positive "
+                "when set."
+            )
+        tangent_override = self.beam_validation_tangent_tolerance_rad
+        if tangent_override is not None and not (
+            np.isfinite(tangent_override) and 0.0 < float(tangent_override) < math.pi
+        ):
+            raise ValueError(
+                "beam_validation_tangent_tolerance_rad must lie in (0, pi) when set."
+            )
         if self.interpolation != "natural_cubic":
             raise ValueError("Only interpolation='natural_cubic' is supported.")
 
@@ -719,6 +744,8 @@ def _validate_beam_on_spatial_and_time_samples(
     controller_pack: dict[str, Any],
     spatial_samples_per_interval: int,
     lumen_C: Array | None = None,
+    beam_position_tolerance_m: float | None = None,
+    beam_tangent_tolerance_rad: float | None = None,
     debug: bool = False,
 ) -> dict[str, Array | bool | float]:
     spatial_s = _subdivide_path(
@@ -759,9 +786,19 @@ def _validate_beam_on_spatial_and_time_samples(
         ) = _physical_errors(
             outputs[index], desired_position[index], desired_tangent[index]
         )
+    position_tolerance = (
+        float(beam_position_tolerance_m)
+        if beam_position_tolerance_m is not None
+        else path.position_tolerance_m
+    )
+    tangent_tolerance = (
+        float(beam_tangent_tolerance_rad)
+        if beam_tangent_tolerance_rad is not None
+        else path.tangent_tolerance_rad
+    )
     feasible = (
-        (position_error <= path.position_tolerance_m)
-        & (tangent_error <= path.tangent_tolerance_rad)
+        (position_error <= position_tolerance)
+        & (tangent_error <= tangent_tolerance)
     )
     spatial_count = spatial_s.size
     spatial_map = inverse[:spatial_count]
@@ -963,8 +1000,25 @@ def parameterize_configuration_path(
                 config.beam_validation_samples_per_interval
             ),
             lumen_C=lumen_C,
+            beam_position_tolerance_m=config.beam_validation_position_tolerance_m,
+            beam_tangent_tolerance_rad=config.beam_validation_tangent_tolerance_rad,
             debug=config.debug,
         )
+        if config.debug and (
+            config.beam_validation_position_tolerance_m is not None
+            or config.beam_validation_tangent_tolerance_rad is not None
+        ):
+            print(
+                "[TIME BEAM VALIDATION] using override tolerances "
+                f"position="
+                f"{1.0e3 * (config.beam_validation_position_tolerance_m or geometric_path.position_tolerance_m):.4f} mm "
+                f"tangent="
+                f"{math.degrees(config.beam_validation_tangent_tolerance_rad or geometric_path.tangent_tolerance_rad):.2f} deg "
+                f"(source global summary had "
+                f"{1.0e3 * geometric_path.position_tolerance_m:.4f} mm / "
+                f"{math.degrees(geometric_path.tangent_tolerance_rad):.2f} deg)",
+                flush=True,
+            )
         achieved_position = np.asarray(beam["time_achieved_position"], dtype=float)
         achieved_tangent = np.asarray(beam["time_achieved_tangent"], dtype=float)
         position_error = np.asarray(beam["time_position_error"], dtype=float)
@@ -1067,10 +1121,28 @@ def parameterize_configuration_path(
         and config.require_nonlinear_beam_feasible
         and not beam_all_feasible
     ):
+        checked_position = (
+            config.beam_validation_position_tolerance_m
+            if config.beam_validation_position_tolerance_m is not None
+            else geometric_path.position_tolerance_m
+        )
+        checked_tangent = (
+            config.beam_validation_tangent_tolerance_rad
+            if config.beam_validation_tangent_tolerance_rad is not None
+            else geometric_path.tangent_tolerance_rad
+        )
         raise RuntimeError(
             "The time-parameterized spline failed nonlinear beam validation: "
-            f"maximum_position_error={1.0e3 * maximum_beam_position_error:.6f} mm, "
-            f"maximum_tangent_error={math.degrees(maximum_beam_tangent_error):.6f} deg."
+            f"maximum_position_error={1.0e3 * maximum_beam_position_error:.6f} mm "
+            f"(tolerance {1.0e3 * checked_position:.6f} mm), "
+            f"maximum_tangent_error={math.degrees(maximum_beam_tangent_error):.6f} deg "
+            f"(tolerance {math.degrees(checked_tangent):.6f} deg).\n"
+            "If the source global path is a fallback to the inverse path "
+            "(summary.fallback_to_inverse_path=True) the tolerance above is the "
+            "optimiser's --auto-tolerance target, not what the path meets; pass "
+            "--beam-position-tolerance-mm / --beam-tangent-tolerance-deg (or "
+            "TimeParameterizationConfig.beam_validation_*_tolerance_*) to check "
+            "against the layer-1 physical tolerance instead."
         )
     return result
 
@@ -1155,6 +1227,102 @@ def load_saved_global_configuration_path(
     # if not all(bool(int(row["feasible"])) for row in dense_rows):
     #     raise RuntimeError("Saved dense-validation CSV contains a failed sample.")
     return geometric
+
+
+def load_saved_inverse_configuration_path(
+    inverse_output_dir: str | Path,
+) -> GeometricConfigurationPath:
+    """Load an inverse-configuration (Layer 1) path directly, skipping Layer 2.
+
+    Use this when Layer 2 (global smoothing) is falling back to the inverse
+    path anyway -- there is nothing to gain from a smoothing round that
+    returns its input, and the global fallback also *coarsens* the node grid
+    (e.g. 57 -> 21 nodes), so feeding the inverse path here keeps the full
+    resolution. The result is flagged ``globally_feasible=False`` /
+    ``dense_validation_feasible=False``: this is the node-feasible L1 path, not
+    a globally-smoothed, dense-validated one. Downstream beam validation still
+    runs (unless skipped) against the L1 physical tolerance.
+    """
+    root = Path(inverse_output_dir)
+    json_path = root / "inverse_configuration_summary.json"
+    csv_path = root / "inverse_configuration_path.csv"
+    for path in (json_path, csv_path):
+        if not path.exists():
+            raise FileNotFoundError(path)
+    configuration = json.loads(json_path.read_text(encoding="utf-8")).get("configuration", {})
+
+    with csv_path.open("r", encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    if len(rows) < 2:
+        raise ValueError("Inverse configuration CSV has fewer than two nodes.")
+
+    def _is_true(value: Any) -> bool:
+        return str(value).strip().lower() in ("1", "1.0", "true", "yes")
+
+    if not all(_is_true(row.get("feasible")) for row in rows):
+        raise RuntimeError(
+            "Saved inverse path CSV contains an infeasible node -- time "
+            "parameterisation needs a node-feasible path."
+        )
+
+    s_m = np.asarray([float(row["s_m"]) for row in rows], dtype=float)
+    states = np.asarray(
+        [
+            [float(row[f"q{joint}_rad"]) for joint in range(1, 7)]
+            + [float(row["insertion_m"])]
+            for row in rows
+        ],
+        dtype=float,
+    )
+    desired_position_m = np.asarray(
+        [[float(row["desired_x"]), float(row["desired_y"]), float(row["desired_z"])]
+         for row in rows],
+        dtype=float,
+    )
+    desired_tangent = np.asarray(
+        [
+            [float(row["desired_tangent_x"]), float(row["desired_tangent_y"]),
+             float(row["desired_tangent_z"])]
+            for row in rows
+        ],
+        dtype=float,
+    )
+    path = GeometricConfigurationPath(
+        s_m=s_m,
+        states=states,
+        desired_position_m=desired_position_m,
+        desired_tangent=desired_tangent,
+        position_tolerance_m=float(configuration["position_tolerance_m"]),
+        tangent_tolerance_rad=float(configuration["tangent_tolerance_rad"]),
+        globally_feasible=False,
+        dense_validation_feasible=False,
+        source=f"inverse_configuration_path:{root}",
+    )
+    path.validate()
+    return path
+
+
+def time_parameterize_saved_inverse_path(
+    *,
+    inverse_output_dir: str | Path,
+    controller_pack: dict[str, Any],
+    config: TimeParameterizationConfig,
+    output_dir: str | Path | None,
+    lumen_C: Array | None = None,
+) -> TimeParameterizedConfigurationPath:
+    """Like ``time_parameterize_saved_global_path`` but reads the Layer 1 path."""
+    geometric = load_saved_inverse_configuration_path(inverse_output_dir)
+    result = parameterize_configuration_path(
+        geometric_path=geometric,
+        config=config,
+        state_min=controller_pack["p_min"],
+        state_max=controller_pack["p_max"],
+        controller_pack=controller_pack,
+        lumen_C=lumen_C,
+    )
+    if output_dir is not None:
+        save_time_parameterized_configuration_path(result, output_dir)
+    return result
 
 
 def geometric_path_from_global_result(
@@ -1708,7 +1876,7 @@ def main() -> None:
         debug=True,
     )
     global_directory = arguments.global_dir or (
-        out_root / "global_configuration_full_debug"
+        out_root / "global_configuration_converged"
     )
     output_directory = arguments.output_dir or (
         out_root / "time_parameterized_configuration_path"
@@ -1766,6 +1934,8 @@ __all__ = [
     "TimeParameterizedConfigurationPath",
     "geometric_path_from_global_result",
     "load_saved_global_configuration_path",
+    "load_saved_inverse_configuration_path",
+    "time_parameterize_saved_inverse_path",
     "load_mpc_configuration_reference",
     "parameterize_configuration_path",
     "save_time_parameterized_configuration_path",

@@ -174,7 +174,7 @@ def main() -> None:
 
     inverse_output_dir = out_root / "offline_inverse_configuration_60"
     output_name = (
-        "global_configuration_full_debug"
+        "global_configuration_converged"
         if arguments.full
         else "global_configuration_seed_audit"
     )

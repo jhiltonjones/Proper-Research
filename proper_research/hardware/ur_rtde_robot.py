@@ -229,6 +229,150 @@ class URRTDERobot:
         """Move to an application-specific, previously validated joint target."""
         return self.move_j(home_joints, speed, acceleration, asynchronous=False)
 
+    # ------------------------------------------------------------------
+    # Streaming interface (for online MPC).
+    #
+    # ``speed_l`` is a non-blocking velocity command: the controller keeps
+    # applying the last commanded TCP twist until it is superseded, ``speed_stop``
+    # is called, or the RTDE watchdog fires.  Call it continuously from a loop at
+    # ``self.frequency`` and pair it with ``speed_stop`` on any fault or stall.
+    # ------------------------------------------------------------------
+
+    def set_watchdog(self, min_frequency: float = 10.0) -> bool:
+        """Ask the controller to stop the arm if commands stop arriving.
+
+        ``min_frequency`` is the slowest command rate the controller will
+        tolerate before it halts the motion on its own.  Not every ur_rtde
+        build exposes this; a missing method is reported as ``False``.
+        """
+        min_frequency = self._positive(min_frequency, "min_frequency")
+        with self._lock:
+            self._require_connected_unlocked()
+            assert self._control is not None
+            fn = getattr(self._control, "setWatchdog", None)
+            if fn is None:
+                return False
+            return bool(fn(min_frequency))
+
+    def speed_l(
+        self,
+        twist: Sequence[float],
+        acceleration: float = 0.25,
+        time_s: float = 0.0,
+    ) -> bool:
+        """Command a base-frame TCP twist ``[vx, vy, vz, wx, wy, wz]``.
+
+        Units are m/s and rad/s.  ``time_s == 0`` returns immediately and the
+        motion continues until the next command; ``time_s > 0`` blocks for that
+        long and then decelerates.
+        """
+        target = self._vector6(twist, "twist")
+        acceleration = self._positive(acceleration, "acceleration")
+        time_s = float(time_s)
+        if not math.isfinite(time_s) or time_s < 0.0:
+            raise ValueError("time_s must be a finite number >= 0")
+
+        with self._lock:
+            self._require_motion_ready_unlocked()
+            assert self._control is not None
+            return bool(self._control.speedL(target, acceleration, time_s))
+
+    def speed_j(
+        self,
+        joint_speeds: Sequence[float],
+        acceleration: float = 0.5,
+        time_s: float = 0.0,
+    ) -> bool:
+        """Command six joint velocities in rad/s (non-blocking when ``time_s==0``)."""
+        target = self._vector6(joint_speeds, "joint_speeds")
+        acceleration = self._positive(acceleration, "acceleration")
+        time_s = float(time_s)
+        if not math.isfinite(time_s) or time_s < 0.0:
+            raise ValueError("time_s must be a finite number >= 0")
+
+        with self._lock:
+            self._require_motion_ready_unlocked()
+            assert self._control is not None
+            return bool(self._control.speedJ(target, acceleration, time_s))
+
+    def speed_stop(self, acceleration: float = 2.0) -> bool:
+        """Decelerate any active ``speed_l``/``speed_j`` motion to a stop.
+
+        Safe to call when nothing is moving and safe to call from a watchdog
+        thread; it does not require the full motion-ready check.
+        """
+        acceleration = self._positive(acceleration, "acceleration")
+        with self._lock:
+            if not self.is_connected():
+                return False
+            assert self._control is not None
+            try:
+                self._control.speedStop(acceleration)
+                return True
+            except Exception:
+                return False
+
+    def servo_l(
+        self,
+        pose: Sequence[float],
+        speed: float = 0.5,
+        acceleration: float = 0.5,
+        time_s: float = 0.008,
+        lookahead_time: float = 0.1,
+        gain: int = 300,
+    ) -> bool:
+        """Servo the TCP toward a base-frame pose; call continuously at a fixed rate."""
+        target = self._vector6(pose, "pose")
+        speed = self._positive(speed, "speed")
+        acceleration = self._positive(acceleration, "acceleration")
+        time_s = self._positive(time_s, "time_s")
+        lookahead_time = self._positive(lookahead_time, "lookahead_time")
+        gain = int(gain)
+        if not 100 <= gain <= 2000:
+            raise ValueError("gain must be between 100 and 2000")
+
+        with self._lock:
+            self._require_motion_ready_unlocked()
+            assert self._control is not None
+            return bool(
+                self._control.servoL(
+                    target, speed, acceleration, time_s, lookahead_time, gain
+                )
+            )
+
+    def servo_stop(self, acceleration: float = 2.0) -> bool:
+        acceleration = self._positive(acceleration, "acceleration")
+        with self._lock:
+            if not self.is_connected():
+                return False
+            assert self._control is not None
+            try:
+                self._control.servoStop(acceleration)
+                return True
+            except Exception:
+                return False
+
+    def get_tcp_speed(self) -> List[float]:
+        """Return the measured TCP twist ``[vx, vy, vz, wx, wy, wz]``."""
+        with self._lock:
+            self._require_connected_unlocked()
+            assert self._receive is not None
+            return list(self._receive.getActualTCPSpeed())
+
+    def init_period(self) -> float:
+        """Mark the start of a control period; feed the result to :meth:`wait_period`."""
+        with self._lock:
+            self._require_connected_unlocked()
+            assert self._control is not None
+            return float(self._control.initPeriod())
+
+    def wait_period(self, t_start: float) -> None:
+        """Sleep so the period that began at ``t_start`` lasts ``1 / frequency``."""
+        with self._lock:
+            if self._control is None:
+                return
+            self._control.waitPeriod(float(t_start))
+
     def _disconnect_unlocked(self, stop_script: bool):
         control, receive = self._control, self._receive
         self._control = None

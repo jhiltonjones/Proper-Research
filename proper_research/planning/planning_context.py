@@ -22,6 +22,7 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
     build_controller,
 )
 from proper_research.simulation.simulations.initial_conditions import (
+    SOURCE_DIPOLE_BODY_AXIS,
     make_initial_poses,
 )
 from proper_research.simulation.simulations.model_factory import (
@@ -147,12 +148,13 @@ def make_robot_config() -> JointSpaceRobotConfig:
     """
     from proper_research.simulation.simulations.initial_conditions import (
         LIVE_JOINTS_RAD,
+        TCP_TO_MAGNET_POSE6,
     )
 
     return JointSpaceRobotConfig(
         q_seed_rad=tuple(LIVE_JOINTS_RAD),
         active_tcp_pose6=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-        tcp_to_magnet_pose6=(0.0, 0.0, 0.03, 0.0, 0.0, 0.0),
+        tcp_to_magnet_pose6=tuple(TCP_TO_MAGNET_POSE6),
         insertion_min_m=0.0,
         insertion_max_m=0.05,
         debug_initial_ik=True,
@@ -257,11 +259,28 @@ def build_planning_context(
 
     pivot_point, start_point, L0, dt = make_initial_poses()
 
+    # The contact model needs a lumen that the (straight) nominal beam sits
+    # well inside, or the analytic contact Jacobian fails FD validation and the
+    # forward model bends.  The stock double-bend lumen curves away from the
+    # straight beam.  Use a straight, wide-bore lumen down the beam axis; the
+    # planners pass the real target centreline separately.
+    bundle_lumen_cfg = LumenConfig(
+        length=0.06, n_pts=240, n_ref_pts=100, radius=0.05, ds_target=1.0e-3, bends=()
+    )
+
     bundle = build_model_bundle(
         pivot_point=pivot_point,
         L0=L0,
-        lumen_cfg=exp_cfg.lumen,
+        lumen_cfg=bundle_lumen_cfg,
         plant_contact=exp_cfg.model.plant_contact,
+        # Lab magnet on an extended bracket; dipole aligned with the beam axial
+        # (+R.z) magnetisation direction at the reference pose.  The legacy body
+        # -x default points the dipole ~horizontal and bends the model beam
+        # ~20 deg where the real beam is straight.
+        source_dipole_body_axis=SOURCE_DIPOLE_BODY_AXIS,
+        # Build the contact lumen at the real beam base, not the legacy fixed
+        # pose 270 mm away (which corrupts the contact solve).
+        lumen_pivot_point=pivot_point,
     )
 
     plant_model = bundle.models["plant"]

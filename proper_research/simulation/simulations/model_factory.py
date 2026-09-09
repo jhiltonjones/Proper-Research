@@ -594,6 +594,17 @@ def build_model_bundle(
     use_physical_stiffness: bool = False,
     effective_youngs_modulus: float = 1.0e6,
     remanence_fraction: float = 1.0,
+    # Direction of the external source-magnet dipole in the magnet body frame.
+    # Legacy default is body -x.  The lab magnet (mounted on the UR TCP, magnet
+    # body frame == TCP frame) has its dipole along body -z (== TCP -z ==
+    # world +R.z == beam axial); pass (0, 0, -1) to match
+    # robotics_frame_measurement_validation.
+    source_dipole_body_axis: tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    # Pose6 the contact lumen is built from.  None -> the legacy fixed pose
+    # (0.798, -0.710, -0.1, pi, ...).  Pass ``pivot_point`` to put the lumen at
+    # the actual beam base; a contact lumen hundreds of mm from the beam
+    # corrupts the contact solve even with no real contact.
+    lumen_pivot_point: np.ndarray | None = None,
 ) -> ModelBundle:
     if hasattr(lumen_cfg, "validate"):
         lumen_cfg.validate()
@@ -610,17 +621,20 @@ def build_model_bundle(
         T_ur_pivot
     )
 
-    pivot_point_lumen = np.array(
-        [
-            0.7981328220229531,
-            -0.70992731669220016,
-            -0.1000000000000000,
-            np.pi,
-            0.001,
-            0.001,
-        ],
-        dtype=float,
-    )
+    if lumen_pivot_point is None:
+        pivot_point_lumen = np.array(
+            [
+                0.7981328220229531,
+                -0.70992731669220016,
+                -0.1000000000000000,
+                np.pi,
+                0.001,
+                0.001,
+            ],
+            dtype=float,
+        )
+    else:
+        pivot_point_lumen = np.asarray(lumen_pivot_point, dtype=float).reshape(6)
 
     T_ur_pivot_lumen = ur_pose6_to_T(
         pivot_point_lumen
@@ -686,7 +700,9 @@ def build_model_bundle(
 
                 # Confirm this sign against the programmed
                 # magnetisation direction of your beam.
-                local_axis=(-1.0, 0.0, 0.0),
+                # +local x: beam poled to be attracted toward the source
+                # magnet (matches the camera; see beam_hardware_experiment_v2).
+                local_axis=(1.0, 0.0, 0.0),
             )
         )
     else:
@@ -754,16 +770,12 @@ def build_model_bundle(
     # --------------------------------------------------------
     # External source magnet
     # --------------------------------------------------------
-    # Keep the simulator's existing source-magnet moment and
-    # body-axis convention. This is not beam magnetisation.
-    m_body = np.array(
-        [
-            -mag_params.mag_epm,
-            0.0,
-            0.0,
-        ],
-        dtype=float,
-    )
+    # External source-magnet moment along the configured body axis (default
+    # body -x; the lab TCP-mounted magnet is body -z).  This is not beam
+    # magnetisation.
+    _dipole_axis = np.asarray(source_dipole_body_axis, dtype=float).reshape(3)
+    _dipole_axis = _dipole_axis / (np.linalg.norm(_dipole_axis) + 1e-12)
+    m_body = float(mag_params.mag_epm) * _dipole_axis
 
     common_model_kwargs = dict(
         p0_ur=p0_ur,

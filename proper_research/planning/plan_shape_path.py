@@ -143,9 +143,8 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
 
     ``u`` = +R.z (forward / insertion / axial),
     ``v`` = +R.y (in-plane bending),
-    ``tip0`` = the nominal straight-beam tip = beam base + L0 * +R.z.  (The
-    beam forward model is used only if it converges; the nominal tip is the
-    safe anchor.)
+    ``tip0`` = the forward model's tip at ``p0`` (so the shape's first node has
+    ~zero position error); falls back to the nominal straight tip.
     """
     from proper_research.simulation.simulations.initial_conditions import (
         make_initial_poses,
@@ -156,6 +155,17 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
     u = np.array([0.0, 0.0, 1.0])          # +R.z, beam axial
     v = np.array([0.0, 1.0, 0.0])          # +R.y, in-plane bending
     tip0 = base_R + float(L0) * u
+    try:
+        model_tip = np.asarray(
+            controller_pack["plant_diagnostic_joint_adapter"].forward_output(
+                np.asarray(controller_pack["p0"], dtype=float)
+            ),
+            dtype=float,
+        )[:3]
+        if np.all(np.isfinite(model_tip)) and np.linalg.norm(model_tip - tip0) < 0.02:
+            tip0 = model_tip
+    except Exception:
+        pass
     return tip0, u, v
 
 

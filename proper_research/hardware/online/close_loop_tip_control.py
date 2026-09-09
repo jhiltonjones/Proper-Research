@@ -135,7 +135,7 @@ class CloseLoopConfig:
     jacobian_source: str = "analytical_beam"
     magnet_tip_coupling: float = 1.0       # only used by "kinematic_scalar"
     insertion_axial_gain: float = 1.0      # d(tip)/d(insertion) for "kinematic_scalar"
-    dipole_unit_in_magnet_body: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    dipole_unit_in_magnet_body: tuple[float, float, float] = (-0.019473, 0.001061, -0.999810)
 
     # --- limits ---------------------------------------------------
     joint_velocity_limit_rad_s: float = 0.10

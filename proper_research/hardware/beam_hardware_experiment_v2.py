@@ -62,7 +62,10 @@ class CompositeBeamConfig:
     effective_youngs_modulus_pa: float = 1.0e6
     poisson_ratio: float = 0.49
     inner_diameter_m: float = 0.0
-    magnetisation_axis_local: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    # +local x (opposite the rod growth direction): the beam is poled so it is
+    # ATTRACTED toward the source magnet, matching the camera (2026-09-09 sweep,
+    # cam-vs-model correlation -0.98 -> +0.998 on this flip).
+    magnetisation_axis_local: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
 
 @dataclass

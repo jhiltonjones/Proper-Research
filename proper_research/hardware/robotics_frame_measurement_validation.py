@@ -60,11 +60,20 @@ EXPERIMENT_CONFIG.send_commands = False
 # plot should show the magnet box below the TCP triad.  Flip the sign here
 # if the magnet ends up on the wrong side.
 # ---------------------------------------------------------------------------
-SOURCE_MAGNET_OFFSET_BELOW_TCP_M: float = 0.030  # <-- PLACEHOLDER: set to the real value
+SOURCE_MAGNET_OFFSET_BELOW_TCP_M: float = 0.030  # legacy "straight below" placeholder
 # Extra body-axis rotation of the magnet frame M relative to the TCP frame,
 # as a rotation vector (rad).  Leave at zeros if the magnet body axes are
 # mounted parallel to the TCP axes.
 SOURCE_MAGNET_BODY_ROTVEC_IN_TCP: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+# Final frame calibration (2026-09-09, from direct measurement): magnet centre
+# at beam_base + [-0.23, 0, 0] in R (== [0, 0, +230] mm in beam frame B: purely
+# out of the vision plane, level with the base; near edge 15.5 cm, ~15 cm long).
+# Flange->magnet translation in the flange frame at the reference orientation.
+# Keep in sync with simulation.simulations.initial_conditions.TCP_TO_MAGNET_POSE6.
+SOURCE_MAGNET_T_TCP_M_POSE6: tuple[float, float, float, float, float, float] = (
+    -0.2901545, 0.1042136, 0.3399979, 0.0, 0.0, 0.0,
+)
 
 
 @dataclass
@@ -100,14 +109,7 @@ class FrameValidationConfig:
     # Default here: build T_TCP_M from the measured SOURCE_MAGNET_OFFSET_BELOW_TCP_M
     # placeholder above (magnet centre along TCP +Z, optional body rotation).
     T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = field(
-        default_factory=lambda: (
-            0.0,
-            0.0,
-            float(SOURCE_MAGNET_OFFSET_BELOW_TCP_M),
-            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[0]),
-            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[1]),
-            float(SOURCE_MAGNET_BODY_ROTVEC_IN_TCP[2]),
-        )
+        default_factory=lambda: tuple(SOURCE_MAGNET_T_TCP_M_POSE6)
     )
     assume_tcp_is_magnet_frame: bool = False
 
@@ -223,7 +225,11 @@ class FrameValidationConfig:
     # magnet_yaw_calibration_deg is applied on top in the body XY plane.
     # Set True only to pin the dipole exactly along +B.x regardless of the TCP.
     source_dipole_along_beam_axial: bool = False
-    source_dipole_unit_in_magnet_body: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    # Body-frame dipole direction chosen so the world dipole is exactly +R.z
+    # (beam axial) at the reference pose; rotating the magnet rotates it.
+    source_dipole_unit_in_magnet_body: tuple[float, float, float] = (
+        -0.019473, 0.001061, -0.999810,
+    )
 
     # Source-magnet drawing dimensions in its body frame M.
     source_magnet_dimensions_mm: tuple[float, float, float] = (20.0, 20.0, 20.0)

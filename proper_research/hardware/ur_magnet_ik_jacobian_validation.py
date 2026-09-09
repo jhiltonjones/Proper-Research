@@ -169,13 +169,28 @@ class ValidationConfig:
         tuple[float, float, float, float, float, float] | None
     ) = None
 
-    # Optional factory calibration corrections.  The public UR table supplies
-    # nominal standard-DH parameters.  If you have controller-specific
-    # corrections, enter them here with the same joint ordering.
-    dh_delta_a_m: tuple[float, ...] = (0.0,) * 6
-    dh_delta_d_m: tuple[float, ...] = (0.0,) * 6
-    dh_delta_alpha_rad: tuple[float, ...] = (0.0,) * 6
-    dh_delta_theta_rad: tuple[float, ...] = (0.0,) * 6
+    # Factory calibration corrections.  The public UR table supplies nominal
+    # standard-DH parameters; these deltas bring the model FK onto the robot's
+    # own calibrated FK.  Fitted 2026-09-09 from 41 (joints, getActualTCPPose)
+    # pairs on this UR10e (192.168.56.101): position RMS 1.37 mm -> 0.11 mm,
+    # 5-fold CV held-out mean 0.11 mm / max 0.30 mm.  Re-fit if the robot,
+    # its mounting, or its calibration.conf changes.
+    dh_delta_a_m: tuple[float, ...] = (
+        1.62323708e-05, -7.41377260e-06, -1.70777958e-05,
+        3.50354814e-05, -2.89070770e-05, 2.38623404e-05,
+    )
+    dh_delta_d_m: tuple[float, ...] = (
+        5.86206571e-06, -2.10708520e-05, -2.10636538e-05,
+        -2.10452542e-05, 2.72393481e-05, -8.51225001e-05,
+    )
+    dh_delta_alpha_rad: tuple[float, ...] = (
+        1.22503421e-05, -7.67865991e-04, 2.10705542e-03,
+        -2.71110517e-04, -8.80080939e-04, 3.85808087e-04,
+    )
+    dh_delta_theta_rad: tuple[float, ...] = (
+        -2.07554495e-05, -4.30170751e-04, 1.32339144e-03,
+        -1.91300857e-04, -4.00639100e-04, 5.15131162e-04,
+    )
 
     # These are algorithm bounds, not a replacement for the UR safety system.
     # Replace them with the limits of the installed robot/configuration.

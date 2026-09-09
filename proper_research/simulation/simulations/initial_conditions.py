@@ -5,83 +5,80 @@ from scipy.spatial.transform import Rotation as R
 
 
 # =====================================================================
-# LIVE HARDWARE STATE  (read from the robot on 2026-09-09 via robot_class)
+# FINAL FRAME CALIBRATION  (robot read 2026-09-09, magnet geometry from
+# direct physical measurement)
 # ---------------------------------------------------------------------
-#   joints (rad) = [-0.62780553, -2.06211915, -1.61096144,
-#                   -1.05756475,  1.56630862, -1.76096565]
-#   TCP pose6 (flange == TCP; the installed TCP offset is zero)
-#              = [0.62616089, -0.67019182, 0.31343135,
-#                -3.06532747,  0.68084844,  0.03120102]
-#   Source magnet: 30 mm below the TCP along TCP.z
-#              (T_tcp_magnet_pose6 = (0, 0, 0.03, 0, 0, 0), matches
-#               robotics_frame_measurement_validation.CONFIG).
+# At the reference TCP the source magnet hangs on a bracket ~33 cm below
+# and ~31 cm behind the flange (world offset [-0.314, 0.010, -0.334]).
+# Its CENTRE sits at  beam_base + [-0.23, 0, 0]  in R -- 23 cm from the
+# beam base / pivot, same R.y, same R.z (== [0, 0, +230] mm in beam
+# frame B: purely out of the 2-D vision plane, level with the base).
+# The magnet near edge is 15.5 cm from the base (it is ~15 cm long along
+# -R.x).  Dipole aligned with the beam axial (+R.z) magnetisation.
+# DH deltas are already fitted into urik.CONFIG.
 #
-# start_point below is the magnet pose6 in the robot base frame R,
-# recomputed from the offline nominal-DH forward kinematics at the live
-# joints so that the offline IK (planning_context.make_robot_config,
-# q_seed = the live joints) returns those exact six joint angles.
+#   joints (rad) = [-0.64739067, -2.05319991, -1.61638916,
+#                   -1.06096228,  1.56594813, -1.84768182]
+#   TCP pose6    = [0.60985444, -0.68005596, 0.31772396,
+#                  -3.08577770,  0.57746171,  0.03115576]
 #
-# NOTE: the offline nominal-DH FK differs from the robot's own calibrated
-# FK by ~1.3 mm at this pose (urik.CONFIG has zero dh_delta_*).  The
-# commanded joint trajectory is unaffected; the beam-tip predictions
-# carry that ~1.3 mm systematic offset until the DH is calibrated.
+# start_point = calibrated FK(live joints) @ pose6_to_T(TCP_TO_MAGNET_POSE6);
+# make_robot_config IK (q_seed = live joints) returns those joints exactly.
 # =====================================================================
 
 LIVE_JOINTS_RAD = (
-    -0.62780553,
-    -2.06211915,
-    -1.61096144,
-    -1.05756475,
-    1.56630862,
-    -1.76096565,
+    -0.64739067,
+    -2.05319991,
+    -1.61638916,
+    -1.06096228,
+    1.56594813,
+    -1.84768182,
 )
+
+# TCP(flange) -> magnet-centre translation, in the flange frame at the
+# reference-pose orientation.
+TCP_TO_MAGNET_POSE6 = (-0.2901545, 0.1042136, 0.3399979, 0.0, 0.0, 0.0)
+
+# Source-magnet dipole direction in the magnet body frame, chosen so the
+# world dipole is exactly +R.z (beam axial) at the reference pose.
+SOURCE_DIPOLE_BODY_AXIS = (-0.019473, 0.001061, -0.999810)
+
+# Magnet extent along its dipole axis (near edge 15.5 cm, centre 23 cm
+# from the beam base -> ~15 cm long).  Point-dipole is marginal at this
+# range; kept for reference / future distributed-source modelling.
+SOURCE_MAGNET_LENGTH_M = 0.15
 
 
 def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     """
-    Build the fixed initial robot/lumen experiment pose, matched to the
-    live hardware state above.
+    Fixed initial robot/beam pose, matched to the final frame calibration.
 
-    Returns
-    -------
-    pivot_point:
-        UR-style pose6 for the beam base / pivot: [x, y, z, rx, ry, rz].
-        The rotation matters: ``build_model_bundle`` grows the Cosserat rod
-        along ``R0 @ [-1, 0, 0]``, so ``R0`` must map ``[-1, 0, 0]`` onto the
-        true beam axial direction.  The hardware beam stands straight up
-        (+R.z), and ``Ry(+90 deg) @ [-1, 0, 0] = [0, 0, 1]``.
-
-    start_point:
-        UR-style pose6 for the initial source-magnet pose in R.
-
-    L_cmd:
-        Initial insertion length [m].
-
-    dt:
-        Controller timestep [s].
+    Returns ``(pivot_point, start_point, L_cmd, dt)``:
+      * ``pivot_point`` -- beam base pose6 in R; rotvec is
+        ``model_base_rotation_from_beam(+R.z, -R.x)`` so ``build_model_bundle``
+        grows the rod along +R.z, bending plane R.y (in-plane) / R.x (out of
+        the 2-D vision plane).
+      * ``start_point`` -- source-magnet pose6 in R (calibrated-FK consistent).
+      * ``L_cmd`` -- initial insertion [m] (near max).
+      * ``dt`` -- controller timestep [s].
     """
-    L_cmd = 0.037
+    L_cmd = 0.045
     dt = 0.01
 
-    # Beam base in R (robotics_frame_measurement_validation.CONFIG
-    # T_robot_beam_pose6 position), with the rotation chosen so the model
-    # rod grows along +R.z.
     pivot_point = np.array(
-        [0.525575, -0.670028, -0.016567, 0.0, np.pi / 2.0, 0.0],
+        [0.525575, -0.670028, -0.016567,
+         2.221441469079183, 0.0, -2.221441469079183],
         dtype=float,
     )
 
-    # Source-magnet pose6 in R, consistent with the offline FK at the live
-    # joints (see the header note).  IK(start_point, q_seed=LIVE_JOINTS_RAD)
-    # -> LIVE_JOINTS_RAD exactly.
     start_point = np.array(
         [
-            0.62484299,
-            -0.66947913,
-            0.28254041,
-            -3.06349506,
-            0.68119035,
-            0.02908557,
+            0.295575,
+            -0.670028,
+            -0.016567,
+            -3.08548018,
+            0.57669094,
+            0.03035070,
         ],
         dtype=float,
     )

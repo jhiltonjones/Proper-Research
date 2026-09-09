@@ -69,9 +69,15 @@ class CloseLoopConfig:
     dry_run: bool = False                    # True -> compute + log only, no motion
 
     # --- target (robot base frame, metres) -------------------------
-    target_offset_R_mm: tuple[float, float, float] = (0.0, 10.0, 0.0)
+    target_offset_R_mm: tuple[float, float, float] = (0.0, -10.0, -5.0)
     tolerance_mm: float = 1.5
     converged_hold_ticks: int = 8
+    # Drop the out-of-plane (B.z) component of the tip error before control.
+    # The beam only moves in its bending plane, so d(tip)/d(magnet) has a
+    # near-zero B.z row -> the damped pseudo-inverse amplifies out-of-plane
+    # noise into large joint commands.  Projecting the error onto (B.x, B.y)
+    # removes that.
+    project_error_to_beam_plane: bool = True
 
     # --- control loop -------------------------------------------------
     control_hz: float = 10.0                # servoJ blocks for 1/control_hz per tick
@@ -79,15 +85,36 @@ class CloseLoopConfig:
     servo_gain: int = 200                   # servoJ proportional gain (100..2000)
     max_joint_step_rad: float = 0.006       # hard cap on |q_target - q_meas| per tick (~0.34 deg)
     max_control_steps: int = 120
-    max_state_age_s: float = 0.30
+    max_state_age_s: float = 0.50
     warmup_timeout_s: float = 20.0
     settle_ticks_before_target: int = 10
 
-    # --- controller (InverseJacobianBeamController) ----------------
-    position_gain: float = 0.6
-    damping: float = 5.0e-2
+    # --- controller ------------------------------------------------
+    #   "jacobian"      : InverseJacobianBeamController (uses the frozen beam Jacobian)
+    #   "pid_cartesian" : PID on the tip error in R, assumes tip follows magnet
+    #     1:1, maps the desired magnet velocity to joints with ONLY the robot
+    #     translational Jacobian.  Bypasses the beam model entirely -- if this
+    #     converges and "jacobian" does not, the beam Jacobian / its frame is
+    #     the problem.
+    controller_type: str = "jacobian"
+    position_gain: float = 0.6            # jacobian mode
+    damping: float = 5.0e-2               # jacobian mode
     nullspace_gain: float = 0.0
-    control_insertion: bool = False
+    control_insertion: bool = True
+
+    pid_kp: float = 3.0                   # pid_cartesian: m/s of tip vel per m of error
+    pid_ki: float = 0.6
+    pid_kd: float = 0.05
+    pid_integral_limit_m: float = 0.02
+    pid_jv_damping: float = 1.0e-3        # damped pinv of the 3x6 robot Jacobian
+    pid_kp_insertion: float = 0.8         # insertion rate (m/s) per m of AXIAL (B.x) tip error
+
+    # --- advancer (insertion) -------------------------------------
+    # control_insertion (above): steer the tip's axial (B.x) position with the
+    # advancer.  advancer_dry_run keeps it a software integral (no serial writes)
+    # even when steering.
+    advancer_port: str = "/dev/ttyACM0"
+    advancer_dry_run: bool = False
 
     # --- beam Jacobian d(tip)/d[q1..q6, insertion], frozen at the start pose --
     #   "analytical_beam"  : real analytic beam sensitivity
@@ -116,7 +143,7 @@ class CloseLoopConfig:
     initial_insertion_m: float = 0.040
 
     cam_index: int = 0
-    exposure: float = 18.0
+    exposure: float = 27.0
     gain: float = 0.0
     grab_period_s: float = 0.004
     reconstruct_period_s: float = 0.01
@@ -239,22 +266,41 @@ class AnalyticalBeamJacobianProvider:
         lumen = rfmv.build_lumen_in_shared_frames(
             mapper.manual_frame, mapper.calibration, mapper.T_R_B
         )
+        # CRITICAL: the Cosserat model grows its rod along  R0 @ [-1, 0, 0].
+        # With R0 = T_R_B.rotation (B.x = +R.z) that points DOWN, i.e. the model
+        # beam is upside-down vs reality and its d(tip)/d(magnet) has the wrong
+        # structure -> the controller diverges.  Rebuild R0 so the rod grows
+        # along the real beam axis (+B.x), same fix as
+        # robotics_frame_measurement_validation's align_model_base_with_measured_beam.
+        beam_axial_R = np.asarray(mapper.T_R_B.rotation[:, 0], dtype=float)
+        model_base_rotation_R = rfmv.model_base_rotation_from_beam(
+            beam_axial_R, mapper.T_R_B.rotation[:, 2]
+        )
         adapter, _meta = rfmv.build_forward_model_in_shared_frame(
             experiment_cfg=experiment_v2.CONFIG,
             T_R_B=mapper.T_R_B,
             lumen=lumen,
+            model_base_rotation_R=model_base_rotation_R,
             dipole_unit_in_magnet_body=dipole_unit_in_magnet_body,
         )
         p8 = rfmv.transform_to_p8(T_R_M, float(insertion_m))
-        p7, _output = adapter.commit_nominal(p8)
+        p7, output = adapter.commit_nominal(p8)
         j_beam = np.asarray(
             adapter.raw_model.jacobian_tip_actuation_tangent(p7), dtype=float
         ).reshape(3, 7)
+
+        # Sanity: where does the MODEL put the tip, vs where vision sees it?
+        # (both in the beam frame B).  If these disagree a lot the frame or the
+        # model orientation is wrong, not just the gain.
+        model_tip_R = np.asarray(output, dtype=float).reshape(-1)[:3]
+        self.model_tip_B_m = mapper.T_R_B.inverse().apply_points(model_tip_R)
+        self.magnet_minus_base_B_m = self.magnet_in_B_m  # base is the B origin
 
         jv = _translational_jacobian_fd(robot, np.asarray(q0, dtype=float)[:6])
         self._jac = np.zeros((3, 7), dtype=float)
         self._jac[:, :6] = j_beam[:, 0:3] @ jv
         self._jac[:, 6] = j_beam[:, 6]
+        self.j_beam_full = j_beam.copy()
         self.calls = 0
         self.last_condition = float(np.linalg.cond(self._jac[:, :6]))
         self.j_beam_translation = j_beam[:, 0:3].copy()
@@ -405,6 +451,25 @@ def main() -> None:
 
     servo_commands = {"sent": 0}
 
+    advancer = None
+    if cfg.control_insertion:
+        from proper_research.hardware.online.advancer_sink import (
+            AdvancerSink,
+            AdvancerSinkConfig,
+        )
+
+        advancer = AdvancerSink(
+            AdvancerSinkConfig(
+                port=cfg.advancer_port,
+                dry_run=cfg.advancer_dry_run,
+                max_rate_m_s=cfg.insertion_rate_limit_m_s,
+            )
+        )
+        print(
+            f"[loop] advancer {'(dry-run)' if cfg.advancer_dry_run else 'LIVE'} "
+            f"on {cfg.advancer_port} -- steering the tip axial (B.x) position"
+        )
+
     stop_flag = {"stop": False}
     prev_handler = signal.signal(
         signal.SIGINT, lambda *_: stop_flag.__setitem__("stop", True)
@@ -420,6 +485,8 @@ def main() -> None:
     try:
         _assert_robot_ready()
         reader.start()
+        if advancer is not None:
+            advancer.start()
         camera.start()
         print("[loop] camera + reader up; waiting for first tip + joints...")
 
@@ -472,15 +539,24 @@ def main() -> None:
                 mapper=mapper,
                 dipole_unit_in_magnet_body=cfg.dipole_unit_in_magnet_body,
             )
+            m_B = 1e3 * jac_provider.magnet_in_B_m
+            base_R = np.asarray(mapper.T_R_B.translation, dtype=float)
+            m_minus_base_R = 1e3 * (jac_provider.source_position_R_m - base_R)
             print(
-                f"[loop] magnet in R (mm) = "
-                f"{np.round(1e3 * jac_provider.source_position_R_m, 1).tolist()}\n"
-                f"[loop] magnet in B (mm) = "
-                f"{np.round(1e3 * jac_provider.magnet_in_B_m, 1).tolist()}  "
-                f"(B.x = along beam; should match the validation script's "
-                f"'source position in B')\n"
-                f"[loop] |d(tip)/d(magnet_xyz)| rows = "
-                f"{np.round(np.linalg.norm(jac_provider.j_beam_translation, axis=1), 3).tolist()}"
+                f"[loop] MAGNET position (all relative to the beam BASE):\n"
+                f"[loop]   in beam frame B [B.x along beam, B.y sideways, B.z out-of-plane]\n"
+                f"[loop]     = [{m_B[0]:+.0f}, {m_B[1]:+.0f}, {m_B[2]:+.0f}] mm   "
+                f"<- your spec was [300, 0, 0]; B.z=0 means IN the 2D vision plane\n"
+                f"[loop]   in robot base R [R.x, R.y, R.z]\n"
+                f"[loop]     = [{m_minus_base_R[0]:+.0f}, {m_minus_base_R[1]:+.0f}, {m_minus_base_R[2]:+.0f}] mm   "
+                f"<- R.z=+{m_minus_base_R[2]:.0f} because the beam grows along +R.z (it stands up),\n"
+                f"[loop]        so '300 mm along the beam' == '300 mm higher in R.z'. Same point.\n"
+                f"[loop]   model tip in B = "
+                f"{np.round(1e3 * jac_provider.model_tip_B_m, 1).tolist()} mm   "
+                f"measured tip in B = {np.round(1e3 * mapper.T_R_B.inverse().apply_points(start_tip), 1).tolist()} mm\n"
+                f"[loop] |d(tip)/d(magnet_xyz)| rows (R.x/R.y/R.z) = "
+                f"{np.round(np.linalg.norm(jac_provider.j_beam_translation, axis=1), 3).tolist()} "
+                f"mm/mm  <- coaxial magnet at 300 mm has almost no bending authority"
             )
         else:
             print("[loop] building kinematic-scalar Jacobian (7 FK calls)...")
@@ -492,25 +568,44 @@ def main() -> None:
                 insertion_axial_gain=cfg.insertion_axial_gain,
             )
         print(f"[loop] cond(J[:, :6]) = {jac_provider.last_condition:.2f}")
-
-        from proper_research.controllers.inverse_jacobian_controller import (
-            build_inverse_jacobian_controller,
+        j_full = jac_provider(z0)
+        print(
+            f"[loop] frozen J rows (R.x/R.y/R.z) |.| = "
+            f"{np.round(np.linalg.norm(j_full[:, :6], axis=1), 4).tolist()}  "
+            f"(target is in R.y = beam B.y)"
         )
 
-        controller = build_inverse_jacobian_controller(
-            reference=_static_reference(target_R, z0, dt),
-            jacobian_provider=jac_provider,
-            mpc_config=_mpc_config(cfg, dt),
-            position_gain=cfg.position_gain,
-            damping=cfg.damping,
-            nullspace_gain=cfg.nullspace_gain,
-            feedforward=False,
-            allow_undeclared_jacobian=True,
-        )
+        # robot translational Jacobian, frozen (used by pid_cartesian and for diag)
+        jv_robot = _translational_jacobian_fd(robot, q0)
 
-        print("[loop] servoJ control; closing the loop")
+        controller = None
+        if cfg.controller_type == "jacobian":
+            from proper_research.controllers.inverse_jacobian_controller import (
+                build_inverse_jacobian_controller,
+            )
+
+            controller = build_inverse_jacobian_controller(
+                reference=_static_reference(target_R, z0, dt),
+                jacobian_provider=jac_provider,
+                mpc_config=_mpc_config(cfg, dt),
+                position_gain=cfg.position_gain,
+                damping=cfg.damping,
+                nullspace_gain=cfg.nullspace_gain,
+                feedforward=False,
+                allow_undeclared_jacobian=True,
+            )
+        elif cfg.controller_type == "pid_cartesian":
+            jv_pinv = jv_robot.T @ np.linalg.inv(
+                jv_robot @ jv_robot.T + (cfg.pid_jv_damping**2) * np.eye(3)
+            )  # (6, 3) damped pseudo-inverse of d(TCP_pos)/d(q)
+        else:
+            raise ValueError(f"unknown controller_type {cfg.controller_type!r}")
+
+        print(f"[loop] controller = {cfg.controller_type}; servoJ control; closing the loop")
 
         u_prev = np.zeros(7, dtype=float)
+        pid_integral = np.zeros(3, dtype=float)
+        pid_prev_error = None
         safety_check_every = max(1, int(round(cfg.control_hz)))  # ~1 Hz
         next_tick = now_monotonic()
 
@@ -552,17 +647,51 @@ def main() -> None:
 
             tip = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
             error = target_R - tip
+            if cfg.project_error_to_beam_plane:
+                b_z = np.asarray(mapper.T_R_B.rotation[:, 2], dtype=float)
+                error = error - float(np.dot(error, b_z)) * b_z
             error_mm = 1.0e3 * float(np.linalg.norm(error))
             q = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
             z = np.concatenate([q, [insertion_m]])
 
-            step = controller.solve(
-                measured_state=z,
-                measured_beam_position=tip,
-                control_index=0,
-                previous_input=u_prev,
-            )
-            command = np.asarray(step.command, dtype=float).reshape(7)
+            predicted_err_mm = float("nan")
+            if cfg.controller_type == "jacobian":
+                step = controller.solve(
+                    measured_state=z,
+                    measured_beam_position=tip,
+                    control_index=0,
+                    previous_input=u_prev,
+                )
+                command = np.asarray(step.command, dtype=float).reshape(7)
+                predicted_err_mm = 1e3 * float(step.first_predicted_beam_error_m)
+            else:  # pid_cartesian
+                b_x = np.asarray(mapper.T_R_B.rotation[:, 0], dtype=float)  # beam axial
+                e_axial = float(np.dot(error, b_x))                         # tip error along the beam
+                e_lateral = error - e_axial * b_x                           # the part the magnet can steer
+                if pid_prev_error is None:
+                    pid_prev_error = e_lateral.copy()
+                pid_integral = np.clip(
+                    pid_integral + e_lateral * dt,
+                    -cfg.pid_integral_limit_m,
+                    cfg.pid_integral_limit_m,
+                )
+                deriv = (e_lateral - pid_prev_error) / dt
+                pid_prev_error = e_lateral.copy()
+                v_tip_R = (
+                    cfg.pid_kp * e_lateral + cfg.pid_ki * pid_integral + cfg.pid_kd * deriv
+                )  # desired lateral tip velocity in R (m/s) == desired magnet velocity
+                command = np.zeros(7, dtype=float)
+                command[:6] = jv_pinv @ v_tip_R
+                # axial (B.x) error -> advancer insertion rate.
+                if cfg.control_insertion:
+                    command[6] = float(
+                        np.clip(
+                            cfg.pid_kp_insertion * e_axial,
+                            -cfg.insertion_rate_limit_m_s,
+                            cfg.insertion_rate_limit_m_s,
+                        )
+                    )
+
             if not cfg.control_insertion:
                 command[6] = 0.0
             if not np.all(np.isfinite(command)):
@@ -573,6 +702,14 @@ def main() -> None:
             converged_ticks = converged_ticks + 1 if converged else 0
             if converged:
                 command = np.zeros(7, dtype=float)  # hold in place
+                pid_integral[:] = 0.0
+
+            # advancer: integrate the insertion-rate command and dispatch it.
+            if advancer is not None:
+                advancer.submit_rate(float(command[6]), dt)
+                insertion_m = float(
+                    np.clip(insertion_m + float(command[6]) * dt, 0.005, 0.20)
+                )
 
             # velocity command -> per-tick joint target, clamped hard.
             qd = np.clip(
@@ -612,9 +749,8 @@ def main() -> None:
                 "qd_cmd_rad_s": [round(float(v), 5) for v in command[:6]],
                 "qd_cmd_norm_rad_s": round(float(np.linalg.norm(command[:6])), 5),
                 "insertion_rate_cmd_m_s": round(float(command[6]), 6),
-                "predicted_tip_error_mm": round(
-                    1e3 * float(step.first_predicted_beam_error_m), 3
-                ),
+                "insertion_length_m": round(float(insertion_m), 5),
+                "predicted_tip_error_mm": round(predicted_err_mm, 3),
                 "converged": bool(converged),
                 "q_target_delta_rad": [round(float(v), 6) for v in delta_q],
                 "servo_ms": round(servo_ms, 1),
@@ -625,11 +761,15 @@ def main() -> None:
             log_file.flush()
 
             if steps % 5 == 0 or converged:
+                ins_txt = (
+                    f"ins={1e3*insertion_m:5.1f}mm(dL={1e3*command[6]:+5.2f}) "
+                    if advancer is not None
+                    else ""
+                )
                 print(
                     f"[{steps:4d}] |e|={error_mm:6.2f}mm "
                     f"e_mm=[{1e3*error[0]:+6.2f} {1e3*error[1]:+6.2f} {1e3*error[2]:+6.2f}] "
-                    f"|qd|={np.linalg.norm(command[:6]):.4f}rad/s "
-                    f"servo_ms={servo_ms:.0f} "
+                    f"|qd|={np.linalg.norm(command[:6]):.4f}rad/s {ins_txt}"
                     f"{'CONVERGED' if converged else ''}"
                 )
 
@@ -649,6 +789,12 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 print(f"[loop] servo_stop error: {exc!r}")
         camera.stop()
+        if advancer is not None:
+            try:
+                advancer.submit_rate(0.0, dt)
+                advancer.stop()
+            except Exception:
+                pass
         try:
             reader.stop()
         except Exception:

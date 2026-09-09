@@ -70,7 +70,7 @@ class StateStreamConfig:
 
     # --- fast tip-only vision --------------------------------------
     cam_index: int = 0
-    exposure: float = 18.0
+    exposure: float = 27.0
     gain: float = 0.0
     warmup_frames: int = 15
     grab_period_s: float = 0.004

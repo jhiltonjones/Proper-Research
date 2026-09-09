@@ -131,16 +131,28 @@ def make_design_config() -> ControllerDesignConfig:
 
 
 def make_robot_config() -> JointSpaceRobotConfig:
-    """Return the UR/insertion configuration used by the saved run."""
+    """Return the UR/insertion configuration matched to the live hardware.
+
+    ``q_seed_rad`` is the live joint vector (see
+    ``initial_conditions.LIVE_JOINTS_RAD``); with the offline-FK-consistent
+    ``start_point`` from ``make_initial_poses`` the initial magnet-pose IK
+    returns exactly those six joint angles.
+
+    ``tcp_to_magnet_pose6 = (0, 0, 0.03, 0, 0, 0)`` -- the source magnet sits
+    30 mm below the TCP along TCP.z, the same transform
+    ``robotics_frame_measurement_validation.CONFIG.T_tcp_magnet_pose6`` uses.
+    (The stale ``urik.CONFIG.T_tcp_magnet_pose6`` is 0.47 m and must be
+    overridden here.)  ``active_tcp_pose6 = 0`` because the robot's installed
+    TCP offset is zero (flange == TCP).
+    """
+    from proper_research.simulation.simulations.initial_conditions import (
+        LIVE_JOINTS_RAD,
+    )
+
     return JointSpaceRobotConfig(
-        q_seed_rad=(
-            -0.41239578,
-            -1.58101477,
-            -1.97399163,
-            -1.14026724,
-            1.58276796,
-            -0.21074230,
-        ),
+        q_seed_rad=tuple(LIVE_JOINTS_RAD),
+        active_tcp_pose6=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        tcp_to_magnet_pose6=(0.0, 0.0, 0.03, 0.0, 0.0, 0.0),
         insertion_min_m=0.0,
         insertion_max_m=0.05,
         debug_initial_ik=True,

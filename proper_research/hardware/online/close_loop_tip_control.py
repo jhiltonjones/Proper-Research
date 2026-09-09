@@ -116,6 +116,16 @@ class CloseLoopConfig:
     advancer_port: str = "/dev/ttyACM0"
     advancer_dry_run: bool = False
 
+    # --- beam frame B in R (kept in sync with robotics_frame_measurement_validation) --
+    # beam_axial_axis_R  : direction the beam grows (it stands up -> +R.z).
+    # beam_plane_normal_axis_R : the CAMERA viewing axis == B.z (out of the 2D
+    #   image plane).  To identify it physically: jog the magnet purely along
+    #   ONE robot axis; the axis whose motion does NOT move the beam tip in the
+    #   2D image is the camera axis.  A wrong choice makes an in-plane magnet
+    #   move look like an out-of-plane one (your "why did B.z change" question).
+    beam_axial_axis_R: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    beam_plane_normal_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+
     # --- beam Jacobian d(tip)/d[q1..q6, insertion], frozen at the start pose --
     #   "analytical_beam"  : real analytic beam sensitivity
     #     (MagneticBeamForwardModel.jacobian_tip_actuation_tangent -> d(tip)/d(magnet
@@ -400,10 +410,18 @@ def main() -> None:
         grab_period_s=cfg.grab_period_s,
         reconstruct_period_s=cfg.reconstruct_period_s,
         image_filename=cfg.image_filename,
+        beam_axial_axis_R=cfg.beam_axial_axis_R,
+        beam_plane_normal_axis_R=cfg.beam_plane_normal_axis_R,
     )
     mapper = NewFrameTipMapper(stream_cfg)
     beam_axis_R = np.asarray(mapper.T_R_B.rotation[:, 0], dtype=float)
-    print(f"[loop] beam axial axis in R = {np.round(beam_axis_R, 4).tolist()}")
+    print(
+        f"[loop] T_R_B columns  B.x(axial)={np.round(mapper.T_R_B.rotation[:, 0], 3).tolist()}  "
+        f"B.y(in-plane sideways)={np.round(mapper.T_R_B.rotation[:, 1], 3).tolist()}  "
+        f"B.z(camera/out-of-plane)={np.round(mapper.T_R_B.rotation[:, 2], 3).tolist()}\n"
+        f"[loop]   -> moving the TCP along R.x changes "
+        f"{'B.z (OUT of the vision plane)' if abs(mapper.T_R_B.rotation[0, 2]) > 0.7 else 'B.y (in-plane)' if abs(mapper.T_R_B.rotation[0, 1]) > 0.7 else 'B.x (axial)'}"
+    )
 
     from proper_research.hardware.ur_rtde_robot import URRTDERobot
 
@@ -481,6 +499,13 @@ def main() -> None:
     started_moving = False
     jac_provider: Any = None
     log_file = log_path.open("w", encoding="utf-8")
+    # Flat CSV for graphing / post-processing.
+    traj_file = (output_dir / "tip_trajectory.csv").open("w", encoding="utf-8", newline="")
+    traj_file.write(
+        "step,t_s,tip_x_m,tip_y_m,tip_z_m,target_x_m,target_y_m,target_z_m,"
+        "err_norm_mm,q1,q2,q3,q4,q5,q6,insertion_m,converged\n"
+    )
+    t_zero = now_monotonic()
 
     try:
         _assert_robot_ready()
@@ -569,6 +594,17 @@ def main() -> None:
             )
         print(f"[loop] cond(J[:, :6]) = {jac_provider.last_condition:.2f}")
         j_full = jac_provider(z0)
+        with np.printoptions(precision=5, suppress=True, linewidth=160):
+            print("[loop] ========= FROZEN BEAM JACOBIAN  d(tip_R xyz)/d[q1..q6, insertion] =========")
+            print(f"[loop] rows = tip R.x, R.y, R.z   cols = q1..q6 (rad), insertion (m)")
+            for r, name in enumerate(("R.x", "R.y", "R.z")):
+                print(f"[loop]   {name}: {j_full[r]}")
+            if isinstance(jac_provider, AnalyticalBeamJacobianProvider):
+                print("[loop] --- factors: J = J_beam[:, 0:3] @ Jv_robot ,  J[:,6] = J_beam[:,6] ---")
+                print(f"[loop] J_beam (3x7) d(tip)/d[magnet_xyz(3), magnet_rot(3), insertion]:")
+                for r, name in enumerate(("R.x", "R.y", "R.z")):
+                    print(f"[loop]   {name}: {jac_provider.j_beam_full[r]}")
+            print("[loop] ============================================================================")
         print(
             f"[loop] frozen J rows (R.x/R.y/R.z) |.| = "
             f"{np.round(np.linalg.norm(j_full[:, :6], axis=1), 4).tolist()}  "
@@ -577,6 +613,10 @@ def main() -> None:
 
         # robot translational Jacobian, frozen (used by pid_cartesian and for diag)
         jv_robot = _translational_jacobian_fd(robot, q0)
+        with np.printoptions(precision=5, suppress=True, linewidth=160):
+            print(f"[loop] Jv_robot (3x6) d(TCP_pos)/d(q):")
+            for r, name in enumerate(("R.x", "R.y", "R.z")):
+                print(f"[loop]   {name}: {jv_robot[r]}")
 
         controller = None
         if cfg.controller_type == "jacobian":
@@ -759,6 +799,15 @@ def main() -> None:
             }
             log_file.write(json.dumps(row) + "\n")
             log_file.flush()
+            traj_file.write(
+                f"{steps},{now_monotonic()-t_zero:.4f},"
+                f"{tip[0]:.6f},{tip[1]:.6f},{tip[2]:.6f},"
+                f"{target_R[0]:.6f},{target_R[1]:.6f},{target_R[2]:.6f},"
+                f"{error_mm:.3f},"
+                + ",".join(f"{v:.6f}" for v in q)
+                + f",{insertion_m:.6f},{int(converged)}\n"
+            )
+            traj_file.flush()
 
             if steps % 5 == 0 or converged:
                 ins_txt = (
@@ -804,6 +853,7 @@ def main() -> None:
         except Exception:
             pass
         log_file.close()
+        traj_file.close()
         sys.stdout = real_stdout
 
     summary = {

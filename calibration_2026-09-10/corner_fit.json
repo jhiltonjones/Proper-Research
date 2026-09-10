@@ -1,0 +1,12 @@
+{
+ "cam_slope": 0.10836478860840608,
+ "cam_bias": 0.7136876617990578,
+ "online_cur_slope": 0.11520569039313752,
+ "online_cur_bias": 1.6326839728140978,
+ "best_yaw": -6,
+ "best_E_scale": 1.2,
+ "best_E_pa": 3000000.0,
+ "best_rms_v_mm": 0.251365525412489,
+ "offline_slope": 0.11521913465024826,
+ "offline_bias": -0.0028391516775407694
+}

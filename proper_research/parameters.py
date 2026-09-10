@@ -88,9 +88,10 @@ def default_beam_params():
 
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
-    B_r = 1.45
-    r_epm = 0.03
-    p_epm = 0.09
+    # Source magnet (2026-09-10): N52 cylinder, 100 mm diameter x 100 mm length.
+    B_r = 1.44
+    r_epm = 0.05
+    p_epm = 0.10
     m_hat = (1.0, 0.0, 0.0)
     x_init = 0.09
     mag_epm = magnetic_moment(B_r, mu_0, r_epm, p_epm)

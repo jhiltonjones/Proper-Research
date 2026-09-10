@@ -5,80 +5,92 @@ from scipy.spatial.transform import Rotation as R
 
 
 # =====================================================================
-# FINAL FRAME CALIBRATION  (robot read 2026-09-09, magnet geometry from
-# direct physical measurement)
+# FRAME CALIBRATION  (robot read 2026-09-10; camera-frame corrected)
 # ---------------------------------------------------------------------
-# At the reference TCP the source magnet hangs on a bracket ~33 cm below
-# and ~31 cm behind the flange (world offset [-0.314, 0.010, -0.334]).
-# Its CENTRE sits at  beam_base + [-0.23, 0, 0]  in R -- 23 cm from the
-# beam base / pivot, same R.y, same R.z (== [0, 0, +230] mm in beam
-# frame B: purely out of the 2-D vision plane, level with the base).
-# The magnet near edge is 15.5 cm from the base (it is ~15 cm long along
-# -R.x).  Dipole aligned with the beam axial (+R.z) magnetisation.
-# DH deltas are already fitted into urik.CONFIG.
+# GEOMETRY: the beam grows along world -X (insertion -> tip moves -X).
+# Camera is OVERHEAD looking down (-Z), so it sees the world X-Y plane;
+# its blind axis is world Z.  So beam frame B:
+#   B.x (axial)      = world -X   (beam_axial_axis_R = (-1,0,0))
+#   B.y (in-plane)   = world +Y   (left/right in the image)
+#   B.z (blind)      = world -Z   (into the image; beam_plane_normal = (0,0,-1))
 #
-#   joints (rad) = [-0.64739067, -2.05319991, -1.61638916,
-#                   -1.06096228,  1.56594813, -1.84768182]
-#   TCP pose6    = [0.60985444, -0.68005596, 0.31772396,
-#                  -3.08577770,  0.57746171,  0.03115576]
+# Source magnet: N52 cylinder, 100 mm dia x 100 mm long, COAXIAL with the
+# beam, dipole along the beam axis (world -X).  Centre at beam_base +
+# [-0.28, 0, 0] -> 28 cm from the pivot along the axis, ~23 cm beyond the
+# tip, same world Y and Z.  DH deltas in urik.CONFIG.
 #
-# start_point = calibrated FK(live joints) @ pose6_to_T(TCP_TO_MAGNET_POSE6);
-# make_robot_config IK (q_seed = live joints) returns those joints exactly.
+#   joints (rad) = [-0.85634357, -1.94584002, -1.76176286,
+#                   -1.03319450,  1.56234264, -2.05640871]
+#   TCP pose6    = [0.40795443, -0.73732753, 0.32527992,
+#                  -3.07806404,  0.57586908,  0.04569585]
+#
+# Beam material parameters calibrated 2026-09-10 against live sweeps
+# (calibration_2026-09-10/): xy-plane arc (phi +-40 deg, r = 28-38 cm),
+# source-dipole rotation, and insertion length 18-36 mm.
+#   -> effective_youngs_modulus_pa = 2.5e6  (in beam_hardware_experiment_v2)
+#   -> in-plane RMS ~3.6 deg; camera confirms ZERO out-of-plane bend for
+#      every in-plane magnet move (frame calibration is correct).
+# Known model limits (fixed-permanent-magnetisation assumption):
+#   * bend scales ~linearly with inserted length; the real beam's tip
+#     angle is ~flat over 18-36 mm -> model only trust-worthy near ~33 mm.
+#   * model is ~2x too insensitive to source-dipole rotation.
+#   * model falls off too slowly with magnet distance (a bit stiff at r=38cm).
 # =====================================================================
 
 LIVE_JOINTS_RAD = (
-    -0.64739067,
-    -2.05319991,
-    -1.61638916,
-    -1.06096228,
-    1.56594813,
-    -1.84768182,
+    -0.85634357,
+    -1.94584002,
+    -1.76176286,
+    -1.03319450,
+    1.56234264,
+    -2.05640871,
 )
 
 # TCP(flange) -> magnet-centre translation, in the flange frame at the
 # reference-pose orientation.
-TCP_TO_MAGNET_POSE6 = (-0.2901545, 0.1042136, 0.3399979, 0.0, 0.0, 0.0)
+TCP_TO_MAGNET_POSE6 = (-0.16542, -0.0022782, 0.3469254, 0.0, 0.0, 0.0)
 
-# Source-magnet dipole direction in the magnet body frame, chosen so the
-# world dipole is exactly +R.z (beam axial) at the reference pose.
-SOURCE_DIPOLE_BODY_AXIS = (-0.019473, 0.001061, -0.999810)
+# Source-magnet dipole direction in the magnet body frame, giving a world -R.x
+# (beam axial: the beam grows along world -X) dipole at the reference pose.
+SOURCE_DIPOLE_BODY_AXIS = (-0.932073, 0.361306, 0.026427)
 
-# Magnet extent along its dipole axis (near edge 15.5 cm, centre 23 cm
-# from the beam base -> ~15 cm long).  Point-dipole is marginal at this
-# range; kept for reference / future distributed-source modelling.
-SOURCE_MAGNET_LENGTH_M = 0.15
+SOURCE_MAGNET_DIAMETER_M = 0.10
+SOURCE_MAGNET_LENGTH_M = 0.10
 
 
 def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     """
-    Fixed initial robot/beam pose, matched to the final frame calibration.
+    Fixed initial robot/beam pose, matched to the frame calibration above.
 
     Returns ``(pivot_point, start_point, L_cmd, dt)``:
       * ``pivot_point`` -- beam base pose6 in R; rotvec is
-        ``model_base_rotation_from_beam(+R.z, -R.x)`` so ``build_model_bundle``
-        grows the rod along +R.z, bending plane R.y (in-plane) / R.x (out of
-        the 2-D vision plane).
+        ``model_base_rotation_from_beam(+R.z, -R.x)``.
       * ``start_point`` -- source-magnet pose6 in R (calibrated-FK consistent).
       * ``L_cmd`` -- initial insertion [m] (near max).
       * ``dt`` -- controller timestep [s].
     """
-    L_cmd = 0.045
+    # 2026-09-10: model calibrated at E = 2.5 MPa (arc + dipole + insertion
+    # sweeps).  L_cmd is the initial inserted length the offline planner starts
+    # from AND the length the live beam must be set to before a planned run.
+    # For the bigger-square study the beam starts at 30 mm and insertion may
+    # range 25-39 mm.
+    L_cmd = 0.030
     dt = 0.01
 
     pivot_point = np.array(
         [0.525575, -0.670028, -0.016567,
-         2.221441469079183, 0.0, -2.221441469079183],
+         3.14159265, 0.0, 0.0],
         dtype=float,
     )
 
     start_point = np.array(
         [
-            0.295575,
+            0.245575,
             -0.670028,
             -0.016567,
-            -3.08548018,
-            0.57669094,
-            0.03035070,
+            -3.07793295,
+            0.57537270,
+            0.04503358,
         ],
         dtype=float,
     )

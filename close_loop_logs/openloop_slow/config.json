@@ -1,0 +1,11 @@
+{
+  "plan_dir": "/home/jack/Proper-Research/plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path",
+  "speed_scale": [
+    2.0,
+    3.0
+  ],
+  "reps": 1,
+  "out_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_slow",
+  "analyze_only": null,
+  "compare_dir": "/home/jack/Proper-Research/close_loop_logs/compare_tri"
+}

@@ -1,0 +1,14 @@
+{
+ "inverse Jacobian": {
+  "rms_track_mm": 1.363073141585945,
+  "max_track_mm": 3.187,
+  "mean_hold_mm": 0.1369090909090909,
+  "final_mm": 0.162
+ },
+ "MPC-LTI": {
+  "rms_track_mm": 0.9885846579601559,
+  "max_track_mm": 2.276,
+  "mean_hold_mm": 0.27436363636363637,
+  "final_mm": 0.237
+ }
+}

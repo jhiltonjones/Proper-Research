@@ -600,6 +600,9 @@ def build_model_bundle(
     # world +R.z == beam axial); pass (0, 0, -1) to match
     # robotics_frame_measurement_validation.
     source_dipole_body_axis: tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    # Body-frame yaw (deg, about body z) applied to the source moment after
+    # source_dipole_body_axis; matches magnet_yaw_calibration_deg online.
+    source_dipole_yaw_deg: float = 0.0,
     # Pose6 the contact lumen is built from.  None -> the legacy fixed pose
     # (0.798, -0.710, -0.1, pi, ...).  Pass ``pivot_point`` to put the lumen at
     # the actual beam base; a contact lumen hundreds of mm from the beam
@@ -700,9 +703,7 @@ def build_model_bundle(
 
                 # Confirm this sign against the programmed
                 # magnetisation direction of your beam.
-                # +local x: beam poled to be attracted toward the source
-                # magnet (matches the camera; see beam_hardware_experiment_v2).
-                local_axis=(1.0, 0.0, 0.0),
+                local_axis=(-1.0, 0.0, 0.0),
             )
         )
     else:
@@ -776,6 +777,17 @@ def build_model_bundle(
     _dipole_axis = np.asarray(source_dipole_body_axis, dtype=float).reshape(3)
     _dipole_axis = _dipole_axis / (np.linalg.norm(_dipole_axis) + 1e-12)
     m_body = float(mag_params.mag_epm) * _dipole_axis
+    # Optional body-frame yaw (rotation about body z), matched to
+    # beam_hardware_experiment_v2.magnet_yaw_calibration_deg in the online
+    # model.  -6 deg reproduces the real beam's ~+0.7 mm pre-curl toward +B.y
+    # measured in the 2026-09-10 corner sweep; without it the offline plan is
+    # ~0.7 mm short of the triangle corners on the +y side and ~1 mm on -y.
+    if abs(float(source_dipole_yaw_deg)) > 1e-9:
+        _a = np.deg2rad(float(source_dipole_yaw_deg))
+        _rz = np.array([[np.cos(_a), -np.sin(_a), 0.0],
+                        [np.sin(_a), np.cos(_a), 0.0],
+                        [0.0, 0.0, 1.0]], dtype=float)
+        m_body = _rz @ m_body
 
     common_model_kwargs = dict(
         p0_ur=p0_ur,

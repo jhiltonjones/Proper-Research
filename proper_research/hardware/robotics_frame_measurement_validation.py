@@ -72,7 +72,7 @@ SOURCE_MAGNET_BODY_ROTVEC_IN_TCP: tuple[float, float, float] = (0.0, 0.0, 0.0)
 # Flange->magnet translation in the flange frame at the reference orientation.
 # Keep in sync with simulation.simulations.initial_conditions.TCP_TO_MAGNET_POSE6.
 SOURCE_MAGNET_T_TCP_M_POSE6: tuple[float, float, float, float, float, float] = (
-    -0.2901545, 0.1042136, 0.3399979, 0.0, 0.0, 0.0,
+    -0.16542, -0.0022782, 0.3469254, 0.0, 0.0, 0.0,
 )
 
 
@@ -180,12 +180,12 @@ class FrameValidationConfig:
     derive_beam_frame_from_axes: bool = True
     # Direction the beam grows in, in robot base coordinates.  The rig has the
     # beam standing vertically, so +Z.
-    beam_axial_axis_R: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
     # Camera viewing axis / beam-plane normal in robot base coordinates.  Only
     # the component perpendicular to beam_axial_axis_R is used.  Flip the sign
     # if the modelled beam / vessel / magnet come out left-right mirrored in
     # camera_overlay.png (this sign is not observable from a planar measurement).
-    beam_plane_normal_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
     # Put the B-frame ORIGIN a fixed distance behind the source magnet along
     # -B.x.  Use this ONCE, at the reference/calibration pose, to derive the
@@ -228,11 +228,11 @@ class FrameValidationConfig:
     # Body-frame dipole direction chosen so the world dipole is exactly +R.z
     # (beam axial) at the reference pose; rotating the magnet rotates it.
     source_dipole_unit_in_magnet_body: tuple[float, float, float] = (
-        -0.019473, 0.001061, -0.999810,
+        -0.932073, 0.361306, 0.026427,
     )
 
     # Source-magnet drawing dimensions in its body frame M.
-    source_magnet_dimensions_mm: tuple[float, float, float] = (20.0, 20.0, 20.0)
+    source_magnet_dimensions_mm: tuple[float, float, float] = (100.0, 100.0, 100.0)
     source_axis_display_length_mm: float = 12.0
     beam_axis_display_length_mm: float = 10.0
     dipole_display_length_mm: float = 15.0

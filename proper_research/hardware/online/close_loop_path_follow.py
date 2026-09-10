@@ -80,7 +80,11 @@ class PathFollowConfig:
 
     # --- where the timed reference comes from ---------------------
     reference_source: str = "plan_dir"      # "synthetic" | "plan_dir"
-    plan_dir: str = ""                       # time-parameterization output dir
+    # 2026-09-10: feasible closed 8 mm apex-at-start triangle from
+    # plan_shape_path.py with the calibrated model (E=2.5 MPa, N52 900 A m^2).
+    # Beam starts at 30 mm (== initial_conditions L0); insertion 30-39 mm.
+    # (plans/square_2mm_2026-09-10/ is the smaller square alternative.)
+    plan_dir: str = "plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path"
     # The offline planner runs in its own world frame (legacy pivot, beam
     # horizontal along -X).  shape_centreline.npz (written next to the plan by
     # plan_shape_path.py) carries tip0 / u_axis / v_axis in that frame; we fit
@@ -102,12 +106,23 @@ class PathFollowConfig:
     shape_axis_v: str = "b_x"
 
     # --- controller ----------------------------------------------
-    controller_kind: str = "naive_inverse_jacobian"   # only this kind for now
+    #   "naive_inverse_jacobian" : InverseJacobianBeamController (resolved-rate)
+    #   "mpc_lti"                : BeamOutputTrackingMPC, one frozen Jacobian
+    #   "mpc_ltv_offline"        : one Jacobian per reference sample (== mpc_lti
+    #                              here, since the beam Jacobian is frozen)
+    controller_kind: str = "naive_inverse_jacobian"
     position_gain: float = 0.6
     damping: float = 5.0e-2
     nullspace_gain: float = 0.0
     feedforward: bool = False
     control_insertion: bool = True
+
+    # --- MPC (controller_kind == "mpc_lti" / "mpc_ltv_offline") ---
+    mpc_prediction_horizon: int = 12
+    mpc_freeze_index: int = 0             # reference sample the LTI model linearises at
+    mpc_position_error_scale_mm: float = 0.5
+    mpc_position_tracking_weight: float = 1.0
+    mpc_use_dare_terminal_cost: bool = True
 
     # --- control loop -------------------------------------------
     control_hz: float = 10.0
@@ -121,14 +136,17 @@ class PathFollowConfig:
     project_error_to_beam_plane: bool = True
 
     # --- beam frame B in R (kept in sync with robotics_frame_measurement_validation) --
-    beam_axial_axis_R: tuple[float, float, float] = (0.0, 0.0, 1.0)
-    beam_plane_normal_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
     # --- frozen beam Jacobian ----------------------------------
     jacobian_source: str = "analytical_beam"   # "analytical_beam" | "kinematic_scalar"
     magnet_tip_coupling: float = 1.0
     insertion_axial_gain: float = 1.0
-    dipole_unit_in_magnet_body: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    # 2026-09-10 calibration: source-magnet dipole direction in the magnet body
+    # frame that gives a world -X (beam-axial) dipole at the reference pose.
+    # Same value as robotics_frame_measurement_validation / close_loop_tip_control.
+    dipole_unit_in_magnet_body: tuple[float, float, float] = (-0.932073, 0.361306, 0.026427)
 
     # --- advancer (insertion) ---------------------------------
     advancer_port: str = "/dev/ttyACM0"
@@ -146,10 +164,12 @@ class PathFollowConfig:
     robot_ip: str = "192.168.56.101"
     reader_poll_hz: float = 60.0
     robot_max_age_s: float = 0.15
-    initial_insertion_m: float = 0.040
+    # Must equal initial_conditions.make_initial_poses()[2] (the offline planner
+    # start length).  2026-09-10 bigger-square study: 30 mm.
+    initial_insertion_m: float = 0.030
 
     cam_index: int = 0
-    exposure: float = 27.0
+    exposure: float = 29.0                 # matches the 2026-09-10 calibration sweeps
     gain: float = 0.0
     grab_period_s: float = 0.004
     reconstruct_period_s: float = 0.01
@@ -160,6 +180,12 @@ class PathFollowConfig:
 
 
 CONFIG = PathFollowConfig()
+
+# A comparison harness may set this to an ndarray of shape [reference_samples, 3, 7]
+# (d(tip_R)/d[q1..q6, insertion] relinearised at each reference sample).  When
+# set, mpc_lti / mpc_ltv_offline use it instead of freezing / recomputing off the
+# frozen jac_provider.  None -> normal behaviour.
+_SCHEDULE_OVERRIDE = None
 
 _AXIS_COLUMN = {"b_x": 0, "b_y": 1, "b_z": 2}
 
@@ -349,10 +375,10 @@ def main() -> None:
     import sys
 
     cfg = CONFIG
-    if cfg.controller_kind != "naive_inverse_jacobian":
+    if cfg.controller_kind not in ("naive_inverse_jacobian", "mpc_lti", "mpc_ltv_offline"):
         raise NotImplementedError(
-            "only 'naive_inverse_jacobian' is wired here so far; the MPC kinds "
-            "need a BeamOutputMPCConfig -- ask for that increment."
+            f"controller_kind={cfg.controller_kind!r} not supported; use "
+            "'naive_inverse_jacobian', 'mpc_lti' or 'mpc_ltv_offline'."
         )
     dt = 1.0 / cfg.control_hz
     real_stdout = sys.stdout
@@ -550,7 +576,7 @@ def main() -> None:
             col_norms = np.linalg.norm(jac_provider.j_beam_full[:, 0:3], axis=0)
             print(
                 f"[path] model magnet in B = [{m_B[0]:+.0f}, {m_B[1]:+.0f}, {m_B[2]:+.0f}] mm "
-                f"(spec [300, 0, 0]; B.y/B.z != 0 -> magnet off the beam axis)\n"
+                f"(coaxial: B.y/B.z ~0 -> magnet on the beam axis, ~280 mm ahead)\n"
                 f"[path] |d(tip)/d(magnet)| per axis  B.z/out={col_norms[0]:.3f}  "
                 f"B.y/in-plane={col_norms[1]:.3f}  B.x/axial={col_norms[2]:.3f} mm/mm "
                 f"(axial should be ~0 for a coaxial axial-dipole magnet)"
@@ -575,11 +601,51 @@ def main() -> None:
 
         # --- offline controller through the standard seam ----
         terminal_hold_steps = max(1, int(round(cfg.control_hz * cfg.shape_end_hold_s)))
+        from dataclasses import replace as _dc_replace
+
+        mpc_config = _mpc_config(cfg, dt)
+        beam_config = None
+        if cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline"):
+            from proper_research.simulation.simulations.simulate_time_parameterized_beam_output_mpc import (
+                BeamOutputMPCConfig,
+            )
+
+            mpc_config = _dc_replace(
+                mpc_config, prediction_horizon=int(cfg.mpc_prediction_horizon)
+            )
+            s = float(cfg.mpc_position_error_scale_mm) * 1.0e-3
+            beam_config = BeamOutputMPCConfig(
+                position_error_scale_m=(s, s, s),
+                position_tracking_weight=float(cfg.mpc_position_tracking_weight),
+                use_dare_terminal_cost=bool(cfg.mpc_use_dare_terminal_cost),
+            )
+
+        # Optional externally-supplied Jacobian schedule (shape [samples, 3, 7]).
+        # A comparison harness sets `close_loop_path_follow._SCHEDULE_OVERRIDE`
+        # to a relinearised-along-the-reference schedule so mpc_lti (frozen at
+        # sample 0) and mpc_ltv_offline (full schedule) are compared on the
+        # SAME model, differing only in time-variation.  Ignored by
+        # naive_inverse_jacobian (which relinearises live off `jac_provider`).
+        schedule_override = globals().get("_SCHEDULE_OVERRIDE")
+        if schedule_override is not None and beam_config is not None:
+            schedule_override = np.asarray(schedule_override, dtype=float)
+            if schedule_override.shape != (reference.sample_count, 3, 7):
+                raise ValueError(
+                    f"_SCHEDULE_OVERRIDE shape {schedule_override.shape} != "
+                    f"({reference.sample_count}, 3, 7)"
+                )
+            print(f"[path] using external Jacobian schedule {schedule_override.shape}")
+        else:
+            schedule_override = None
+
         solver = build_offline_solver(
             cfg.controller_kind,
             reference=reference,
             jacobian_provider=jac_provider,
-            mpc_config=_mpc_config(cfg, dt),
+            mpc_config=mpc_config,
+            beam_config=beam_config,
+            schedule=schedule_override,
+            freeze_index=int(cfg.mpc_freeze_index),
             adapter_config=OfflineControllerConfig(
                 progress_mode="wallclock",
                 terminal_hold_steps=terminal_hold_steps,
@@ -590,7 +656,15 @@ def main() -> None:
             feedforward=cfg.feedforward,
             allow_undeclared_jacobian=True,
         )
-        print(f"[path] controller = {cfg.controller_kind}; closing the loop")
+        print(
+            f"[path] controller = {cfg.controller_kind}"
+            + (
+                f" (horizon={cfg.mpc_prediction_horizon}, freeze@{cfg.mpc_freeze_index})"
+                if beam_config is not None
+                else ""
+            )
+            + "; closing the loop"
+        )
 
         safety_check_every = max(1, int(round(cfg.control_hz)))
         next_tick = now_monotonic()

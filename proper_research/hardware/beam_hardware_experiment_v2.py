@@ -59,13 +59,19 @@ class CompositeBeamConfig:
     particle_specific_moment_A_m2_kg: float = 80.6
     silicone_density_kg_m3: float = 1070.0
     remanence_fraction: float = 1.0
-    effective_youngs_modulus_pa: float = 1.0e6
+    # Calibrated 2026-09-10 against the live arc + dipole + insertion sweeps,
+    # then refined against the CORNER sweep (calibration_2026-09-10/
+    # corner_sweep_data.json): magnet in B.y at the triangle-corner insertion
+    # (38 mm).  cam_v = 0.108*mag_y + 0.71 mm ; the model's lateral gain was
+    # ~6% steep -> 3.0 MPa flattens it (slope ratio 1.008), and the +0.71 mm
+    # real-beam pre-curl is matched by magnet_yaw_calibration_deg = -6 (was
+    # -10, which over-biased the model +0.9 mm).  Corner RMS 0.96 -> 0.25 mm.
+    effective_youngs_modulus_pa: float = 3.0e6
     poisson_ratio: float = 0.49
     inner_diameter_m: float = 0.0
-    # +local x (opposite the rod growth direction): the beam is poled so it is
-    # ATTRACTED toward the source magnet, matching the camera (2026-09-09 sweep,
-    # cam-vs-model correlation -0.98 -> +0.998 on this flip).
-    magnetisation_axis_local: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    # -local x = the rod growth direction = world +B.x = along the axial field
+    # from the coaxial source magnet -> aligned -> straight beam at the reference.
+    magnetisation_axis_local: tuple[float, float, float] = (-1.0, 0.0, 0.0)
 
 
 @dataclass
@@ -123,7 +129,9 @@ class ExperimentConfig:
     use_vision_length_in_model: bool = True
     min_vision_length_m: float = 0.010
     max_vision_length_m: float = 0.050
-    magnet_yaw_calibration_deg: float = -10.0
+    # 2026-09-10 corner-sweep calibration: -6 deg reproduces the real beam's
+    # +0.71 mm pre-curl toward +B.y; -10 over-biased the model by ~+0.9 mm.
+    magnet_yaw_calibration_deg: float = -6.0
     jacobian_variant: str = "contact"  # "contact" or "no_contact"
     sensitivity_workers: int = 1
 

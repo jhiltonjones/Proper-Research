@@ -46,16 +46,35 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # shape centreline
 # ---------------------------------------------------------------------------
-def _shape_corners(shape: str, size_m: float, closed: bool) -> np.ndarray:
+def _shape_corners(
+    shape: str,
+    size_m: float,
+    closed: bool,
+    *,
+    triangle_apex_at_start: bool = False,
+    triangle_base_m: float | None = None,
+) -> np.ndarray:
     """2-D corners in the (u, v) bend plane, first corner at the origin.
 
     The first edge runs along +u (the beam's forward / insertion direction).
+
+    ``triangle_apex_at_start`` makes an isoceles triangle whose sharp APEX sits
+    at the origin (the beam tip's starting position, zero deflection) and whose
+    base is at ``u = size_m`` -- so insertion only ever *increases* from the
+    start, and the lateral spread grows gradually with insertion instead of
+    being demanded up front.  ``triangle_base_m`` sets the full v-width of that
+    base (default: ``size_m``).
     """
     s = float(size_m)
     if shape == "square":
         pts = [(0.0, 0.0), (s, 0.0), (s, s), (0.0, s)]
     elif shape == "triangle":
-        pts = [(0.0, 0.0), (s, 0.0), (0.5 * s, 0.8660254 * s)]
+        if triangle_apex_at_start:
+            b = float(triangle_base_m) if triangle_base_m is not None else s
+            # apex at the origin; base at u = s, symmetric about v = 0.
+            pts = [(0.0, 0.0), (s, 0.5 * b), (s, -0.5 * b)]
+        else:
+            pts = [(0.0, 0.0), (s, 0.0), (0.5 * s, 0.8660254 * s)]
     elif shape == "line":
         pts = [(0.0, 0.0), (s, 0.0)]
         closed = False
@@ -114,8 +133,16 @@ def _build_shape_centreline(
     tip0_world: np.ndarray,
     u_axis: np.ndarray,
     v_axis: np.ndarray,
+    triangle_apex_at_start: bool = False,
+    triangle_base_m: float | None = None,
 ) -> np.ndarray:
-    corners = _shape_corners(shape, size_m, closed)
+    corners = _shape_corners(
+        shape,
+        size_m,
+        closed,
+        triangle_apex_at_start=triangle_apex_at_start,
+        triangle_base_m=triangle_base_m,
+    )
     path2d = _resample(corners, ds_m)
     # Round the corners with a fixed, light smoothing pass -- window set by
     # corner_smoothing_mm.  Just enough to kill the tangent discontinuity at a
@@ -138,11 +165,13 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
     """(tip0, u, v) in the robot base frame R.
 
     With ``initial_conditions.make_initial_poses`` pointing the planner at the
-    hardware beam pose, the planner world frame *is* R.  The beam stands up
-    along +R.z; the in-plane bending direction is +R.y.
+    hardware beam pose, the planner world frame *is* R.  Per the 2026-09-10
+    frame calibration the beam grows along **world -X** (the camera is
+    overhead, blind axis = world Z); the in-plane bending direction the camera
+    sees is +R.y.
 
-    ``u`` = +R.z (forward / insertion / axial),
-    ``v`` = +R.y (in-plane bending),
+    ``u`` = -R.x (forward / insertion / axial, the beam growth direction),
+    ``v`` = +R.y (in-plane bending, left/right in the overhead image),
     ``tip0`` = the forward model's tip at ``p0`` (so the shape's first node has
     ~zero position error); falls back to the nominal straight tip.
     """
@@ -152,7 +181,7 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
 
     pivot_point, _start, L0, _dt = make_initial_poses()
     base_R = np.asarray(pivot_point[:3], dtype=float)
-    u = np.array([0.0, 0.0, 1.0])          # +R.z, beam axial
+    u = np.array([-1.0, 0.0, 0.0])         # -R.x, beam axial / growth direction
     v = np.array([0.0, 1.0, 0.0])          # +R.y, in-plane bending
     tip0 = base_R + float(L0) * u
     try:
@@ -162,6 +191,9 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
             ),
             dtype=float,
         )[:3]
+        # the model tip at p0 is the authoritative start point (straight beam,
+        # ~34 mm along -R.x); accept it whenever it is finite and within a few
+        # mm of the nominal straight tip.
         if np.all(np.isfinite(model_tip)) and np.linalg.norm(model_tip - tip0) < 0.02:
             tip0 = model_tip
     except Exception:
@@ -175,15 +207,26 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
 def _arguments() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--shape", choices=("square", "triangle", "line"), default="square")
-    p.add_argument("--size-mm", type=float, default=6.0, help="edge length / height")
+    p.add_argument("--size-mm", type=float, default=3.0, help="edge length / height")
+    p.add_argument("--triangle-apex-at-start", action="store_true",
+                   help="triangle only: put the sharp apex at the beam tip's "
+                        "start (zero deflection) and the base at u=+size-mm, so "
+                        "insertion only ever increases and the lateral spread "
+                        "grows gradually -> much more feasible for this beam")
+    p.add_argument("--triangle-base-mm", type=float, default=None,
+                   help="triangle-apex-at-start: full v-width of the base "
+                        "(default = --size-mm)")
     p.add_argument("--point-spacing-mm", type=float, default=0.5)
     p.add_argument("--closed", action="store_true", help="return to the first corner")
     p.add_argument("--corner-smoothing-mm", type=float, default=2.0,
                    help="moving-average window; rounds corners so the tip tangent "
                         "stays trackable (0 = sharp corners, planner will likely fail)")
-    p.add_argument("--tangent-tolerance-deg", type=float, default=150.0,
-                   help="inverse-planner tangent feasibility bound; high (~150) = "
-                        "position-only planning, which is what a wide lumen wants")
+    p.add_argument("--tangent-tolerance-deg", type=float, default=179.9,
+                   help="inverse-planner tangent feasibility GATE (the solver's "
+                        "tangent residual is already zero -> position-only). A "
+                        "closed shape needs ~179.9 because the tip tangent is "
+                        "~antiparallel to the path on the return edges; lower it "
+                        "only if you actually want a directed-tip path.")
     p.add_argument("--position-tolerance-mm", type=float, default=1.0,
                    help="inverse/global tip-position feasibility bound. The beam "
                         "has weak lateral authority with the current magnet, so a "
@@ -191,6 +234,11 @@ def _arguments() -> argparse.Namespace:
     p.add_argument("--fast", action="store_true",
                    help="fewer multistarts / evaluations in Layer 1 (quicker, "
                         "lower-quality inverse seed)")
+    p.add_argument("--max-chain-rule-error", type=float, default=0.09,
+                   help="tolerance for the analytic-vs-FD chained-Jacobian check "
+                        "at the initial state. The contact-beam analytic Jacobian "
+                        "sits ~5%% off FD at the current pose; the inverse planner "
+                        "only uses it as a predictor, so ~0.09 is safe.")
     p.add_argument("--lumen-radius-mm", type=float, default=50.0)
     p.add_argument("--magnet-exclusion", dest="magnet_exclusion", action="store_true",
                    default=True,
@@ -209,6 +257,12 @@ def _arguments() -> argparse.Namespace:
     p.add_argument("--joint-acceleration-limit", type=float, default=0.5)
     p.add_argument("--insertion-acceleration-limit", type=float, default=0.02)
     p.add_argument("--max-path-speed-mm-s", type=float, default=3.0)
+    p.add_argument("--time-constraint-tolerance", type=float, default=1.0e-8,
+                   help="fractional slack on the time-parameterisation vel/accel "
+                        "limits.  The MPC-resampled trajectory can sit a few %% "
+                        "over an accel limit on a sharp corner even after the "
+                        "dilation loop; ~0.1 accepts that (limits are already "
+                        "conservative).")
     p.add_argument("--output-root", type=Path, default=None)
     return p.parse_args()
 
@@ -249,6 +303,12 @@ def main() -> None:
         tip0_world=tip0,
         u_axis=u_axis,
         v_axis=v_axis,
+        triangle_apex_at_start=args.triangle_apex_at_start,
+        triangle_base_m=(
+            args.triangle_base_mm * 1.0e-3
+            if args.triangle_base_mm is not None
+            else None
+        ),
     )
     perimeter = float(np.sum(np.linalg.norm(np.diff(centreline, axis=0), axis=1)))
     print(
@@ -281,9 +341,11 @@ def main() -> None:
         if hasattr(planner_config, f.name)
     }
     shared["tangent_tolerance_rad"] = math.radians(
-        min(args.tangent_tolerance_deg, 179.0)
+        min(args.tangent_tolerance_deg, 179.95)
     )
     shared["position_tolerance_m"] = args.position_tolerance_mm * 1.0e-3
+    if "maximum_chain_rule_relative_error" in shared:
+        shared["maximum_chain_rule_relative_error"] = float(args.max_chain_rule_error)
 
     if args.magnet_exclusion:
         magnet_R = np.asarray(
@@ -341,6 +403,7 @@ def main() -> None:
             [args.joint_acceleration_limit] * 6 + [args.insertion_acceleration_limit]
         ),
         maximum_path_speed_m_s=args.max_path_speed_mm_s * 1.0e-3,
+        constraint_tolerance=float(args.time_constraint_tolerance),
         require_nonlinear_beam_feasible=False,
         require_saved_global_feasible=False,
         require_saved_dense_feasible=False,

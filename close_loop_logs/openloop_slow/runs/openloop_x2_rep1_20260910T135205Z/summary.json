@@ -1,0 +1,9 @@
+{
+  "kind": "open_loop",
+  "speed_scale": 2.0,
+  "rep": 1,
+  "plan_dir": "/home/jack/Proper-Research/plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path",
+  "stop_reason": "ValueError('The value is not within [0.03;0.2]')",
+  "samples": 132,
+  "playback_dt_s": 0.1999999999999993
+}

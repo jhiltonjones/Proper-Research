@@ -1,0 +1,10 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/inv_rep1_20260910T131753Z,path_complete,152,131,1.5865366813349682,1.316549618320611,3.305,2.996,0.09638095238095239,0.053,43.1977
+mpc_lti,lti,1,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/lti_rep1_20260910T131928Z,path_complete,152,131,1.3513922450569265,1.1234885496183205,2.905,2.6109999999999998,0.40885714285714286,0.545,40.0392
+mpc_ltv_offline,ltv,1,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/ltv_rep1_20260910T132101Z,path_complete,153,131,1.447195276366991,1.200381679389313,3.4,2.976,0.3396363636363637,0.351,40.947
+naive_inverse_jacobian,inv,2,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/inv_rep2_20260910T132235Z,path_complete,152,131,1.7398318862368318,1.381022900763359,4.136,3.503,0.38604761904761903,0.469,39.1924
+mpc_lti,lti,2,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/lti_rep2_20260910T132406Z,path_complete,153,131,1.5458373950414053,1.3,3.549,2.7945,0.44586363636363624,0.479,31.7533
+mpc_ltv_offline,ltv,2,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/ltv_rep2_20260910T132811Z,stale_vision(age=0.541s),95,95,1.6194822661969213,1.3473368421052634,3.083,2.9305999999999996,nan,2.48,31.2046
+naive_inverse_jacobian,inv,3,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/inv_rep3_20260910T132943Z,path_complete,153,131,1.5977318967024656,1.304908396946565,3.597,3.065,0.14136363636363636,0.026,40.8882
+mpc_lti,lti,3,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/lti_rep3_20260910T133116Z,path_complete,152,131,1.4685490450474998,1.260832061068702,3.361,2.5615,0.38461904761904764,0.368,43.2711
+mpc_ltv_offline,ltv,3,/home/jack/Proper-Research/close_loop_logs/compare_tri/runs/ltv_rep3_20260910T133252Z,path_complete,152,131,1.5337347596560167,1.2344351145038164,3.533,3.1615,0.32161904761904764,0.292,40.4732

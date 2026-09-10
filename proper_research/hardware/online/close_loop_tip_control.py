@@ -117,14 +117,14 @@ class CloseLoopConfig:
     advancer_dry_run: bool = False
 
     # --- beam frame B in R (kept in sync with robotics_frame_measurement_validation) --
-    # beam_axial_axis_R  : direction the beam grows (it stands up -> +R.z).
-    # beam_plane_normal_axis_R : the CAMERA viewing axis == B.z (out of the 2D
-    #   image plane).  To identify it physically: jog the magnet purely along
-    #   ONE robot axis; the axis whose motion does NOT move the beam tip in the
-    #   2D image is the camera axis.  A wrong choice makes an in-plane magnet
-    #   move look like an out-of-plane one (your "why did B.z change" question).
-    beam_axial_axis_R: tuple[float, float, float] = (0.0, 0.0, 1.0)
-    beam_plane_normal_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    # 2026-09-10 calibration: the beam grows along world -X (insertion -> tip
+    # moves -X); the camera is OVERHEAD looking down, so B.z (its blind axis) is
+    # world -Z and the image plane is world X-Y.
+    #   beam_axial_axis_R        = world -X  (the beam growth / insertion dir)
+    #   beam_plane_normal_axis_R = world -Z  (camera viewing axis == B.z)
+    #   B.y = world +Y            (left/right in the overhead image)
+    beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
     # --- beam Jacobian d(tip)/d[q1..q6, insertion], frozen at the start pose --
     #   "analytical_beam"  : real analytic beam sensitivity
@@ -135,7 +135,7 @@ class CloseLoopConfig:
     jacobian_source: str = "analytical_beam"
     magnet_tip_coupling: float = 1.0       # only used by "kinematic_scalar"
     insertion_axial_gain: float = 1.0      # d(tip)/d(insertion) for "kinematic_scalar"
-    dipole_unit_in_magnet_body: tuple[float, float, float] = (-0.019473, 0.001061, -0.999810)
+    dipole_unit_in_magnet_body: tuple[float, float, float] = (-0.932073, 0.361306, 0.026427)
 
     # --- limits ---------------------------------------------------
     joint_velocity_limit_rad_s: float = 0.10
@@ -150,10 +150,12 @@ class CloseLoopConfig:
     robot_ip: str = "192.168.56.101"
     reader_poll_hz: float = 60.0            # receive-only joint/pose poll rate
     robot_max_age_s: float = 0.15
-    initial_insertion_m: float = 0.040
+    # 2026-09-10: match initial_conditions.make_initial_poses()[2] (offline
+    # planner start length).  Bigger-square study: 30 mm.
+    initial_insertion_m: float = 0.030
 
     cam_index: int = 0
-    exposure: float = 27.0
+    exposure: float = 29.0                  # matches the 2026-09-10 calibration sweeps
     gain: float = 0.0
     grab_period_s: float = 0.004
     reconstruct_period_s: float = 0.01
@@ -181,20 +183,37 @@ def _translational_jacobian_fd(robot: Any, q: np.ndarray, eps: float = 1.0e-4) -
     """
 
     q = np.asarray(q, dtype=float).reshape(6)
-    try:
+
+    def _fk_block() -> np.ndarray:
         p0 = np.asarray(robot.get_forward_kinematics(q), dtype=float)[:3]
         jac = np.zeros((3, 6), dtype=float)
         for i in range(6):
             dq = q.copy()
             dq[i] += eps
             jac[:, i] = (np.asarray(robot.get_forward_kinematics(dq), dtype=float)[:3] - p0) / eps
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            f"getForwardKinematics failed ({exc!r}). The arm is probably in a "
-            "protective stop or a program is running -- clear it on the pendant "
-            "(Remote Control), then re-run."
-        ) from exc
-    return jac
+        return jac
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            return _fk_block()
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            # The RTDEControlInterface watchdog can drop the connection while the
+            # (single-threaded) caller is busy building the beam model just
+            # before this call.  Reconnect and retry rather than abort the run.
+            recon = getattr(robot, "reconnect", None)
+            if callable(recon):
+                try:
+                    recon()
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+    raise RuntimeError(
+        f"getForwardKinematics failed after 3 attempts ({last_exc!r}). The arm is "
+        "probably in a protective stop or a program is running -- clear it on the "
+        "pendant (Remote Control), then re-run."
+    ) from last_exc
 
 
 class SimpleBeamJacobianProvider:
@@ -276,12 +295,11 @@ class AnalyticalBeamJacobianProvider:
         lumen = rfmv.build_lumen_in_shared_frames(
             mapper.manual_frame, mapper.calibration, mapper.T_R_B
         )
-        # CRITICAL: the Cosserat model grows its rod along  R0 @ [-1, 0, 0].
-        # With R0 = T_R_B.rotation (B.x = +R.z) that points DOWN, i.e. the model
-        # beam is upside-down vs reality and its d(tip)/d(magnet) has the wrong
-        # structure -> the controller diverges.  Rebuild R0 so the rod grows
-        # along the real beam axis (+B.x), same fix as
-        # robotics_frame_measurement_validation's align_model_base_with_measured_beam.
+        # The Cosserat model grows its rod along  R0 @ [-1, 0, 0].  Rebuild R0
+        # (via model_base_rotation_from_beam) so that direction is the real beam
+        # axis B.x = world -X; using the raw T_R_B rotation instead leaves the
+        # model beam mis-oriented and d(tip)/d(magnet) mis-structured.  Same fix
+        # as robotics_frame_measurement_validation.
         beam_axial_R = np.asarray(mapper.T_R_B.rotation[:, 0], dtype=float)
         model_base_rotation_R = rfmv.model_base_rotation_from_beam(
             beam_axial_R, mapper.T_R_B.rotation[:, 2]
@@ -571,17 +589,16 @@ def main() -> None:
                 f"[loop] MAGNET position (all relative to the beam BASE):\n"
                 f"[loop]   in beam frame B [B.x along beam, B.y sideways, B.z out-of-plane]\n"
                 f"[loop]     = [{m_B[0]:+.0f}, {m_B[1]:+.0f}, {m_B[2]:+.0f}] mm   "
-                f"<- your spec was [300, 0, 0]; B.z=0 means IN the 2D vision plane\n"
+                f"<- coaxial: B.y and B.z ~0 means the magnet is on the beam axis\n"
                 f"[loop]   in robot base R [R.x, R.y, R.z]\n"
                 f"[loop]     = [{m_minus_base_R[0]:+.0f}, {m_minus_base_R[1]:+.0f}, {m_minus_base_R[2]:+.0f}] mm   "
-                f"<- R.z=+{m_minus_base_R[2]:.0f} because the beam grows along +R.z (it stands up),\n"
-                f"[loop]        so '300 mm along the beam' == '300 mm higher in R.z'. Same point.\n"
+                f"<- the beam grows along world -X, so the magnet sits ~280 mm along -R.x\n"
                 f"[loop]   model tip in B = "
                 f"{np.round(1e3 * jac_provider.model_tip_B_m, 1).tolist()} mm   "
                 f"measured tip in B = {np.round(1e3 * mapper.T_R_B.inverse().apply_points(start_tip), 1).tolist()} mm\n"
                 f"[loop] |d(tip)/d(magnet_xyz)| rows (R.x/R.y/R.z) = "
                 f"{np.round(np.linalg.norm(jac_provider.j_beam_translation, axis=1), 3).tolist()} "
-                f"mm/mm  <- coaxial magnet at 300 mm has almost no bending authority"
+                f"mm/mm  <- axial (R.x) ~0; in-plane steering is R.y"
             )
         else:
             print("[loop] building kinematic-scalar Jacobian (7 FK calls)...")

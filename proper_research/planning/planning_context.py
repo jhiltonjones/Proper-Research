@@ -274,13 +274,22 @@ def build_planning_context(
         lumen_cfg=bundle_lumen_cfg,
         plant_contact=exp_cfg.model.plant_contact,
         # Lab magnet on an extended bracket; dipole aligned with the beam axial
-        # (+R.z) magnetisation direction at the reference pose.  The legacy body
-        # -x default points the dipole ~horizontal and bends the model beam
-        # ~20 deg where the real beam is straight.
+        # (world -X) magnetisation direction at the reference pose.  The legacy
+        # body -x default points the dipole ~horizontal and bends the model
+        # beam ~20 deg where the real beam is straight.
         source_dipole_body_axis=SOURCE_DIPOLE_BODY_AXIS,
         # Build the contact lumen at the real beam base, not the legacy fixed
         # pose 270 mm away (which corrupts the contact solve).
         lumen_pivot_point=pivot_point,
+        # Match the online prediction model (beam_hardware_experiment_v2 +
+        # rfmv.build_forward_model_in_shared_frame): uniform-rod stiffness at the
+        # 2026-09-10 calibrated Young's modulus, the N52 900 A m^2 source moment
+        # (from parameters.default_magnet_params()), and the -6 deg dipole yaw
+        # that reproduces the real beam's +0.7 mm pre-curl.  Refined against the
+        # corner sweep -> corner RMS 0.96 -> 0.25 mm.
+        use_physical_stiffness=True,
+        effective_youngs_modulus=3.0e6,
+        source_dipole_yaw_deg=-6.0,
     )
 
     plant_model = bundle.models["plant"]

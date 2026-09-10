@@ -41,7 +41,7 @@ import json
 import math
 import signal
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace as replace_dc
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -123,6 +123,20 @@ class PathFollowConfig:
     mpc_position_error_scale_mm: float = 0.5
     mpc_position_tracking_weight: float = 1.0
     mpc_use_dare_terminal_cost: bool = True
+
+    # --- feedforward (trajectory tracking) ---------------------
+    # False : pure feedback -- servo q_meas + the controller step toward the tip
+    #         target.  Ignores the planned joint trajectory; with an accurate
+    #         plan this is WORSE than open-loop (2026-09-10 triangle: inv RMS
+    #         1.70, mpc_lti 1.47, vs open-loop 1.31 mm).
+    # True  : servo the PLANNED joints reference.state[i][:6] plus the
+    #         controller's CORRECTION as a trim, planned insertion rate to the
+    #         advancer.  For MPC the planned input reference.input[i] is
+    #         subtracted from the command first (the MPC already feeds it
+    #         forward internally) so it is not double-counted.  2026-09-10:
+    #         inv+FF RMS 1.06 mm / max 2.07 -- the best of all controllers.
+    feedforward_joint_trajectory: bool = True
+    feedforward_correction_scale: float = 1.0   # multiplies the feedback step in FF mode
 
     # --- control loop -------------------------------------------
     control_hz: float = 10.0
@@ -380,6 +394,14 @@ def main() -> None:
             f"controller_kind={cfg.controller_kind!r} not supported; use "
             "'naive_inverse_jacobian', 'mpc_lti' or 'mpc_ltv_offline'."
         )
+    if cfg.feedforward_joint_trajectory and cfg.controller_kind != "naive_inverse_jacobian":
+        # The MPC formulation (state prediction from the measured state, Delta-u
+        # cost, DARE terminal) assumes the "servo q_meas + u0" update.  Servoing
+        # the planned joints + a correction fights that -- tested 2026-09-10,
+        # mpc_*+FF terminal error ~1.6 mm.  Pure feedback for MPC (it already
+        # tracks the planned state in its cost).
+        print(f"[path] feedforward_joint_trajectory auto-disabled for {cfg.controller_kind}")
+        cfg = replace_dc(cfg, feedforward_joint_trajectory=False)
     dt = 1.0 / cfg.control_hz
     real_stdout = sys.stdout
     sys.stdout = _DebugLineFilter(real_stdout)
@@ -470,6 +492,7 @@ def main() -> None:
     )
 
     steps = 0
+    ins_trim = 0.0   # accumulated feedback insertion correction (FF mode)
     abort_reason = ""
     started_moving = False
     jac_provider: Any = None
@@ -727,19 +750,47 @@ def main() -> None:
             error_mm = 1.0e3 * float(np.linalg.norm(error))
             q = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
 
+            ref_state = np.asarray(reference.state, dtype=float)
+            ref_input = np.asarray(reference.input, dtype=float)
+            # The MPC command already contains the planned (feedforward) input
+            # in its cost; the resolved-rate command is pure correction.  In FF
+            # mode, subtract the planned input for MPC so we don't double-count.
+            is_mpc = cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline")
+            corr = command.copy()
+            if cfg.feedforward_joint_trajectory and is_mpc:
+                corr = command - ref_input[target_index]
+
+            ff_ins_rate = 0.0
+            if cfg.feedforward_joint_trajectory and reference.sample_count > 1:
+                prev_ix = max(0, target_index - 1)
+                ff_ins_rate = float(
+                    (ref_state[target_index, 6] - ref_state[prev_ix, 6]) / dt
+                )
+
             if advancer is not None:
-                advancer.submit_rate(float(command[6]), dt)
+                advancer.submit_rate(
+                    (float(corr[6]) if cfg.feedforward_joint_trajectory else float(command[6]))
+                    + ff_ins_rate, dt
+                )
+            if cfg.feedforward_joint_trajectory:
+                ins_trim += float(corr[6]) * dt
+                insertion_m = float(np.clip(ref_state[target_index, 6] + ins_trim, 0.005, 0.20))
+            elif advancer is not None:
                 insertion_m = float(
                     np.clip(insertion_m + float(command[6]) * dt, 0.005, 0.20)
                 )
 
             qd = np.clip(
-                command[:6],
+                (corr[:6] if cfg.feedforward_joint_trajectory else command[:6]),
                 -cfg.joint_velocity_limit_rad_s,
                 cfg.joint_velocity_limit_rad_s,
             )
             delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
-            q_target = q + delta_q
+            if cfg.feedforward_joint_trajectory:
+                # servo the PLANNED joints + the controller correction as a trim
+                q_target = ref_state[target_index, :6] + cfg.feedforward_correction_scale * delta_q
+            else:
+                q_target = q + delta_q
 
             t_servo = now_monotonic()
             if not cfg.dry_run:

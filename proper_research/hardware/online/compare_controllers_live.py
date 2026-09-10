@@ -214,7 +214,8 @@ def build_ltv_schedule(plan_dir: str, cache: Path) -> np.ndarray:
 # worker: one run in its own process
 # ==========================================================================
 def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
-            plan_dir: str, horizon: int, beam_len_mm: float) -> int:
+            plan_dir: str, horizon: int, beam_len_mm: float,
+            feedforward: bool = False) -> int:
     import proper_research.hardware.online.close_loop_path_follow as pf
 
     # Always move to reference first: besides resetting drift it "primes" the
@@ -245,6 +246,7 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     pf.CONFIG.initial_insertion_m = beam_len_mm * 1e-3
     pf.CONFIG.exposure = 29.0
     pf.CONFIG.max_control_steps = 800
+    pf.CONFIG.feedforward_joint_trajectory = bool(feedforward)
     pf.CONFIG.output_root = str(out_dir / "runs")
     pf.CONFIG.run_name = f"{kind_key}_rep{rep}"
     try:
@@ -375,15 +377,18 @@ def main():
     p.add_argument("--beam-len-mm", type=float, default=30.0)
     p.add_argument("--out-dir", default=None)
     p.add_argument("--analyze-only", default=None)
+    p.add_argument("--feedforward", action="store_true",
+                   help="servo the PLANNED joints + a feedback trim (trajectory "
+                        "tracking) instead of pure tip-error feedback")
     # hidden worker entry point
-    p.add_argument("--_worker", nargs=7, default=None,
-                   metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON", "BEAMLEN"))
+    p.add_argument("--_worker", nargs=8, default=None,
+                   metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON", "BEAMLEN", "FF"))
     args = p.parse_args()
 
     if args._worker:
-        kind_key, rep, out_dir, sched, plan_dir, horizon, blen = args._worker
+        kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
-                         plan_dir, int(horizon), float(blen)))
+                         plan_dir, int(horizon), float(blen), bool(int(ff))))
 
     if args.analyze_only:
         analyse(Path(args.analyze_only))
@@ -412,7 +417,8 @@ def main():
             print(f"\n{'=' * 72}\n  rep {rep}/{args.reps}   {KIND[k]}\n{'=' * 72}", flush=True)
             cmd = [sys.executable, "-m", "proper_research.hardware.online.compare_controllers_live",
                    "--_worker", k, str(rep), str(out_dir), str(sched_npz),
-                   args.plan_dir, str(args.horizon), str(args.beam_len_mm)]
+                   args.plan_dir, str(args.horizon), str(args.beam_len_mm),
+                   "1" if args.feedforward else "0"]
             rc, rd = None, None
             for attempt in range(1, MAX_ATTEMPTS_PER_RUN + 1):
                 if not first:

@@ -281,6 +281,18 @@ class ConfigurationMPCConfig:
     solver_relative_tolerance: float = 1.0e-7
     solver_maximum_iterations: int = 20_000
     solver_polish: bool = True
+    # 2026-09-11: hard real-time safety net -- OSQP's own wall-clock cutoff
+    # (seconds; 0 = disabled, OSQP's default). On an ill-conditioned problem
+    # (this beam's Jacobian) ADMM iteration count can blow up (measured 3300+
+    # mean iterations / 400ms+ solves on a hard shape, vs ~280 iters / 20ms on
+    # an easier one) and silently exceed the online loop's 100ms control
+    # period -- the reference then races ahead on wallclock progress while the
+    # solve is still running, making the comparison against a near-instant
+    # controller (inverse-Jacobian) unfair. Set to a fraction of the control
+    # period (e.g. 0.08 for 100ms/10Hz) to force OSQP to return its best
+    # solution so far rather than overrun; see beam-lateral-authority-limit
+    # memory for the diagnosis.
+    solver_time_limit_s: float = 0.0
     solver_verbose: bool = False
 
     def validate(self) -> None:
@@ -330,6 +342,8 @@ class ConfigurationMPCConfig:
             raise ValueError("solver_backend must be 'auto', 'osqp', or 'scipy'.")
         if int(self.solver_maximum_iterations) < 1:
             raise ValueError("solver_maximum_iterations must be positive.")
+        if not np.isfinite(self.solver_time_limit_s) or self.solver_time_limit_s < 0.0:
+            raise ValueError("solver_time_limit_s must be finite and >= 0.")
 
     @property
     def effective_input_increment_scale(self) -> Array:
@@ -705,7 +719,7 @@ class ConfigurationTrackingMPC:
             previous_input=np.zeros(7, dtype=float),
             validate_state=False,
         )
-        self._solver.setup(
+        setup_kwargs = dict(
             P=sp.triu(sp.csc_matrix(self.H), format="csc"),
             q=zero,
             A=sp.csc_matrix(self.A),
@@ -720,6 +734,12 @@ class ConfigurationTrackingMPC:
             verbose=bool(self.config.solver_verbose),
             warm_start=True,
         )
+        # OSQP (>=1.0) rejects time_limit=0 at setup ("must be positive")
+        # even though 0 means "disabled" in the underlying C solve loop -- see
+        # simulate_time_parameterized_beam_output_mpc's matching call site.
+        if float(self.config.solver_time_limit_s) > 0.0:
+            setup_kwargs["time_limit"] = float(self.config.solver_time_limit_s)
+        self._solver.setup(**setup_kwargs)
 
     def _constraint_bounds(
         self,

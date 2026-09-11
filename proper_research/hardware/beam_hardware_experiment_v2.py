@@ -73,6 +73,32 @@ class CompositeBeamConfig:
     # from the coaxial source magnet -> aligned -> straight beam at the reference.
     magnetisation_axis_local: tuple[float, float, float] = (-1.0, 0.0, 0.0)
 
+    # 2026-09-11: selectable INDUCED (field-following) magnetisation, added to
+    # test whether the beam's real magnetic response (2 mm dia. PDMS + 80%
+    # iron particles -- a soft, not permanent, magnet) explains the ~3x
+    # under-sensitivity to source-DIPOLE ROTATION found in the corner/arc/
+    # dipole-rotation-vs-radius sweeps.  "fixed_axial" (default) is the
+    # ORIGINAL, still-in-use model: a fixed moment_per_length along the rod,
+    # independent of the local field.  "induced_axial_transverse" instead uses
+    # proper_research.simulation.magnetic_beam.run_solver_smoke_test.
+    # make_induced_axial_transverse_m_local_factory (chi_axial/chi_transverse
+    # susceptibilities against the LOCAL field, tanh-saturated at
+    # induced_m_sat_A_m).
+    #
+    # STATUS: implemented and gradient-verified (FD-vs-analytic on the total
+    # energy, rel. error ~1e-6 including a chain-rule term the old virtual-work
+    # formula does not have -- see gradients.py:magnetic_energy_gradient_u_fd),
+    # but a joint fit against 66 live poses did NOT beat the fixed_axial model
+    # (RMS 3.49 vs 3.13 mm; the dipole-rotation subset got WORSE, 4.42 vs
+    # 4.15 mm) and drove chi_transverse -> 0 -- i.e. this simple linear,
+    # shape-anisotropic susceptibility form does not explain the rotation gap
+    # either.  Left available (NOT the default) for further investigation
+    # rather than treated as the fix; see calibration_2026-09-10/fit_induced*.
+    magnetisation_model: str = "fixed_axial"  # or "induced_axial_transverse"
+    induced_chi_axial: float = 8.0
+    induced_chi_transverse: float = 3.0
+    induced_m_sat_A_m: float | None = 8.0
+
 
 @dataclass
 class ExperimentConfig:
@@ -393,6 +419,7 @@ def calculate_composite_components(
     from proper_research.simulation.magnetic_beam.run_solver_smoke_test import (
         calculate_composite_beam_properties,
         make_Kinv_fun,
+        make_induced_axial_transverse_m_local_factory,
         make_uniform_axial_m_local_factory,
     )
 
@@ -408,10 +435,24 @@ def calculate_composite_components(
     )
     axis = np.asarray(composite_cfg.magnetisation_axis_local, dtype=float)
     axis /= np.linalg.norm(axis)
-    m_local_factory = make_uniform_axial_m_local_factory(
-        moment_per_length=float(calculated["moment_per_length"]),
-        local_axis=tuple(axis.tolist()),
-    )
+    model = getattr(composite_cfg, "magnetisation_model", "fixed_axial")
+    if model == "induced_axial_transverse":
+        m_local_factory = make_induced_axial_transverse_m_local_factory(
+            chi_axial=composite_cfg.induced_chi_axial,
+            chi_transverse=composite_cfg.induced_chi_transverse,
+            local_axis=tuple(axis.tolist()),
+            m_sat_A_m=composite_cfg.induced_m_sat_A_m,
+        )
+    elif model == "fixed_axial":
+        m_local_factory = make_uniform_axial_m_local_factory(
+            moment_per_length=float(calculated["moment_per_length"]),
+            local_axis=tuple(axis.tolist()),
+        )
+    else:
+        raise ValueError(
+            f"magnetisation_model must be 'fixed_axial' or "
+            f"'induced_axial_transverse', got {model!r}."
+        )
     if not callable(m_local_factory):
         raise TypeError("Composite m_local_factory must be callable.")
     Kinv_fun = make_Kinv_fun(

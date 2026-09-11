@@ -175,6 +175,29 @@ class BeamOutputMPCConfig:
     disturbance_filter_alpha: float = 0.0
     joint_trust_region_rad: float | None = None
     insertion_trust_region_m: float | None = None
+    # 2026-09-11: EXPLICIT anisotropic input regularisation, added directly to
+    # the QP Hessian per horizon step, keyed to that step's local (joint-only,
+    # 3x6) Jacobian SVD. Diagnosed root cause: on an ill-conditioned Jacobian
+    # (this beam, condition number ~1.5e5), MPC's isotropic input weight
+    # (input_tracking_weight) cannot selectively damp the near-null singular
+    # direction without also crushing the well-conditioned ones -- empirically
+    # confirmed to plateau (pushing input_tracking_weight from 1e-2 to 1e7 only
+    # moved the near-null-direction command fraction from 47% to 41%, nowhere
+    # near inverse-Jacobian's 14%, while RMS got worse). This term instead
+    # penalises ONLY the weak singular direction(s) directly: for each horizon
+    # step's local Jacobian J = U@diag(s)@Vt, weight = 1/(s^2+eps) minus its
+    # own minimum (so the strongest direction gets zero extra penalty), added
+    # as gain * V @ diag(weight) @ V.T to that step's 6x6 joint block of the
+    # Hessian. 0.0 = disabled (no change to any other run).
+    directional_damping: float = 0.0
+    # 2026-09-11: bounded-weight refinement -- caps the near-null direction's
+    # weight to ~1/floor^2 instead of an unbounded 1/sigma^2 (see
+    # _directional_damping_hessian_block's docstring for the full story: the
+    # unbounded version worked directionally but wrecked OSQP's conditioning
+    # live). Units match the Jacobian's singular values (comparable to
+    # inverse-Jacobian's own damping=0.05 parameter). Only used when
+    # directional_damping > 0.
+    directional_damping_floor: float = 0.01
 
     def validate(self) -> None:
         scale = _finite_vector(
@@ -202,6 +225,12 @@ class BeamOutputMPCConfig:
                 not np.isfinite(float(value)) or float(value) <= 0.0
             ):
                 raise ValueError(f"{name} must be positive when supplied.")
+        if not np.isfinite(self.directional_damping) or self.directional_damping < 0.0:
+            raise ValueError("directional_damping must be finite and >= 0.")
+        if not np.isfinite(self.directional_damping_floor) or (
+            self.directional_damping_floor <= 0.0
+        ):
+            raise ValueError("directional_damping_floor must be finite and > 0.")
 
     @property
     def trust_region(self) -> Array | None:
@@ -823,6 +852,45 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         self._filtered_output_residual = filtered.copy()
         return instantaneous, filtered
 
+    def _directional_damping_hessian_block(self, indices: Array) -> Array:
+        """Anisotropic input regularisation, one 7x7 block per horizon step.
+
+        Diagnosed 2026-09-11 (see BeamOutputMPCConfig.directional_damping's
+        docstring): penalises ONLY the near-null singular direction(s) of each
+        step's local (joint-only, 3x6) Jacobian, directly mirroring what
+        inverse-Jacobian's damped-least-squares law does automatically -- an
+        isotropic input weight cannot do this without also damping the
+        well-conditioned directions (confirmed empirically to plateau).
+
+        2026-09-11 bounded-weight refinement: the first version used a fixed
+        eps2=1e-6 numerical floor, which for this beam's near-null direction
+        (sigma~5.9e-7) gave weight~1e6 -- a huge eigenvalue-scale mismatch
+        against the rest of the Hessian's other terms (~1e-2 to ~1e7) that
+        confirmed live to wreck OSQP's ADMM convergence (mean solve time
+        23ms->67ms, iterations 353->1291, 18% of ticks over the 100ms control
+        budget). `directional_damping_floor` (units: same as the Jacobian's
+        singular values, i.e. comparable to inverse-Jacobian's own
+        damping=0.05) now sets eps2 = floor^2 explicitly, capping the weakest
+        direction's weight to ~1/floor^2 -- e.g. floor=0.01 caps it at ~1e4,
+        two orders of magnitude gentler, while floor^2=1e-4 is still >100x
+        below the next-weakest singular value observed (~0.037, s^2~1.4e-3)
+        so the weak direction stays clearly, selectively targeted.
+        """
+        gain = float(self.beam_config.directional_damping)
+        floor = float(self.beam_config.directional_damping_floor)
+        eps2 = floor**2
+        blocks = []
+        for idx in indices:
+            j6 = np.asarray(self.reference_position_jacobians[idx], dtype=float)[:, :6]
+            _, s, vt = np.linalg.svd(j6, full_matrices=False)
+            weight = 1.0 / (s**2 + eps2)
+            weight = weight - weight.min()  # zero penalty on the strongest direction
+            m6 = (vt.T * weight) @ vt
+            m7 = np.zeros((self.m, self.m), dtype=float)
+            m7[:6, :6] = m6
+            blocks.append(gain * m7)
+        return sp.block_diag(blocks, format="csc").toarray()
+
     def _beam_prediction_terms(
         self,
         *,
@@ -886,6 +954,9 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         )
         hessian = self._base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
         linear = base_linear + 2.0 * (G.T @ self.Qpbar @ constant_error)
+        if float(self.beam_config.directional_damping) > 0.0:
+            indices = self._reference_indices(control_index, future=True)
+            hessian = hessian + 2.0 * self._directional_damping_hessian_block(indices)
         if self.beam_config.use_dare_terminal_cost:
             terminal_hessian, terminal_linear = (
                 self._terminal_riccati_qp_terms(
@@ -968,7 +1039,7 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             state=np.zeros(7), previous_input=np.zeros(7), validate_state=False
         )
         self._solver = _base.osqp.OSQP()
-        self._solver.setup(
+        setup_kwargs = dict(
             P=P,
             q=np.zeros(self.nu),
             A=sp.csc_matrix(self.A),
@@ -981,6 +1052,14 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             verbose=bool(self.config.solver_verbose),
             warm_start=True,
         )
+        # OSQP (>=1.0) rejects time_limit=0 outright at setup ("must be
+        # positive") even though 0 means "disabled" during solving in the
+        # underlying C code -- so omit the kwarg entirely rather than pass 0;
+        # see solver_time_limit_s's docstring for why a real-time deployment
+        # wants this set to a positive fraction of the control period.
+        if float(self.config.solver_time_limit_s) > 0.0:
+            setup_kwargs["time_limit"] = float(self.config.solver_time_limit_s)
+        self._solver.setup(**setup_kwargs)
 
     def _solve_scipy_dynamic(
         self,

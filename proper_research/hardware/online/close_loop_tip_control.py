@@ -83,7 +83,16 @@ class CloseLoopConfig:
     control_hz: float = 10.0                # servoJ blocks for 1/control_hz per tick
     servo_lookahead_s: float = 0.20         # servoJ lookahead buffer (>= 1/control_hz)
     servo_gain: int = 200                   # servoJ proportional gain (100..2000)
-    max_joint_step_rad: float = 0.006       # hard cap on |q_target - q_meas| per tick (~0.34 deg)
+    # 2026-09-11: was 0.006 -- tighter than joint_velocity_limit_rad_s*dt (0.10*0.1=0.01
+    # rad), so it was the actual binding constraint, not the stated velocity limit.
+    # Confirmed live: 182/243 ticks (75%) pinned at the old 0.006 cap on the 20mm
+    # triangle, throttling inverse-Jacobian's correction well below its own velocity
+    # budget -- the wallclock-advancing reference then permanently outran it, and the
+    # closed loop never left the beam's centreline (achieved y range +-1.8mm vs the
+    # plan's +-9.4mm) even though open loop tracked the same corners fine. Raised to
+    # 0.012 (20% headroom above the velocity-limit-implied 0.01 rad/tick) so this cap
+    # is no longer the tighter constraint; see beam-lateral-authority-limit memory.
+    max_joint_step_rad: float = 0.012       # hard cap on |q_target - q_meas| per tick (~0.69 deg)
     max_control_steps: int = 120
     max_state_age_s: float = 0.50
     warmup_timeout_s: float = 20.0
@@ -139,7 +148,10 @@ class CloseLoopConfig:
 
     # --- limits ---------------------------------------------------
     joint_velocity_limit_rad_s: float = 0.10
-    joint_acceleration_limit_rad_s2: float = 0.40
+    # 2026-09-11: matched to the offline planner's --joint-acceleration-limit
+    # default (0.5) -- was 0.40, a latent mismatch between what Layer 3 times
+    # the plan against and what the online loop's MPC/clip actually enforces.
+    joint_acceleration_limit_rad_s2: float = 0.50
     insertion_rate_limit_m_s: float = 2.0e-3
     speed_j_acceleration_rad_s2: float = 0.8
 

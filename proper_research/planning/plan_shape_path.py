@@ -231,6 +231,14 @@ def _arguments() -> argparse.Namespace:
                    help="inverse/global tip-position feasibility bound. The beam "
                         "has weak lateral authority with the current magnet, so a "
                         "few-mm shape may need 2-3 mm here to be feasible at all.")
+    p.add_argument("--tangent-error-selection-weight", type=float, default=1.0,
+                   help="multistart candidate selection ranks by "
+                        "position_error/position_tolerance + this * "
+                        "tangent_error/tangent_tolerance. The online controllers "
+                        "never track desired_tangent, so 0.0 makes selection "
+                        "purely position-accuracy-driven (tangent still gates "
+                        "feasibility via --tangent-tolerance-deg, unaffected). "
+                        "Default 1.0 = unchanged behaviour.")
     p.add_argument("--fast", action="store_true",
                    help="fewer multistarts / evaluations in Layer 1 (quicker, "
                         "lower-quality inverse seed)")
@@ -249,6 +257,13 @@ def _arguments() -> argparse.Namespace:
     p.add_argument("--magnet-exclusion-radius-mm", type=float, default=None,
                    help="override the exclusion radius [mm]; default = the current "
                         "magnet-to-nominal-tip distance")
+    p.add_argument("--magnet-exclusion-reference-joints", type=str, default=None,
+                   help="comma-separated q1..q6 [rad].  The exclusion radius is "
+                        "computed as a RELATIVE quantity -- this pose's magnet "
+                        "distance to the tip path (same measure the solver enforces) "
+                        "-- instead of a literal --magnet-exclusion-radius-mm number "
+                        "or a raw TCP/joint box constraint.  Takes priority over "
+                        "--magnet-exclusion-radius-mm.")
     p.add_argument("--skip-global", action="store_true",
                    help="time-parameterise the Layer 1 inverse path directly")
     p.add_argument("--dt", type=float, default=0.1, help="reference sample period [s]")
@@ -263,7 +278,23 @@ def _arguments() -> argparse.Namespace:
                         "over an accel limit on a sharp corner even after the "
                         "dilation loop; ~0.1 accepts that (limits are already "
                         "conservative).")
+    p.add_argument("--velocity-safety-factor", type=float, default=0.8,
+                   help="Layer 3 times the path to stay within this fraction of "
+                        "--joint/insertion-velocity-limit (default 0.8 = 20%% "
+                        "headroom below the LIVE clip bound used online). Raise "
+                        "toward 1.0 for a deliberately time-optimal plan that "
+                        "rides the limit, e.g. to stress-test naive-controller "
+                        "command clipping vs MPC's lookahead.")
+    p.add_argument("--acceleration-safety-factor", type=float, default=0.8,
+                   help="same as --velocity-safety-factor, for the acceleration "
+                        "limits.")
     p.add_argument("--output-root", type=Path, default=None)
+    p.add_argument("--maximum-global-nodes", type=int, default=200,
+                   help="Layer 2's seed grid merges the coarse path_step_m "
+                        "uniform grid with EVERY feasible Layer-1 node -- for "
+                        "a fully-feasible run that's >= the Layer-1 node count, "
+                        "so a bigger/longer shape (more Layer-1 nodes at the "
+                        "same --point-spacing-mm) needs this raised above 200.")
     return p.parse_args()
 
 
@@ -344,6 +375,10 @@ def main() -> None:
         min(args.tangent_tolerance_deg, 179.95)
     )
     shared["position_tolerance_m"] = args.position_tolerance_mm * 1.0e-3
+    if "tangent_error_selection_weight" in shared:
+        shared["tangent_error_selection_weight"] = float(
+            args.tangent_error_selection_weight
+        )
     if "maximum_chain_rule_relative_error" in shared:
         shared["maximum_chain_rule_relative_error"] = float(args.max_chain_rule_error)
 
@@ -356,11 +391,48 @@ def main() -> None:
         )[:3, 3]
         # distance from the magnet to the closest point of the desired tip path
         gaps = np.linalg.norm(centreline - magnet_R[None, :], axis=1)
-        exclusion_radius_m = (
-            args.magnet_exclusion_radius_mm * 1.0e-3
-            if args.magnet_exclusion_radius_mm is not None
-            else float(gaps.min())
-        )
+        if args.magnet_exclusion_reference_joints:
+            ref_q = np.array(
+                [float(x) for x in args.magnet_exclusion_reference_joints.split(",")],
+                dtype=float,
+            )
+            from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+            from proper_research.hardware import (
+                robotics_frame_measurement_validation as rfmv,
+            )
+            from proper_research.simulation.simulations.initial_conditions import (
+                make_initial_poses,
+            )
+            from scipy.spatial.transform import Rotation as _Rot
+
+            beam_base = np.asarray(make_initial_poses()[0][:3], dtype=float)
+            dh = urik.corrected_dh_from_config(urik.CONFIG)
+            fk = urik.forward_kinematics(ref_q, dh)
+            T_ref = fk.T_R_target if fk.T_R_target is not None else fk.T_R_F
+            tcp6_ref = np.r_[T_ref[:3, 3], _Rot.from_matrix(T_ref[:3, :3]).as_rotvec()]
+            _, _, T_R_M_ref = rfmv.source_transform_from_tcp(tcp6_ref, rfmv.CONFIG)
+            magnet_ref = np.asarray(T_R_M_ref.translation, dtype=float)
+            base_radius_m = float(np.linalg.norm(magnet_ref - beam_base))
+            # The solver's exclusion constraint is "magnet -> nearest point of the
+            # TIP PATH", not "magnet -> beam base" (the path can pass closer to the
+            # magnet than the fixed base does).  Use the SAME quantity here -- the
+            # reference pose's distance to this centreline -- so the constraint is a
+            # true "no closer than the reference pose" floor that stays feasible at
+            # the path's own start (a base-distance floor can be tighter than the
+            # path already is at s=0 and make even the trivial first node infeasible).
+            gaps_ref = np.linalg.norm(centreline - magnet_ref[None, :], axis=1)
+            exclusion_radius_m = float(gaps_ref.min())
+            print(
+                f"[layer1] magnet exclusion radius from --magnet-exclusion-reference-joints: "
+                f"magnet@{np.round(magnet_ref, 3).tolist()}  beam_base dist {1e3 * base_radius_m:.1f} mm  "
+                f"-> tip-path dist (used) {1e3 * exclusion_radius_m:.1f} mm"
+            )
+        else:
+            exclusion_radius_m = (
+                args.magnet_exclusion_radius_mm * 1.0e-3
+                if args.magnet_exclusion_radius_mm is not None
+                else float(gaps.min())
+            )
         shared["source_magnet_lumen_exclusion_radius_m"] = exclusion_radius_m
         print(
             f"[layer1] magnet exclusion ON: source magnet centre must stay "
@@ -404,6 +476,8 @@ def main() -> None:
         ),
         maximum_path_speed_m_s=args.max_path_speed_mm_s * 1.0e-3,
         constraint_tolerance=float(args.time_constraint_tolerance),
+        velocity_safety_factor=float(args.velocity_safety_factor),
+        acceleration_safety_factor=float(args.acceleration_safety_factor),
         require_nonlinear_beam_feasible=False,
         require_saved_global_feasible=False,
         require_saved_dense_feasible=False,
@@ -437,7 +511,7 @@ def main() -> None:
             path_step_m=3.0e-3,
             minimum_path_step_m=1.5e-3,
             maximum_refinement_rounds=1,
-            maximum_nodes=200,
+            maximum_nodes=int(args.maximum_global_nodes),
             maximum_iterations=40,
             maximum_wall_time_s=180.0,
             stagnation_function_evaluations=4000,

@@ -199,6 +199,19 @@ class InverseConfigurationPlannerConfig:
     gtol: float = 1.0e-9
     debug: bool = True
 
+    # 2026-09-11: multistart candidate selection ranks by
+    # (position_error/position_tolerance + tangent_error/tangent_tolerance),
+    # i.e. tangent can outweigh position when choosing among converged
+    # candidates even though the solve RESIDUAL itself is already
+    # position-only. For a system whose online controllers never track
+    # desired_tangent (confirmed unused by both the inverse-Jacobian and MPC
+    # controllers -- tangent only gates feasibility, see
+    # tangent_tolerance_rad), that tie-break term is gratuitous and can pick a
+    # worse-positioned candidate purely for better tangent. Default 1.0
+    # preserves existing behaviour for every other caller of this module; set
+    # to 0.0 to make selection purely position-accuracy-driven.
+    tangent_error_selection_weight: float = 1.0
+
     def validate(self) -> None:
         positive_scalars = {
             "position_tolerance_m": self.position_tolerance_m,
@@ -230,6 +243,12 @@ class InverseConfigurationPlannerConfig:
 
         if not 0.0 < self.tangent_tolerance_rad < math.pi:
             raise ValueError("tangent_tolerance_rad must lie in (0, pi).")
+        if not np.isfinite(self.tangent_error_selection_weight) or (
+            self.tangent_error_selection_weight < 0.0
+        ):
+            raise ValueError(
+                "tangent_error_selection_weight must be finite and >= 0."
+            )
         if self.minimum_path_step_m > self.initial_path_step_m:
             raise ValueError(
                 "minimum_path_step_m cannot exceed initial_path_step_m."
@@ -1357,6 +1376,9 @@ def _solve_one_node(
         )
 
     # Prefer physical task accuracy, then the complete regularized objective.
+    # tangent_error_selection_weight defaults to 1.0 (unchanged behaviour);
+    # set to 0.0 when the downstream controller never tracks tip tangent, so
+    # this tie-break is purely position-accuracy-driven (see its docstring).
     return min(
         candidates,
         key=lambda item: (
@@ -1364,7 +1386,8 @@ def _solve_one_node(
             if item.source_magnet_lumen_constraint_satisfied
             else max(0.0, -item.source_magnet_lumen_margin_m),
             item.position_error_m / float(config.position_tolerance_m)
-            + item.tangent_error_rad / float(config.tangent_tolerance_rad),
+            + float(config.tangent_error_selection_weight)
+            * item.tangent_error_rad / float(config.tangent_tolerance_rad),
             item.objective_value,
         ),
     )

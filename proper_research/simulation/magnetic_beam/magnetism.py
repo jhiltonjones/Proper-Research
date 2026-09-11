@@ -1,11 +1,39 @@
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 
 from .kinematics import quat_normalize, quat_to_R
 
 
 MU0_OVER_4PI = 1e-7
+
+
+def _m_local_fun_is_field_dependent(m_local_fun) -> bool:
+    """True if ``m_local_fun`` wants the local field (an INDUCED/field-following
+    magnetisation model), false for the legacy fixed-moment signature
+    ``m_local_fun(s_mid, m_moment)``.
+
+    Detected by signature inspection so existing ``m_local_fun`` callables
+    (2 positional args, no kwargs) are called exactly as before -- this is a
+    purely additive capability.
+    """
+    try:
+        sig = inspect.signature(m_local_fun)
+    except (TypeError, ValueError):
+        return False
+    params = sig.parameters
+    return "B_local_mid" in params or any(
+        p.kind == p.VAR_KEYWORD for p in params.values()
+    )
+
+
+def _call_m_local_fun(m_local_fun, s_mid, m_front_or_overhead, *, B_local_mid=None, R_mid=None):
+    """Call ``m_local_fun`` with the local field if it wants one, else legacy 2-arg."""
+    if _m_local_fun_is_field_dependent(m_local_fun):
+        return m_local_fun(s_mid, m_front_or_overhead, B_local_mid=B_local_mid, R_mid=R_mid)
+    return m_local_fun(s_mid, m_front_or_overhead)
 
 
 def quat_stack_to_R(q: np.ndarray) -> np.ndarray:
@@ -269,7 +297,29 @@ def magnetic_wrench_density_cosserat_profile_segments(
     q_mid = midpoint_quaternions(q)
     R_mid = quat_stack_to_R(q_mid)
 
-    m_loc_mid = np.asarray(m_local_fun(s_mid, m_front_or_overhead), float)
+    r_mid_pts = p_mid.T
+
+    # B is computed BEFORE m_local_fun: an INDUCED/field-following
+    # m_local_fun (_m_local_fun_is_field_dependent) needs the local field to
+    # compute the beam's own magnetisation; a legacy fixed-moment m_local_fun
+    # ignores the field argument and this reordering changes nothing for it.
+    B_mid = dipole_field_from_source(
+        r_mid_pts,
+        r_src,
+        m_ext,
+        r_min=r_min,
+    ).T
+
+    # World field rotated into each segment's LOCAL frame -- (R_mid[n])^T @ B_mid[:, n].
+    B_local_mid = np.einsum("nji,jn->in", R_mid, B_mid)
+
+    m_loc_mid = np.asarray(
+        _call_m_local_fun(
+            m_local_fun, s_mid, m_front_or_overhead,
+            B_local_mid=B_local_mid, R_mid=R_mid,
+        ),
+        float,
+    )
 
     expected_m_shape = (3, s.size - 1)
     if m_loc_mid.shape != expected_m_shape:
@@ -281,15 +331,6 @@ def magnetic_wrench_density_cosserat_profile_segments(
     # R_mid shape: (N - 1, 3, 3)
     # m_loc_mid.T shape: (N - 1, 3)
     m_mid_world = np.einsum("nij,nj->in", R_mid, m_loc_mid.T)
-
-    r_mid_pts = p_mid.T
-
-    B_mid = dipole_field_from_source(
-        r_mid_pts,
-        r_src,
-        m_ext,
-        r_min=r_min,
-    ).T
 
     f_mid = magnetic_force_analytical(
         r_mid_pts,
@@ -341,7 +382,23 @@ def magnetic_energy_quantities_cosserat_profile_segments(
     q_mid = midpoint_quaternions(q)
     R_mid = quat_stack_to_R(q_mid)
 
-    m_loc_mid = np.asarray(m_local_fun(s_mid, m_front_or_overhead), float)
+    # Same B-before-m_local_fun ordering as the full wrench routine (see there
+    # for why): an induced m_local_fun needs the local field.
+    B_mid = dipole_field_from_source(
+        p_mid.T,
+        r_src,
+        m_ext,
+        r_min=r_min,
+    ).T
+    B_local_mid = np.einsum("nji,jn->in", R_mid, B_mid)
+
+    m_loc_mid = np.asarray(
+        _call_m_local_fun(
+            m_local_fun, s_mid, m_front_or_overhead,
+            B_local_mid=B_local_mid, R_mid=R_mid,
+        ),
+        float,
+    )
     expected = (3, s.size - 1)
     if m_loc_mid.shape != expected:
         raise ValueError(
@@ -349,12 +406,6 @@ def magnetic_energy_quantities_cosserat_profile_segments(
         )
 
     m_mid_world = np.einsum("nij,nj->in", R_mid, m_loc_mid.T)
-    B_mid = dipole_field_from_source(
-        p_mid.T,
-        r_src,
-        m_ext,
-        r_min=r_min,
-    ).T
     return B_mid, m_mid_world, s_mid
 
 

@@ -270,6 +270,81 @@ def make_uniform_axial_m_local_factory(
     return m_local_factory
 
 
+def make_induced_axial_transverse_m_local_factory(
+    *,
+    chi_axial: float,
+    chi_transverse: float,
+    local_axis: np.ndarray | tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    m_sat_A_m: float | None = None,
+):
+    """Build an INDUCED (field-following) magnetisation factory.
+
+    2026-09-11: replaces the fixed/permanent axial assumption
+    (``make_uniform_axial_m_local_factory``) with the physically appropriate
+    model for a soft-magnetic composite (the beam is 2 mm dia. PDMS with
+    integrated iron particles -- an induced, not permanent, magnet).  At each
+    point along the rod::
+
+        m_local(s) = chi_axial * B_ax(s) * e1  +  chi_transverse * B_tr(s)
+
+    where ``e1`` is the rod's own local axial direction, ``B_ax`` is the local
+    field's component along ``e1``, and ``B_tr`` is the remaining (transverse)
+    field vector.  ``chi_axial >> chi_transverse`` is expected from the rod's
+    strong shape anisotropy (demagnetising factor along a thin, long rod
+    strongly favours axial magnetisation), but chi_transverse is NOT zero the
+    way the fixed-axial model implicitly assumed -- that assumption is what
+    made the model ~3x too insensitive to source-DIPOLE ROTATION in the
+    2026-09-11 calibration sweep (translation, which mostly samples the axial
+    field, was only ~15-20% off).
+
+    ``chi_axial``/``chi_transverse`` have units of A m^2 per (A m^2 field-per-
+    length) i.e. [moment-per-length / field] = [A m / T]; fit them against
+    hardware data (see ``beam_magnet_calibration_sweep.py``'s saved sweeps) --
+    there are no first-principles defaults here.
+
+    ``m_sat_A_m`` (optional): a smooth per-length saturation cap via
+    ``tanh``, so a very strong near-field state (deep in the solver's line
+    search, not necessarily physical) cannot produce an unbounded moment.
+    """
+    chi_axial = float(chi_axial)
+    chi_transverse = float(chi_transverse)
+    local_axis = np.asarray(local_axis, float).reshape(3)
+    axis_norm = float(np.linalg.norm(local_axis))
+    if axis_norm < 1e-12:
+        raise ValueError("local_axis must be nonzero.")
+    local_axis = local_axis / axis_norm
+    if m_sat_A_m is not None and float(m_sat_A_m) <= 0:
+        raise ValueError("m_sat_A_m must be positive if given.")
+    m_sat = float(m_sat_A_m) if m_sat_A_m is not None else None
+
+    def m_local_factory(*, L_model: float, wire_len: float, tip_len: float):
+        del L_model, wire_len, tip_len
+
+        def m_local_fun(s_mid, unused_parameter, *, B_local_mid=None, R_mid=None):
+            del unused_parameter, R_mid
+            n_segments = np.asarray(s_mid, float).reshape(-1).size
+            if B_local_mid is None:
+                # No field supplied (e.g. a caller still on the legacy 2-arg
+                # convention) -> no induced response; explicit zero is safer
+                # than silently guessing a fixed moment.
+                return np.zeros((3, n_segments), dtype=float)
+            B_local_mid = np.asarray(B_local_mid, float).reshape(3, n_segments)
+            B_ax_scalar = local_axis @ B_local_mid                      # (n,)
+            B_ax_vec = np.outer(local_axis, B_ax_scalar)                # (3, n)
+            B_tr_vec = B_local_mid - B_ax_vec                           # (3, n)
+            m = chi_axial * B_ax_vec + chi_transverse * B_tr_vec
+            if m_sat is not None:
+                mag = np.linalg.norm(m, axis=0)
+                safe_mag = np.maximum(mag, 1e-18)
+                scale = np.where(mag > 1e-18, np.tanh(safe_mag / m_sat) * m_sat / safe_mag, 1.0)
+                m = m * scale[None, :]
+            return m
+
+        return m_local_fun
+
+    return m_local_factory
+
+
 def make_Kinv_fun(
     *,
     youngs_modulus: float,

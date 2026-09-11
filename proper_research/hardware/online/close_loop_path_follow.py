@@ -137,11 +137,81 @@ class PathFollowConfig:
     #         inv+FF RMS 1.06 mm / max 2.07 -- the best of all controllers.
     feedforward_joint_trajectory: bool = True
     feedforward_correction_scale: float = 1.0   # multiplies the feedback step in FF mode
+    # Diagnostic escape hatch: MPC kinds normally have feedforward_joint_trajectory
+    # force-disabled in main() (see the comment there -- known worse terminal
+    # convergence, ~1.4-1.6mm).  Set this True to run mpc_lti/mpc_ltv_offline WITH
+    # feedforward anyway, e.g. to collect instrumented data diagnosing *why* it is
+    # worse instead of just avoiding the mode.
+    force_mpc_feedforward: bool = False
+    # 2026-09-11 fix #2 (diagnosed root cause: MPC's u0 does not shrink to zero
+    # as the tracking error shrinks/grows the way inverse-Jacobian's does --
+    # corr(|u0|,error) collapses to ~0.03-0.14 at the hold vs inverse-Jacobian's
+    # 0.98-1.0 -- so once FF bakes that "sticky" u0 into a trim on the FROZEN
+    # terminal reference position, nothing pulls it back toward the true
+    # residual). When True: once terminal_hold is reached, fall back to pure
+    # feedback (q_target = q_meas + delta_q, exactly the non-FF branch) instead
+    # of trimming the frozen ref_state[target_index] -- feedforward stays in
+    # charge during transit (where it already works), feedback takes over for
+    # the static hold (where it's needed). See beam-lateral-authority-limit
+    # memory for the diagnosis this is based on.
+    ff_trim_base_switch_at_hold: bool = False
+    # 2026-09-11 fix #1 (same diagnosis, different lever): ConfigurationMPCConfig's
+    # input_increment_weight (Rd) penalises u0 changing from the controller's
+    # OWN previous output -- confirmed NOT a hard velocity-limit saturation
+    # (max per-axis |u0| at hold was 0.062 rad/s vs the 0.10 rad/s bound), so
+    # this is a genuine soft-cost lever. None = leave ConfigurationMPCConfig's
+    # default (1e-3); set to a smaller value (e.g. 1e-4 or 0.0) to make MPC's
+    # u0 respond more to the CURRENT residual instead of "stay near last tick" --
+    # only applied when feedforward_joint_trajectory is True, so it never
+    # touches MPC's already-winning pure-feedback behaviour.
+    mpc_ff_input_increment_weight: float | None = None
+    # 2026-09-11: general (NOT FF-gated) overrides for the same two QP cost
+    # terms, to test "does MPC's constraint-aware horizon beat inverse-Jacobian
+    # once control-effort regularisation is minimised, so its UNCONSTRAINED
+    # behaviour matches resolved-rate and only the box constraints + lookahead
+    # can differentiate them". Both None = ConfigurationMPCConfig defaults
+    # (input_tracking_weight=1e-2, input_increment_weight=1e-3) unchanged.
+    # CAUTION: driving these toward 0 removes positive-definite structure from
+    # the QP Hessian -- on an ill-conditioned problem (this beam's Jacobian
+    # condition number is ~1.5e5-1.7e5 depending on shape) that can mean MORE
+    # solver iterations/time, not fewer; watch solver_time_s/iterations, not
+    # just tracking error, when using this.
+    mpc_input_tracking_weight_override: float | None = None
+    mpc_input_increment_weight_override: float | None = None
+    # 2026-09-11: real-time-fairness safety net -- confirmed via
+    # target_index-jump-per-tick analysis that mpc_ltv_offline overran the
+    # 100ms/10Hz control budget on 73% of ticks on a hard (ill-conditioned)
+    # shape (mean solve 160ms, max 419ms), causing the WALLCLOCK-based
+    # reference progress to silently skip 1.6 samples/tick on average instead
+    # of 1 -- an unfair comparison against inverse-Jacobian's near-instant
+    # (~0.1ms) solve. mpc_lti was NOT affected (0% overrun) on the same run,
+    # so this is solver-time-specific, not a blanket MPC problem. None = no
+    # override (ConfigurationMPCConfig.solver_time_limit_s stays 0 = OSQP
+    # default/unbounded); set to a fraction of dt (e.g. 0.08 at 10Hz) to force
+    # OSQP to return its best solution within budget instead of overrunning.
+    mpc_solver_time_limit_s: float | None = None
+    # 2026-09-11: explicit anisotropic input regularisation (see
+    # BeamOutputMPCConfig.directional_damping's docstring for the full
+    # diagnosis) -- penalises only the near-null singular direction of each
+    # horizon step's local Jacobian, unlike the isotropic
+    # mpc_input_tracking_weight_override which plateaus without reaching
+    # inverse-Jacobian's directional-damping behaviour. 0.0 = disabled.
+    mpc_directional_damping: float = 0.0
+    mpc_directional_damping_floor: float = 0.01
 
     # --- control loop -------------------------------------------
     control_hz: float = 10.0
     servo_lookahead_s: float = 0.20
     servo_gain: int = 200
+    # 2026-09-11: briefly raised 0.006 -> 0.012 -> 0.018 while diagnosing why
+    # pure-feedback inverse-Jacobian doesn't reach the 20mm triangle's corners
+    # (see beam-lateral-authority-limit memory: the old 0.006 cap was pinned
+    # on 75% of ticks). Reverted back to the original 0.006 alongside
+    # joint_velocity_limit_rad_s/joint_acceleration_limit_rad_s2 per user
+    # request, to keep a consistent baseline for the open-loop/inv/mpc_lti/
+    # mpc_ltv x FF/no-FF comparison -- the corner-reaching fix that actually
+    # works cleanly is feedforward, not loosened limits (which helped pure
+    # feedback partially but measurably hurt feedforward).
     max_joint_step_rad: float = 0.006
     max_control_steps: int = 600
     max_state_age_s: float = 0.50
@@ -167,6 +237,16 @@ class PathFollowConfig:
     advancer_dry_run: bool = False
 
     # --- limits ----------------------------------------------
+    # 2026-09-11: velocity/accel/step-cap were all raised today while
+    # diagnosing why pure-feedback inverse-Jacobian doesn't reach the 20mm
+    # triangle's corners (see beam-lateral-authority-limit memory). Confirmed
+    # the raise helps pure feedback somewhat but HURTS feedforward (RMS
+    # 1.61->2.14, visible overshoot at one corner) -- feedforward's trim is
+    # normally small and was already well-tuned against the tighter original
+    # limits, so loosening them just removes useful damping on the few ticks
+    # where the trim spikes. Reverted all three back to original here per
+    # user request, to keep a consistent, FF-validated baseline for the
+    # upcoming open-loop/inv/mpc_lti/mpc_ltv x FF/no-FF x 3-rep comparison.
     joint_velocity_limit_rad_s: float = 0.10
     joint_acceleration_limit_rad_s2: float = 0.40
     insertion_rate_limit_m_s: float = 2.0e-3
@@ -394,14 +474,24 @@ def main() -> None:
             f"controller_kind={cfg.controller_kind!r} not supported; use "
             "'naive_inverse_jacobian', 'mpc_lti' or 'mpc_ltv_offline'."
         )
-    if cfg.feedforward_joint_trajectory and cfg.controller_kind != "naive_inverse_jacobian":
+    if (
+        cfg.feedforward_joint_trajectory
+        and cfg.controller_kind != "naive_inverse_jacobian"
+        and not cfg.force_mpc_feedforward
+    ):
         # The MPC formulation (state prediction from the measured state, Delta-u
         # cost, DARE terminal) assumes the "servo q_meas + u0" update.  Servoing
         # the planned joints + a correction fights that -- tested 2026-09-10,
         # mpc_*+FF terminal error ~1.6 mm.  Pure feedback for MPC (it already
-        # tracks the planned state in its cost).
+        # tracks the planned state in its cost).  Set cfg.force_mpc_feedforward
+        # to run it anyway (diagnostic runs).
         print(f"[path] feedforward_joint_trajectory auto-disabled for {cfg.controller_kind}")
         cfg = replace_dc(cfg, feedforward_joint_trajectory=False)
+    elif cfg.feedforward_joint_trajectory and cfg.controller_kind != "naive_inverse_jacobian":
+        print(
+            f"[path] force_mpc_feedforward=True: leaving feedforward_joint_trajectory=True "
+            f"for {cfg.controller_kind} (known-bad mode, running for diagnostics)"
+        )
     dt = 1.0 / cfg.control_hz
     real_stdout = sys.stdout
     sys.stdout = _DebugLineFilter(real_stdout)
@@ -636,11 +726,59 @@ def main() -> None:
             mpc_config = _dc_replace(
                 mpc_config, prediction_horizon=int(cfg.mpc_prediction_horizon)
             )
+            if (
+                cfg.feedforward_joint_trajectory
+                and cfg.mpc_ff_input_increment_weight is not None
+            ):
+                print(
+                    f"[path] fix #1: overriding input_increment_weight "
+                    f"{mpc_config.input_increment_weight:g} -> "
+                    f"{cfg.mpc_ff_input_increment_weight:g} (FF mode)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_increment_weight=float(cfg.mpc_ff_input_increment_weight),
+                )
+            if cfg.mpc_input_tracking_weight_override is not None:
+                print(
+                    f"[path] overriding input_tracking_weight "
+                    f"{mpc_config.input_tracking_weight:g} -> "
+                    f"{cfg.mpc_input_tracking_weight_override:g}"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_tracking_weight=float(
+                        cfg.mpc_input_tracking_weight_override
+                    ),
+                )
+            if cfg.mpc_input_increment_weight_override is not None:
+                print(
+                    f"[path] overriding input_increment_weight "
+                    f"{mpc_config.input_increment_weight:g} -> "
+                    f"{cfg.mpc_input_increment_weight_override:g}"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_increment_weight=float(
+                        cfg.mpc_input_increment_weight_override
+                    ),
+                )
+            if cfg.mpc_solver_time_limit_s is not None:
+                print(
+                    f"[path] setting OSQP solver_time_limit_s -> "
+                    f"{cfg.mpc_solver_time_limit_s:g}s (real-time fairness cap)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    solver_time_limit_s=float(cfg.mpc_solver_time_limit_s),
+                )
             s = float(cfg.mpc_position_error_scale_mm) * 1.0e-3
             beam_config = BeamOutputMPCConfig(
                 position_error_scale_m=(s, s, s),
                 position_tracking_weight=float(cfg.mpc_position_tracking_weight),
                 use_dare_terminal_cost=bool(cfg.mpc_use_dare_terminal_cost),
+                directional_damping=float(cfg.mpc_directional_damping),
+                directional_damping_floor=float(cfg.mpc_directional_damping_floor),
             )
 
         # Optional externally-supplied Jacobian schedule (shape [samples, 3, 7]).
@@ -688,6 +826,47 @@ def main() -> None:
             )
             + "; closing the loop"
         )
+
+        # --- persist the frozen Jacobian (+ MPC schedule, if any) as structured
+        # data, once per run, so a comparison harness can diagnose controller
+        # internals after the fact instead of only reading console prints.
+        try:
+            jac_dump = {
+                "controller_kind": cfg.controller_kind,
+                "feedforward_joint_trajectory": bool(cfg.feedforward_joint_trajectory),
+                "jacobian_source": cfg.jacobian_source,
+                "q0_rad": np.asarray(q0, dtype=float).reshape(-1).tolist(),
+                "insertion0_m": float(insertion_m),
+                "j_full_3x7": np.asarray(j_full, dtype=float).tolist(),
+                "jv_robot_3x6": np.asarray(jv_robot, dtype=float).tolist(),
+                "jacobian_condition": float(jac_provider.last_condition),
+            }
+            if isinstance(jac_provider, AnalyticalBeamJacobianProvider):
+                jac_dump["magnet_in_B_mm"] = (1e3 * jac_provider.magnet_in_B_m).tolist()
+                jac_dump["j_beam_full_3x7"] = np.asarray(
+                    jac_provider.j_beam_full, dtype=float
+                ).tolist()
+            if schedule_override is not None:
+                jac_dump["schedule_override_shape"] = list(schedule_override.shape)
+                jac_dump["schedule_override"] = schedule_override.tolist()
+            if beam_config is not None:
+                jac_dump["mpc_prediction_horizon"] = int(cfg.mpc_prediction_horizon)
+                jac_dump["mpc_freeze_index"] = int(cfg.mpc_freeze_index)
+                jac_dump["mpc_position_error_scale_mm"] = float(
+                    cfg.mpc_position_error_scale_mm
+                )
+                jac_dump["mpc_position_tracking_weight"] = float(
+                    cfg.mpc_position_tracking_weight
+                )
+                jac_dump["mpc_use_dare_terminal_cost"] = bool(
+                    cfg.mpc_use_dare_terminal_cost
+                )
+            jac_dump_path = output_dir / "frozen_jacobian.json"
+            with jac_dump_path.open("w", encoding="utf-8") as handle:
+                json.dump(jac_dump, handle, indent=1)
+            print(f"[path] frozen Jacobian (+schedule) -> {jac_dump_path}")
+        except Exception as exc:  # pragma: no cover -- diagnostics must never break the run
+            print(f"[path] WARNING: failed to dump frozen_jacobian.json: {exc!r}")
 
         safety_check_every = max(1, int(round(cfg.control_hz)))
         next_tick = now_monotonic()
@@ -761,7 +940,19 @@ def main() -> None:
                 corr = command - ref_input[target_index]
 
             ff_ins_rate = 0.0
-            if cfg.feedforward_joint_trajectory and reference.sample_count > 1:
+            if (
+                cfg.feedforward_joint_trajectory
+                and reference.sample_count > 1
+                and not terminal_hold
+            ):
+                # 2026-09-11 bug fix: target_index/prev_ix both freeze at the
+                # last reference sample during the terminal hold, so this used
+                # to keep re-computing the SAME (generally nonzero -- the
+                # planned trajectory can have residual insertion slope right
+                # before the hold starts) rate every tick for the whole hold,
+                # driving a real, unintended insertion drift (+0.3 to +1.7mm
+                # measured across FF runs -- see beam-lateral-authority-limit
+                # memory). A held target should not keep advancing insertion.
                 prev_ix = max(0, target_index - 1)
                 ff_ins_rate = float(
                     (ref_state[target_index, 6] - ref_state[prev_ix, 6]) / dt
@@ -786,10 +977,15 @@ def main() -> None:
                 cfg.joint_velocity_limit_rad_s,
             )
             delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
-            if cfg.feedforward_joint_trajectory:
+            if cfg.feedforward_joint_trajectory and not (
+                cfg.ff_trim_base_switch_at_hold and terminal_hold
+            ):
                 # servo the PLANNED joints + the controller correction as a trim
                 q_target = ref_state[target_index, :6] + cfg.feedforward_correction_scale * delta_q
             else:
+                # fix #2 (or FF off): pure feedback off the measured joints --
+                # either FF was never on, or ff_trim_base_switch_at_hold kicked
+                # in because the planned reference has stopped advancing.
                 q_target = q + delta_q
 
             t_servo = now_monotonic()
@@ -816,6 +1012,7 @@ def main() -> None:
                 "t_s": round(t_rel, 4),
                 "state_age_s": round(float(age), 4),
                 "ref_index": ref_index,
+                "target_index": int(target_index),
                 "progress_index": int(info.get("progress_index", ref_index)),
                 "terminal_hold": terminal_hold,
                 "infeasible": bool(result.infeasible),
@@ -824,10 +1021,30 @@ def main() -> None:
                 "error_mm": [round(float(v), 3) for v in 1e3 * error],
                 "error_norm_mm": round(error_mm, 3),
                 "u0": [round(float(v), 6) for v in command],
+                "u0_correction": [round(float(v), 6) for v in corr],
+                "ff_insertion_rate_m_s": round(ff_ins_rate, 6),
                 "insertion_length_m": round(float(insertion_m), 5),
+                "q_meas_rad": [round(float(v), 6) for v in q],
                 "q_target_delta_rad": [round(float(v), 6) for v in delta_q],
                 "servo_ms": round(servo_ms, 1),
                 "dry_run": cfg.dry_run,
+                # --- controller-internals diagnostics (2026-09-11) ---
+                "controller_kind": cfg.controller_kind,
+                "feedforward": bool(cfg.feedforward_joint_trajectory),
+                "solver_status": info.get("status"),
+                "solver_success": info.get("success"),
+                "solver_iterations": info.get("iterations"),
+                "solver_time_s": info.get("solve_time_s"),
+                "objective": info.get("objective"),
+                "primal_residual": info.get("primal_residual"),
+                "dual_residual": info.get("dual_residual"),
+                "planned_input": info.get("planned_input"),
+                "predicted_input_0": info.get("predicted_input_0"),
+                "predicted_state_0": info.get("predicted_state_0"),
+                "predicted_beam_position_0_m": info.get("predicted_beam_position_0_m"),
+                "predicted_beam_error_0_m": info.get("predicted_beam_error_0_m"),
+                "horizon_len": info.get("horizon_len"),
+                "jacobian_condition": round(float(jac_provider.last_condition), 2),
             }
             log_file.write(json.dumps(row) + "\n")
             log_file.flush()

@@ -72,9 +72,14 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     # 2026-09-10: model calibrated at E = 2.5 MPa (arc + dipole + insertion
     # sweeps).  L_cmd is the initial inserted length the offline planner starts
     # from AND the length the live beam must be set to before a planned run.
-    # For the bigger-square study the beam starts at 30 mm and insertion may
-    # range 25-39 mm.
-    L_cmd = 0.030
+    # 2026-09-11: moved 0.030 -> 0.025 for the bigger (14 mm depth / 20 mm base)
+    # apex-at-start triangle -- taller insertion range (25-39 mm instead of
+    # 30-38.8 mm) at the SAME 39 mm max, to push the planned trajectory closer
+    # to the velocity/acceleration limits (a deliberate stress-test: see
+    # beam-lateral-authority-limit memory, MPC-vs-inverse-Jacobian clipping
+    # investigation). Live beam must be set to 25 mm before a planned run on
+    # this plan.
+    L_cmd = 0.025
     dt = 0.01
 
     pivot_point = np.array(

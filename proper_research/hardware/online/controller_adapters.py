@@ -219,6 +219,15 @@ class OfflineJointControllerAdapter:
         self._prev_input = command.copy()
         self._counter += 1
 
+        # 2026-09-11: widened for controller-internals diagnosis (why does one
+        # controller track worse than another on the same reference/Jacobian?)
+        # -- InverseJacobianStep and BeamOutputMPCStep expose the SAME field
+        # set (see their dataclasses), so this is safe for either controller.
+        predicted_inputs = getattr(step, "predicted_inputs", None)
+        predicted_states = getattr(step, "predicted_states", None)
+        predicted_beam_positions = getattr(step, "predicted_beam_positions", None)
+        predicted_beam_errors = getattr(step, "predicted_beam_errors", None)
+        planned_input = getattr(step, "planned_input", None)
         info = {
             "controller": getattr(self.controller, "name", None)
             or getattr(self.controller, "variant_name", "offline_controller"),
@@ -230,8 +239,36 @@ class OfflineJointControllerAdapter:
             "iterations": int(getattr(step, "iterations", 0)),
             "solve_time_s": float(getattr(step, "solve_time_s", 0.0)),
             "objective": float(getattr(step, "objective", np.nan)),
+            "primal_residual": float(getattr(step, "primal_residual", np.nan)),
+            "dual_residual": float(getattr(step, "dual_residual", np.nan)),
             "first_predicted_beam_error_m": float(
                 getattr(step, "first_predicted_beam_error_m", np.nan)
+            ),
+            "planned_input": (
+                None if planned_input is None
+                else np.asarray(planned_input, dtype=float).reshape(-1).tolist()
+            ),
+            # first horizon step only (full horizon is verbose; step-0 is what
+            # was actually about to be commanded next, the most diagnostic slice)
+            "predicted_input_0": (
+                None if predicted_inputs is None
+                else np.asarray(predicted_inputs, dtype=float).reshape(-1, 7)[0].tolist()
+            ),
+            "predicted_state_0": (
+                None if predicted_states is None
+                else np.asarray(predicted_states, dtype=float).reshape(-1, 7)[0].tolist()
+            ),
+            "predicted_beam_position_0_m": (
+                None if predicted_beam_positions is None
+                else np.asarray(predicted_beam_positions, dtype=float).reshape(-1, 3)[0].tolist()
+            ),
+            "predicted_beam_error_0_m": (
+                None if predicted_beam_errors is None
+                else np.asarray(predicted_beam_errors, dtype=float).reshape(-1, 3)[0].tolist()
+            ),
+            "horizon_len": (
+                0 if predicted_inputs is None
+                else int(np.asarray(predicted_inputs, dtype=float).reshape(-1, 7).shape[0])
             ),
             "measured_joint_state": measured_state,
         }

@@ -3,12 +3,59 @@ from __future__ import annotations
 import numpy as np
 
 from .contact import ContactParams, contact_energy_from_p
-from .kinematics import integrate_pq_and_sens_from_u
+from .energy_optimized import _magnetic_energy_from_state
+from .kinematics import integrate_pq_and_sens_from_u, integrate_pq_from_u
+from .magnetism import _m_local_fun_is_field_dependent
 
 from beam_direction_magnetisation.ana_energy import (
     elastic_energy_gradient_u,
     magnetic_energy_gradient_u_virtual_work_analytic,
 )
+
+
+def magnetic_energy_gradient_u_fd(
+    u_flat: np.ndarray,
+    *,
+    p0: np.ndarray,
+    q0: np.ndarray,
+    s: np.ndarray,
+    m_src: np.ndarray,
+    r_src: np.ndarray,
+    m_local_fun,
+    m_moment: float,
+    eps: float = 1.0e-7,
+) -> np.ndarray:
+    """Central-difference dW_m/du_flat, for INDUCED (field-dependent) magnetisation.
+
+    ``magnetic_energy_gradient_u_virtual_work_analytic`` differentiates p, q
+    through the force/torque densities but treats those densities as fixed --
+    correct only when m_local does not itself depend on the local field (the
+    legacy fixed-moment models).  An induced m_local(s) = f(B(p(s))) adds a
+    dm/dB * dB/dp * dp/du term the virtual-work formula does not include.
+    Finite-differencing the true energy sidesteps re-deriving that term and is
+    correct by construction; it is used automatically (see
+    ``_m_local_fun_is_field_dependent``) only for induced-type m_local_fun,
+    where the closed-form energy/gradient work is not yet done, so this is
+    intentionally the safe-but-slower path, not the production-optimized one.
+    """
+    u_flat = np.asarray(u_flat, dtype=float).reshape(-1)
+
+    def w_m(u: np.ndarray) -> float:
+        p, q, _ = integrate_pq_from_u(u, p0=p0, q0=q0, s=s)
+        w, _ = _magnetic_energy_from_state(
+            p=p, q=q, s=s, m_src=m_src, r_src=r_src,
+            m_local_fun=m_local_fun, m_moment=m_moment, detail="none",
+        )
+        return w
+
+    grad = np.zeros_like(u_flat)
+    for k in range(u_flat.size):
+        up = u_flat.copy()
+        um = u_flat.copy()
+        up[k] += eps
+        um[k] -= eps
+        grad[k] = (w_m(up) - w_m(um)) / (2.0 * eps)
+    return grad
 
 
 def contact_energy_gradient_u_consistent(
@@ -119,16 +166,31 @@ def energy_gradient_u(
         )
 
     if use_magnetic:
-        grad_mag = magnetic_energy_gradient_u_virtual_work_analytic(
-            u_flat,
-            p0=p0,
-            q0=q0,
-            s=s,
-            m_src=m_src,
-            r_src=r_src,
-            m_local_fun=m_local_fun,
-            m_moment=m_moment,
-        )
+        if _m_local_fun_is_field_dependent(m_local_fun):
+            # Induced/field-following magnetisation: the virtual-work formula
+            # is missing a dm/dB*dB/dp*dp/du term for this model, so use the
+            # FD gradient of the true energy instead (see its docstring).
+            grad_mag = magnetic_energy_gradient_u_fd(
+                u_flat,
+                p0=p0,
+                q0=q0,
+                s=s,
+                m_src=m_src,
+                r_src=r_src,
+                m_local_fun=m_local_fun,
+                m_moment=m_moment,
+            )
+        else:
+            grad_mag = magnetic_energy_gradient_u_virtual_work_analytic(
+                u_flat,
+                p0=p0,
+                q0=q0,
+                s=s,
+                m_src=m_src,
+                r_src=r_src,
+                m_local_fun=m_local_fun,
+                m_moment=m_moment,
+            )
 
         grad_mag = np.asarray(grad_mag, float).reshape(-1)
 

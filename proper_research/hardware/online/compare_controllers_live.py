@@ -215,7 +215,14 @@ def build_ltv_schedule(plan_dir: str, cache: Path) -> np.ndarray:
 # ==========================================================================
 def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             plan_dir: str, horizon: int, beam_len_mm: float,
-            feedforward: bool = False) -> int:
+            feedforward: bool = False, force_mpc_feedforward: bool = False,
+            ff_trim_base_switch_at_hold: bool = False,
+            mpc_ff_input_increment_weight: float | None = None,
+            mpc_input_tracking_weight_override: float | None = None,
+            mpc_input_increment_weight_override: float | None = None,
+            mpc_solver_time_limit_s: float | None = None,
+            mpc_directional_damping: float = 0.0,
+            mpc_directional_damping_floor: float = 0.01) -> int:
     import proper_research.hardware.online.close_loop_path_follow as pf
 
     # Always move to reference first: besides resetting drift it "primes" the
@@ -247,6 +254,14 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     pf.CONFIG.exposure = 29.0
     pf.CONFIG.max_control_steps = 800
     pf.CONFIG.feedforward_joint_trajectory = bool(feedforward)
+    pf.CONFIG.force_mpc_feedforward = bool(force_mpc_feedforward)
+    pf.CONFIG.ff_trim_base_switch_at_hold = bool(ff_trim_base_switch_at_hold)
+    pf.CONFIG.mpc_ff_input_increment_weight = mpc_ff_input_increment_weight
+    pf.CONFIG.mpc_input_tracking_weight_override = mpc_input_tracking_weight_override
+    pf.CONFIG.mpc_input_increment_weight_override = mpc_input_increment_weight_override
+    pf.CONFIG.mpc_solver_time_limit_s = mpc_solver_time_limit_s
+    pf.CONFIG.mpc_directional_damping = float(mpc_directional_damping)
+    pf.CONFIG.mpc_directional_damping_floor = float(mpc_directional_damping_floor)
     pf.CONFIG.output_root = str(out_dir / "runs")
     pf.CONFIG.run_name = f"{kind_key}_rep{rep}"
     try:
@@ -380,15 +395,76 @@ def main():
     p.add_argument("--feedforward", action="store_true",
                    help="servo the PLANNED joints + a feedback trim (trajectory "
                         "tracking) instead of pure tip-error feedback")
+    p.add_argument("--force-mpc-feedforward", action="store_true",
+                   help="with --feedforward, also run mpc_lti/mpc_ltv_offline in "
+                        "feedforward mode instead of the normal auto-disable "
+                        "(diagnostic: known-worse terminal convergence, run to "
+                        "collect instrumented data on why)")
+    p.add_argument("--ff-trim-base-switch-at-hold", action="store_true",
+                   help="diagnostic fix #2: once the terminal hold is reached, "
+                        "trim off q_meas instead of the frozen planned reference "
+                        "(pure feedback during hold, FF during transit)")
+    p.add_argument("--mpc-ff-input-increment-weight", type=float, default=None,
+                   help="diagnostic fix #1: override ConfigurationMPCConfig's "
+                        "input_increment_weight (default 1e-3) for FF-mode MPC "
+                        "only, e.g. 1e-4 or 0.0")
+    p.add_argument("--mpc-input-tracking-weight", type=float, default=None,
+                   help="override ConfigurationMPCConfig's input_tracking_weight "
+                        "(R, default 1e-2) unconditionally (both FF and pure "
+                        "feedback) -- e.g. near-0 to test MPC's unconstrained "
+                        "behaviour against inverse-Jacobian's. CAUTION: can "
+                        "increase solver iterations/time on an ill-conditioned "
+                        "problem -- watch solve time, not just tracking error.")
+    p.add_argument("--mpc-input-increment-weight", type=float, default=None,
+                   help="same as --mpc-input-tracking-weight, for "
+                        "input_increment_weight (Rd, default 1e-3), applied "
+                        "unconditionally.")
+    p.add_argument("--mpc-solver-time-limit-s", type=float, default=None,
+                   help="real-time fairness cap: OSQP's own wall-clock cutoff "
+                        "per solve (0 = disabled/OSQP default). On an "
+                        "ill-conditioned problem ADMM iterations can blow up "
+                        "and overrun the control period, causing the "
+                        "wallclock-progress reference to skip samples -- set "
+                        "to a fraction of dt (e.g. 0.08 at 10Hz) so MPC is "
+                        "never structurally handicapped vs inverse-Jacobian's "
+                        "near-instant solve. See beam-lateral-authority-limit "
+                        "memory for the diagnosis.")
+    p.add_argument("--mpc-directional-damping", type=float, default=0.0,
+                   help="anisotropic input regularisation gain (0 = disabled): "
+                        "penalises only the near-null singular direction of "
+                        "each horizon step's local Jacobian, mirroring "
+                        "inverse-Jacobian's damped-least-squares law "
+                        "directionally instead of via a uniform input weight "
+                        "(which was confirmed to plateau -- see "
+                        "beam-lateral-authority-limit memory).")
+    p.add_argument("--mpc-directional-damping-floor", type=float, default=0.01,
+                   help="bounded-weight refinement: caps the near-null "
+                        "direction's penalty weight to ~1/floor^2 instead of "
+                        "unbounded 1/sigma^2 (units match the Jacobian's "
+                        "singular values, comparable to inverse-Jacobian's "
+                        "damping=0.05). The unbounded version wrecked OSQP's "
+                        "solve time live -- see beam-lateral-authority-limit "
+                        "memory. Only used when --mpc-directional-damping > 0.")
     # hidden worker entry point
-    p.add_argument("--_worker", nargs=8, default=None,
-                   metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON", "BEAMLEN", "FF"))
+    p.add_argument("--_worker", nargs=16, default=None,
+                   metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON",
+                            "BEAMLEN", "FF", "FORCE_MPC_FF", "FF_HOLD_SWITCH", "RD_WEIGHT",
+                            "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "DIR_DAMPING",
+                            "DIR_DAMPING_FLOOR"))
     args = p.parse_args()
 
     if args._worker:
-        kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff = args._worker
+        (kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff, force_mpc_ff,
+         ff_hold_switch, rd_weight, r_override, rd_override,
+         time_limit, dir_damping, dir_damping_floor) = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
-                         plan_dir, int(horizon), float(blen), bool(int(ff))))
+                         plan_dir, int(horizon), float(blen), bool(int(ff)),
+                         bool(int(force_mpc_ff)), bool(int(ff_hold_switch)),
+                         None if rd_weight == "none" else float(rd_weight),
+                         None if r_override == "none" else float(r_override),
+                         None if rd_override == "none" else float(rd_override),
+                         None if time_limit == "none" else float(time_limit),
+                         float(dir_damping), float(dir_damping_floor)))
 
     if args.analyze_only:
         analyse(Path(args.analyze_only))
@@ -418,7 +494,19 @@ def main():
             cmd = [sys.executable, "-m", "proper_research.hardware.online.compare_controllers_live",
                    "--_worker", k, str(rep), str(out_dir), str(sched_npz),
                    args.plan_dir, str(args.horizon), str(args.beam_len_mm),
-                   "1" if args.feedforward else "0"]
+                   "1" if args.feedforward else "0",
+                   "1" if args.force_mpc_feedforward else "0",
+                   "1" if args.ff_trim_base_switch_at_hold else "0",
+                   ("none" if args.mpc_ff_input_increment_weight is None
+                    else str(args.mpc_ff_input_increment_weight)),
+                   ("none" if args.mpc_input_tracking_weight is None
+                    else str(args.mpc_input_tracking_weight)),
+                   ("none" if args.mpc_input_increment_weight is None
+                    else str(args.mpc_input_increment_weight)),
+                   ("none" if args.mpc_solver_time_limit_s is None
+                    else str(args.mpc_solver_time_limit_s)),
+                   str(args.mpc_directional_damping),
+                   str(args.mpc_directional_damping_floor)]
             rc, rd = None, None
             for attempt in range(1, MAX_ATTEMPTS_PER_RUN + 1):
                 if not first:

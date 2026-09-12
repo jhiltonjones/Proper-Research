@@ -78,8 +78,24 @@ def _shape_corners(
     elif shape == "line":
         pts = [(0.0, 0.0), (s, 0.0)]
         closed = False
+    elif shape == "circle":
+        # ``s`` (--size-mm) is the DIAMETER. Circle of radius R tangent to the
+        # +u axis at the origin -- same trick as triangle_apex_at_start: the
+        # path starts exactly at the beam's zero-deflection tip, moving
+        # initially along +u (the natural insertion direction) instead of
+        # demanding immediate lateral motion the beam has no authority for at
+        # zero insertion. Centre at (0, R); parametrising
+        # (R sin(theta), R - R cos(theta)) gives tangent (R, 0) ~ +u at
+        # theta=0. Insertion (u) ranges over [-R, +R] relative to the start
+        # (i.e. the beam both extends AND retracts relative to L0), unlike
+        # the triangle's apex-at-start (insertion only increases) -- expect
+        # this to be the more demanding axis to satisfy for feasibility.
+        r = 0.5 * s
+        n = 256
+        theta = np.linspace(0.0, 2.0 * math.pi, n, endpoint=False)
+        pts = list(zip(r * np.sin(theta), r - r * np.cos(theta)))
     else:
-        raise ValueError(f"--shape must be square|triangle|line; got {shape!r}")
+        raise ValueError(f"--shape must be square|triangle|line|circle; got {shape!r}")
     corners = np.asarray(pts, dtype=float)
     if closed and shape != "line":
         corners = np.vstack([corners, corners[:1]])
@@ -206,8 +222,9 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
 # ---------------------------------------------------------------------------
 def _arguments() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--shape", choices=("square", "triangle", "line"), default="square")
-    p.add_argument("--size-mm", type=float, default=3.0, help="edge length / height")
+    p.add_argument("--shape", choices=("square", "triangle", "line", "circle"), default="square")
+    p.add_argument("--size-mm", type=float, default=3.0,
+                   help="edge length / height (square, triangle, line); DIAMETER (circle)")
     p.add_argument("--triangle-apex-at-start", action="store_true",
                    help="triangle only: put the sharp apex at the beam tip's "
                         "start (zero deflection) and the base at u=+size-mm, so "

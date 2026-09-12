@@ -178,6 +178,31 @@ class PathFollowConfig:
     # just tracking error, when using this.
     mpc_input_tracking_weight_override: float | None = None
     mpc_input_increment_weight_override: float | None = None
+    # 2026-09-12: ROOT-CAUSE candidate for MPC+FF being worse than open loop
+    # in EVERY variant tried (horizon 1/15, default/reduced Rd, DARE on/off,
+    # directional_damping 0/0.1) -- none of those touch this term.
+    # `ConfigurationMPCConfig.state_tracking_weight` (default 1.0) with
+    # `state_error_scale`=0.5deg/joint gives an effective weight of
+    # ~1/(0.0087rad)^2 ~ 13000 per joint-radian^2 in `_linear_cost`'s
+    # `S.T@Qbar@(free_state-state_reference)` term -- a JOINT-SPACE
+    # catch-up-to-the-planned-trajectory cost, entirely separate from (and
+    # far larger in scale than) the beam OUTPUT-tracking Qp term. In pure
+    # feedback this is a reasonable regulariser (like inverse-Jacobian's own
+    # nullspace_gain). In FEEDFORWARD mode it is redundant AND uncoordinated:
+    # the robot is already servoed directly to `ref_state[target_index]`, so
+    # this term just re-derives "how far is measured_state from the current
+    # target" every tick and bakes a large joint-space pull into `command` --
+    # only `ref_input` (the planned VELOCITY) gets subtracted before treating
+    # `command` as an output-space trim, so this pull leaks straight through.
+    # Live-confirmed 2026-09-12: at horizon=1 (isolating out any lookahead
+    # effect), MPC's actual u0_correction has NEGATIVE mean cosine similarity
+    # (-0.30, 82% of ticks) against what plain DLS would command given the
+    # IDENTICAL measured error and frozen Jacobian -- i.e. much of MPC's
+    # command is pointing in a direction unrelated to (often opposed to) the
+    # beam-tip correction actually needed. None = ConfigurationMPCConfig's
+    # default (1.0) unchanged; set to 0.0 to test removing this term
+    # entirely in FF mode.
+    mpc_state_tracking_weight_override: float | None = None
     # 2026-09-11: real-time-fairness safety net -- confirmed via
     # target_index-jump-per-tick analysis that mpc_ltv_offline overran the
     # 100ms/10Hz control budget on 73% of ticks on a hard (ill-conditioned)
@@ -198,6 +223,44 @@ class PathFollowConfig:
     # inverse-Jacobian's directional-damping behaviour. 0.0 = disabled.
     mpc_directional_damping: float = 0.0
     mpc_directional_damping_floor: float = 0.01
+    # 2026-09-12: convenience preset bundling two independent, complementary
+    # fixes for MPC's FF hold-phase pathology (negative corr(|trim|,error),
+    # see beam-lateral-authority-limit memory): (a) SPATIAL -- turn on
+    # mpc_directional_damping at the value validated in "Round 4" (no-FF,
+    # h12) if it's still at its default 0.0; (b) TEMPORAL -- disable the DARE
+    # terminal cost and reduce input_increment_weight (Rd) if not already
+    # overridden, removing the "sticky u0" mechanism. Only touches fields
+    # still at their un-overridden default, so an explicit
+    # mpc_directional_damping / mpc_use_dare_terminal_cost /
+    # mpc_input_increment_weight_override the caller already set wins.
+    # CAUTION: Rd near-zero was tried once before (1e-6, pure feedback,
+    # horizon 30, NO directional damping) and made solve time/tracking
+    # WORSE -- that failure was the Hessian losing positive-definite
+    # structure on an ill-conditioned QP with nothing to compensate.
+    # directional_damping reintroduces exactly that structure in the
+    # direction that matters, and the default here (1e-4, not 1e-6) is more
+    # conservative -- but this combination is UNTESTED; watch
+    # solver_time_s/iterations, not just tracking error.
+    mpc_conditioning_fix: bool = False
+    mpc_conditioning_fix_directional_damping: float = 0.1
+    mpc_conditioning_fix_input_increment_weight: float = 1.0e-4
+
+    # --- inverse-Jacobian selective damping (2026-09-12) --------
+    # Opt-in per-singular-value damping refinement -- see
+    # InverseJacobianBeamController's docstring. 0.0 = disabled (unchanged
+    # isotropic DLS behaviour).
+    inv_selective_damping_gain: float = 0.0
+    inv_selective_damping_floor: float = 0.01
+
+    # --- tip-position estimator (2026-09-12) --------------------
+    # "raw" = unfiltered camera tip (unchanged default behaviour); "kalman" =
+    # _ConstantVelocityKalman3D above, filtering the MEASUREMENT the
+    # controller reacts to (before it reaches build_offline_solver's
+    # adapter) so temporal-smoothing knobs (Rd, DLS damping) can be tuned
+    # for control behaviour without also filtering vision noise.
+    tip_estimator: str = "raw"                    # "raw" | "kalman"
+    kf_process_noise_std_m_s2: float = 0.02        # unmodelled accel scale
+    kf_measurement_noise_std_m: float = 3.0e-4     # ~0.3mm camera noise floor
 
     # --- control loop -------------------------------------------
     control_hz: float = 10.0
@@ -282,6 +345,76 @@ CONFIG = PathFollowConfig()
 _SCHEDULE_OVERRIDE = None
 
 _AXIS_COLUMN = {"b_x": 0, "b_y": 1, "b_z": 2}
+
+
+# =============================================================================
+# tip-position estimator (2026-09-12)
+# =============================================================================
+class _ConstantVelocityKalman3D:
+    """Constant-velocity Kalman filter smoothing the camera-tracked tip.
+
+    Why: diagnosing MPC's negative hold-phase corr(|u0_correction|, error)
+    (see beam-lateral-authority-limit memory) found that the input-increment
+    weight ``Rd`` is doing double duty -- damping tick-to-tick "stickiness"
+    AND implicitly filtering vision noise. Killing ``Rd`` to fix the former
+    risks exposing the control law to raw camera jitter (the latter). This
+    filters the MEASUREMENT itself, so ``Rd``/DLS damping can be tuned purely
+    for temporal behaviour without also having to double as a noise filter.
+
+    State ``x = [pos_xyz(3), vel_xyz(3)]``, discretised white-noise-
+    acceleration process model (``process_noise_std_m_s2`` is the std of the
+    unmodelled acceleration), isotropic position-only measurement
+    (``measurement_noise_std_m``). Deliberately simple (no cross-axis
+    coupling, no adaptive covariance) -- a starting point to test the
+    decoupling idea, not a tuned final filter.
+    """
+
+    def __init__(self, process_noise_std_m_s2: float, measurement_noise_std_m: float) -> None:
+        self.q = float(process_noise_std_m_s2)
+        self.r = float(measurement_noise_std_m)
+        if self.q <= 0.0 or not np.isfinite(self.q):
+            raise ValueError("process_noise_std_m_s2 must be finite and > 0.")
+        if self.r <= 0.0 or not np.isfinite(self.r):
+            raise ValueError("measurement_noise_std_m must be finite and > 0.")
+        self.x: Optional[np.ndarray] = None
+        self.P: Optional[np.ndarray] = None
+
+    def reset(self, position_m: np.ndarray) -> None:
+        self.x = np.concatenate(
+            [np.asarray(position_m, dtype=float).reshape(3), np.zeros(3)]
+        )
+        self.P = np.eye(6) * 1.0e-6
+        self.P[3:, 3:] = np.eye(3) * 1.0   # velocity: start with no confidence
+
+    def step(self, position_m: np.ndarray, dt: float) -> np.ndarray:
+        if self.x is None:
+            self.reset(position_m)
+            return self.x[:3].copy()
+
+        F = np.eye(6)
+        F[0:3, 3:6] = np.eye(3) * dt
+        qc = self.q**2
+        block = qc * np.array(
+            [[dt**4 / 4.0, dt**3 / 2.0], [dt**3 / 2.0, dt**2]]
+        )
+        Q = np.zeros((6, 6))
+        for axis in range(3):
+            idx = [axis, axis + 3]
+            Q[np.ix_(idx, idx)] = block
+
+        x_pred = F @ self.x
+        P_pred = F @ self.P @ F.T + Q
+
+        H = np.zeros((3, 6))
+        H[:, :3] = np.eye(3)
+        R = np.eye(3) * (self.r**2)
+        S = H @ P_pred @ H.T + R
+        K = P_pred @ H.T @ np.linalg.solve(S, np.eye(3))
+        innovation = np.asarray(position_m, dtype=float).reshape(3) - H @ x_pred
+
+        self.x = x_pred + K @ innovation
+        self.P = (np.eye(6) - K @ H) @ P_pred
+        return self.x[:3].copy()
 
 
 # =============================================================================
@@ -635,6 +768,22 @@ def main() -> None:
         q0 = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
         z0 = np.concatenate([q0, [insertion_m]])
 
+        tip_filter: Optional[_ConstantVelocityKalman3D] = None
+        if cfg.tip_estimator == "kalman":
+            tip_filter = _ConstantVelocityKalman3D(
+                process_noise_std_m_s2=cfg.kf_process_noise_std_m_s2,
+                measurement_noise_std_m=cfg.kf_measurement_noise_std_m,
+            )
+            tip_filter.reset(start_tip)
+            print(
+                f"[path] tip estimator: Kalman (q={cfg.kf_process_noise_std_m_s2:g} m/s^2, "
+                f"r={1e3 * cfg.kf_measurement_noise_std_m:.2f}mm)"
+            )
+        elif cfg.tip_estimator == "raw":
+            print("[path] tip estimator: raw (unfiltered)")
+        else:
+            raise ValueError(f"tip_estimator must be 'raw' or 'kalman'; got {cfg.tip_estimator!r}")
+
         # --- timed reference -----------------------------------
         if cfg.reference_source == "plan_dir":
             reference = _load_plan_reference(cfg, dt, start_tip, mapper.T_R_B)
@@ -726,6 +875,36 @@ def main() -> None:
             mpc_config = _dc_replace(
                 mpc_config, prediction_horizon=int(cfg.mpc_prediction_horizon)
             )
+            if cfg.mpc_conditioning_fix:
+                if cfg.mpc_directional_damping == 0.0:
+                    cfg = replace_dc(
+                        cfg,
+                        mpc_directional_damping=float(
+                            cfg.mpc_conditioning_fix_directional_damping
+                        ),
+                    )
+                    print(
+                        f"[path] mpc_conditioning_fix: directional_damping 0.0 -> "
+                        f"{cfg.mpc_directional_damping:g} (spatial fix)"
+                    )
+                if cfg.mpc_use_dare_terminal_cost:
+                    cfg = replace_dc(cfg, mpc_use_dare_terminal_cost=False)
+                    print(
+                        "[path] mpc_conditioning_fix: DARE terminal cost disabled "
+                        "(temporal fix)"
+                    )
+                if cfg.mpc_input_increment_weight_override is None:
+                    cfg = replace_dc(
+                        cfg,
+                        mpc_input_increment_weight_override=float(
+                            cfg.mpc_conditioning_fix_input_increment_weight
+                        ),
+                    )
+                    print(
+                        f"[path] mpc_conditioning_fix: input_increment_weight "
+                        f"override -> {cfg.mpc_input_increment_weight_override:g} "
+                        "(temporal fix)"
+                    )
             if (
                 cfg.feedforward_joint_trajectory
                 and cfg.mpc_ff_input_increment_weight is not None
@@ -761,6 +940,19 @@ def main() -> None:
                     mpc_config,
                     input_increment_weight=float(
                         cfg.mpc_input_increment_weight_override
+                    ),
+                )
+            if cfg.mpc_state_tracking_weight_override is not None:
+                print(
+                    f"[path] overriding state_tracking_weight "
+                    f"{mpc_config.state_tracking_weight:g} -> "
+                    f"{cfg.mpc_state_tracking_weight_override:g} (root-cause test: "
+                    f"removes the joint-space catch-up-to-reference term from FF's trim)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    state_tracking_weight=float(
+                        cfg.mpc_state_tracking_weight_override
                     ),
                 )
             if cfg.mpc_solver_time_limit_s is not None:
@@ -816,6 +1008,8 @@ def main() -> None:
             nullspace_gain=cfg.nullspace_gain,
             feedforward=cfg.feedforward,
             allow_undeclared_jacobian=True,
+            selective_damping_gain=cfg.inv_selective_damping_gain,
+            selective_damping_floor=cfg.inv_selective_damping_floor,
         )
         print(
             f"[path] controller = {cfg.controller_kind}"
@@ -897,6 +1091,12 @@ def main() -> None:
             if estimate.robot_joints is None:
                 abort_reason = "no_joints_on_estimate"
                 break
+
+            tip_raw = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
+            if tip_filter is not None:
+                estimate = replace_dc(
+                    estimate, tip_position_m=tip_filter.step(tip_raw, dt)
+                )
 
             pose = reader.latest_pose(cfg.robot_max_age_s)
             if pose is not None:
@@ -1017,6 +1217,7 @@ def main() -> None:
                 "terminal_hold": terminal_hold,
                 "infeasible": bool(result.infeasible),
                 "tip_mm": [round(float(v), 3) for v in 1e3 * tip],
+                "tip_raw_mm": [round(float(v), 3) for v in 1e3 * tip_raw],
                 "desired_mm": [round(float(v), 3) for v in 1e3 * desired],
                 "error_mm": [round(float(v), 3) for v in 1e3 * error],
                 "error_norm_mm": round(error_mm, 3),

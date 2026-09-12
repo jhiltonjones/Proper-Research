@@ -295,6 +295,8 @@ def build_offline_solver(
     feedforward: bool = True,
     allow_undeclared_jacobian: bool = False,
     joint_state_getter: Optional[JointStateGetter] = None,
+    selective_damping_gain: float = 0.0,
+    selective_damping_floor: float = 0.01,
 ) -> OfflineJointControllerAdapter:
     """Build one of the three offline controllers and wrap it for the runner.
 
@@ -330,6 +332,8 @@ def build_offline_solver(
             nullspace_gain=nullspace_gain,
             feedforward=feedforward,
             allow_undeclared_jacobian=allow_undeclared_jacobian,
+            selective_damping_gain=selective_damping_gain,
+            selective_damping_floor=selective_damping_floor,
         )
     else:
         if beam_config is None:

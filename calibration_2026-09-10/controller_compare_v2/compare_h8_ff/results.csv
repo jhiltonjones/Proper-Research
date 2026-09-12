@@ -1,0 +1,4 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/inv_rep1_20260910T175221Z,path_complete,148,127,0.961480952514008,0.8096692913385828,2.058,1.6841,0.20242857142857149,0.08,36.4007
+mpc_lti,lti,1,/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/lti_rep1_20260910T175351Z,path_complete,148,127,1.5017653941986406,1.3402440944881888,3.26,2.3609999999999998,0.9130952380952382,1.603,34.9607
+mpc_ltv_offline,ltv,1,/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/ltv_rep1_20260910T175522Z,path_complete,149,127,1.3631387471913812,1.2026614173228347,2.657,2.1779,1.0772272727272727,1.583,35.1678

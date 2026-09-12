@@ -1,0 +1,60 @@
+{
+  "robot_ip": "192.168.56.101",
+  "insertion_mm": null,
+  "min_radius_mm": 211.0,
+  "z_limit_mm": 70.0,
+  "skip_beam_length_set": false,
+  "skip_arc": false,
+  "arc_radii_mm": [
+    211.0,
+    250.0,
+    290.0
+  ],
+  "arc_azimuths_deg": [
+    0,
+    15,
+    30,
+    -15,
+    -30
+  ],
+  "skip_z": false,
+  "z_sweep_radius_mm": 250.0,
+  "z_offsets_mm": [
+    0,
+    30,
+    60,
+    -30,
+    -60
+  ],
+  "skip_dipole": false,
+  "dipole_radius_mm": 250.0,
+  "dipole_positions_deg": [
+    0,
+    20
+  ],
+  "dipole_yaw_deg": [
+    0,
+    10,
+    20,
+    -10,
+    -20
+  ],
+  "dipole_pitch_deg": [
+    15,
+    -15
+  ],
+  "skip_combined": false,
+  "combined_radius_mm": 225.0,
+  "combined_azimuths_deg": [
+    -25,
+    0,
+    25
+  ],
+  "combined_yaw_deg": [
+    -15,
+    0,
+    15
+  ],
+  "out_dir": "/home/jack/Proper-Research/calibration_2026-09-10/calib_sweep_20260911",
+  "analyze_only": null
+}

@@ -1,0 +1,11 @@
+{
+  "n_rows": 44,
+  "kinds": {
+    "ref": 1,
+    "arc": 15,
+    "z": 5,
+    "dipZ": 10,
+    "dipY": 4,
+    "combined": 9
+  }
+}

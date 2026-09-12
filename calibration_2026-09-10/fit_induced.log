@@ -1,0 +1,36 @@
+n=66  kinds={'combined': 9, 'dipY': 10, 'ref': 2, 'z': 5, 'arc': 15, 'dipZ': 25}
+  chi_ax=  6.000 chi_tr=  3.000 (frac=0.500)  RMS=6.091 mm  [   10s]
+  chi_ax=  6.300 chi_tr=  3.150 (frac=0.500)  RMS=6.029 mm  [   20s]
+  chi_ax=  6.000 chi_tr=  3.150 (frac=0.525)  RMS=6.141 mm  [   30s]
+  chi_ax=  6.300 chi_tr=  2.993 (frac=0.475)  RMS=5.979 mm  [   40s]
+  chi_ax=  6.450 chi_tr=  2.903 (frac=0.450)  RMS=5.898 mm  [   50s]
+  chi_ax=  6.750 chi_tr=  3.038 (frac=0.450)  RMS=5.836 mm  [   61s]
+  chi_ax=  7.125 chi_tr=  3.028 (frac=0.425)  RMS=5.710 mm  [   71s]
+  chi_ax=  7.275 chi_tr=  2.728 (frac=0.375)  RMS=5.581 mm  [   82s]
+  chi_ax=  7.763 chi_tr=  2.426 (frac=0.312)  RMS=5.366 mm  [   93s]
+  chi_ax=  8.438 chi_tr=  2.426 (frac=0.287)  RMS=5.191 mm  [  104s]
+  chi_ax=  9.431 chi_tr=  1.945 (frac=0.206)  RMS=4.870 mm  [  117s]
+  chi_ax= 10.069 chi_tr=  0.944 (frac=0.094)  RMS=4.582 mm  [  128s]
+  chi_ax= 11.541 chi_tr=  0.000 (frac=0.000)  RMS=4.234 mm  [  141s]
+  chi_ax= 13.209 chi_tr=  0.000 (frac=0.000)  RMS=4.033 mm  [  154s]
+  chi_ax= 15.933 chi_tr=  0.000 (frac=0.000)  RMS=3.771 mm  [  167s]
+  chi_ax= 18.042 chi_tr=  0.000 (frac=0.000)  RMS=3.611 mm  [  181s]
+  chi_ax= 20.000 chi_tr=  0.000 (frac=0.000)  RMS=3.489 mm  [  197s]
+  chi_ax= 20.000 chi_tr=  0.000 (frac=0.000)  RMS=3.489 mm  [  212s]
+  chi_ax= 20.000 chi_tr=  0.000 (frac=0.000)  RMS=3.489 mm  [  228s]
+  chi_ax= 20.000 chi_tr=  0.000 (frac=0.000)  RMS=3.489 mm  [  243s]
+
+BEST: chi_axial=20.000  chi_transverse=0.000 (ratio 0.000)  RMS=3.489 mm
+
+OLD fixed-axial (E=3.0MPa, yaw=-6):        RMS = 3.129 mm
+NEW induced (chi_ax=20.00, chi_tr=0.00): RMS = 3.489 mm
+
+per-kind RMS (old vs new):
+  arc        n= 15  old=  1.82  new=  2.98
+  combined   n=  9  old=  3.98  new=  4.12
+  dipY       n= 10  old=  1.32  new=  1.53
+  dipZ       n= 25  old=  4.15  new=  4.42
+  ref        n=  2  old=  0.75  new=  0.61
+  z          n=  5  old=  1.00  new=  0.94
+
+saved fit_induced.json

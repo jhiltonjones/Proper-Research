@@ -222,7 +222,17 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             mpc_input_increment_weight_override: float | None = None,
             mpc_solver_time_limit_s: float | None = None,
             mpc_directional_damping: float = 0.0,
-            mpc_directional_damping_floor: float = 0.01) -> int:
+            mpc_directional_damping_floor: float = 0.01,
+            mpc_conditioning_fix: bool = False,
+            mpc_conditioning_fix_directional_damping: float = 0.1,
+            mpc_conditioning_fix_input_increment_weight: float = 1.0e-4,
+            inv_selective_damping_gain: float = 0.0,
+            inv_selective_damping_floor: float = 0.01,
+            tip_estimator: str = "raw",
+            kf_process_noise_std_m_s2: float = 0.02,
+            kf_measurement_noise_std_m: float = 3.0e-4,
+            disable_dare_terminal_cost: bool = False,
+            mpc_state_tracking_weight_override: float | None = None) -> int:
     import proper_research.hardware.online.close_loop_path_follow as pf
 
     # Always move to reference first: besides resetting drift it "primes" the
@@ -262,6 +272,21 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     pf.CONFIG.mpc_solver_time_limit_s = mpc_solver_time_limit_s
     pf.CONFIG.mpc_directional_damping = float(mpc_directional_damping)
     pf.CONFIG.mpc_directional_damping_floor = float(mpc_directional_damping_floor)
+    pf.CONFIG.mpc_conditioning_fix = bool(mpc_conditioning_fix)
+    pf.CONFIG.mpc_conditioning_fix_directional_damping = float(
+        mpc_conditioning_fix_directional_damping
+    )
+    pf.CONFIG.mpc_conditioning_fix_input_increment_weight = float(
+        mpc_conditioning_fix_input_increment_weight
+    )
+    pf.CONFIG.inv_selective_damping_gain = float(inv_selective_damping_gain)
+    pf.CONFIG.inv_selective_damping_floor = float(inv_selective_damping_floor)
+    pf.CONFIG.tip_estimator = str(tip_estimator)
+    pf.CONFIG.kf_process_noise_std_m_s2 = float(kf_process_noise_std_m_s2)
+    pf.CONFIG.kf_measurement_noise_std_m = float(kf_measurement_noise_std_m)
+    if disable_dare_terminal_cost:
+        pf.CONFIG.mpc_use_dare_terminal_cost = False
+    pf.CONFIG.mpc_state_tracking_weight_override = mpc_state_tracking_weight_override
     pf.CONFIG.output_root = str(out_dir / "runs")
     pf.CONFIG.run_name = f"{kind_key}_rep{rep}"
     try:
@@ -445,18 +470,76 @@ def main():
                         "damping=0.05). The unbounded version wrecked OSQP's "
                         "solve time live -- see beam-lateral-authority-limit "
                         "memory. Only used when --mpc-directional-damping > 0.")
+    p.add_argument("--mpc-conditioning-fix", action="store_true",
+                   help="convenience preset bundling two complementary MPC fixes "
+                        "(see beam-lateral-authority-limit memory): (a) turn on "
+                        "--mpc-directional-damping at the Round-4-validated value "
+                        "if it's still 0.0, (b) disable the DARE terminal cost + "
+                        "reduce input_increment_weight if not already overridden. "
+                        "Only touches fields still at their default.")
+    p.add_argument("--mpc-conditioning-fix-directional-damping", type=float, default=0.1,
+                   help="directional_damping gain applied by --mpc-conditioning-fix "
+                        "(default 0.1, validated in 'Round 4', no-FF/h12).")
+    p.add_argument("--mpc-conditioning-fix-input-increment-weight", type=float, default=1.0e-4,
+                   help="input_increment_weight (Rd) override applied by "
+                        "--mpc-conditioning-fix (default 1e-4 -- deliberately not "
+                        "as extreme as the 1e-6 tried before without directional "
+                        "damping, which hurt solve time/tracking).")
+    p.add_argument("--inv-selective-damping-gain", type=float, default=0.0,
+                   help="inverse-Jacobian SDLS refinement (0 = disabled, plain "
+                        "isotropic DLS): per-singular-value extra damping on the "
+                        "near-null direction, mirroring --mpc-directional-damping "
+                        "but applied directly in the DLS pseudo-inverse.")
+    p.add_argument("--inv-selective-damping-floor", type=float, default=0.01,
+                   help="bounded-weight floor for --inv-selective-damping-gain "
+                        "(same construction as --mpc-directional-damping-floor).")
+    p.add_argument("--tip-estimator", choices=("raw", "kalman"), default="raw",
+                   help="filter the camera tip position before the controller "
+                        "sees it. 'kalman' = constant-velocity KF, decoupling "
+                        "Rd/DLS-damping's temporal role from noise filtering "
+                        "(see beam-lateral-authority-limit memory).")
+    p.add_argument("--kf-process-noise-std", type=float, default=0.02,
+                   help="Kalman filter process (acceleration) noise std, m/s^2.")
+    p.add_argument("--kf-measurement-noise-std", type=float, default=3.0e-4,
+                   help="Kalman filter measurement noise std, m (default 0.3mm).")
+    p.add_argument("--disable-dare-terminal-cost", action="store_true",
+                   help="TEMPORAL fix in isolation, no spatial (directional-"
+                        "damping) fix bundled in: disables the DARE terminal "
+                        "cost. Combine with --mpc-input-increment-weight to "
+                        "also cut Rd -- together these are 'the fix that gets "
+                        "rid of the memory-dependent DARE and changes the "
+                        "input weight' (see beam-lateral-authority-limit "
+                        "memory). --mpc-conditioning-fix bundles this WITH "
+                        "directional_damping; use this flag instead when you "
+                        "want the temporal fix alone.")
+    p.add_argument("--mpc-state-tracking-weight", type=float, default=None,
+                   help="ROOT-CAUSE test override for ConfigurationMPCConfig's "
+                        "state_tracking_weight (default 1.0, effective ~13000 per "
+                        "joint-radian^2 given state_error_scale=0.5deg): a "
+                        "JOINT-SPACE catch-up-to-reference cost, separate from "
+                        "the beam OUTPUT-tracking Qp term. Live-confirmed "
+                        "2026-09-12 that MPC's u0_correction has NEGATIVE mean "
+                        "cosine similarity (-0.30) against what plain DLS would "
+                        "command on the identical error even at horizon=1 -- "
+                        "this term is the leading suspect (redundant with, and "
+                        "uncoordinated against, feedforward's own joint-state "
+                        "servoing). Set to 0.0 to test removing it.")
     # hidden worker entry point
-    p.add_argument("--_worker", nargs=16, default=None,
+    p.add_argument("--_worker", nargs=26, default=None,
                    metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON",
                             "BEAMLEN", "FF", "FORCE_MPC_FF", "FF_HOLD_SWITCH", "RD_WEIGHT",
                             "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "DIR_DAMPING",
-                            "DIR_DAMPING_FLOOR"))
+                            "DIR_DAMPING_FLOOR", "COND_FIX", "COND_FIX_DIR_DAMPING",
+                            "COND_FIX_RD", "INV_SEL_GAIN", "INV_SEL_FLOOR",
+                            "TIP_ESTIMATOR", "KF_Q", "KF_R", "NO_DARE", "STATE_TRACK_W"))
     args = p.parse_args()
 
     if args._worker:
         (kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff, force_mpc_ff,
          ff_hold_switch, rd_weight, r_override, rd_override,
-         time_limit, dir_damping, dir_damping_floor) = args._worker
+         time_limit, dir_damping, dir_damping_floor, cond_fix, cond_fix_dir_damping,
+         cond_fix_rd, inv_sel_gain, inv_sel_floor, tip_estimator, kf_q, kf_r,
+         no_dare, state_track_w) = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
                          plan_dir, int(horizon), float(blen), bool(int(ff)),
                          bool(int(force_mpc_ff)), bool(int(ff_hold_switch)),
@@ -464,7 +547,11 @@ def main():
                          None if r_override == "none" else float(r_override),
                          None if rd_override == "none" else float(rd_override),
                          None if time_limit == "none" else float(time_limit),
-                         float(dir_damping), float(dir_damping_floor)))
+                         float(dir_damping), float(dir_damping_floor),
+                         bool(int(cond_fix)), float(cond_fix_dir_damping),
+                         float(cond_fix_rd), float(inv_sel_gain), float(inv_sel_floor),
+                         tip_estimator, float(kf_q), float(kf_r), bool(int(no_dare)),
+                         None if state_track_w == "none" else float(state_track_w)))
 
     if args.analyze_only:
         analyse(Path(args.analyze_only))
@@ -506,7 +593,18 @@ def main():
                    ("none" if args.mpc_solver_time_limit_s is None
                     else str(args.mpc_solver_time_limit_s)),
                    str(args.mpc_directional_damping),
-                   str(args.mpc_directional_damping_floor)]
+                   str(args.mpc_directional_damping_floor),
+                   "1" if args.mpc_conditioning_fix else "0",
+                   str(args.mpc_conditioning_fix_directional_damping),
+                   str(args.mpc_conditioning_fix_input_increment_weight),
+                   str(args.inv_selective_damping_gain),
+                   str(args.inv_selective_damping_floor),
+                   args.tip_estimator,
+                   str(args.kf_process_noise_std),
+                   str(args.kf_measurement_noise_std),
+                   "1" if args.disable_dare_terminal_cost else "0",
+                   ("none" if args.mpc_state_tracking_weight is None
+                    else str(args.mpc_state_tracking_weight))]
             rc, rd = None, None
             for attempt in range(1, MAX_ATTEMPTS_PER_RUN + 1):
                 if not first:

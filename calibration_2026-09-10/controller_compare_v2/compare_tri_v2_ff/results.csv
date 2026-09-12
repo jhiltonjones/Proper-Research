@@ -1,0 +1,7 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/inv_rep1_20260910T173659Z,path_complete,149,127,1.087997937411199,0.9452598425196852,2.333,2.0455,0.3694545454545455,0.272,35.1943
+mpc_lti,lti,1,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/lti_rep1_20260910T173827Z,path_complete,148,127,1.4685165180478996,1.3226850393700784,3.255,2.4316999999999984,0.8762380952380953,1.287,37.6336
+mpc_ltv_offline,ltv,1,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/ltv_rep1_20260910T174001Z,path_complete,148,127,1.25275516520069,1.1221181102362205,2.317,2.0047999999999995,1.060142857142857,1.566,35.6228
+naive_inverse_jacobian,inv,2,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/inv_rep2_20260910T174133Z,path_complete,149,127,1.0253465786255946,0.8726299212598425,1.812,1.7179999999999997,0.4230454545454545,0.371,34.8905
+mpc_lti,lti,2,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/lti_rep2_20260910T174301Z,path_complete,148,127,1.3625327966868335,1.2371653543307082,3.111,2.1681,1.0031904761904762,1.588,35.6299
+mpc_ltv_offline,ltv,2,/home/jack/Proper-Research/close_loop_logs/compare_tri_v2_ff/runs/ltv_rep2_20260910T174434Z,path_complete,148,127,1.3565502942343868,1.2295039370078742,2.493,2.04,0.8525238095238095,1.409,34.2142

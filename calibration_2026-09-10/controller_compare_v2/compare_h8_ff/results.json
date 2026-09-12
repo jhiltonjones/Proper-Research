@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/inv_rep1_20260910T175221Z",
+    "stop_reason": "path_complete",
+    "steps": 148,
+    "n_track": 127,
+    "rms_track_mm": 0.961480952514008,
+    "mean_track_mm": 0.8096692913385828,
+    "max_track_mm": 2.058,
+    "p95_track_mm": 1.6841,
+    "mean_hold_mm": 0.20242857142857149,
+    "final_mm": 0.08,
+    "duration_s": 36.4007
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/lti_rep1_20260910T175351Z",
+    "stop_reason": "path_complete",
+    "steps": 148,
+    "n_track": 127,
+    "rms_track_mm": 1.5017653941986406,
+    "mean_track_mm": 1.3402440944881888,
+    "max_track_mm": 3.26,
+    "p95_track_mm": 2.3609999999999998,
+    "mean_hold_mm": 0.9130952380952382,
+    "final_mm": 1.603,
+    "duration_s": 34.9607
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/compare_h8_ff/runs/ltv_rep1_20260910T175522Z",
+    "stop_reason": "path_complete",
+    "steps": 149,
+    "n_track": 127,
+    "rms_track_mm": 1.3631387471913812,
+    "mean_track_mm": 1.2026614173228347,
+    "max_track_mm": 2.657,
+    "p95_track_mm": 2.1779,
+    "mean_hold_mm": 1.0772272727272727,
+    "final_mm": 1.583,
+    "duration_s": 35.1678
+  }
+]

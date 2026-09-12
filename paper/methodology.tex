@@ -1,0 +1,595 @@
+% ==============================================================
+% Methodology section draft — magnetic beam steering system.
+% IEEE Transactions on Robotics style (IEEEtran, journal mode).
+%
+% This file is a STANDALONE, COMPILABLE EXCERPT containing only the
+% Methodology section, intended to be pasted into the full paper
+% (which will supply its own title, abstract, introduction, related
+% work, results and conclusion). Section/subsection numbering here
+% will be renumbered automatically once merged.
+%
+% NOTE: no LaTeX toolchain was available in this environment to
+% compile-check this file. Please compile locally (pdflatex, twice,
+% then bibtex/pdflatex if you split the bibliography out) before
+% relying on it, and check line breaks in the longer equations.
+%
+% Bibliography: several entries below have verified title/venue/year
+% from the source PDFs or from this project's own code docstrings
+% (see inline "% VERIFY" comments), but exact author lists,
+% volume/issue/page numbers and DOIs were not independently
+% confirmed and are marked for you to fill in from the PDFs
+% themselves before submission — do not submit with placeholder
+% bibliographic fields still present.
+% ==============================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\begin{document}
+
+\section{Methodology}
+\label{sec:methodology}
+
+This section describes the magnetic beam-steering system used throughout
+the paper: the Cosserat-rod beam model and its magnetic actuation law
+(Sec.~\ref{sec:beam-model}), the control (output) Jacobian obtained from
+it (Sec.~\ref{sec:jacobian}), the offline reference-trajectory generator
+(Sec.~\ref{sec:planner}), the two closed-loop controllers compared in this
+work (Sec.~\ref{sec:control}), the real-time system that executes them on
+hardware (Sec.~\ref{sec:online}), and the experimental hardware/timing
+parameters used to generate the results reported elsewhere in the paper
+(Sec.~\ref{sec:expsetup}).
+
+\subsection{System Overview}
+\label{sec:overview}
+
+The system steers a slender, magnetically-responsive beam (guidewire) that
+is fed axially through a fixed insertion point by a linear advancer, while
+a permanent magnet mounted on the end-effector of a 6-DoF robot arm
+supplies the external field that bends the beam. A camera observes the
+beam and reports the tip position (and, where available, tip tangent
+direction) to the controller at each control step.
+
+The physical control input to the beam is the pose of the actuating
+magnet together with the instantaneous insertion length,
+$\theta = [\,p_a;\,\phi_a;\,L\,]\in\mathbb{R}^{7}$, where $p_a\in\mathbb{R}^3$
+is the magnet position, $\phi_a\in\mathbb{R}^3$ is a minimal (e.g.\
+axis--angle) parameterization of its orientation, and $L$ is the inserted
+beam length. Because the magnet is rigidly mounted on the robot
+end-effector, $\theta$'s pose components are themselves a function of the
+robot's six joint angles $q\in\mathbb{R}^6$ through the arm's own forward
+kinematics. The quantity actually commanded and measured at each control
+step is therefore the joint-and-insertion configuration
+\begin{equation}
+z = [\,q;\,L\,] \in \mathbb{R}^{7},
+\label{eq:config}
+\end{equation}
+and its time-derivative $v=\dot z$ (six joint velocities and one insertion
+rate) is the control signal both controllers below compute. Fig.~\ref{fig:architecture}
+summarizes the real-time data flow between vision, the controller, and the
+robot/advancer actuators; Sec.~\ref{sec:online} describes it in detail.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=6mm and 10mm,
+  box/.style={draw, rounded corners, align=center, minimum height=8mm, minimum width=24mm, font=\small},
+  >={Latex[length=2mm]}
+]
+\node[box] (cam) {Camera\\(tip pose)};
+\node[box, right=of cam] (state) {State\\estimate};
+\node[box, right=of state] (ctrl) {Controller\\DLS / MPC};
+\node[box, below=of ctrl] (robot) {Robot arm\\(joint velocities)};
+\node[box, left=of robot] (adv) {Advancer\\(insertion rate)};
+\draw[->] (cam) -- (state);
+\draw[->] (state) -- (ctrl);
+\draw[->] (ctrl) -- (robot);
+\draw[->] (ctrl) -- (adv);
+\draw[->] (robot.west) -- (adv.east);
+\end{tikzpicture}
+\caption{Real-time control architecture: vision and robot/advancer state
+are fused into a state estimate at each control tick; the active
+controller (damped-least-squares or MPC, Sec.~\ref{sec:control}) maps this,
+together with the offline reference trajectory, to joint and insertion
+rate commands.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Magnetic Beam Model}
+\label{sec:beam-model}
+
+The beam is modeled as a Cosserat rod of length $L$ and circular cross
+section, following standard geometrically-exact rod
+theory~\cite{rucker2010geometrically}, represented in
+piecewise-constant-strain (PCS) form: the centerline is divided into $n_s$
+nodes ($n_s-1$ constant-strain segments), and the local strain
+$u(s)=[u_1(s);u_2(s);u_3(s)]$ (torsion and the two principal bending
+curvatures, in the body frame) is constant within each segment. The
+material is linear elastic with cross-sectional stiffness
+\begin{equation}
+K = \operatorname{diag}(GJ,\,EI,\,EI),
+\label{eq:stiffness}
+\end{equation}
+where $E$ and $G$ are the (composite) Young's and shear moduli, and $I$,
+$J$ are the second moment of area and polar moment of area of the circular
+cross section. $E$ is obtained by fitting the model to measured beam
+deflections under known actuation (Sec.~\ref{sec:online} and the
+experimental section of the paper); $G$ follows from $E$ and an assumed
+Poisson's ratio $\nu$ via $G=E/(2(1+\nu))$.
+
+\subsubsection{Magnetic actuation}
+The actuating magnet is modeled as an ideal point dipole of moment $m_a$
+located at $p_a$. At a point $r$ along the beam it produces the field
+\begin{equation}
+B(r;\theta) = \frac{\mu_0}{4\pi\lVert R\rVert^3}\Big(3(\hat R\cdot m_a)\hat R - m_a\Big),
+\quad R = r-p_a,\ \hat R=\tfrac{R}{\lVert R\rVert},
+\label{eq:dipole-field}
+\end{equation}
+the standard point-dipole field used throughout the magnetic-continuum-robot
+literature \cite{fu2023magnetic,kratchman2017guiding}. The beam carries a
+local magnetic moment $m(s)$ (a fixed, hard-magnetized profile, or a
+field-dependent/induced one, depending on the beam's fabrication), and the
+magnetic potential energy is
+\begin{equation}
+W_m[u;\theta] = -\int_0^L m(s)\cdot B\big(r(s;u);\theta\big)\,ds,
+\label{eq:magnetic-energy}
+\end{equation}
+evaluated at each segment midpoint under the PCS discretization.
+
+\subsubsection{Equilibrium}
+The beam's elastic (bending/twist) energy is
+\begin{equation}
+W_{el}[u] = \frac{1}{2}\int_0^L \big(u(s)-u^\circ\big)^{\!\top} K \big(u(s)-u^\circ\big)\,ds,
+\label{eq:elastic-energy}
+\end{equation}
+with $u^\circ$ the (zero, for an initially straight beam) rest strain.
+Adding optional gravitational and lumen-contact penalty terms
+$W_g[u]$, $W_{cf}[u]$ where relevant, the total potential energy is
+\begin{equation}
+\Pi(u;\theta) = W_{el}[u] + W_m[u;\theta] + W_g[u] + W_{cf}[u],
+\label{eq:total-energy}
+\end{equation}
+and the beam's quasi-static shape at a given control input is the strain
+field that minimizes it,
+\begin{equation}
+u^*(\theta) = \operatorname*{arg\,min}_u \Pi(u;\theta).
+\label{eq:equilibrium}
+\end{equation}
+\eqref{eq:equilibrium} is solved with a quasi-Newton, bound-constrained
+(L-BFGS-B~\cite{byrd1995lbfgsb}) minimizer, using analytic energy
+gradients. Because the physical process is one of
+continuous beam insertion, the solve is performed with quasi-static
+continuation in $L$: the equilibrium at one insertion length is used to
+warm-start the solve at the next, which both accelerates convergence and
+avoids convergence to non-physical local equilibria that an unwarmed solve
+can find in this non-convex energy landscape.
+
+Given the equilibrium strain field $u^*(\theta)$, the centerline pose
+$(p(s),R(s))$ is recovered by the standard Cosserat-rod reconstruction
+\begin{equation}
+p'(s) = R(s)e_3, \qquad R'(s) = R(s)\,\widehat{u(s)},
+\label{eq:reconstruction}
+\end{equation}
+($\widehat{(\cdot)}$ the skew-symmetric matrix operator) integrated along
+the beam from the (fixed) insertion point. The quantity ultimately
+regulated by the controllers below is the beam-tip pose,
+\begin{equation}
+y(\theta) = \big[\,p(L);\,R(L)e_3\,\big] \in \mathbb{R}^6,
+\label{eq:output}
+\end{equation}
+i.e.\ tip position and tip tangent direction, though the experiments in
+this paper track tip \emph{position} only ($y=p(L)\in\mathbb{R}^3$); the
+tangent rows of the Jacobian derived next are retained for completeness
+and future use.
+
+\subsection{Control (Output) Jacobian}
+\label{sec:jacobian}
+
+Both the offline planner (Sec.~\ref{sec:planner}) and the closed-loop
+controllers (Sec.~\ref{sec:control}) require the sensitivity of the tip
+output \eqref{eq:output} to the control input, $J_b(\theta)=\partial
+y/\partial\theta$. Because $y$ depends on $\theta$ only through the
+equilibrium strain field $u^*(\theta)$ (and, directly, through the
+insertion length component of $\theta$), $J_b$ is obtained via the
+implicit function theorem rather than by repeated re-solves of
+\eqref{eq:equilibrium}. Differentiating the first-order optimality
+condition $\nabla_u\Pi(u^*;\theta)=0$ with respect to $\theta$ gives
+\begin{equation}
+H\,\frac{\partial u^*}{\partial\theta} + G = 0
+\quad\Longrightarrow\quad
+\frac{\partial u^*}{\partial\theta} = -H^{-1}G,
+\label{eq:ift}
+\end{equation}
+where $H=\nabla^2_{uu}\Pi$ is the Hessian of the total energy at the
+equilibrium and $G=\nabla^2_{u\theta}\Pi$ is the mixed second derivative,
+both obtained by finite differences of the analytically-available energy
+gradient about the converged equilibrium. The beam Jacobian then follows
+by the chain rule,
+\begin{equation}
+J_b(\theta) = \frac{\partial y}{\partial u}\frac{\partial u^*}{\partial\theta}
++ \left.\frac{\partial y}{\partial\theta}\right\rvert_{u=u^*}
+\ \in\ \mathbb{R}^{6\times7},
+\label{eq:jacobian-chain}
+\end{equation}
+where the second (direct) term captures $y$'s explicit dependence on
+$\theta$ at fixed strain (e.g.\ through the insertion length). This
+implicit-differentiation route is more efficient than the finite-difference
+Jacobian obtained by repeated boundary-value-problem solves used in, e.g.,
+\cite{kratchman2017guiding}, and is closer in spirit to the analytic
+sensitivity boundary-value problem of \cite{wu2025closedloop}, though
+formulated here around an energy-minimization rather than a shooting
+solution of the rod equilibrium.
+
+Because the magnet pose components of $\theta$ are realized by the robot
+arm's own forward kinematics from its joint angles, $\theta_{\text{pose}} =
+FK_r(q)$, the full configuration-space Jacobian used by the planner and
+controllers is obtained by one further chain-rule step,
+\begin{equation}
+J(z) = J_b(\theta(z))\,\operatorname{blkdiag}\!\big(J_r(q),\,1\big)
+\ \in\ \mathbb{R}^{6\times 7},
+\label{eq:full-jacobian}
+\end{equation}
+with $J_r(q)=\partial FK_r/\partial q\in\mathbb{R}^{6\times6}$ the robot
+arm's own (well-conditioned) manipulator Jacobian and $z=[q;L]$ as in
+\eqref{eq:config}.
+
+$J(z)$ is severely ill-conditioned: only a low-dimensional subspace of the
+7-dimensional configuration space produces significant tip motion, a
+consequence of the beam's weak magnetic lateral steering authority. This
+is consistent with related single-external-magnet systems reported in the
+literature, e.g.\ the rank-5 (of 6) magnet-to-wrench Jacobian reported for
+a robot-manipulated tip magnet in \cite{kratchman2017guiding}, and motivates
+the explicit singular-direction handling built into both controllers below
+(damped least squares, Sec.~\ref{sec:dls}; anisotropic directional damping,
+Sec.~\ref{sec:mpc}) — an alternative to the fixed-threshold Jacobian floor
+used for a similar purpose in \cite{wu2025closedloop}.
+
+\subsection{Offline Reference Trajectory Generation}
+\label{sec:planner}
+
+A reference trajectory is generated offline, in two stages, and supplied
+to both closed-loop controllers as a feedforward term.
+
+\subsubsection{Geometric path}
+A sequence of waypoint configurations $\chi_j=[q_1,\dots,q_6,L]_j$ is found
+by nonlinear least-squares, one waypoint at a time, minimizing the
+residual
+\begin{equation}
+r(\chi_j) =
+\begin{bmatrix}
+\big(p_{\mathrm{tip}}(\chi_j)-p_{\mathrm{des},j}\big)/\tau_p \\
+\big(t_{\mathrm{tip}}(\chi_j)-t_{\mathrm{des},j}\big)/\tau_t \\
+\sqrt{w_c}\,(\chi_j-\chi_{j-1})/\sigma_c \\
+\sqrt{w_0}\,(\chi_j-\chi_0)/\sigma_0
+\end{bmatrix},
+\label{eq:planner-residual}
+\end{equation}
+where $\tau_p,\tau_t$ are position/tangent tolerances used as residual
+scales, the third block penalizes deviation from the previous waypoint
+(continuity/step regularization, weight $w_c$, scale $\sigma_c$) and the
+fourth penalizes deviation from a nominal seed configuration $\chi_0$
+(weight $w_0$, scale $\sigma_0$), keeping the redundant configuration close
+to a well-behaved posture. \eqref{eq:planner-residual} is minimized with a
+trust-region nonlinear least-squares solver using the analytic Jacobian
+\eqref{eq:full-jacobian}; because the problem is non-convex and the
+Jacobian is ill-conditioned (Sec.~\ref{sec:jacobian}), each waypoint is
+solved from several randomly-perturbed initializations (multistart) and
+the best-converged solution is retained.
+
+\subsubsection{Time parameterization}
+The geometric path is then converted into a time-parameterized trajectory
+by a reachability-based time-optimal path-parameterization method
+\cite{bobrow1985timeoptimal,shinmckay1985minimumtime,phampham2018reachability}:
+writing $x=\dot s^2$ and $u=\ddot s$ for a path parameter $s$, a backward
+pass computes the controllable velocity set and a forward pass computes
+the maximum feasible speed profile subject to per-joint and insertion
+velocity/acceleration bounds (scaled by a fixed safety factor below their
+physical limits). The resulting timing law is smoothed with a $C^2$
+natural cubic spline to remove knot-velocity discontinuities, and its
+total duration is dilated to the nearest exact multiple of the control
+sample period $\Delta t$ so that the reference trajectory aligns exactly
+with the control loop described in Sec.~\ref{sec:online}. This produces,
+for every reference sample $k$, a reference configuration $z^*_k$ and a
+reference (feedforward) rate $v^*_k$.
+
+\subsection{Closed-Loop Control}
+\label{sec:control}
+
+Both controllers described below track the reference trajectory
+$\{z^*_k,v^*_k\}$ produced by the planner, operating on the configuration
+$z=[q;L]$ and its rate $v=\dot z$, and both reuse $v^*_k$ as a feedforward
+term rather than re-deriving the whole trajectory online (the paper's
+experimental section reports the comparison of pure feedback against
+feedforward for both controllers; outside the scope of this excerpt). At
+control step $k$
+let $z_k$ denote the measured configuration, $p_k$ the tip position
+estimate (from vision), $p^*_{k+1}$ the reference tip position at the next
+sample, and $e_k=p^*_{k+1}-p_k$ the tracking error.
+
+\subsubsection{Damped Least-Squares Feedback Controller}
+\label{sec:dls}
+The baseline controller re-evaluates the Jacobian at the \emph{currently
+measured} configuration at every control tick, $J_k=J(z_k)$, and inverts
+it with Tikhonov (damped-least-squares) regularization,
+\begin{equation}
+J_k^{+} = J_k^{\top}\big(J_kJ_k^{\top}+\lambda^2 I\big)^{-1},
+\label{eq:dls}
+\end{equation}
+with fixed damping $\lambda$. The task-space command is
+$v_{\text{task}} = J_k^{+}\big(k_p e_k/\Delta t\big)$; the redundant
+(nullspace) degrees of freedom are used both to regulate the configuration
+towards a reference posture $z^*_k$ and to inject the feedforward rate,
+projected so that it cannot perturb the tracked output,
+\begin{equation}
+v_k = J_k^{+}\Big(\frac{k_p e_k}{\Delta t}\Big)
++ \big(I-J_k^{+}J_k\big)\Big(\frac{k_n(z^*_k-z_k)}{\Delta t} + v^*_k\Big).
+\label{eq:dls-full}
+\end{equation}
+The commanded rate is then passed through a three-stage constraint
+sequence — a velocity limit, an acceleration limit relative to the
+previously applied command, a configuration (joint/insertion) box limit,
+and a final re-clip of the velocity — applied identically for the MPC
+controller below, so that the two controllers are compared under matched
+actuation limits. An optional anisotropic variant replaces the isotropic
+damping $\lambda^2 I$ in \eqref{eq:dls} with a singular-value-dependent
+penalty built from the SVD of $J_k$, selectively damping only its
+near-null directions; this mirrors the directional-damping mechanism of
+the MPC controller (Sec.~\ref{sec:mpc}). This anisotropic variant is
+implemented and validated independently, but its gain was set to zero
+(plain isotropic damping only) in the comparison reported in this paper;
+see Table~\ref{tab:params}.
+
+\subsubsection{Output-Tracking Model Predictive Controller}
+\label{sec:mpc}
+The MPC controller predicts the configuration trajectory over a horizon of
+$N$ steps under a single-integrator model, $z_{k+i+1}=z_{k+i}+\Delta t\,
+v_{k+i}$, condensed as
+\begin{equation}
+Z = E z_k + S V,\qquad V=[v_k;\dots;v_{k+N-1}],
+\label{eq:condensed}
+\end{equation}
+with $S$ block-lower-triangular ($\Delta t\,I$ blocks) and $E$ the
+constant stacking matrix; a first-difference operator $D$ is used to
+penalize the rate of change of the command sequence. The predicted tip
+error over the horizon is obtained by linearizing the output map about the
+reference trajectory,
+\begin{equation}
+\Delta Y = \bar J\,S\,V + c,
+\label{eq:output-prediction}
+\end{equation}
+where $\bar J = \operatorname{blkdiag}(J_{k},\dots,J_{k+N-1})$ stacks a
+Jacobian for each horizon step, and $c$ folds in the nominal-to-desired
+tip offset together with an online bias estimate. Two Jacobian-scheduling
+variants are compared: an \emph{LTI} controller that freezes $\bar J$ at a
+single sample (evaluated once, offline, at one reference configuration —
+e.g.\ the first sample of the current plan segment) for the entire
+horizon and run, and an \emph{LTV} controller that uses a full schedule of
+per-sample Jacobians, evaluated once, offline, along the planned reference
+trajectory. Both variants therefore condition the prediction model on the
+\emph{planned} trajectory rather than on the live measured configuration —
+in contrast to the DLS controller's per-tick re-evaluation
+(Sec.~\ref{sec:dls}) — a distinction with observable consequences for
+tracking performance discussed in the paper's experimental section.
+
+The receding-horizon command is obtained by solving the convex quadratic
+program
+\begin{align}
+\min_{V}\ & (Z-Z^*)^{\top}\bar Q (Z-Z^*)
++ V^{\top}\bar R V
++ (DV)^{\top}\bar R_d (DV) \notag\\
+& + \Delta Y^{\top}\bar Q_p\,\Delta Y
++ V^{\top}\Lambda_{dd}V
++ (z_N-z^*_N)^{\top} P (z_N-z^*_N)
+\label{eq:mpc-cost}\\
+\text{s.t.}\ & v_{\min}\le v_{k+i}\le v_{\max}, \notag\\
+& \lVert v_{k+i}-v_{k+i-1}\rVert \le a_{\max}\Delta t, \notag\\
+& z_{\min}\le z_{k+i}\le z_{\max}, \quad i=0,\dots,N-1, \notag
+\end{align}
+where $\bar Q$ is a (small) configuration-space tracking weight, $\bar R$
+and $\bar R_d$ penalize input effort and input rate, and $\bar Q_p$ is the
+primary tip-tracking weight. $\bar Q$ is deliberately tuned small relative
+to $\bar Q_p$: driving the configuration towards the planned trajectory is
+redundant with both the feedforward term and the output-tracking cost
+$\Delta Y^\top\bar Q_p\Delta Y$ (all three pull the same finite command
+budget), and an over-weighted $\bar Q$ was found to measurably degrade tip
+tracking; $\bar Q$ is kept only large enough that the terminal weight
+$P$ (below) remains well defined, since the beam's output Jacobian is
+rank-deficient in the 7-dimensional configuration space
+(Sec.~\ref{sec:jacobian}). $\Lambda_{dd}$ is an optional directional
+damping term, built at each horizon step from the local Jacobian's
+singular value decomposition $J_{k+i}=U\Sigma V^{\top}$ as a penalty
+concentrated on its near-null right-singular directions (with a fixed
+floor on the penalty weight, needed to preserve the numerical conditioning
+of the underlying ADMM-based QP solve); it is the MPC analogue of the
+anisotropic DLS damping mentioned in Sec.~\ref{sec:dls}, and was likewise
+disabled (gain set to zero) in the comparison reported in this paper after
+being found not to improve net tracking error on this reference path (see
+Table~\ref{tab:params}). $z_N$ is the predicted terminal configuration (last block of $Z$) and
+$P$ is the solution of the discrete algebraic Riccati equation (DARE) for
+the single-integrator prediction model with combined terminal weight
+$\bar Q + J_N^{\top}\bar Q_p J_N$ (state-tracking and output-tracking
+weights evaluated at the horizon's terminal Jacobian $J_N$), approximating
+the infinite-horizon cost-to-go beyond the horizon; this is also why
+$\bar Q$ cannot be driven to exactly zero even though it is tuned small
+(Sec.~\ref{sec:jacobian}'s rank-deficient $J$ would otherwise leave the
+terminal weight rank-deficient and the DARE ill-posed). The
+QP \eqref{eq:mpc-cost} is solved once per control step with the
+operator-splitting solver OSQP~\cite{osqp2020}; only the first control
+$v_k$ is applied, in standard receding-horizon fashion, before the state
+estimate and reference index are updated and the problem is re-solved at
+the next control tick.
+
+\subsection{Real-Time System Architecture}
+\label{sec:online}
+
+Both controllers are executed in a single-process, multi-threaded runtime
+at a fixed control rate. Camera-based tip tracking, robot joint angles,
+and advancer insertion length are fused into a single state estimate at
+each tick; the active controller is wrapped behind a common
+$\mathrm{solve}(\text{estimate},\Delta t)\mapsto v_k$ interface so that the
+DLS and MPC controllers of Sec.~\ref{sec:control} are interchangeable
+without changes to the surrounding system. A supervisory monitor aborts
+the control loop (commanding a stop on the robot and advancer) if the
+vision state becomes stale, any worker thread stops responding, the
+robot's own safety system reports a protective stop, the commanded tip
+position leaves the calibrated workspace, or a non-finite command is
+ever produced by the controller.
+
+\subsection{Experimental Setup}
+\label{sec:expsetup}
+
+The robot arm is a Universal Robots UR10e (6-DoF), addressed over its RTDE
+interface at the manufacturer's native 500\,Hz update rate; a dedicated
+streaming thread re-issues the current \texttt{speedJ}/\texttt{speedL}
+command to the arm at 125\,Hz between control ticks (with a 10\,Hz
+watchdog-triggered stop if commands stop arriving), while the
+outer perception-and-control loop of Sec.~\ref{sec:online} — vision,
+state estimation, and the controller solve of Sec.~\ref{sec:control} —
+runs at 10\,Hz ($\Delta t=0.1$\,s). The actuating magnet is a grade-N52
+cylindrical NdFeB permanent magnet (100\,mm diameter $\times$ 100\,mm
+length) rigidly mounted on the robot's end-effector, with a dipole moment
+fitted to $\approx$900\,A$\cdot$m$^2$ under the beam/magnet calibration in
+effect for the reported experiments. The beam is a 2.0\,mm-diameter
+elastomer/magnetic-particle composite (80\,wt.\% particle loading,
+particle density 7450\,kg/m$^3$), fed by a serial-commanded stepper
+advancer (USB serial, 115200\,baud, $\approx$50\,Hz dispatch rate,
+0.166\,mm per step). Tip tracking uses a single overhead camera, with a
+frame-grab thread draining frames at up to $\approx$250\,Hz (the achieved
+rate is capped by the camera driver) and the reported tip position is used
+directly from vision, without additional Kalman filtering, in the
+experiments reported in this paper.
+
+All perception, beam-model sensitivity evaluation, and controller solves
+(both the DLS closed-form solve and the MPC's QP) run on a single
+workstation's CPU — no GPU acceleration is used — within the
+single-process, multi-threaded runtime of Sec.~\ref{sec:online}. Table~\ref{tab:hardware}
+summarizes the compute platform and timing parameters; Table~\ref{tab:params}
+summarizes the model and controller parameters used in the reported
+comparison.
+
+\begin{table}[t]
+\centering
+\caption{Compute platform and real-time timing parameters.}
+\label{tab:hardware}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Quantity & Value \\
+\midrule
+CPU & Intel Core i7-11700K (8C/16T, 3.60\,GHz) \\
+RAM & 32\,GB \\
+OS & Ubuntu 22.04.5 LTS \\
+Kernel & Linux 5.15, \texttt{PREEMPT\_RT} patched \\
+Robot & Universal Robots UR10e \\
+RTDE interface rate & 500\,Hz (native) \\
+Robot command-stream rate & 125\,Hz \\
+Robot watchdog backstop & 10\,Hz \\
+Outer control-loop rate & 10\,Hz ($\Delta t=0.1$\,s) \\
+Camera grab-thread rate & $\lesssim$250\,Hz (driver-capped) \\
+Advancer serial link & 115200\,baud, $\approx$50\,Hz dispatch \\
+Advancer step resolution & 0.166\,mm/step \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Model and controller parameters used in the reported comparison
+(the beam Young's modulus and Jacobian conditioning are recalibrated each
+session and are not fixed physical constants; DLS task/posture gains
+$k_p,k_n$ were not confirmed against the exact run configuration and
+should be filled in from the code/run logs before submission).}
+\label{tab:params}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Quantity & Value \\
+\midrule
+Beam nodes, $n_s$ & 10 (9 segments) \\
+Beam diameter & 2.0\,mm \\
+Beam Young's modulus, $E$ (calibrated) & $\sim$2.5\,MPa \\
+Actuating magnet dipole moment (calibrated) & $\sim$900\,A$\cdot$m$^2$ \\
+MPC horizon, $N$ & 15 \\
+Config.-space weight $\bar Q$ (state-tracking) & $1\times10^{-3}$ (both LTI/LTV) \\
+Output-tracking weight $\bar Q_p$ & $1.0$ over a $0.5$\,mm error scale \\
+Directional damping $\Lambda_{dd}$ (DLS \& MPC) & disabled (gain 0) in this comparison \\
+DARE terminal cost & enabled \\
+DLS damping, $\lambda$ & $10^{-3}$ (code default) \\
+Jacobian condition number, $\kappa(J)$ & $\sim$$1.5\times10^{5}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ==============================================================
+% Bibliography. VERIFY all author lists / volumes / issues / pages
+% / DOIs against the source PDFs before submission — several entries
+% below carry only the title, venue and year that could be confirmed.
+% ==============================================================
+\begin{thebibliography}{9}
+
+\bibitem{fu2023magnetic}
+Fu \emph{et al.}, ``A Magnetically Controlled Guidewire Robot System with
+Steering and Propulsion Capabilities for Vascular Interventional
+Surgery,'' \emph{Advanced Intelligent Systems}, 2023.
+% VERIFY: full author list, volume/issue/pages, DOI.
+
+\bibitem{kratchman2017guiding}
+L.~B.~Kratchman \emph{et al.}, ``Guiding Elastic Rods With a
+Robot-Manipulated Magnet for Medical Applications,'' \emph{IEEE
+Transactions on Robotics}.
+% VERIFY: full author list, year, volume/issue/pages, DOI.
+
+\bibitem{wu2025closedloop}
+Wu and Zhang, ``Closed-Loop Magnetic Control of Medical Soft Continuum
+Robots for Deflection,'' \emph{IEEE/ASME Transactions on Mechatronics}.
+% VERIFY: full author list, year, volume/issue/pages, DOI.
+
+\bibitem{phampham2018reachability}
+Q.-C.~Pham and D.~Pham, ``A New Approach to Time-Optimal Path
+Parameterization Based on Reachability Analysis,'' \emph{IEEE
+Transactions on Robotics}, vol.~34, no.~3, 2018. arXiv:1707.07239.
+% VERIFY: exact author initials/order, pages, DOI (title/venue/arXiv ID
+% as cited in this project's own planner code docstring).
+
+\bibitem{bobrow1985timeoptimal}
+J.~E.~Bobrow, S.~Dubowsky, and J.~S.~Gibson, ``Time-Optimal Control of
+Robotic Manipulators Along Specified Paths,'' \emph{International Journal
+of Robotics Research}, 1985.
+% VERIFY: volume/issue/pages.
+
+\bibitem{shinmckay1985minimumtime}
+K.~G.~Shin and N.~D.~McKay, ``Minimum-Time Control of Robotic Manipulators
+with Geometric Path Constraints,'' \emph{IEEE Transactions on Automatic
+Control}, 1985.
+% VERIFY: volume/issue/pages.
+
+\bibitem{rucker2010geometrically}
+D.~C.~Rucker, B.~A.~Jones, and R.~J.~Webster~III, ``A Geometrically Exact
+Model for Externally Loaded Concentric-Tube Continuum Robots,'' \emph{IEEE
+Transactions on Robotics}, vol.~26, no.~5, pp.~769--780, 2010.
+% VERIFY: this is offered as a standard geometrically-exact/Cosserat rod
+% reference for the general theory -- it is NOT confirmed to be what this
+% codebase's own beam model was originally derived from; replace with the
+% actual source reference if one exists, or confirm this one is suitable.
+
+\bibitem{byrd1995lbfgsb}
+R.~H.~Byrd, P.~Lu, J.~Nocedal, and C.~Zhu, ``A Limited Memory Algorithm
+for Bound Constrained Optimization,'' \emph{SIAM Journal on Scientific
+Computing}, vol.~16, no.~5, pp.~1190--1208, 1995.
+% VERIFY: pages/DOI. Confirmed by the codebase to be the solver actually
+% used (scipy's L-BFGS-B implementation), not just a generic citation.
+
+\bibitem{osqp2020}
+B.~Stellato, G.~Banjac, P.~Goulart, A.~Bemporad, and S.~Boyd, ``OSQP: An
+Operator Splitting Solver for Quadratic Programs,'' \emph{Mathematical
+Programming Computation}, vol.~12, no.~4, pp.~637--672, 2020.
+% VERIFY: pages/DOI. Confirmed by the codebase to be the QP solver
+% actually used, not just a generic citation.
+
+\end{thebibliography}
+
+\end{document}

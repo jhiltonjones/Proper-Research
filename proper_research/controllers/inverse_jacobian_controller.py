@@ -34,6 +34,23 @@ bounds the command near a singularity at the cost of a steady-state error in the
 directions J cannot reach.  The default is small; raise it if the run shows
 large commands where the Jacobian's condition number spikes.
 
+Selective damping (optional, 2026-09-12)
+-----------------------------------------
+The above is one ISOTROPIC lambda applied to all three output directions --
+already fine for this system (weak-direction command fraction ~4%, see
+beam-lateral-authority-limit memory) since DLS naturally damps small-sigma
+directions more (the effect scales with sigma/(sigma^2+lambda^2)).
+``selective_damping_gain`` (0 = disabled, the historical exact behaviour)
+sharpens this further with an explicit per-singular-value extra penalty,
+mirroring ``BeamOutputMPCConfig.directional_damping`` built for the MPC
+variants: decompose J via SVD and add
+``gain * (1/(sigma_i^2+floor^2) - min_i(...))`` on top of the isotropic
+``damping**2`` for each singular direction i, so the near-null direction gets
+extra suppression while the two well-conditioned directions are essentially
+untouched (their extra weight is ~0 by construction). Plumbed in as an
+option to compare against plain DLS, not because plain DLS was shown to need
+it.
+
 The controller returns a ``ConfigurationMPCStep``-shaped object, so it drops
 into the same closed loop and the same record schema as the MPCs.
 """
@@ -99,6 +116,8 @@ class InverseJacobianBeamController:
         nullspace_gain: float = 1.0,
         feedforward: bool = True,
         allow_undeclared_jacobian: bool = False,
+        selective_damping_gain: float = 0.0,
+        selective_damping_floor: float = 0.01,
     ) -> None:
         self.reference = reference
         # The controller records what it was handed. Ask any instance
@@ -129,6 +148,12 @@ class InverseJacobianBeamController:
         self.feedforward = bool(feedforward)
         if self.damping <= 0.0:
             raise ValueError("damping must be positive; it is a Levenberg parameter.")
+        self.selective_damping_gain = float(selective_damping_gain)
+        self.selective_damping_floor = float(selective_damping_floor)
+        if self.selective_damping_gain < 0.0 or not np.isfinite(self.selective_damping_gain):
+            raise ValueError("selective_damping_gain must be finite and >= 0.")
+        if self.selective_damping_floor <= 0.0 or not np.isfinite(self.selective_damping_floor):
+            raise ValueError("selective_damping_floor must be finite and > 0.")
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -140,6 +165,8 @@ class InverseJacobianBeamController:
             "damping": self.damping,
             "nullspace_gain": self.nullspace_gain,
             "feedforward": self.feedforward,
+            "selective_damping_gain": self.selective_damping_gain,
+            "selective_damping_floor": self.selective_damping_floor,
         }
 
     def reset(self) -> None:
@@ -174,9 +201,12 @@ class InverseJacobianBeamController:
         if not np.all(np.isfinite(jacobian)):
             raise FloatingPointError("The beam Jacobian is not finite.")
 
-        # Damped least squares: J^T (J J^T + lambda^2 I)^-1.
-        gram = jacobian @ jacobian.T + (self.damping**2) * np.eye(3)
-        pseudo = jacobian.T @ np.linalg.solve(gram, np.eye(3))
+        if self.selective_damping_gain > 0.0:
+            pseudo = self._selective_damped_pseudo_inverse(jacobian)
+        else:
+            # Damped least squares: J^T (J J^T + lambda^2 I)^-1.
+            gram = jacobian @ jacobian.T + (self.damping**2) * np.eye(3)
+            pseudo = jacobian.T @ np.linalg.solve(gram, np.eye(3))
 
         task_velocity = pseudo @ (self.position_gain * (desired - measured) / self.dt)
         projector = np.eye(7) - pseudo @ jacobian
@@ -217,6 +247,38 @@ class InverseJacobianBeamController:
             ),
         )
 
+    def _selective_damped_pseudo_inverse(self, jacobian: Array) -> Array:
+        """Per-singular-value damped pseudo-inverse (SDLS, 2026-09-12).
+
+        ``J = U diag(sigma) V^T`` (economy SVD, 3x3/3/3x7).  Each direction i
+        gets its own Levenberg term ``lambda_i^2 = damping^2 + gain *
+        weight_i``, ``weight_i = 1/(sigma_i^2+floor^2) - min_j(...)`` -- the
+        same bounded-weight construction validated for
+        ``BeamOutputMPCConfig.directional_damping`` (floor caps the near-null
+        direction's extra penalty instead of letting it blow up as
+        sigma_i -> 0). ``weight_i`` is ~0 for the well-conditioned directions
+        by construction (it is shifted by its own minimum), so they keep
+        close to the plain isotropic-damping behaviour; only the near-null
+        direction gets materially more suppression than ``damping`` alone
+        would give it.
+
+        Caveat (checked numerically against the real beam's singular values,
+        ~0.086 / 0.037 / 5.9e-7): the continuous ``1/sigma^2`` weighting means
+        the SECOND-best direction (0.037) also picks up a little extra
+        damping (~5.5% of what the near-null direction gets) -- it is not a
+        clean "leave the top-2 untouched" scheme. Small at this system's
+        actual singular-value spread, but don't assume ``selective_damping_gain``
+        is perfectly surgical; check the weak-direction fraction AND the
+        overall command norm, not just one of them, when tuning it.
+        """
+        u, s, vt = np.linalg.svd(jacobian, full_matrices=False)
+        floor2 = self.selective_damping_floor**2
+        weight = 1.0 / (s**2 + floor2)
+        weight = weight - weight.min()
+        lam2 = self.damping**2 + self.selective_damping_gain * weight
+        gains = s / (s**2 + lam2)
+        return (vt.T * gains) @ u.T
+
     def _clip(self, command: Array, state: Array, previous: Array) -> Array:
         command = np.clip(command, -self.velocity_limit, self.velocity_limit)
         command = np.clip(
@@ -242,6 +304,8 @@ def build_inverse_jacobian_controller(
     nullspace_gain: float = 1.0,
     feedforward: bool = True,
     allow_undeclared_jacobian: bool = True,
+    selective_damping_gain: float = 0.0,
+    selective_damping_floor: float = 0.01,
 ) -> InverseJacobianBeamController:
     """Build it from the same ``ConfigurationMPCConfig`` the MPCs use.
 
@@ -262,6 +326,8 @@ def build_inverse_jacobian_controller(
         nullspace_gain=nullspace_gain,
         feedforward=feedforward,
         allow_undeclared_jacobian=allow_undeclared_jacobian,
+        selective_damping_gain=selective_damping_gain,
+        selective_damping_floor=selective_damping_floor,
     )
 
 

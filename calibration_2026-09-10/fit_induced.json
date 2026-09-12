@@ -1,0 +1,9 @@
+{
+ "chi_axial": 20.0,
+ "chi_transverse": 0.0,
+ "chi_tr_over_chi_ax": 0.0,
+ "m_sat_A_m": 8.0,
+ "rms_old_mm": 3.129450000621269,
+ "rms_new_mm": 3.488793603611938,
+ "n_poses": 66
+}

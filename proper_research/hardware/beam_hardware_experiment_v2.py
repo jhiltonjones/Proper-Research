@@ -66,7 +66,58 @@ class CompositeBeamConfig:
     # ~6% steep -> 3.0 MPa flattens it (slope ratio 1.008), and the +0.71 mm
     # real-beam pre-curl is matched by magnet_yaw_calibration_deg = -6 (was
     # -10, which over-biased the model +0.9 mm).  Corner RMS 0.96 -> 0.25 mm.
-    effective_youngs_modulus_pa: float = 3.0e6
+    #
+    # 2026-09-14: re-calibrated against a pure +Y magnet-translation sweep at
+    # 32mm insertion (close_loop_logs/stiffness_calib_linearY_2026-09-14/,
+    # repeated in ..._repeat_2026-09-14/ -- raw measurements reproduced to
+    # ~0.01mm across the two independent sweeps). The real beam showed an
+    # almost FLAT lateral response (0.02-0.04mm) across 30mm of magnet
+    # travel, while the E=3.0MPa model predicted up to 2.3mm. A stiffness-only
+    # fit against THAT data does NOT converge to a physically sensible value
+    # -- RMS keeps improving out to E=10,000 MPa (a rigid-rod limit) and
+    # asymptotes near 0.34mm, even with contact/lumen constraints disabled.
+    # Root cause turned out to be a CONFOUND, not (only) stiffness: that
+    # sweep was run with the beam resting against/near the vessel wall, so
+    # wall friction/contact was suppressing real lateral movement. Confirmed
+    # by repeating the identical sweep from a manually-verified position
+    # lifted clear of the vessel (close_loop_logs/stiffness_calib_offwall_2026-09-14/,
+    # model tip 693mm from the real vessel centreline -- genuinely
+    # unconstrained): the measured response is a clean, monotonic curve (not
+    # flat), and a stiffness fit against THIS data converges cleanly --
+    # model/measured SLOPE ratio hits 0.996 (near-perfect) at E=32MPa. A
+    # residual ~0.4mm BIAS/offset remains at that E (separate from the slope
+    # match, likely a small dipole-yaw/pre-curl residual) -- left for online
+    # feedback to close, not chased further here. E=3.0 -> 32.0 MPa.
+    #
+    # 2026-09-14 (later same day): the E=32MPa fit above was ITSELF
+    # contaminated. Three calibration bugs were fixed after that fit: (1)
+    # camera pixel scale was off (checkerboard diagonal-baseline recalibration,
+    # 0.3725 -> 0.3709 mm/px, ~0.4%), (2) commanded vs actual beam insertion
+    # length had drifted (beam-length closed-loop convergence was using
+    # XY-only tip distance, undercounting true arc length whenever there's
+    # out-of-plane curl -- fixed to full 3D distance), and (3) -- the big one
+    # -- stiffness_calib_offwall_2026-09-14 (which produced the 32MPa fit)
+    # was analyzed with jacobian_variant left at its module default
+    # ("contact"), which pulls a stale ~4.6-5.4mm-radius lumen out of
+    # manual_vessel_boundaries.json (leftover data unrelated to the actual
+    # free-space test) and silently caps/distorts the model's lateral
+    # prediction. This is the SAME confound class that produced a false-alarm
+    # "insertion-length saturation" finding earlier the same day (see git
+    # history / session notes) -- it was fixed in ad hoc analysis scripts at
+    # the time but never in this default, so it re-contaminated the 32MPa fit.
+    #
+    # Redid the sweep with all three fixes in place, in true open space (user
+    # physically removed the vessel), at two insertion depths (32mm and 40mm,
+    # close_loop_logs/stiffness_calib_final_{32,40}mm_2026-09-14/), analyzed
+    # with jacobian_variant="no_contact" explicitly. Per-dataset slope-matched
+    # fits: 32mm -> E=1.80MPa (slopeR=0.998), 40mm -> E=3.20MPa (slopeR=0.997).
+    # Joint fit (minimizing combined squared slope-ratio error across both
+    # datasets) -> E=2.25MPa (32mm slopeR=0.937, 40mm slopeR=1.081). This
+    # lands almost exactly back on the ORIGINAL 2026-09-10 frame-calibration
+    # estimate (2.5MPa, see final-frame-calibration memory) -- i.e. the whole
+    # 3.0 -> 20.0 -> 32.0 MPa escalation this session was chasing the contact
+    # -lumen artifact, not a real stiffness change. E=32.0 -> 2.25 MPa.
+    effective_youngs_modulus_pa: float = 2.25e6
     poisson_ratio: float = 0.49
     inner_diameter_m: float = 0.0
     # -local x = the rod growth direction = world +B.x = along the axial field

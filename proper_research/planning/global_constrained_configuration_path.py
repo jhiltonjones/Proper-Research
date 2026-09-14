@@ -57,7 +57,10 @@ except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
 
 try:
     from proper_research.planning.global_upgrades import (
+        CompositeNodeConstraints,
+        NodeBaseExclusionConstraints,
         NodeExclusionConstraints,
+        NodeZFloorConstraints,
         effective_task_tolerances,
         magnet_path_quadratic,
         tip_centring_quadratic,
@@ -65,7 +68,10 @@ try:
     )
 except ModuleNotFoundError:  # Allows ``python this_file.py --self-test``.
     from global_upgrades import (  # type: ignore
+        CompositeNodeConstraints,
+        NodeBaseExclusionConstraints,
         NodeExclusionConstraints,
+        NodeZFloorConstraints,
         effective_task_tolerances,
         magnet_path_quadratic,
         tip_centring_quadratic,
@@ -238,6 +244,16 @@ class GlobalConfigurationOptimizerConfig:
     require_analytical_magnet_position_jacobian: bool = False
     magnet_jacobian_joint_step_rad: float = 1.0e-6
     magnet_jacobian_insertion_step_m: float = 1.0e-6
+
+    # 2026-09-12: Layer-2 analogues of the same two safety fixes added to
+    # Layer 1 (offline_inverse_configuration_head_exclusion.py) after a live
+    # incident -- see NodeZFloorConstraints/NodeBaseExclusionConstraints in
+    # global_upgrades.py for the full rationale. Layer 1 alone was NOT
+    # enough: its raw output was perfectly clean, but this global smoothing
+    # pass had no such constraints and reintroduced both violations into the
+    # FINAL deployed plan. Both default on, matching Layer 1's defaults.
+    enforce_magnet_z_no_decrease: bool = True
+    magnet_beam_base_exclusion_radius_m: float | None = 0.230
 
     # Every hard constraint here (the keep-out, and the position/tangent task
     # tolerances) is enforced by the optimizer at the discrete decision NODES
@@ -1607,7 +1623,7 @@ def _solve_global_problem(
         position_tolerance_m=spend_position_tolerance,
         tangent_tolerance_rad=spend_tangent_tolerance,
     )
-    exclusion: NodeExclusionConstraints | None = None
+    lumen_constraint: NodeExclusionConstraints | None = None
     if config.source_magnet_lumen_exclusion_radius_m is not None:
         if path is None:
             raise ValueError(
@@ -1615,7 +1631,7 @@ def _solve_global_problem(
                 "CentrelinePath was supplied to the global solve. Pass "
                 "path=CentrelinePath(lumen_C)."
             )
-        exclusion = NodeExclusionConstraints(
+        lumen_constraint = NodeExclusionConstraints(
             adapter=adapter,
             path=path,
             state_min=state_min,
@@ -1630,6 +1646,49 @@ def _solve_global_problem(
             ),
             joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
             insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
+
+    # 2026-09-12 safety fixes -- see GlobalConfigurationOptimizerConfig's
+    # docstring comments above and NodeZFloorConstraints/
+    # NodeBaseExclusionConstraints in global_upgrades.py.
+    z_floor_constraint: NodeZFloorConstraints | None = None
+    base_exclusion_constraint: NodeBaseExclusionConstraints | None = None
+    if config.enforce_magnet_z_no_decrease:
+        from proper_research.planning.offline_inverse_configuration_head_exclusion import (
+            _MagnetPositionProvider as _ZFloorProvider,
+        )
+        provider = _ZFloorProvider(
+            adapter=adapter, state_min=state_min, state_max=state_max,
+            config=type("_Shim", (), {
+                "magnet_jacobian_joint_step_rad": float(config.magnet_jacobian_joint_step_rad),
+                "magnet_jacobian_insertion_step_m": float(config.magnet_jacobian_insertion_step_m),
+            })(),
+        )
+        z_floor_m = float(provider.position(np.asarray(seed.states[0], dtype=float))[2])
+        z_floor_constraint = NodeZFloorConstraints(
+            adapter=adapter, state_min=state_min, state_max=state_max,
+            node_count=node_count, z_floor_m=z_floor_m,
+            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
+    if config.magnet_beam_base_exclusion_radius_m is not None:
+        from proper_research.simulation.simulations.initial_conditions import (
+            make_initial_poses,
+        )
+        beam_pivot, _start, _L0, _dt = make_initial_poses()
+        base_exclusion_constraint = NodeBaseExclusionConstraints(
+            adapter=adapter, state_min=state_min, state_max=state_max,
+            node_count=node_count,
+            base_m=np.asarray(beam_pivot[:3], dtype=float),
+            radius_m=float(config.magnet_beam_base_exclusion_radius_m),
+            joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
+            insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
+        )
+
+    exclusion: CompositeNodeConstraints | None = None
+    if lumen_constraint is not None or z_floor_constraint is not None or base_exclusion_constraint is not None:
+        exclusion = CompositeNodeConstraints(
+            lumen=lumen_constraint, z_floor=z_floor_constraint, base=base_exclusion_constraint,
         )
     if config.tip_centring_weight > 0.0:
         # One extra block-diagonal quadratic in the same QP.  Linearised at
@@ -2003,8 +2062,27 @@ def _validate_inverse_result(
     )
     if np.any(states < state_min - 1.0e-10) or np.any(states > state_max + 1.0e-10):
         raise ValueError("Inverse result contains a state outside absolute bounds.")
-    if not np.allclose(states[0], initial_state, atol=1.0e-8, rtol=0.0):
-        raise ValueError("Inverse result initial state differs from controller_pack['p0'].")
+    solved_initial_node = bool(inverse_result.configuration.get("solve_initial_node", False))
+    if not solved_initial_node:
+        if not np.allclose(states[0], initial_state, atol=1.0e-8, rtol=0.0):
+            # Every free-space shape this session pinned the target path's
+            # first point to the beam's own resting tip, so the Layer 1
+            # result's node 0 was always literally controller_pack['p0'] --
+            # this check caught genuine corruption (e.g. a stale/mismatched
+            # inverse_result reused against the wrong controller_pack).
+            raise ValueError("Inverse result initial state differs from controller_pack['p0'].")
+    else:
+        # solve_initial_node=True means moving the initial state away from
+        # p0 was scientifically intended (see plan_vessel_path.py -- a
+        # vessel's real entrance is generally not where the beam's resting
+        # tip already sits). states[0] != p0 is then the correct, expected
+        # outcome, not corruption -- the bounds check above already confirms
+        # it is a physically valid state. Anchor Layer 2's own
+        # fix_initial_state to what Layer 1 ACTUALLY solved for node 0, not
+        # the raw resting p0: otherwise fix_initial_state would silently
+        # re-pin the global optimisation to the state Layer 1 deliberately
+        # moved away from, reintroducing the exact gap this was meant to fix.
+        initial_state = states[0].copy()
     for index, node in enumerate(inverse_result.nodes):
         _unit_vector(node.desired_tangent, f"desired tangent at inverse node {index}")
         _unit_vector(node.tip_tangent, f"tip tangent at inverse node {index}")

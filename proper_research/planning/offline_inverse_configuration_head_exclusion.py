@@ -191,6 +191,26 @@ class InverseConfigurationPlannerConfig:
     source_magnet_lumen_exclusion_radius_m: float | None = None
     source_magnet_lumen_constraint_tolerance_m: float = 1.0e-6
 
+    # 2026-09-12 safety fixes, added after a live incident: a closed-circle
+    # plan's insertion retracted well below its starting length, which pulled
+    # the magnet close enough to the beam base to breach the documented
+    # >=230mm floor (magnet-workspace-constraints memory) AND separately let
+    # the magnet drop in Z toward the table -- neither was previously a hard
+    # constraint anywhere in this solver (the exclusion radius above is
+    # magnet-to-TIP-PATH only, not magnet-to-base, and nothing at all
+    # constrained Z). Both are hard SLSQP inequality constraints, composed
+    # alongside the lumen exclusion via _CompositeExclusionConstraint (see
+    # below) -- enabled by default so a caller has to opt OUT, not in.
+    enforce_magnet_z_no_decrease: bool = True
+    # Magnet world-Z may never drop below its value at the plan's initial
+    # state (state0) -- "may only rise in Z, never lower" per the documented
+    # physical rule. Not a user-set target; computed from state0 at build time.
+    magnet_beam_base_exclusion_radius_m: float | None = 0.230
+    # Separate, stricter floor than source_magnet_lumen_exclusion_radius_m:
+    # magnet-to-BEAM-BASE distance (a fixed point), not magnet-to-tip-path.
+    # None disables it. Beam base position is read from
+    # initial_conditions.make_initial_poses() at build time.
+
     # Prefer an analytical translational magnet Jacobian supplied by the
     # adapter.  A central-difference FK fallback is available because the
     # existing diagnostic adapter is only guaranteed to expose
@@ -790,6 +810,226 @@ class _MagnetLumenExclusionConstraint:
             >= -float(self.config.source_magnet_lumen_constraint_tolerance_m)
         )
         return float(distance), float(margin), int(segment), satisfied
+
+
+class _MagnetPositionProvider:
+    """Shared magnet-position + Jacobian computation.
+
+    Deliberately duplicated from ``_MagnetLumenExclusionConstraint`` (rather
+    than refactoring that class to share it) so the 2026-09-12 safety
+    constraints below cannot regress the existing, already-validated lumen
+    exclusion in any way.
+    """
+
+    _ANALYTICAL_METHOD_NAMES = _MagnetLumenExclusionConstraint._ANALYTICAL_METHOD_NAMES
+
+    def __init__(self, *, adapter: Any, state_min: Array, state_max: Array,
+                 config: InverseConfigurationPlannerConfig):
+        self.adapter = adapter
+        self.state_min = _finite_vector(state_min, 7, "state_min")
+        self.state_max = _finite_vector(state_max, 7, "state_max")
+        self.config = config
+        self._analytical_method = self._find_analytical_method()
+        self._x_position: Array | None = None
+        self._position: Array | None = None
+        self._x_jacobian: Array | None = None
+        self._position_jacobian: Array | None = None
+
+    def _find_analytical_method(self) -> Any | None:
+        for name in self._ANALYTICAL_METHOD_NAMES:
+            method = getattr(self.adapter, name, None)
+            if callable(method):
+                return method
+        return None
+
+    @staticmethod
+    def _same(left: Array | None, right: Array) -> bool:
+        return left is not None and np.array_equal(left, right)
+
+    def position(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "magnet-position state")
+        if not self._same(self._x_position, state):
+            pose = _magnet_pose6(self.adapter, state)
+            if not np.all(np.isfinite(pose[:3])):
+                raise FloatingPointError(
+                    "magnet_transform returned a non-finite source-magnet position."
+                )
+            self._x_position = state.copy()
+            self._position = pose[:3].copy()
+        return np.asarray(self._position, dtype=float).copy()
+
+    def _coerce_analytical_jacobian(self, value: Any) -> Array:
+        matrix = np.asarray(value, dtype=float)
+        if matrix.shape == (3, 6):
+            matrix = np.column_stack((matrix, np.zeros(3, dtype=float)))
+        if matrix.shape != (3, 7) or not np.all(np.isfinite(matrix)):
+            raise FloatingPointError(
+                "An analytical magnet-position Jacobian must be finite with "
+                f"shape (3, 7) or (3, 6); got {matrix.shape}."
+            )
+        return matrix.copy()
+
+    def _finite_difference_jacobian(self, state: Array) -> Array:
+        steps = np.full(7, float(self.config.magnet_jacobian_joint_step_rad), dtype=float)
+        steps[6] = float(self.config.magnet_jacobian_insertion_step_m)
+        centre = self.position(state)
+        matrix = np.zeros((3, 7), dtype=float)
+        for coordinate, nominal_step in enumerate(steps):
+            plus_step = min(nominal_step, max(0.0, self.state_max[coordinate] - state[coordinate]))
+            minus_step = min(nominal_step, max(0.0, state[coordinate] - self.state_min[coordinate]))
+            if plus_step > 1.0e-15 and minus_step > 1.0e-15:
+                plus = state.copy(); minus = state.copy()
+                plus[coordinate] += plus_step
+                minus[coordinate] -= minus_step
+                matrix[:, coordinate] = (self.position(plus) - self.position(minus)) / (plus_step + minus_step)
+            elif plus_step > 1.0e-15:
+                plus = state.copy()
+                plus[coordinate] += plus_step
+                matrix[:, coordinate] = (self.position(plus) - centre) / plus_step
+            elif minus_step > 1.0e-15:
+                minus = state.copy()
+                minus[coordinate] -= minus_step
+                matrix[:, coordinate] = (centre - self.position(minus)) / minus_step
+            else:
+                matrix[:, coordinate] = 0.0
+        if not np.all(np.isfinite(matrix)):
+            raise FloatingPointError("Finite-difference magnet-position Jacobian is non-finite.")
+        return matrix
+
+    def position_jacobian(self, state: Any) -> Array:
+        state = _finite_vector(state, 7, "magnet-Jacobian state")
+        if not self._same(self._x_jacobian, state):
+            if self._analytical_method is not None:
+                matrix = self._coerce_analytical_jacobian(self._analytical_method(state))
+            else:
+                matrix = self._finite_difference_jacobian(state)
+            self._x_jacobian = state.copy()
+            self._position_jacobian = matrix.copy()
+        return np.asarray(self._position_jacobian, dtype=float).copy()
+
+
+class _MagnetZFloorConstraint:
+    """Hard SLSQP inequality: magnet world-Z must never drop below z_floor_m.
+
+    2026-09-12: added after a live incident where a closed-circle plan (no Z
+    constraint anywhere in this solver) let the magnet drop toward the table
+    during an open-loop hardware run. ``z_floor_m`` is normally the magnet's
+    Z at the plan's initial state -- "may only rise in Z, never lower".
+
+        g(state) = (position(state)[2] - z_floor_m) / z_scale_m   >= 0
+
+    ``z_scale_m`` just normalises the constraint to an O(1) magnitude for
+    SLSQP's merit function (matched to the apparatus's few-cm Z travel);
+    it does not change what is enforced (g >= 0 <=> z >= z_floor_m).
+    """
+
+    def __init__(self, *, provider: _MagnetPositionProvider, z_floor_m: float,
+                 z_scale_m: float = 0.05):
+        self.provider = provider
+        self.z_floor_m = float(z_floor_m)
+        self.z_scale_m = float(z_scale_m)
+        if self.z_scale_m <= 0.0 or not math.isfinite(self.z_scale_m):
+            raise ValueError("z_scale_m must be finite and positive.")
+
+    def value(self, state: Any) -> float:
+        z = self.provider.position(state)[2]
+        return float((z - self.z_floor_m) / self.z_scale_m)
+
+    def jacobian(self, state: Any) -> Array:
+        J = self.provider.position_jacobian(state)
+        gradient = np.asarray(J[2, :], dtype=float) / self.z_scale_m
+        if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
+            raise FloatingPointError("Magnet Z-floor constraint Jacobian is invalid.")
+        return gradient
+
+    def physical_metrics(self, state: Any) -> tuple[float, float, bool]:
+        z = float(self.provider.position(state)[2])
+        margin = z - self.z_floor_m
+        return z, margin, bool(margin >= -1.0e-6)
+
+
+class _MagnetBaseExclusionConstraint:
+    """Hard SLSQP inequality: magnet must stay >= radius_m from the beam base.
+
+    2026-09-12: a SEPARATE, stricter floor than the existing
+    ``_MagnetLumenExclusionConstraint`` above, which only bounds
+    magnet-to-TIP-PATH distance. A shape whose insertion retracts well below
+    its starting length (e.g. a closed circle passing back through a short
+    insertion) can satisfy "far from the tip" while the tip -- and hence the
+    magnet, which must track it -- gets close to the fixed beam base. Found
+    live: a circle plan without this breached the documented >=230mm floor
+    (magnet_workspace_constraints memory) at 214mm on 42% of samples.
+
+        g(state) = (||position(state) - base_m|| / radius_m)^2 - 1   >= 0
+    """
+
+    def __init__(self, *, provider: _MagnetPositionProvider, base_m: Array, radius_m: float):
+        self.provider = provider
+        self.base_m = np.asarray(base_m, dtype=float).reshape(3)
+        self.radius_m = float(radius_m)
+        if self.radius_m <= 0.0 or not math.isfinite(self.radius_m):
+            raise ValueError("radius_m must be finite and positive.")
+
+    def value(self, state: Any) -> float:
+        displacement = self.provider.position(state) - self.base_m
+        distance = float(np.linalg.norm(displacement))
+        return float((distance / self.radius_m) ** 2 - 1.0)
+
+    def jacobian(self, state: Any) -> Array:
+        displacement = self.provider.position(state) - self.base_m
+        J = self.provider.position_jacobian(state)
+        gradient = (2.0 / self.radius_m**2) * (displacement @ J)
+        if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
+            raise FloatingPointError("Magnet base-exclusion constraint Jacobian is invalid.")
+        return gradient
+
+    def physical_metrics(self, state: Any) -> tuple[float, float, bool]:
+        displacement = self.provider.position(state) - self.base_m
+        distance = float(np.linalg.norm(displacement))
+        margin = distance - self.radius_m
+        return distance, margin, bool(margin >= -1.0e-6)
+
+
+class _CompositeExclusionConstraint:
+    """Combines multiple independent hard inequality constraints behind the
+    SAME ``.value``/``.jacobian``/``.physical_metrics``/``.jacobian_source``
+    interface ``_MagnetLumenExclusionConstraint`` exposes, so every existing
+    call site that threads a single ``exclusion_constraint`` through stays
+    unchanged: scipy's SLSQP accepts a VECTOR-valued constraint function
+    (every component must be >= 0), so ``value``/``jacobian`` here just stack
+    the sub-constraints' own scalar value / row Jacobian instead of returning
+    one. ``physical_metrics``/``jacobian_source`` report the lumen
+    sub-constraint's own values unchanged (its 4-tuple shape is what
+    existing diagnostics/logging code expects) -- if there is no lumen
+    sub-constraint, they report a permissive placeholder.
+    """
+
+    def __init__(self, *, lumen: _MagnetLumenExclusionConstraint | None = None,
+                 z_floor: _MagnetZFloorConstraint | None = None,
+                 base: _MagnetBaseExclusionConstraint | None = None):
+        self._lumen = lumen
+        self._subs = [c for c in (lumen, z_floor, base) if c is not None]
+        if not self._subs:
+            raise ValueError("_CompositeExclusionConstraint built with no active sub-constraints.")
+
+    @property
+    def radius_m(self) -> float:
+        return self._lumen.radius_m if self._lumen is not None else float("nan")
+
+    @property
+    def jacobian_source(self) -> str:
+        return self._lumen.jacobian_source if self._lumen is not None else "z_floor_or_base_only"
+
+    def value(self, state: Any) -> Array:
+        return np.array([float(c.value(state)) for c in self._subs], dtype=float)
+
+    def jacobian(self, state: Any) -> Array:
+        return np.vstack([np.atleast_2d(c.jacobian(state)) for c in self._subs])
+
+    def physical_metrics(self, state: Any):
+        if self._lumen is not None:
+            return self._lumen.physical_metrics(state)
+        return (float("nan"), float("nan"), -1, True)
 
 
 class _NodeObjective:
@@ -1711,14 +1951,50 @@ def solve_offline_inverse_configuration(
             )
 
     path = CentrelinePath(lumen_C)
-    exclusion_constraint = None
+    lumen_constraint = None
     if config.source_magnet_lumen_exclusion_radius_m is not None:
-        exclusion_constraint = _MagnetLumenExclusionConstraint(
+        lumen_constraint = _MagnetLumenExclusionConstraint(
             adapter=adapter,
             path=path,
             state_min=lower,
             state_max=upper,
             config=config,
+        )
+
+    # 2026-09-12 safety fixes (see InverseConfigurationPlannerConfig's
+    # docstring comments above): magnet Z no-decrease + magnet-to-beam-base
+    # exclusion, composed alongside the lumen exclusion so every downstream
+    # call site that threads a single `exclusion_constraint` keeps working
+    # unchanged.
+    z_floor_constraint = None
+    base_exclusion_constraint = None
+    if config.enforce_magnet_z_no_decrease or config.magnet_beam_base_exclusion_radius_m is not None:
+        position_provider = _MagnetPositionProvider(
+            adapter=adapter, state_min=lower, state_max=upper, config=config,
+        )
+        if config.enforce_magnet_z_no_decrease:
+            z_floor_m = float(position_provider.position(state0)[2])
+            z_floor_constraint = _MagnetZFloorConstraint(
+                provider=position_provider, z_floor_m=z_floor_m,
+            )
+        if config.magnet_beam_base_exclusion_radius_m is not None:
+            from proper_research.simulation.simulations.initial_conditions import (
+                make_initial_poses,
+            )
+            beam_pivot, _start, _L0, _dt = make_initial_poses()
+            beam_base_m = np.asarray(beam_pivot[:3], dtype=float)
+            base_exclusion_constraint = _MagnetBaseExclusionConstraint(
+                provider=position_provider,
+                base_m=beam_base_m,
+                radius_m=float(config.magnet_beam_base_exclusion_radius_m),
+            )
+
+    exclusion_constraint = None
+    if lumen_constraint is not None or z_floor_constraint is not None or base_exclusion_constraint is not None:
+        exclusion_constraint = _CompositeExclusionConstraint(
+            lumen=lumen_constraint,
+            z_floor=z_floor_constraint,
+            base=base_exclusion_constraint,
         )
     alternative_states = [
         _finite_vector(value, 7, "alternative initial state")

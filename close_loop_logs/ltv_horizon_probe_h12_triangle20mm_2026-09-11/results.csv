@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/ltv_horizon_probe_h12_triangle20mm_2026-09-11/runs/ltv_rep1_20260911T163821Z,path_complete,243,222,4.733542335824731,3.9259549549549555,10.215,8.917849999999998,0.09966666666666667,0.299,42.7535

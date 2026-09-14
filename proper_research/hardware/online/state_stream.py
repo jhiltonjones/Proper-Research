@@ -86,6 +86,13 @@ class StateStreamConfig:
     pivot_hint_px: tuple[int, int] = (318, 292)
     marker_min_area_px2: float = 4.0
     marker_max_area_px2: float = 40000.0
+    # 2026-09-14: how many red markers must be visible. Default (3-4) matches
+    # every live-control caller's validated requirement -- do not lower this
+    # for anything that needs a real tangent (mag_start/tangent_start
+    # markers). Set marker_min_count=2 explicitly for a short-insertion
+    # (<~25mm) calibration check, where only base+tip may be visible.
+    marker_min_count: int = 3
+    marker_max_count: int = 4
     marker_sat_min: int = 50
     marker_val_min: int = 40
     marker_red_hue1_high: int = 10
@@ -93,7 +100,12 @@ class StateStreamConfig:
     emit_chord_tangent: bool = True        # cheap tangent_start->tip chord (not the true tangent)
 
     # --- NEW beam frame B (matches robotics_frame_measurement_validation) --
-    known_calibration_distance_mm: float = 38.0
+    # 2026-09-14: re-calibrated against a 1cm-square checkerboard grid
+    # (diagonal baseline) -- see calibration_points.json's "source" field.
+    # Agrees with the old 38.0mm hand-clicked estimate to ~0.4% once measured
+    # the same (diagonal, not naively-averaged) way -- a precision
+    # refinement, not a correction of a real error.
+    known_calibration_distance_mm: float = 80.62257748298549
     saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (-1.0, 1.0)
     saved_axis_convention: str = "image_cartesian"
     beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
@@ -304,6 +316,12 @@ class NewFrameTipMapper:
     def _tip_and_tangent_start_px(self, frame_bgr: np.ndarray):
         bb = self._bounds_beam
         cfg = self._cfg
+        # marker_min_count defaults to 3 (the live-control-validated
+        # requirement); a short beam (<~25mm insertion) may only expose 2
+        # markers before the tangent_start marker clears the advancer/sheath
+        # -- relax to 2 explicitly (e.g. a short-insertion calibration
+        # script) rather than silently failing. Not changed by default, so
+        # every existing caller keeps the original 3-4 requirement.
         candidates = bb.detect_4_red_markers_in_roi(
             frame_bgr,
             roi_box=None,
@@ -315,14 +333,24 @@ class NewFrameTipMapper:
             hue1_high=cfg.marker_red_hue1_high,
             hue2_low=cfg.marker_red_hue2_low,
             show_debug=False,
-            min_markers=3,
-            max_markers=4,
+            min_markers=cfg.marker_min_count,
+            max_markers=cfg.marker_max_count,
         )
-        if candidates is None or len(candidates) not in (3, 4):
-            raise RuntimeError(f"expected 3-4 red markers, got {candidates}")
+        valid_counts = tuple(range(cfg.marker_min_count, cfg.marker_max_count + 1))
+        if candidates is None or len(candidates) not in valid_counts:
+            raise RuntimeError(
+                f"expected {cfg.marker_min_count}-{cfg.marker_max_count} red markers, "
+                f"got {candidates}"
+            )
         base_c, _mag_c, tangent_start_c, tip_c = bb.order_beam_marker_candidates(
             candidates, pivot_hint=tuple(cfg.pivot_hint_px)
         )
+        if tangent_start_c is None:
+            # 2-marker case (base, tip only) -- no tangent_start marker
+            # visible. Callers that only need the tip position (e.g. a
+            # length-calibration check) are unaffected; callers that need a
+            # real tangent should not relax marker_min_count below 3.
+            tangent_start_c = tip_c
         return (
             np.asarray(tip_c["point"], dtype=float),
             np.asarray(tangent_start_c["point"], dtype=float),

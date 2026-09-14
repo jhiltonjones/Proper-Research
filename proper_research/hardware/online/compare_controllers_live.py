@@ -232,7 +232,11 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             kf_process_noise_std_m_s2: float = 0.02,
             kf_measurement_noise_std_m: float = 3.0e-4,
             disable_dare_terminal_cost: bool = False,
-            mpc_state_tracking_weight_override: float | None = None) -> int:
+            mpc_state_tracking_weight_override: float | None = None,
+            vessel_lumen_file: str = "",
+            mpc_wall_avoidance_gain: float = 0.0,
+            mpc_wall_avoidance_margin_mm: float = 0.5,
+            mpc_wall_avoidance_beam_radius_mm: float = 1.0) -> int:
     import proper_research.hardware.online.close_loop_path_follow as pf
 
     # Always move to reference first: besides resetting drift it "primes" the
@@ -287,6 +291,10 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     if disable_dare_terminal_cost:
         pf.CONFIG.mpc_use_dare_terminal_cost = False
     pf.CONFIG.mpc_state_tracking_weight_override = mpc_state_tracking_weight_override
+    pf.CONFIG.vessel_lumen_file = vessel_lumen_file
+    pf.CONFIG.mpc_wall_avoidance_gain = float(mpc_wall_avoidance_gain)
+    pf.CONFIG.mpc_wall_avoidance_margin_mm = float(mpc_wall_avoidance_margin_mm)
+    pf.CONFIG.mpc_wall_avoidance_beam_radius_mm = float(mpc_wall_avoidance_beam_radius_mm)
     pf.CONFIG.output_root = str(out_dir / "runs")
     pf.CONFIG.run_name = f"{kind_key}_rep{rep}"
     try:
@@ -525,13 +533,35 @@ def main():
                         "uncoordinated against, feedforward's own joint-state "
                         "servoing). Set to 0.0 to test removing it.")
     # hidden worker entry point
-    p.add_argument("--_worker", nargs=26, default=None,
+    p.add_argument("--vessel-lumen-file", type=str, default="",
+                   help="real digitized vessel lumen (robot frame R, see "
+                        "detect_blue.py::draw_vessel_lumen_for_planner). Required "
+                        "when --mpc-wall-avoidance-gain > 0.")
+    p.add_argument("--mpc-wall-avoidance-gain", type=float, default=0.0,
+                   help="SOFT wall-avoidance penalty gain (0 = disabled -- pass "
+                        "this flag to compare against a controller with NO "
+                        "knowledge of the wall). Deliberately soft, not a hard "
+                        "constraint: in a sharp vessel wall contact is sometimes "
+                        "necessary, not a failure, and a hard constraint would "
+                        "make the QP infeasible exactly then. Adds extra cost "
+                        "weight on the outward-normal component of tracking "
+                        "error at each horizon step -- see "
+                        "BeamOutputMPCConfig.wall_avoidance_gain's docstring. "
+                        "Requires --vessel-lumen-file.")
+    p.add_argument("--mpc-wall-avoidance-margin-mm", type=float, default=0.5,
+                   help="safety buffer beyond the beam's physical radius when "
+                        "computing available wall clearance for the penalty.")
+    p.add_argument("--mpc-wall-avoidance-beam-radius-mm", type=float, default=1.0,
+                   help="beam physical radius used for the wall-avoidance "
+                        "clearance calculation (matches ContactParams.r_beam).")
+    p.add_argument("--_worker", nargs=30, default=None,
                    metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON",
                             "BEAMLEN", "FF", "FORCE_MPC_FF", "FF_HOLD_SWITCH", "RD_WEIGHT",
                             "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "DIR_DAMPING",
                             "DIR_DAMPING_FLOOR", "COND_FIX", "COND_FIX_DIR_DAMPING",
                             "COND_FIX_RD", "INV_SEL_GAIN", "INV_SEL_FLOOR",
-                            "TIP_ESTIMATOR", "KF_Q", "KF_R", "NO_DARE", "STATE_TRACK_W"))
+                            "TIP_ESTIMATOR", "KF_Q", "KF_R", "NO_DARE", "STATE_TRACK_W",
+                            "VESSEL_LUMEN_FILE", "WALL_GAIN", "WALL_MARGIN", "WALL_BEAM_RADIUS"))
     args = p.parse_args()
 
     if args._worker:
@@ -539,7 +569,8 @@ def main():
          ff_hold_switch, rd_weight, r_override, rd_override,
          time_limit, dir_damping, dir_damping_floor, cond_fix, cond_fix_dir_damping,
          cond_fix_rd, inv_sel_gain, inv_sel_floor, tip_estimator, kf_q, kf_r,
-         no_dare, state_track_w) = args._worker
+         no_dare, state_track_w, vessel_lumen_file, wall_gain, wall_margin,
+         wall_beam_radius) = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
                          plan_dir, int(horizon), float(blen), bool(int(ff)),
                          bool(int(force_mpc_ff)), bool(int(ff_hold_switch)),
@@ -551,7 +582,9 @@ def main():
                          bool(int(cond_fix)), float(cond_fix_dir_damping),
                          float(cond_fix_rd), float(inv_sel_gain), float(inv_sel_floor),
                          tip_estimator, float(kf_q), float(kf_r), bool(int(no_dare)),
-                         None if state_track_w == "none" else float(state_track_w)))
+                         None if state_track_w == "none" else float(state_track_w),
+                         vessel_lumen_file, float(wall_gain), float(wall_margin),
+                         float(wall_beam_radius)))
 
     if args.analyze_only:
         analyse(Path(args.analyze_only))
@@ -604,7 +637,11 @@ def main():
                    str(args.kf_measurement_noise_std),
                    "1" if args.disable_dare_terminal_cost else "0",
                    ("none" if args.mpc_state_tracking_weight is None
-                    else str(args.mpc_state_tracking_weight))]
+                    else str(args.mpc_state_tracking_weight)),
+                   args.vessel_lumen_file,
+                   str(args.mpc_wall_avoidance_gain),
+                   str(args.mpc_wall_avoidance_margin_mm),
+                   str(args.mpc_wall_avoidance_beam_radius_mm)]
             rc, rd = None, None
             for attempt in range(1, MAX_ATTEMPTS_PER_RUN + 1):
                 if not first:

@@ -1,0 +1,4 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_noff_n3/runs/lti_rep1_20260912T102954Z,path_complete,244,222,4.63740144597933,3.7708378378378375,10.231,8.6075,0.3159999999999999,0.369,47.5119
+mpc_lti,lti,2,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_noff_n3/runs/lti_rep2_20260912T103259Z,path_complete,242,221,4.611647654634701,3.7581538461538457,10.14,8.901,0.4291904761904763,0.297,44.2712
+mpc_lti,lti,3,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_noff_n3/runs/lti_rep3_20260912T103554Z,path_complete,243,222,4.558940802779001,3.7751621621621623,9.67,8.50485,0.48223809523809524,0.567,47.5441

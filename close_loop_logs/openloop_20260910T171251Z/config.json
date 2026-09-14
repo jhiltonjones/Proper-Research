@@ -1,0 +1,10 @@
+{
+  "plan_dir": "/home/jack/Proper-Research/plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path",
+  "speed_scale": [
+    1.0
+  ],
+  "reps": 1,
+  "out_dir": null,
+  "analyze_only": null,
+  "compare_dir": null
+}

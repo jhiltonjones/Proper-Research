@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/compare_noFF_dirdamp2_triangle20mm_2026-09-11/runs/lti_rep1_20260911T154643Z,path_complete,169,148,5.0932576311529045,4.407594594594595,10.704,8.5866,0.34266666666666673,0.296,47.9642

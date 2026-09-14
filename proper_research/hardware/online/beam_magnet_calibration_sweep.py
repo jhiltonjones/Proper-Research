@@ -56,6 +56,13 @@ from scipy.spatial.transform import Rotation as Rot
 REPO = Path(__file__).resolve().parents[3]
 REF_ORI = np.array([-3.07806404, 0.57586908, 0.04569585])
 
+# 2026-09-14: user-verified TCP Z, confirmed offline (model tip 693mm from
+# the real vessel centreline there -- genuinely clear) and reused across
+# several off-wall calibration sweeps. --start-tcp-pose6's Z must stay
+# within this margin of it (see build_poses's linear_tcp block).
+LINEAR_TCP_DEFAULT_Z_M = 0.35782223424787696
+LINEAR_TCP_Z_MARGIN_M = 0.03
+
 
 @contextlib.contextmanager
 def _quiet():
@@ -78,6 +85,18 @@ class Pose:
 def _polar(beam_base: np.ndarray, radius_m: float, azimuth_deg: float, z_off_m: float = 0.0):
     p = np.deg2rad(azimuth_deg)
     return beam_base + radius_m * np.array([-np.cos(p), np.sin(p), 0.0]) + np.array([0, 0, z_off_m])
+
+
+def _linear_y(beam_base: np.ndarray, radius_m: float, dy_m: float, z_off_m: float = 0.0):
+    """Magnet position at ``radius_m`` behind the beam base (coaxial, azimuth=0
+    in ``_polar``'s convention), then translated by ``dy_m`` along +Y (robot
+    frame R) -- a straight Cartesian line, unlike ``_polar``'s constant-radius
+    arc. For "does the beam need to be modelled stiffer" calibration: hold
+    insertion and standoff radius fixed, move the magnet along one axis only,
+    compare measured vs model-predicted tip displacement per mm of magnet
+    travel.
+    """
+    return beam_base + radius_m * np.array([-1.0, 0.0, 0.0]) + np.array([0.0, dy_m, z_off_m])
 
 
 def build_poses(args, beam_base: np.ndarray) -> list[Pose]:
@@ -119,6 +138,50 @@ def build_poses(args, beam_base: np.ndarray) -> list[Pose]:
                     poses.append(Pose(m, o, "dipY",
                                       f"dipY_r{int(radius_mm)}_pos{int(az_pos):+d}_pitch{int(pitch):+d}"))
 
+    if args.linear_y_offsets_mm and not args.start_tcp_pose6:
+        r = max(args.linear_radius_mm or args.min_radius_mm, args.min_radius_mm) * 1e-3
+        for dy_mm in args.linear_y_offsets_mm:
+            poses.append(Pose(_linear_y(beam_base, r, dy_mm * 1e-3), REF_ORI, "linear",
+                              f"linear_r{int(round(r*1e3))}_dy{dy_mm:+.1f}"))
+
+    if args.linear_y_offsets_mm and args.start_tcp_pose6:
+        # Sweep +Y from a manually-verified LIVE TCP pose instead of the
+        # beam_base-relative radius/azimuth construction -- e.g. a position
+        # deliberately moved off the vessel wall first, to separate genuine
+        # elastic response from wall-friction/contact effects.
+        from proper_research.simulation.simulations.initial_conditions import (
+            TCP_TO_MAGNET_POSE6,
+        )
+        tcp = np.asarray(args.start_tcp_pose6, dtype=float)
+        ori = tcp[3:6]
+        tcp_frame_off = np.array(TCP_TO_MAGNET_POSE6[:3])
+
+        # 2026-09-14: keep the TCP Z axis pinned near the user-verified,
+        # off-vessel reference (0.35782223424787696) -- only +/-30mm allowed,
+        # to bound how far a calibration pose can drift from the position
+        # already confirmed clear of the vessel/apparatus.
+        z_error_mm = 1e3 * abs(float(tcp[2]) - LINEAR_TCP_DEFAULT_Z_M)
+        if z_error_mm > 1e3 * LINEAR_TCP_Z_MARGIN_M + 1e-6:
+            raise ValueError(
+                f"--start-tcp-pose6's Z ({tcp[2]:.6f} m) is {z_error_mm:.1f} mm from the "
+                f"verified reference Z ({LINEAR_TCP_DEFAULT_Z_M} m) -- exceeds the "
+                f"+/-{1e3 * LINEAR_TCP_Z_MARGIN_M:.0f}mm bound. Refusing to build poses."
+            )
+
+        Rm = Rot.from_rotvec(ori).as_matrix()
+        magnet_ref = tcp[:3] + Rm @ tcp_frame_off
+        ref_dist_mm = 1e3 * float(np.linalg.norm(magnet_ref - beam_base))
+        print(f"[linear_tcp] start TCP -> magnet {np.round(magnet_ref, 4).tolist()}, "
+              f"{ref_dist_mm:.1f} mm from beam base (floor {args.min_radius_mm:.0f} mm), "
+              f"Z {z_error_mm:.1f}mm from reference (bound +/-{1e3 * LINEAR_TCP_Z_MARGIN_M:.0f}mm)")
+        if ref_dist_mm < args.min_radius_mm - 1e-6:
+            print(f"[WARN] start-tcp-pose6's magnet position is CLOSER than --min-radius-mm "
+                  f"-- proceeding anyway since this is a user-verified live position, but "
+                  f"double check this was intended.")
+        for dy_mm in args.linear_y_offsets_mm:
+            m = magnet_ref + np.array([0.0, dy_mm * 1e-3, 0.0])
+            poses.append(Pose(m, ori, "linear_tcp", f"linear_tcp_dy{dy_mm:+.1f}"))
+
     if not args.skip_combined:
         r = max(args.combined_radius_mm, args.min_radius_mm) * 1e-3
         for az in args.combined_azimuths_deg:
@@ -133,15 +196,46 @@ def build_poses(args, beam_base: np.ndarray) -> list[Pose]:
 # ==========================================================================
 # hardware + model setup
 # ==========================================================================
-def build_model():
+def build_model(jacobian_variant: str | None = None):
+    """Build the (camera mapper, forward-model adapter) pair used for the
+    live sweep and its analysis.
+
+    `jacobian_variant` ("contact" or "no_contact") is set EXPLICITLY on
+    ev2.CONFIG before building, and always printed -- never silently
+    inherited. This tool used to leave it at whatever ev2.CONFIG.
+    jacobian_variant happened to default to ("contact"), which pulls a stale
+    lumen radius out of manual_vessel_boundaries.json and silently caps/
+    distorts the model's lateral prediction. That confound produced a false
+    -alarm "insertion-length saturation" finding and, separately, a
+    contaminated E=32MPa stiffness fit on 2026-09-14 before being traced and
+    fixed here -- see CompositeBeamConfig.effective_youngs_modulus_pa's
+    docstring in beam_hardware_experiment_v2.py for the full story. Pass
+    "no_contact" explicitly for any free-space (off-wall / no-vessel)
+    calibration sweep.
+    """
     from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
     from proper_research.hardware import robotics_frame_measurement_validation as rfmv
     import proper_research.hardware.beam_hardware_experiment_v2 as ev2
 
+    if jacobian_variant is not None:
+        ev2.CONFIG.jacobian_variant = jacobian_variant
+    print(f"[build_model] jacobian_variant = {ev2.CONFIG.jacobian_variant!r}", flush=True)
+
     with _quiet():
         b = ev2._base_module()
         b.configure_bounds_beam_paths(ev2.CONFIG)
-        mapper = NewFrameTipMapper(StateStreamConfig(exposure=29.0))
+        # marker_min_count=2: this tool routinely runs short-insertion
+        # (<~25mm, sometimes down to 15mm) calibration sweeps where only the
+        # base+tip markers are visible, no mag_start/tangent_start. Safe here
+        # (unlike live control) since nothing downstream of this tool's own
+        # analysis needs a real measured tangent -- position/slope fits only
+        # use tip_position_m. 2026-09-14: found live, by re-running this
+        # exact comprehensive campaign after fixing a physical camera
+        # obstruction and seeing EVERY length still fail with 0/N valid
+        # frames despite the beam being clearly visible in a raw frame --
+        # traced to this default (3) never having been lowered here even
+        # though the marker_min_count/marker_max_count fields existed.
+        mapper = NewFrameTipMapper(StateStreamConfig(exposure=29.0, marker_min_count=2))
         lumen = rfmv.build_lumen_in_shared_frames(mapper.manual_frame, mapper.calibration, mapper.T_R_B)
         mbr = rfmv.model_base_rotation_from_beam(
             np.asarray(mapper.T_R_B.rotation[:, 0]), mapper.T_R_B.rotation[:, 2]
@@ -184,6 +278,24 @@ def run_sweep(args) -> Path:
 
     pivot_point, _, L0_default, _ = make_initial_poses()
     beam_base = np.asarray(pivot_point[:3], dtype=float)
+    if getattr(args, "beam_base_z_override", None) is not None:
+        # 2026-09-14: override just the Z component of beam_base (X/Y
+        # unchanged) -- used to reconcile the arc/dipole pose-construction
+        # reference (historically beam_base[2] from make_initial_poses(),
+        # ~-0.017m) with the separately, more carefully verified TCP Z
+        # reference (LINEAR_TCP_DEFAULT_Z_M=0.35782223424787696m) used for
+        # the --start-tcp-pose6/linear_tcp block. The two are NOT the same
+        # physical quantity (TCP Z vs. beam-holder pivot Z) so the override
+        # value must be computed via the TCP->magnet offset transform, not
+        # passed as the raw TCP Z -- see the session's derivation: TCP_Z_ref
+        # + (R(REF_ORI) @ TCP_TO_MAGNET_POSE6[:3])[2] = ~0.0161m, a +32.7mm
+        # lift vs. the untouched beam_base[2]. Applied here (not just to
+        # pose construction) so the exclusion-radius safety check stays
+        # centered on the SAME point as the poses it's protecting.
+        old_z = beam_base[2]
+        beam_base = np.array([beam_base[0], beam_base[1], float(args.beam_base_z_override)])
+        print(f"[beam_base] Z override: {old_z:.6f} -> {beam_base[2]:.6f} "
+              f"({1e3*(beam_base[2]-old_z):+.1f} mm)")
     ins_m = (args.insertion_mm * 1e-3) if args.insertion_mm else L0_default
     dh = urik.corrected_dh_from_config(urik.CONFIG)
     tcp_frame_off = np.array(TCP_TO_MAGNET_POSE6[:3])
@@ -199,7 +311,26 @@ def run_sweep(args) -> Path:
         )
         return np.array(r.q_rad), r.converged, r.final_position_error_m
 
-    mapper, adapter = build_model()
+    def magnet_of_q(q):
+        T = urik.forward_kinematics(np.asarray(q, dtype=float), dh, None).T_R_target
+        return T[:3, 3] + T[:3, :3] @ tcp_frame_off
+
+    def path_clears_radius(q_from, q_to, min_radius_m, n_samples=20):
+        """Check every joint-space-interpolated waypoint between two joint
+        configurations, not just the endpoints -- move_j's Cartesian path is
+        not a straight line and is not guaranteed to stay outside the
+        exclusion radius even when both endpoints do. Returns
+        (clear, worst_distance_m)."""
+        q_from = np.asarray(q_from, dtype=float)
+        q_to = np.asarray(q_to, dtype=float)
+        worst = np.inf
+        for t in np.linspace(0.0, 1.0, n_samples):
+            q_mid = q_from + t * (q_to - q_from)
+            d = float(np.linalg.norm(magnet_of_q(q_mid) - beam_base))
+            worst = min(worst, d)
+        return worst >= min_radius_m, worst
+
+    mapper, adapter = build_model(jacobian_variant=getattr(args, "jacobian_variant", None))
     T_R_B = mapper.T_R_B
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -209,7 +340,7 @@ def run_sweep(args) -> Path:
     (out_dir / "config.json").write_text(json.dumps(
         {k: v for k, v in vars(args).items()}, indent=2))
 
-    scfg = StateStreamConfig(exposure=29.0)
+    scfg = StateStreamConfig(exposure=29.0, marker_min_count=2)  # see build_model()'s comment
     camera = CameraSource(
         CameraConfig(cam_index=0, exposure=29.0, image_filename="/dev/shm/calib_sweep.png",
                     roi_polygon_path=scfg.roi_polygon_path, manual_boundary_path=scfg.manual_boundary_path,
@@ -238,12 +369,30 @@ def run_sweep(args) -> Path:
         adv.start()
         time.sleep(2.5)
         print(f"[beam] setting length -> {1e3 * ins_m:.0f} mm")
-        for it in range(10):
+        # 2026-09-14: was range(10) -- found live (lifted-base 30mm run) that
+        # the advancer can get stuck making near-zero progress for many
+        # iterations in a row (51.5->51.5->51.3->...->51.5mm across 9
+        # iterations despite repeated -4mm commands) before suddenly moving
+        # on a later iteration -- looks like the per-iteration feedback wait
+        # (commands_in_flight==0 + residual<0.166mm) can exit before the
+        # advancer has actually started responding to a large jump, wasting
+        # iterations rather than genuinely failing to converge. Raised the
+        # budget so a slow start doesn't starve real convergence; the
+        # early-break on abs(err_mm)<0.7 keeps normal (fast-converging) runs
+        # just as quick as before.
+        for it in range(25):
             tb, nf = cam_tipB()
             if tb is None:
                 print("[beam] no camera; skipping length set")
                 break
-            L = float(np.linalg.norm(tb[:2]))
+            # 2026-09-14: use the FULL 3D tip distance, not just in-plane
+            # (B.x,B.y) -- the XY-only measurement under-counts true arc
+            # length whenever there's real out-of-plane (blind axis) curl,
+            # which would make this closed loop over-insert to compensate.
+            # Validated against an isolated insertion-length check (fixed
+            # TCP_TARGET pose, 10-50mm, max error 0.37mm using this 3D
+            # measure) -- see close_loop_logs/insertion_calibration_2026-09-14.json.
+            L = float(np.linalg.norm(tb[:3]))
             err_mm = 1e3 * (ins_m - L)
             print(f"[beam]  iter {it}: {1e3 * L:.1f} mm (target {1e3 * ins_m:.0f}, err {err_mm:+.1f})")
             if abs(err_mm) < 0.7:
@@ -298,25 +447,57 @@ def run_sweep(args) -> Path:
                 print(f"  {pose.label}: IK reject (conv={conv} err={1e3 * perr:.1f}mm "
                       f"dq={np.max(np.abs(qt - seed)):.2f})")
                 continue
-            for attempt in (1, 2):
-                if not ready():
+
+            # move_j's Cartesian path is not a straight line and is not
+            # guaranteed to stay outside the exclusion radius even when both
+            # endpoints (current + target) individually clear it. Check the
+            # whole interpolated path; if it dips inside, route through the
+            # known-safe reference pose (q_ref, verified safe by construction
+            # -- it's where the robot already is) instead of moving directly.
+            min_r_m = args.min_radius_mm * 1e-3
+            direct_clear, direct_worst = path_clears_radius(seed, qt, min_r_m)
+            if direct_clear:
+                waypoints = [qt]
+            else:
+                leg1_clear, leg1_worst = path_clears_radius(seed, q_ref, min_r_m)
+                leg2_clear, leg2_worst = path_clears_radius(q_ref, qt, min_r_m)
+                if leg1_clear and leg2_clear:
+                    print(f"  {pose.label}: direct path dips to {1e3*direct_worst:.1f}mm "
+                          f"(floor {args.min_radius_mm}mm) -- routing via q_ref instead")
+                    waypoints = [q_ref, qt]
+                else:
+                    print(f"  {pose.label}: NO SAFE PATH found (direct worst "
+                          f"{1e3*direct_worst:.1f}mm, via-q_ref worst "
+                          f"{1e3*min(leg1_worst, leg2_worst):.1f}mm) -- SKIP, floor {args.min_radius_mm}mm")
+                    continue
+
+            move_failed = False
+            for waypoint_q in waypoints:
+                for attempt in (1, 2):
+                    if not ready():
+                        try:
+                            r.reconnect()
+                        except Exception:
+                            pass
+                        time.sleep(0.5)
                     try:
-                        r.reconnect()
-                    except Exception:
-                        pass
-                    time.sleep(0.5)
-                try:
-                    r.move_j(list(qt), speed=0.3, acceleration=0.3)
-                    break
-                except Exception as exc:
-                    print(f"  {pose.label}: move attempt{attempt} {exc!r}")
-                    if attempt == 2:
+                        r.move_j(list(waypoint_q), speed=0.3, acceleration=0.3)
                         break
-                    try:
-                        r.reconnect()
-                    except Exception:
-                        pass
-                    time.sleep(0.6)
+                    except Exception as exc:
+                        print(f"  {pose.label}: move attempt{attempt} {exc!r}")
+                        if attempt == 2:
+                            move_failed = True
+                            break
+                        try:
+                            r.reconnect()
+                        except Exception:
+                            pass
+                        time.sleep(0.6)
+                if move_failed:
+                    break
+            if move_failed:
+                print(f"  {pose.label}: move failed after retries, skipping this pose")
+                continue
             time.sleep(0.4)
             try:
                 qc = np.array(r.get_joints())
@@ -577,13 +758,53 @@ def _arguments() -> argparse.Namespace:
     p.add_argument("--dipole-yaw-deg", type=float, nargs="+", default=[0, 10, 20, -10, -20])
     p.add_argument("--dipole-pitch-deg", type=float, nargs="+", default=[15, -15])
 
+    p.add_argument("--linear-y-offsets-mm", type=float, nargs="+", default=[],
+                   help="straight-line +Y translation block (NOT an arc): magnet "
+                        "held at --linear-radius-mm behind the beam base "
+                        "(coaxial), then offset by each of these values along "
+                        "+Y (robot frame R). Empty (default) = block skipped. "
+                        "Purpose: isolate measured-vs-model tip displacement "
+                        "per mm of pure Y translation, to check whether the "
+                        "beam needs a stiffer effective modulus (model predicts "
+                        "MORE deflection than measured) or is already too stiff "
+                        "(model predicts LESS).")
+    p.add_argument("--linear-radius-mm", type=float, default=None,
+                   help="standoff distance for --linear-y-offsets-mm (default: "
+                        "--min-radius-mm).")
+    p.add_argument("--start-tcp-pose6", type=float, nargs=6, default=None,
+                   metavar=("X", "Y", "Z", "RX", "RY", "RZ"),
+                   help="use --linear-y-offsets-mm's dy values relative to THIS "
+                        "live TCP pose's magnet position instead of the "
+                        "beam_base-relative radius/azimuth construction -- for a "
+                        "manually-verified position (e.g. lifted off the vessel "
+                        "wall) where the caller already knows it's safe. "
+                        "Overrides --linear-radius-mm.")
     p.add_argument("--skip-combined", action="store_true")
     p.add_argument("--combined-radius-mm", type=float, default=225.0)
     p.add_argument("--combined-azimuths-deg", type=float, nargs="+", default=[-25, 0, 25])
     p.add_argument("--combined-yaw-deg", type=float, nargs="+", default=[-15, 0, 15])
 
+    p.add_argument("--jacobian-variant", choices=["contact", "no_contact"], default=None,
+                    help="Explicit contact model for build_model() (default: leave "
+                         "ev2.CONFIG.jacobian_variant as configured, but always print "
+                         "which mode is active). Pass 'no_contact' for free-space "
+                         "(off-wall / no-vessel) sweeps to avoid the stale-lumen "
+                         "confound documented in build_model()'s docstring.")
+    p.add_argument("--beam-base-z-override", type=float, default=None,
+                    help="override beam_base's Z component only (X/Y unchanged) "
+                         "for BOTH pose construction and the exclusion-radius "
+                         "safety check. Use to reconcile with the separately-"
+                         "verified TCP Z reference -- compute via TCP_Z_ref + "
+                         "(R(REF_ORI) @ TCP_TO_MAGNET_POSE6[:3])[2], not the raw "
+                         "TCP Z (they are different physical quantities).")
     p.add_argument("--out-dir", default=None)
     p.add_argument("--analyze-only", default=None)
+    p.add_argument("--skip-analysis", action="store_true",
+                    help="save live data but skip the post-sweep analysis "
+                         "(slope/RMS fit + distance-law hypothesis check) -- "
+                         "useful when running several lengths back-to-back "
+                         "and doing one combined analysis pass afterward "
+                         "instead of re-analyzing after every single length.")
     return p.parse_args()
 
 
@@ -593,7 +814,8 @@ def main() -> None:
         analyse(Path(args.analyze_only))
         return
     out_dir = run_sweep(args)
-    analyse(out_dir)
+    if not args.skip_analysis:
+        analyse(out_dir)
 
 
 if __name__ == "__main__":

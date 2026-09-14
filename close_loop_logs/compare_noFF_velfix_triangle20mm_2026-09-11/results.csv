@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,close_loop_logs/compare_noFF_velfix_triangle20mm_2026-09-11/runs/inv_rep1_20260911T162902Z,path_complete,243,222,3.989635511361096,3.365567567567568,8.636,7.298149999999999,0.16971428571428573,0.092,45.4889

@@ -223,6 +223,17 @@ class PathFollowConfig:
     # inverse-Jacobian's directional-damping behaviour. 0.0 = disabled.
     mpc_directional_damping: float = 0.0
     mpc_directional_damping_floor: float = 0.01
+    # 2026-09-14: SOFT wall-avoidance for real-vessel work (see
+    # BeamOutputMPCConfig.wall_avoidance_gain's docstring for the full
+    # design -- soft, not a hard constraint, since wall contact is
+    # sometimes necessary in a sharp vessel, not a failure). 0.0 (default)
+    # = disabled, identical behaviour to before this was added. Requires
+    # vessel_lumen_file when > 0 (the real digitized geometry the penalty
+    # is computed against -- see detect_blue.py::draw_vessel_lumen_for_planner).
+    mpc_wall_avoidance_gain: float = 0.0
+    vessel_lumen_file: str = ""
+    mpc_wall_avoidance_margin_mm: float = 0.5
+    mpc_wall_avoidance_beam_radius_mm: float = 1.0
     # 2026-09-12: convenience preset bundling two independent, complementary
     # fixes for MPC's FF hold-phase pathology (negative corr(|trim|,error),
     # see beam-lateral-authority-limit memory): (a) SPATIAL -- turn on
@@ -964,6 +975,42 @@ def main() -> None:
                     mpc_config,
                     solver_time_limit_s=float(cfg.mpc_solver_time_limit_s),
                 )
+            wall_kwargs: dict[str, Any] = {}
+            if float(cfg.mpc_wall_avoidance_gain) > 0.0:
+                if not cfg.vessel_lumen_file:
+                    raise ValueError(
+                        "mpc_wall_avoidance_gain > 0 requires --vessel-lumen-file "
+                        "(the real digitized vessel geometry the penalty is "
+                        "computed against)."
+                    )
+                from proper_research.vision.detect_blue import (
+                    load_vessel_lumen_robot_frame,
+                )
+                lumen_C_wall, lumen_R_wall, _ = load_vessel_lumen_robot_frame(
+                    cfg.vessel_lumen_file
+                )
+                # Queried LIVE against the measured beam position each tick
+                # (see BeamOutputMPCConfig.wall_avoidance_gain's docstring for
+                # why -- the reference path IS the centreline, so a normal
+                # precomputed from it is degenerate); the config just carries
+                # the real geometry through.
+                wall_kwargs = {
+                    "wall_avoidance_gain": float(cfg.mpc_wall_avoidance_gain),
+                    "wall_avoidance_lumen_C": lumen_C_wall,
+                    "wall_avoidance_lumen_R": lumen_R_wall,
+                    "wall_avoidance_beam_radius_m": (
+                        float(cfg.mpc_wall_avoidance_beam_radius_mm) * 1.0e-3
+                    ),
+                    "wall_avoidance_margin_m": (
+                        float(cfg.mpc_wall_avoidance_margin_mm) * 1.0e-3
+                    ),
+                }
+                print(
+                    f"[path] wall-avoidance ON: gain={cfg.mpc_wall_avoidance_gain:g}, "
+                    f"{len(lumen_C_wall)} lumen samples, queried live each tick "
+                    f"(margin={cfg.mpc_wall_avoidance_margin_mm:g}mm, "
+                    f"beam_radius={cfg.mpc_wall_avoidance_beam_radius_mm:g}mm)"
+                )
             s = float(cfg.mpc_position_error_scale_mm) * 1.0e-3
             beam_config = BeamOutputMPCConfig(
                 position_error_scale_m=(s, s, s),
@@ -971,6 +1018,7 @@ def main() -> None:
                 use_dare_terminal_cost=bool(cfg.mpc_use_dare_terminal_cost),
                 directional_damping=float(cfg.mpc_directional_damping),
                 directional_damping_floor=float(cfg.mpc_directional_damping_floor),
+                **wall_kwargs,
             )
 
         # Optional externally-supplied Jacobian schedule (shape [samples, 3, 7]).

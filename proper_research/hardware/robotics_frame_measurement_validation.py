@@ -125,11 +125,11 @@ class FrameValidationConfig:
     # delta" line and camera_overlay.png (measured cyan vs model magenta must
     # overlie) before changing these.
     saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (-1.0, 1.0)
-    # 30 mm matches the rest of the codebase (bounds_beam.compute_mm_per_pixel
-    # default and its use of this same calibration_points.json).  Only change
-    # this if the two saved calibration points were physically clicked at a
-    # different known separation.
-    known_calibration_distance_mm: float = 38.0
+    # 2026-09-14: re-calibrated against a 1cm-square checkerboard grid
+    # (diagonal baseline) -- see calibration_points.json's "source" field.
+    # Only change this if the two saved calibration points were physically
+    # re-clicked/re-derived at a different known separation.
+    known_calibration_distance_mm: float = 80.62257748298549
 
     # The planar calibration origin is manual_frame["base_px"], which rarely
     # matches the detected base red marker exactly (a few px = ~1 mm).  That

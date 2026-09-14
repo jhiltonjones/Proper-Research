@@ -53,6 +53,8 @@ def _shape_corners(
     *,
     triangle_apex_at_start: bool = False,
     triangle_base_m: float | None = None,
+    rectangle_depth_m: float | None = None,
+    s_curve_length_m: float | None = None,
 ) -> np.ndarray:
     """2-D corners in the (u, v) bend plane, first corner at the origin.
 
@@ -64,10 +66,20 @@ def _shape_corners(
     start, and the lateral spread grows gradually with insertion instead of
     being demanded up front.  ``triangle_base_m`` sets the full v-width of that
     base (default: ``size_m``).
+
+    ``rectangle``: ``size_m`` is the WIDTH (v-extent, lateral -- the dimension
+    that actually demands magnetic steering authority, same convention as
+    circle's diameter); ``rectangle_depth_m`` is the u-extent (axial/insertion,
+    the cheaper direction). Defaults to a square (depth = width) if unset.
     """
     s = float(size_m)
     if shape == "square":
         pts = [(0.0, 0.0), (s, 0.0), (s, s), (0.0, s)]
+    elif shape == "rectangle":
+        depth = float(rectangle_depth_m) if rectangle_depth_m is not None else s
+        # first edge along +u (depth) from the zero-deflection start, same
+        # tangent-safe-start convention as every other shape here.
+        pts = [(0.0, 0.0), (depth, 0.0), (depth, s), (0.0, s)]
     elif shape == "triangle":
         if triangle_apex_at_start:
             b = float(triangle_base_m) if triangle_base_m is not None else s
@@ -94,8 +106,39 @@ def _shape_corners(
         n = 256
         theta = np.linspace(0.0, 2.0 * math.pi, n, endpoint=False)
         pts = list(zip(r * np.sin(theta), r - r * np.cos(theta)))
+    elif shape == "s_curve":
+        # Two opposite-sign raised-cosine lobes over axial length L
+        # (--s-curve-length-mm; default 2*size_mm), amplitude s (--size-mm,
+        # same "lateral extent" convention as circle/rectangle). Genuinely
+        # different test case from every other shape here: it demands
+        # bending ONE way then the OTHER over a smooth, continuous curve
+        # (never a fixed rotational sense like the circle, never a sharp
+        # point turn like the triangle/rectangle corners) -- and u is
+        # STRICTLY MONOTONIC (never retracts), the simplest/safest insertion
+        # profile of any shape tried so far.
+        #
+        # v(u) = +(s/2)(1-cos(4*pi*u/L))  for u in [0, L/2]  (rises 0->s->0)
+        #        -(s/2)(1-cos(4*pi*(u-L/2)/L)) for u in [L/2, L]  (0->-s->0)
+        #
+        # dv/du = 0 at u = 0, L/2, L (tangent exactly +-u at all three
+        # points, in particular a tangent-safe start matching every other
+        # shape's convention), continuous first derivative throughout (no
+        # corner discontinuity anywhere -- unlike triangle/square/rectangle).
+        L = float(s_curve_length_m) if s_curve_length_m is not None else 2.0 * s
+        n = 256
+        u = np.linspace(0.0, L, n)
+        half = L / 2.0
+        v = np.where(
+            u <= half,
+            0.5 * s * (1.0 - np.cos(4.0 * math.pi * u / L)),
+            -0.5 * s * (1.0 - np.cos(4.0 * math.pi * (u - half) / L)),
+        )
+        pts = list(zip(u, v))
+        closed = False  # inherently open; --closed is ignored for this shape
     else:
-        raise ValueError(f"--shape must be square|triangle|line|circle; got {shape!r}")
+        raise ValueError(
+            f"--shape must be square|rectangle|triangle|line|circle|s_curve; got {shape!r}"
+        )
     corners = np.asarray(pts, dtype=float)
     if closed and shape != "line":
         corners = np.vstack([corners, corners[:1]])
@@ -151,6 +194,8 @@ def _build_shape_centreline(
     v_axis: np.ndarray,
     triangle_apex_at_start: bool = False,
     triangle_base_m: float | None = None,
+    rectangle_depth_m: float | None = None,
+    s_curve_length_m: float | None = None,
 ) -> np.ndarray:
     corners = _shape_corners(
         shape,
@@ -158,6 +203,8 @@ def _build_shape_centreline(
         closed,
         triangle_apex_at_start=triangle_apex_at_start,
         triangle_base_m=triangle_base_m,
+        rectangle_depth_m=rectangle_depth_m,
+        s_curve_length_m=s_curve_length_m,
     )
     path2d = _resample(corners, ds_m)
     # Round the corners with a fixed, light smoothing pass -- window set by
@@ -222,9 +269,17 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
 # ---------------------------------------------------------------------------
 def _arguments() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--shape", choices=("square", "triangle", "line", "circle"), default="square")
+    p.add_argument("--shape", choices=("square", "rectangle", "triangle", "line", "circle", "s_curve"),
+                   default="square")
     p.add_argument("--size-mm", type=float, default=3.0,
-                   help="edge length / height (square, triangle, line); DIAMETER (circle)")
+                   help="edge length / height (square, triangle, line); DIAMETER (circle); "
+                        "WIDTH i.e. lateral/v-extent (rectangle -- see --rect-depth-mm); "
+                        "AMPLITUDE (s_curve -- see --s-curve-length-mm)")
+    p.add_argument("--rect-depth-mm", type=float, default=None,
+                   help="rectangle only: depth (axial/u-extent). Default = --size-mm (a square).")
+    p.add_argument("--s-curve-length-mm", type=float, default=None,
+                   help="s_curve only: total axial length spanning both lobes. "
+                        "Default = 2 * --size-mm.")
     p.add_argument("--triangle-apex-at-start", action="store_true",
                    help="triangle only: put the sharp apex at the beam tip's "
                         "start (zero deflection) and the base at u=+size-mm, so "
@@ -356,6 +411,12 @@ def main() -> None:
             args.triangle_base_mm * 1.0e-3
             if args.triangle_base_mm is not None
             else None
+        ),
+        rectangle_depth_m=(
+            args.rect_depth_mm * 1.0e-3 if args.rect_depth_mm is not None else None
+        ),
+        s_curve_length_m=(
+            args.s_curve_length_mm * 1.0e-3 if args.s_curve_length_mm is not None else None
         ),
     )
     perimeter = float(np.sum(np.linalg.norm(np.diff(centreline, axis=0), axis=1)))

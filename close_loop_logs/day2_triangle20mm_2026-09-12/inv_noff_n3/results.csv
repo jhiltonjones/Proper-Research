@@ -1,0 +1,4 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep1_20260912T102409Z,path_complete,243,222,4.50931094744205,3.862977477477477,9.432,7.76295,0.4933333333333333,0.631,42.0046
+naive_inverse_jacobian,inv,2,close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep2_20260912T102544Z,path_complete,244,222,4.528453508172042,3.788689189189189,9.752,8.385449999999999,0.1705,0.128,51.6049
+naive_inverse_jacobian,inv,3,close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep3_20260912T102728Z,path_complete,244,222,4.542921378711408,3.798382882882883,9.993,8.510649999999998,0.15840909090909092,0.14,42.3871

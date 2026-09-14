@@ -199,6 +199,38 @@ class BeamOutputMPCConfig:
     # directional_damping > 0.
     directional_damping_floor: float = 0.01
 
+    # 2026-09-14: SOFT wall-avoidance for real-vessel work. Deliberately soft,
+    # not a hard constraint: in a sharp vessel, wall contact is sometimes
+    # unavoidable and part of the intended navigation, not a failure -- a hard
+    # constraint would make the QP infeasible exactly when contact is
+    # genuinely needed. Instead this adds EXTRA cost weight, per horizon
+    # step, on specifically the OUTWARD-normal component of tracking error
+    # -- the same mathematical pattern as directional_damping above (extra
+    # anisotropic weight added to the QP Hessian/linear cost every tick),
+    # just pointed at the wall normal instead of the Jacobian's near-null
+    # singular direction, and built in OUTPUT (tip-position) space via G
+    # rather than input (joint) space.
+    #
+    # The outward normal is computed LIVE, from the actually-measured beam
+    # position each tick -- NOT precomputed from the reference path. The
+    # reference path *is* the vessel centreline (that is what the offline
+    # planner tracks), so a "direction from centreline to reference point"
+    # is degenerate (distance ~0) at essentially every sample; the only
+    # well-defined outward direction for a tube is the one the beam is
+    # ACTUALLY deviating along right now. The same live-measured direction
+    # is applied uniformly across the horizon window (a short ~1.5cm
+    # window; the wall direction does not change fast enough over that
+    # span to justify a separate per-step query). 0.0 (default) = disabled,
+    # no change to any other run.
+    wall_avoidance_gain: float = 0.0
+    # Real vessel geometry (robot frame R) the live wall-normal query is run
+    # against -- lumen_C (M, 3), lumen_R (M,). Required when
+    # wall_avoidance_gain > 0.
+    wall_avoidance_lumen_C: Any = None
+    wall_avoidance_lumen_R: Any = None
+    wall_avoidance_beam_radius_m: float = 0.001
+    wall_avoidance_margin_m: float = 0.0005
+
     def validate(self) -> None:
         scale = _finite_vector(
             self.position_error_scale_m, 3, "position_error_scale_m"
@@ -231,6 +263,15 @@ class BeamOutputMPCConfig:
             self.directional_damping_floor <= 0.0
         ):
             raise ValueError("directional_damping_floor must be finite and > 0.")
+        if not np.isfinite(self.wall_avoidance_gain) or self.wall_avoidance_gain < 0.0:
+            raise ValueError("wall_avoidance_gain must be finite and >= 0.")
+        if self.wall_avoidance_gain > 0.0 and (
+            self.wall_avoidance_lumen_C is None or self.wall_avoidance_lumen_R is None
+        ):
+            raise ValueError(
+                "wall_avoidance_gain > 0 requires wall_avoidance_lumen_C and "
+                "wall_avoidance_lumen_R (the real digitized vessel geometry)."
+            )
 
     @property
     def trust_region(self) -> Array | None:
@@ -537,6 +578,16 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         self.reference_position_jacobians = jacobians.copy()
         self.nominal_reference_positions_m = nominal_positions.copy()
         self._filtered_output_residual: Array | None = None
+
+        if beam_config.wall_avoidance_gain > 0.0:
+            from proper_research.simulation.magnetic_beam.contact import LumenQuery
+
+            self._wall_query = LumenQuery(
+                np.asarray(beam_config.wall_avoidance_lumen_C, dtype=float),
+                np.asarray(beam_config.wall_avoidance_lumen_R, dtype=float),
+            )
+        else:
+            self._wall_query = None
 
         scale = _finite_vector(
             beam_config.position_error_scale_m, 3, "position_error_scale_m"
@@ -891,6 +942,47 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             blocks.append(gain * m7)
         return sp.block_diag(blocks, format="csc").toarray()
 
+    def _wall_avoidance_qp_terms(
+        self, *, beam_position: Array, G: Array, constant_error: Array, n_steps: int
+    ) -> tuple[Array, Array]:
+        """Extra Hessian/linear-cost terms penalising outward-normal error.
+
+        Soft, not a hard constraint (see BeamOutputMPCConfig.wall_avoidance_gain
+        docstring for why, and for why the outward normal is queried LIVE
+        against the actually-measured ``beam_position`` rather than
+        precomputed from the reference path, which is degenerate for this
+        purpose). Penalises
+        ``gain * weight * (n . (predicted_tip_k - desired_position_k))^2``
+        at every horizon step k, using the SAME live-measured normal ``n``
+        and proximity ``weight`` across the whole (short, ~1.5cm) horizon
+        window. Returns zero contribution when the beam is (near-)exactly on
+        the centreline, where the outward direction is undefined.
+
+        Same construction as the existing Qpbar tracking-cost term
+        (hessian = 2*G.T@Q@G, linear = 2*G.T@Q@constant_error), with
+        Q = block_diag(gain * weight * outer(n, n)) repeated N times -- a
+        rank-1 PSD block per horizon step instead of Qpbar's isotropic one.
+        """
+        zero = (np.zeros_like(G.T @ G), np.zeros(G.shape[1]))
+        if self._wall_query is None:
+            return zero
+        delta, r_local, closest_point = self._wall_query.closest(beam_position)
+        if delta <= 1.0e-6:
+            return zero
+        n = (np.asarray(beam_position, dtype=float) - closest_point) / delta
+        r_safe = max(
+            float(r_local)
+            - float(self.beam_config.wall_avoidance_beam_radius_m)
+            - float(self.beam_config.wall_avoidance_margin_m),
+            1.0e-6,
+        )
+        weight = float(self.beam_config.wall_avoidance_gain) / (r_safe ** 2)
+        Qwall_step = weight * np.outer(n, n)
+        Qwall = sp.block_diag([Qwall_step] * n_steps, format="csc").toarray()
+        hessian = 2.0 * (G.T @ Qwall @ G)
+        linear = 2.0 * (G.T @ Qwall @ constant_error)
+        return hessian, linear
+
     def _beam_prediction_terms(
         self,
         *,
@@ -931,6 +1023,7 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         previous_input: Array,
         control_index: int,
         estimated_residual: Array,
+        beam_position: Array | None = None,
     ) -> tuple[Array, Array, dict[str, Array]]:
         state_reference = self.reference.state_window(control_index, self.N)
         input_reference = self.reference.input_window(control_index, self.N)
@@ -957,6 +1050,13 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
         if float(self.beam_config.directional_damping) > 0.0:
             indices = self._reference_indices(control_index, future=True)
             hessian = hessian + 2.0 * self._directional_damping_hessian_block(indices)
+        if float(self.beam_config.wall_avoidance_gain) > 0.0 and beam_position is not None:
+            wall_hessian, wall_linear = self._wall_avoidance_qp_terms(
+                beam_position=beam_position, G=G, constant_error=constant_error,
+                n_steps=self.N,
+            )
+            hessian = hessian + wall_hessian
+            linear = linear + wall_linear
         if self.beam_config.use_dare_terminal_cost:
             terminal_hessian, terminal_linear = (
                 self._terminal_riccati_qp_terms(
@@ -1126,6 +1226,7 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             previous_input=previous,
             control_index=control_index,
             estimated_residual=estimated,
+            beam_position=beam_position,
         )
         input_reference = beam_terms["input_reference"]
         lower, upper = self._constraint_bounds_with_trust_region(

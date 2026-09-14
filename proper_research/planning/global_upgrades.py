@@ -58,17 +58,23 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import numpy as np
-from scipy.sparse import block_diag, csc_matrix, lil_matrix
+from scipy.sparse import block_diag, csc_matrix, lil_matrix, vstack as sparse_vstack
 
 try:  # the same dual import the global module uses
     from proper_research.planning.offline_inverse_configuration_head_exclusion import (
         CentrelinePath,
         _MagnetLumenExclusionConstraint,
+        _MagnetPositionProvider,
+        _MagnetZFloorConstraint,
+        _MagnetBaseExclusionConstraint,
     )
 except ModuleNotFoundError:  # pragma: no cover - self-test path
     from offline_inverse_configuration_head_exclusion import (  # type: ignore
         CentrelinePath,
         _MagnetLumenExclusionConstraint,
+        _MagnetPositionProvider,
+        _MagnetZFloorConstraint,
+        _MagnetBaseExclusionConstraint,
     )
 
 Array = np.ndarray
@@ -189,6 +195,211 @@ class NodeExclusionConstraints:
             "minimum_margin_m": float(np.min(margins)) if margins else float("nan"),
             "all_satisfied": bool(np.all(satisfied)) if satisfied else True,
             "jacobian_source": self.jacobian_source,
+        }
+
+
+class NodeZFloorConstraints:
+    """The Layer-1 magnet Z-no-decrease constraint, evaluated at every global
+    node -- the Layer-2 analogue of ``NodeExclusionConstraints`` above.
+
+    2026-09-12: added after a live incident showed Layer 1's per-node
+    Z-floor constraint (``_MagnetZFloorConstraint`` in the head-exclusion
+    module) was NOT enough on its own -- Layer 2's global smoothing pass had
+    no such constraint at all and reintroduced Z-decreases (up to 3.3mm on
+    65% of samples) into the FINAL deployed plan, even though Layer 1's own
+    raw output was perfectly clean (0 violations). Same values()/jacobian()
+    vectorised shape as NodeExclusionConstraints, so it plugs into the same
+    NonlinearConstraint(lb=0, ub=inf) call sites.
+    """
+
+    def __init__(self, *, adapter: Any, state_min: Array, state_max: Array,
+                 node_count: int, z_floor_m: float,
+                 joint_step_rad: float = 1.0e-6, insertion_step_m: float = 1.0e-6) -> None:
+        shim = _ExclusionShimConfig(
+            source_magnet_lumen_exclusion_radius_m=1.0,  # unused by the provider
+            source_magnet_lumen_constraint_tolerance_m=1.0e-6,
+            require_analytical_magnet_position_jacobian=False,
+            magnet_jacobian_joint_step_rad=float(joint_step_rad),
+            magnet_jacobian_insertion_step_m=float(insertion_step_m),
+        )
+        self.node_count = int(node_count)
+        self.z_floor_m = float(z_floor_m)
+        self.constraints = [
+            _MagnetZFloorConstraint(
+                provider=_MagnetPositionProvider(
+                    adapter=adapter, state_min=state_min, state_max=state_max, config=shim,
+                ),
+                z_floor_m=self.z_floor_m,
+            )
+            for _ in range(self.node_count)
+        ]
+        self.jacobian_source = "magnet_z_floor"
+
+    def _states(self, x: Array) -> Array:
+        return np.asarray(x, dtype=float).reshape(self.node_count, 7)
+
+    def values(self, x: Array) -> Array:
+        states = self._states(x)
+        return np.asarray(
+            [c.value(states[i]) for i, c in enumerate(self.constraints)], dtype=float,
+        )
+
+    def jacobian(self, x: Array) -> Any:
+        states = self._states(x)
+        rows = [
+            csc_matrix(np.asarray(c.jacobian(states[i]), dtype=float).reshape(1, 7))
+            for i, c in enumerate(self.constraints)
+        ]
+        return block_diag(rows, format="csc")
+
+    def violation(self, x: Array) -> float:
+        return float(np.max(np.maximum(0.0, -self.values(x))))
+
+    def metrics(self, x: Array) -> dict[str, Any]:
+        states = self._states(x)
+        zs, margins, satisfied = [], [], []
+        for i, c in enumerate(self.constraints):
+            z, margin, ok = c.physical_metrics(states[i])
+            zs.append(z); margins.append(margin); satisfied.append(bool(ok))
+        return {
+            "z_floor_m": self.z_floor_m,
+            "z_m": np.asarray(zs, dtype=float),
+            "margin_m": np.asarray(margins, dtype=float),
+            "satisfied": np.asarray(satisfied, dtype=bool),
+            "minimum_margin_m": float(np.min(margins)) if margins else float("nan"),
+            "all_satisfied": bool(np.all(satisfied)) if satisfied else True,
+            "jacobian_source": self.jacobian_source,
+        }
+
+
+class NodeBaseExclusionConstraints:
+    """The Layer-1 magnet-to-beam-base exclusion, evaluated at every global
+    node -- the Layer-2 analogue of ``NodeExclusionConstraints`` above, using
+    a fixed point (the beam base) instead of the tip-path polyline. See
+    ``NodeZFloorConstraints`` for why this exists at Layer 2 too, not just
+    Layer 1: found live that a circle plan breached the documented >=230mm
+    floor at 214mm on 42% of samples in the FINAL (Layer-2-smoothed) plan.
+    """
+
+    def __init__(self, *, adapter: Any, state_min: Array, state_max: Array,
+                 node_count: int, base_m: Array, radius_m: float,
+                 joint_step_rad: float = 1.0e-6, insertion_step_m: float = 1.0e-6) -> None:
+        shim = _ExclusionShimConfig(
+            source_magnet_lumen_exclusion_radius_m=1.0,  # unused by the provider
+            source_magnet_lumen_constraint_tolerance_m=1.0e-6,
+            require_analytical_magnet_position_jacobian=False,
+            magnet_jacobian_joint_step_rad=float(joint_step_rad),
+            magnet_jacobian_insertion_step_m=float(insertion_step_m),
+        )
+        self.node_count = int(node_count)
+        self.radius_m = float(radius_m)
+        self.base_m = np.asarray(base_m, dtype=float).reshape(3)
+        self.constraints = [
+            _MagnetBaseExclusionConstraint(
+                provider=_MagnetPositionProvider(
+                    adapter=adapter, state_min=state_min, state_max=state_max, config=shim,
+                ),
+                base_m=self.base_m,
+                radius_m=self.radius_m,
+            )
+            for _ in range(self.node_count)
+        ]
+        self.jacobian_source = "magnet_base_exclusion"
+
+    def _states(self, x: Array) -> Array:
+        return np.asarray(x, dtype=float).reshape(self.node_count, 7)
+
+    def values(self, x: Array) -> Array:
+        states = self._states(x)
+        return np.asarray(
+            [c.value(states[i]) for i, c in enumerate(self.constraints)], dtype=float,
+        )
+
+    def jacobian(self, x: Array) -> Any:
+        states = self._states(x)
+        rows = [
+            csc_matrix(np.asarray(c.jacobian(states[i]), dtype=float).reshape(1, 7))
+            for i, c in enumerate(self.constraints)
+        ]
+        return block_diag(rows, format="csc")
+
+    def violation(self, x: Array) -> float:
+        return float(np.max(np.maximum(0.0, -self.values(x))))
+
+    def metrics(self, x: Array) -> dict[str, Any]:
+        states = self._states(x)
+        distances, margins, satisfied = [], [], []
+        for i, c in enumerate(self.constraints):
+            distance, margin, ok = c.physical_metrics(states[i])
+            distances.append(distance); margins.append(margin); satisfied.append(bool(ok))
+        return {
+            "radius_m": self.radius_m,
+            "distance_m": np.asarray(distances, dtype=float),
+            "margin_m": np.asarray(margins, dtype=float),
+            "satisfied": np.asarray(satisfied, dtype=bool),
+            "minimum_margin_m": float(np.min(margins)) if margins else float("nan"),
+            "all_satisfied": bool(np.all(satisfied)) if satisfied else True,
+            "jacobian_source": self.jacobian_source,
+        }
+
+
+class CompositeNodeConstraints:
+    """Combines multiple ``Node*Constraints``-shaped objects (each exposing
+    ``values(x)``/``jacobian(x)``/``violation(x)``/``metrics(x)`` over the
+    SAME ``node_count``) behind one identical interface, so every existing
+    call site in ``global_constrained_configuration_path.py`` that threads a
+    single ``exclusion`` object through keeps working completely unchanged.
+
+    ``metrics()``/``radius_m``/``jacobian_source`` report the lumen
+    sub-constraint's own values (the shape existing diagnostics expect); if
+    there is no lumen sub-constraint they fall back to a permissive
+    placeholder, same convention as ``_CompositeExclusionConstraint`` in the
+    head-exclusion module (Layer 1's equivalent of this class).
+    """
+
+    def __init__(self, *, lumen: "NodeExclusionConstraints | None" = None,
+                 z_floor: "NodeZFloorConstraints | None" = None,
+                 base: "NodeBaseExclusionConstraints | None" = None):
+        self._lumen = lumen
+        self._subs = [c for c in (lumen, z_floor, base) if c is not None]
+        if not self._subs:
+            raise ValueError("CompositeNodeConstraints built with no active sub-constraints.")
+        self._path_node_count = self._subs[0].node_count
+        for c in self._subs:
+            if c.node_count != self._path_node_count:
+                raise ValueError("All sub-constraints must share the same node_count.")
+        # NOTE: call sites in global_constrained_configuration_path.py use
+        # `exclusion.node_count` to size the NonlinearConstraint's lb/ub
+        # arrays, i.e. they expect it to equal len(values(x)) -- which, once
+        # more than one sub-constraint is stacked, is
+        # path_node_count * len(self._subs), NOT the number of path nodes.
+        # Exposing that total here (rather than the path node count) is what
+        # keeps every such call site correct without needing to touch them.
+        self.node_count = self._path_node_count * len(self._subs)
+
+    @property
+    def radius_m(self) -> float:
+        return self._lumen.radius_m if self._lumen is not None else float("nan")
+
+    @property
+    def jacobian_source(self) -> str:
+        return self._lumen.jacobian_source if self._lumen is not None else "z_floor_or_base_only"
+
+    def values(self, x: Array) -> Array:
+        return np.concatenate([c.values(x) for c in self._subs])
+
+    def jacobian(self, x: Array) -> Any:
+        return sparse_vstack([c.jacobian(x) for c in self._subs], format="csc")
+
+    def violation(self, x: Array) -> float:
+        return float(np.max(np.maximum(0.0, -self.values(x))))
+
+    def metrics(self, x: Array) -> dict[str, Any]:
+        if self._lumen is not None:
+            return self._lumen.metrics(x)
+        return {
+            "radius_m": float("nan"), "minimum_margin_m": float("nan"),
+            "all_satisfied": True, "jacobian_source": self.jacobian_source,
         }
 
 

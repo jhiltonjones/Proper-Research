@@ -1697,8 +1697,13 @@ unwrap_tip_angle = AngleUnwrapper()
 def order_beam_marker_candidates(candidates, pivot_hint=None):
     items = list(candidates)
 
-    if len(items) not in (3, 4):
-        raise ValueError(f"Expected 3 or 4 candidates, got {len(items)}")
+    # 2026-09-14: 2-marker case added for a short-insertion (<~25mm)
+    # calibration check, where only base+tip are visible (tangent_start /
+    # mag_start markers not yet clear of the advancer/sheath). Every
+    # existing caller still passes min_markers=3 by default, so this branch
+    # is opt-in, not a change to default behaviour.
+    if len(items) not in (2, 3, 4):
+        raise ValueError(f"Expected 2, 3, or 4 candidates, got {len(items)}")
 
     pts = [np.array(c["point"], dtype=np.float32) for c in items]
 
@@ -1720,9 +1725,13 @@ def order_beam_marker_candidates(candidates, pivot_hint=None):
 
     if len(ordered) == 4:
         base_c, mag_start_c, tangent_start_c, tip_c = ordered
-    else:
+    elif len(ordered) == 3:
         base_c, tangent_start_c, tip_c = ordered
         mag_start_c = None
+    else:  # 2: base + tip only, no tangent_start marker visible
+        base_c, tip_c = ordered
+        mag_start_c = None
+        tangent_start_c = None
 
     return base_c, mag_start_c, tangent_start_c, tip_c
 def signed_angle_between_vectors(v1, v2):

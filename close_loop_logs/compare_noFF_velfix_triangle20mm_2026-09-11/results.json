@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_noFF_velfix_triangle20mm_2026-09-11/runs/inv_rep1_20260911T162902Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 3.989635511361096,
+    "mean_track_mm": 3.365567567567568,
+    "max_track_mm": 8.636,
+    "p95_track_mm": 7.298149999999999,
+    "mean_hold_mm": 0.16971428571428573,
+    "final_mm": 0.092,
+    "duration_s": 45.4889
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_scurve10x20mm_2026-09-13/runs/openloop_x1_rep1_20260913T114139Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 3.52801678311843,
+    "mean_track_mm": 3.049589595375722,
+    "max_track_mm": 6.579,
+    "p95_track_mm": 6.2618,
+    "mean_hold_mm": 3.346733333333334,
+    "final_mm": 3.31
+  }
+]

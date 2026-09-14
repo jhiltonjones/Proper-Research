@@ -283,12 +283,29 @@ def build_planning_context(
         lumen_pivot_point=pivot_point,
         # Match the online prediction model (beam_hardware_experiment_v2 +
         # rfmv.build_forward_model_in_shared_frame): uniform-rod stiffness at the
-        # 2026-09-10 calibrated Young's modulus, the N52 900 A m^2 source moment
+        # calibrated Young's modulus, the N52 900 A m^2 source moment
         # (from parameters.default_magnet_params()), and the -6 deg dipole yaw
         # that reproduces the real beam's +0.7 mm pre-curl.  Refined against the
-        # corner sweep -> corner RMS 0.96 -> 0.25 mm.
+        # corner sweep -> corner RMS 0.96 -> 0.25 mm (2026-09-10), then
+        # re-calibrated 2026-09-14 against a +Y translation sweep at 32mm
+        # insertion, off the vessel wall (a near-wall sweep first suggested a
+        # much larger, unphysically-converging gap, traced to wall-friction
+        # contamination). That first off-wall fit (E=32MPa) was ITSELF later
+        # found to be contaminated by the contact-lumen confound (jacobian_
+        # variant left at its "contact" default, pulling a stale lumen radius
+        # from manual_vessel_boundaries.json) plus camera/insertion
+        # calibration drift -- see CompositeBeamConfig.effective_youngs_modulus_pa's
+        # docstring in beam_hardware_experiment_v2.py for the full story.
+        # Redone 2026-09-14 with camera + insertion calibration fixed and
+        # jacobian_variant="no_contact" explicit, at two insertion depths in
+        # true open space (32mm -> E=1.80MPa, 40mm -> E=3.20MPa, each
+        # individually slope-matched to ~0.997-0.998). Joint fit across both
+        # -> E=2.25MPa, which lands back near the ORIGINAL 2026-09-10 estimate
+        # (2.5MPa) -- the whole 3.0->20.0->32.0 MPa escalation was chasing the
+        # contact-lumen artifact, not a real stiffness change. Kept identical
+        # to the online model's value.
         use_physical_stiffness=True,
-        effective_youngs_modulus=3.0e6,
+        effective_youngs_modulus=2.25e6,
         source_dipole_yaw_deg=-6.0,
     )
 

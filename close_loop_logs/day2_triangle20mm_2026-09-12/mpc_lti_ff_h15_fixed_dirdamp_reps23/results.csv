@@ -1,0 +1,3 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_fixed_dirdamp_reps23/runs/lti_rep1_20260912T100348Z,path_complete,243,221,1.8487883019752052,1.435977375565611,3.846,3.386,0.7553636363636365,0.605,51.3566
+mpc_lti,lti,2,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_fixed_dirdamp_reps23/runs/lti_rep2_20260912T100533Z,path_complete,243,221,1.6532333806392032,1.362737556561086,3.273,2.855,0.385,0.134,42.0513

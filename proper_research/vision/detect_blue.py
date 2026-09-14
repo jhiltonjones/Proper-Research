@@ -4,6 +4,31 @@ import os
 import json
 
 MANUAL_VESSEL_BOUNDARY_FILE = "manual_vessel_boundaries.json"
+
+# manual_vessel_boundaries.json is NOT vessel-specific data -- it is the BEAM's
+# own frame-calibration artifact (base_px/ex_img/ey_img), loaded by
+# state_stream.py::NewFrameTipMapper to build the pixel->beam-plane (B) and
+# beam->robot (R) transforms the whole online stack uses. Never overwrite it
+# from a vessel-boundary click session. Vessel lumen geometry goes to its own
+# file instead -- see create_vessel_lumen_in_robot_frame / VESSEL_LUMEN_FILE.
+BEAM_FRAME_CALIBRATION_FILE = "/home/jack/Proper-Research/manual_vessel_boundaries.json"
+CALIBRATION_POINTS_FILE = "/home/jack/Proper-Research/calibration_points.json"
+VESSEL_LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame.json"
+
+# Must match StateStreamConfig's defaults (state_stream.py) exactly, or the
+# vessel geometry and the live-tracked beam tip land in different frames.
+# 2026-09-14: re-calibrated against a 1cm-square checkerboard grid (diagonal
+# baseline, 67 corner-to-corner spacings cross-checked) -- see
+# calibration_points.json's "source" field. Was 38.0 (hand-clicked
+# two-point estimate); the new value agrees with it to ~0.4% once measured
+# via the same (diagonal, not naively-averaged) method, so this is a
+# precision refinement, not a correction of a real error.
+_DEFAULT_KNOWN_CALIBRATION_DISTANCE_MM = 80.62257748298549
+_DEFAULT_SAVED_AXIS_CONVENTION = "image_cartesian"
+_DEFAULT_POSITIVE_AXIS_SIGNS = (-1.0, 1.0)
+_DEFAULT_BEAM_AXIAL_AXIS_R = (-1.0, 0.0, 0.0)
+_DEFAULT_BEAM_PLANE_NORMAL_AXIS_R = (0.0, 0.0, -1.0)
+_DEFAULT_T_ROBOT_BEAM_POSE6 = (0.525575, -0.670028, -0.016567, 0.0, -1.5707963, 0.0)
 def resample_polyline_by_arclength(points, n_samples=200):
     pts = np.asarray(points, dtype=float)
 
@@ -126,6 +151,126 @@ def build_lumen_from_manual_boundaries_with_frame(
     lumen_R_m = lumen_R_mm / 1000.0
 
     return lumen_C_m, lumen_R_m, lumen_C_mm, lumen_R_mm
+
+
+def create_vessel_lumen_in_robot_frame(
+    left_boundary_px,
+    right_boundary_px,
+    *,
+    manual_boundary_path=BEAM_FRAME_CALIBRATION_FILE,
+    calibration_points_path=CALIBRATION_POINTS_FILE,
+    known_calibration_distance_mm=_DEFAULT_KNOWN_CALIBRATION_DISTANCE_MM,
+    saved_axis_convention=_DEFAULT_SAVED_AXIS_CONVENTION,
+    positive_axis_signs=_DEFAULT_POSITIVE_AXIS_SIGNS,
+    beam_axial_axis_R=_DEFAULT_BEAM_AXIAL_AXIS_R,
+    beam_plane_normal_axis_R=_DEFAULT_BEAM_PLANE_NORMAL_AXIS_R,
+    T_robot_beam_pose6=_DEFAULT_T_ROBOT_BEAM_POSE6,
+):
+    """Convert clicked vessel-wall pixels into a lumen (centreline + radius)
+    in the ROBOT frame R -- the same frame the offline planner's ``pivot_point``
+    / forward kinematics use (see planner-legacy-frame-lock).
+
+    This reuses the EXACT SAME calibration chain ``state_stream.py``'s
+    ``NewFrameTipMapper`` uses for the live tip: pixels -> beam plane B (via
+    ``PlanarPixelCalibration``, built from the EXISTING beam-frame calibration
+    in ``manual_boundary_path`` + the pixel scale in ``calibration_points_path``)
+    -> robot frame R (via the fixed ``T_R_B`` rigid transform). Using anything
+    else here (a fresh local frame from new clicks, a hand-rolled px->mm
+    scale, ...) would put the vessel geometry in a DIFFERENT frame than the
+    live-tracked beam tip and every constraint the planner already enforces
+    (magnet-to-base exclusion, Z floor, ...) -- silently wrong, not just
+    imprecise.
+
+    ``left_boundary_px``/``right_boundary_px`` must be paired, equal-length,
+    full-frame pixel coordinates (e.g. the output of
+    ``create_vessel_geometry_from_clicks`` / ``centerline_to_offset_boundaries``).
+    Returns ``(lumen_C_m, lumen_R_m, provenance)``: ``lumen_C_m`` is (N, 3),
+    ``lumen_R_m`` is (N,), both in metres in frame R.
+    """
+    from proper_research.hardware.robotics_frame_measurement_validation import (
+        FrameTransform,
+        PlanarPixelCalibration,
+        beam_frame_rotation_from_axes,
+        compute_metres_per_pixel,
+    )
+
+    left_px = np.asarray(left_boundary_px, dtype=float)
+    right_px = np.asarray(right_boundary_px, dtype=float)
+    if left_px.shape != right_px.shape:
+        raise ValueError(
+            f"left/right boundary must be paired and equal length; got "
+            f"{left_px.shape} vs {right_px.shape}."
+        )
+
+    manual = load_manual_vessel_boundaries_with_frame(manual_boundary_path)
+    with open(calibration_points_path, "r", encoding="utf-8") as handle:
+        cal_points = json.load(handle)["points_px"]
+    metres_per_pixel = compute_metres_per_pixel(
+        cal_points[0], cal_points[1], known_calibration_distance_mm
+    )
+    calibration = PlanarPixelCalibration.from_basis_scale(
+        origin_px=manual["base_px"],
+        ex_saved=manual["ex_img"],
+        ey_saved=manual["ey_img"],
+        metres_per_pixel=metres_per_pixel,
+        saved_axis_convention=saved_axis_convention,
+        positive_axis_signs=positive_axis_signs,
+    )
+
+    rotation = beam_frame_rotation_from_axes(beam_axial_axis_R, beam_plane_normal_axis_R)
+    matrix = np.eye(4)
+    matrix[:3, :3] = rotation
+    matrix[:3, 3] = np.asarray(T_robot_beam_pose6, dtype=float)[:3]
+    T_R_B = FrameTransform("R", "B", matrix)
+
+    left_B = calibration.pixels_to_beam(left_px)   # (N, 3), z=0 by construction
+    right_B = calibration.pixels_to_beam(right_px)
+    left_R = T_R_B.apply_points(left_B)
+    right_R = T_R_B.apply_points(right_B)
+
+    lumen_C_m = 0.5 * (left_R + right_R)
+    lumen_R_m = 0.5 * np.linalg.norm(right_R - left_R, axis=1)
+
+    provenance = {
+        "manual_boundary_path": str(manual_boundary_path),
+        "calibration_points_path": str(calibration_points_path),
+        "metres_per_pixel": float(metres_per_pixel),
+        "known_calibration_distance_mm": float(known_calibration_distance_mm),
+        "saved_axis_convention": saved_axis_convention,
+        "positive_axis_signs": list(positive_axis_signs),
+        "beam_axial_axis_R": list(beam_axial_axis_R),
+        "beam_plane_normal_axis_R": list(beam_plane_normal_axis_R),
+        "T_robot_beam_pose6": list(T_robot_beam_pose6),
+    }
+    return lumen_C_m, lumen_R_m, provenance
+
+
+def save_vessel_lumen_robot_frame(lumen_C_m, lumen_R_m, provenance, path=VESSEL_LUMEN_FILE):
+    """Save a lumen (centreline + radius, robot frame R) for the offline
+    planner. Distinct from ``save_manual_vessel_boundaries_with_frame`` --
+    that one is pixel-space + the beam's OWN frame calibration and must not
+    be conflated with this, the actual planner-ready vessel geometry."""
+    data = {
+        "frame": "R",
+        "lumen_C_m": np.asarray(lumen_C_m, dtype=float).tolist(),
+        "lumen_R_m": np.asarray(lumen_R_m, dtype=float).tolist(),
+        "provenance": provenance,
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    return path
+
+
+def load_vessel_lumen_robot_frame(path=VESSEL_LUMEN_FILE):
+    with open(path, "r") as f:
+        data = json.load(f)
+    if data.get("frame") != "R":
+        raise ValueError(
+            f"{path} is not a robot-frame vessel lumen file (frame={data.get('frame')!r})."
+        )
+    lumen_C_m = np.asarray(data["lumen_C_m"], dtype=float)
+    lumen_R_m = np.asarray(data["lumen_R_m"], dtype=float)
+    return lumen_C_m, lumen_R_m, data.get("provenance", {})
 
 
 def resample_polyline_by_arclength_preserve_vertices(points, samples_per_segment=20):
@@ -1049,9 +1194,215 @@ def show_boundary_preview(
     cv2.imshow(window_name, vis)
     cv2.waitKey(1)
     return vis
+
+
+def draw_vessel_lumen_for_planner(
+    image_filename="focused_image.jpg",
+    save_path=VESSEL_LUMEN_FILE,
+    blue_roi_path="blue_roi_box.json",
+    manual_boundary_path=BEAM_FRAME_CALIBRATION_FILE,
+    calibration_points_path=CALIBRATION_POINTS_FILE,
+):
+    """Click a new vessel's walls (or centreline) on a photo and save a
+    planner-ready lumen (centreline + radius, ROBOT frame R) to ``save_path``.
+
+    Unlike ``draw_manual_vessel_boundaries_with_origin_and_axis``, this does
+    NOT ask for base/reference-axis clicks -- the frame comes from the
+    EXISTING beam-frame calibration (``manual_boundary_path`` +
+    ``calibration_points_path``, the same files ``state_stream.py`` uses for
+    the live tip), so the new vessel's geometry lands in exactly the frame
+    the live tip and the offline planner's forward kinematics already share.
+    That file (default ``manual_vessel_boundaries.json``) is READ here, never
+    written -- this tool cannot corrupt the beam's own frame calibration.
+    """
+    image_bgr = cv2.imread(image_filename)
+    if image_bgr is None:
+        raise FileNotFoundError(f"Could not read image at {image_filename}")
+
+    roi_box = load_roi_box(blue_roi_path)
+    if roi_box is not None:
+        x0, y0, w, h = roi_box
+        display = image_bgr[y0:y0 + h, x0:x0 + w].copy()
+    else:
+        x0, y0 = 0, 0
+        display = image_bgr.copy()
+
+    left_points: list = []
+    right_points: list = []
+    center_points: list = []
+    current_mode = {"name": "left"}       # left, right, center
+    vessel_creation_mode = {"name": "auto"}
+    window_name = "Click vessel walls (or centreline) for the planner"
+
+    def to_full_px(p_roi):
+        return float(p_roi[0] + x0), float(p_roi[1] + y0)
+
+    def redraw():
+        vis = display.copy()
+        cv2.putText(vis, f"Mode: {current_mode['name'].upper()}  (frame: EXISTING beam calibration, not re-clicked)",
+                    (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+        cv2.putText(vis,
+                    "l=left wall | r=right wall | m=centreline | 1/2/0=creation mode | "
+                    "v=live preview | z=undo | c=clear | s=save lumen | q=quit",
+                    (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
+        cv2.putText(vis, f"Vessel creation: {vessel_creation_mode['name'].upper()}",
+                    (10, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+        for pts, color, line_color, label in [
+            (left_points, (0, 255, 0), (0, 150, 0), "L"),
+            (right_points, (0, 0, 255), (0, 0, 180), "R"),
+            (center_points, (255, 255, 0), (200, 200, 0), "C"),
+        ]:
+            for i, (x, y) in enumerate(pts):
+                cv2.circle(vis, (int(x), int(y)), 3, color, -1)
+                cv2.putText(vis, label, (int(x) + 4, int(y) + 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+                if i > 0:
+                    cv2.line(vis, (int(pts[i - 1][0]), int(pts[i - 1][1])), (int(x), int(y)), line_color, 1)
+        cv2.imshow(window_name, vis)
+
+    def on_mouse(event, x, y, flags, param):
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        p = (float(x), float(y))
+        mode = current_mode["name"]
+        if mode == "left":
+            left_points.append(p)
+        elif mode == "right":
+            right_points.append(p)
+        elif mode == "center":
+            center_points.append(p)
+        redraw()
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(window_name, on_mouse)
+    redraw()
+
+    while True:
+        key = cv2.waitKey(20) & 0xFF
+
+        if key == ord("l"):
+            current_mode["name"] = "left"; redraw()
+        elif key == ord("r"):
+            current_mode["name"] = "right"; redraw()
+        elif key == ord("m"):
+            current_mode["name"] = "center"; redraw()
+        elif key == ord("1"):
+            vessel_creation_mode["name"] = "centerline"; redraw()
+        elif key == ord("2"):
+            vessel_creation_mode["name"] = "boundaries"; redraw()
+        elif key == ord("0"):
+            vessel_creation_mode["name"] = "auto"; redraw()
+        elif key == ord("z"):
+            mode = current_mode["name"]
+            if mode == "left" and left_points: left_points.pop()
+            elif mode == "right" and right_points: right_points.pop()
+            elif mode == "center" and center_points: center_points.pop()
+            redraw()
+        elif key == ord("c"):
+            mode = current_mode["name"]
+            if mode == "left": left_points.clear()
+            elif mode == "right": right_points.clear()
+            elif mode == "center": center_points.clear()
+            redraw()
+        elif key == ord("v"):
+            try:
+                left_boundary_px, right_boundary_px, centerline_px, used_creation_mode = (
+                    create_vessel_geometry_from_clicks(
+                        center_points_roi=center_points,
+                        left_points_roi=left_points,
+                        right_points_roi=right_points,
+                        to_full_px=to_full_px,
+                        radius_px=14.0,
+                        mode=vessel_creation_mode["name"],
+                    )
+                )
+            except ValueError as e:
+                print(f"[WARN] {e}")
+                continue
+            live_camera_centerline_overlay(
+                centerline_px=centerline_px, left_boundary_px=left_boundary_px,
+                right_boundary_px=right_boundary_px, radius_px=14.0,
+            )
+            redraw()
+        elif key == ord("s"):
+            try:
+                left_boundary_px, right_boundary_px, centerline_px, used_creation_mode = (
+                    create_vessel_geometry_from_clicks(
+                        center_points_roi=center_points,
+                        left_points_roi=left_points,
+                        right_points_roi=right_points,
+                        to_full_px=to_full_px,
+                        radius_px=16.0,
+                        samples_per_segment=30,
+                        boundary_samples=60,
+                        smooth_iter=3,
+                        mode=vessel_creation_mode["name"],
+                    )
+                )
+            except ValueError as e:
+                print(f"[WARN] {e}")
+                print("[INFO] Either press m and click a centreline, or press l/r and click both walls.")
+                continue
+
+            show_boundary_preview(display, left_boundary_px, right_boundary_px, centerline_px,
+                                   x0=x0, y0=y0, window_name="Boundary preview before save")
+            print("[PREVIEW] Press y to accept/save, n to reject and continue editing.")
+            accept_preview = False
+            while True:
+                k = cv2.waitKey(20) & 0xFF
+                if k == ord("y"):
+                    accept_preview = True
+                    cv2.destroyWindow("Boundary preview before save")
+                    break
+                elif k == ord("n") or k == 27:
+                    cv2.destroyWindow("Boundary preview before save")
+                    break
+            if not accept_preview:
+                print("[INFO] Preview rejected. Continue editing.")
+                redraw()
+                continue
+
+            lumen_C_m, lumen_R_m, provenance = create_vessel_lumen_in_robot_frame(
+                left_boundary_px, right_boundary_px,
+                manual_boundary_path=manual_boundary_path,
+                calibration_points_path=calibration_points_path,
+            )
+            written = save_vessel_lumen_robot_frame(lumen_C_m, lumen_R_m, provenance, path=save_path)
+
+            arclength_m = float(np.sum(np.linalg.norm(np.diff(lumen_C_m, axis=0), axis=1)))
+            print(f"[SAVED] {written}")
+            print(f"[SANITY] {len(lumen_C_m)} samples, frame=R, "
+                  f"radius {lumen_R_m.min()*1000:.2f}-{lumen_R_m.max()*1000:.2f} mm, "
+                  f"centreline length {arclength_m*1000:.1f} mm, "
+                  f"C[0]={lumen_C_m[0]}, C[-1]={lumen_C_m[-1]} (m, robot frame)")
+            print("[SANITY] Check these against the vessel's known dimensions before "
+                  "handing this to the offline planner.")
+
+            cv2.destroyWindow(window_name)
+            return {"lumen_C_m": lumen_C_m, "lumen_R_m": lumen_R_m, "provenance": provenance, "path": written}
+        elif key == ord("q") or key == 27:
+            cv2.destroyWindow(window_name)
+            print("[INFO] Vessel lumen digitisation cancelled.")
+            return None
+
+
 if __name__ == "__main__":
-    manual = draw_manual_vessel_boundaries_with_origin_and_axis(
-        image_filename="focused_image.jpg",
-        save_path=MANUAL_VESSEL_BOUNDARY_FILE,
-        blue_roi_path="blue_roi_box.json",
-    )
+    import sys
+
+    if "--beam-frame" in sys.argv:
+        # Legacy workflow: (re)calibrate the BEAM's own frame. Only run this
+        # if the beam-base markers/camera have moved and manual_vessel_boundaries.json
+        # itself needs rebuilding -- NOT for digitising a new vessel.
+        manual = draw_manual_vessel_boundaries_with_origin_and_axis(
+            image_filename="focused_image.jpg",
+            save_path=MANUAL_VESSEL_BOUNDARY_FILE,
+            blue_roi_path="blue_roi_box.json",
+        )
+    else:
+        # Default: digitise a vessel's lumen for the offline planner, in the
+        # robot frame, using the EXISTING beam-frame calibration.
+        result = draw_vessel_lumen_for_planner(
+            image_filename="focused_image.jpg",
+            save_path=VESSEL_LUMEN_FILE,
+            blue_roi_path="blue_roi_box.json",
+        )

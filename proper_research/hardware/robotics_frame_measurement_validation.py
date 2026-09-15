@@ -792,6 +792,9 @@ def build_forward_model_in_shared_frame(
     )
     if not callable(m_local_factory) or not callable(Kinv_fun):
         raise TypeError("Composite magnetisation and stiffness factories must be callable.")
+    gravity_force_density = experiment_v2.gravity_force_density_from_composite(
+        experiment_cfg.composite, calculated
+    )
 
     magnet_params = default_magnet_params()
     if force_dipole_axis_R is not None:
@@ -839,6 +842,7 @@ def build_forward_model_in_shared_frame(
         use_lumen_jac=use_contact,
         contact_params=contact if use_contact else None,
         m_local_factory=m_local_factory,
+        gravity_force_density=gravity_force_density,
         result_detail="contact",
         store_history=False,
         store_vectors_in_info=False,

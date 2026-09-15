@@ -117,7 +117,67 @@ class CompositeBeamConfig:
     # estimate (2.5MPa, see final-frame-calibration memory) -- i.e. the whole
     # 3.0 -> 20.0 -> 32.0 MPa escalation this session was chasing the contact
     # -lumen artifact, not a real stiffness change. E=32.0 -> 2.25 MPa.
-    effective_youngs_modulus_pa: float = 2.25e6
+    #
+    # 2026-09-15: that single E=2.25MPa constant was ITSELF found to be too
+    # simple -- a comprehensive arc+dipole campaign across 4 insertion depths
+    # (20/30/40/50mm, all fully corrected: camera+insertion calibration,
+    # jacobian_variant="no_contact" explicit, beam-length closed loop fixed
+    # to a slow-advancer-response bug) found a clean, individually-converged
+    # E per length (slopeR ~1.00 at each): 20mm->1.49MPa, 30mm->2.46MPa,
+    # 40mm->3.26MPa, 50mm->5.54MPa -- E genuinely needs to grow with L, not
+    # just noise around one value.
+    #
+    # Investigated WHY before just curve-fitting it away:
+    #  - A joint (single-E, single-length-offset) fit across all 4 lengths
+    #    was tried, to test "the model just assumes the wrong effective
+    #    free-bending length" -- REJECTED: even at its best (E~12MPa,
+    #    offset~+12mm), a systematic residual trend survives (slopeR 0.95 ->
+    #    1.02 -> 1.08 -> 1.18 across the 4 lengths) that a single constant
+    #    offset cannot absorb. So it is not simply "L is measured/assumed
+    #    wrong" -- something about the beam's own composition changes along
+    #    its length.
+    #  - A pure elastic-cantilever scaling law (E ~ L^3, what you'd expect
+    #    if the magnetic driving moment were constant and only elasticity
+    #    varied with L) fits the E(L) data badly (R^2=0.68) -- real growth
+    #    is far flatter than that. This means the magnetic driving effect
+    #    itself must be growing sub-linearly with L relative to what a
+    #    uniform-moment-per-length model (this file's "fixed_axial" model,
+    #    moment_per_length integrated uniformly over the whole commanded
+    #    insertion) assumes.
+    #  - Leading hypothesis (not yet confirmed by direct inspection): the
+    #    magnetic PDMS+iron-particle material may not run the beam's full
+    #    length -- if it's a short, soft, magnetically-active TIP sitting on
+    #    a stiffer, non-magnetic wire shaft (rather than uniform composite
+    #    end to end), then longer commanded insertion pushes out mostly bare
+    #    wire, not more magnetic material. A model assuming the whole L is
+    #    soft composite would look increasingly "too floppy" vs reality as L
+    #    grows -- exactly this trend, and exactly why a uniform-E, uniform-
+    #    moment single-material model can only ever curve-fit around the
+    #    true (non-uniform, two-material) structure, not eliminate the
+    #    residual. Confirming this needs physically inspecting the beam
+    #    (or a bimaterial two-segment Cosserat model), neither done here.
+    #
+    # Pragmatic fix (this entry): fit E(L) directly from the 4-point data
+    # (quadratic, R^2=0.985, clearly better than linear R^2=0.937 or a pure
+    # power law R^2=0.947) and use `youngs_modulus_for_insertion_length()`
+    # below instead of one constant, wherever the caller knows its target/
+    # expected insertion length. This is an EMPIRICAL correction, not a fix
+    # for the underlying two-material-beam mechanism above -- residual error
+    # is still expected and is left for online feedback to close, per the
+    # same reasoning as every earlier calibration entry in this docstring.
+    #
+    # 2026-09-15 (later same day): SUPERSEDED as the default by the proper
+    # two-material (bimaterial) beam model below (use_bimaterial_beam=True,
+    # now the default) once the user confirmed the beam's real construction
+    # -- a 0.2mm nitinol wire core with a 40mm PDMS+iron-particle composite
+    # tip. This field's value is now the COMPOSITE-ONLY modulus that the
+    # bimaterial fit converged to (E_composite=1.60MPa, with the wire fixed
+    # at nitinol's real ~75GPa modulus rather than fit) -- see
+    # use_bimaterial_beam's docstring for the fit and its residuals. The
+    # empirical youngs_modulus_for_insertion_length() quadratic (evaluated at
+    # a caller's own target length) is kept available for any caller that
+    # still runs with use_bimaterial_beam=False.
+    effective_youngs_modulus_pa: float = 1.60e6
     poisson_ratio: float = 0.49
     inner_diameter_m: float = 0.0
     # -local x = the rod growth direction = world +B.x = along the axial field
@@ -149,6 +209,113 @@ class CompositeBeamConfig:
     induced_chi_axial: float = 8.0
     induced_chi_transverse: float = 3.0
     induced_m_sat_A_m: float | None = 8.0
+
+    # 2026-09-15: opt-in TWO-MATERIAL beam -- a bare 0.2mm nitinol wire core
+    # (proximal, stiff, non-magnetic) with a 40mm PDMS+iron-particle magnetic
+    # composite tip (distal, soft, magnetic) bonded on with a ~5mm overlap,
+    # per the user-confirmed physical construction. When True, replaces BOTH
+    # the uniform stiffness (effective_youngs_modulus_pa applied everywhere)
+    # and uniform magnetisation (moment_per_length applied everywhere) with
+    # make_bimaterial_Kinv_fun/make_wire_tip_axial_m_local_factory -- zero
+    # magnetic moment and wire-only stiffness below the wire/tip boundary,
+    # composite properties above it, linearly blended across
+    # tip_overlap_length_m. The wire/tip SPLIT itself (wire_len/tip_len per
+    # commanded insertion) was already fully threaded through every solver
+    # variant via kinematics.effective_lengths/BeamModelConfig.L_tip_full
+    # (default 0.04m -- already matches the real tip length) -- only the
+    # material-property functions needed to actually use that split, which
+    # they didn't before this flag existed (both discarded wire_len/tip_len
+    # and returned one uniform material).
+    #
+    # VALIDATED 2026-09-15 against the same 4-length campaign
+    # (close_loop_logs/stiffness_campaign_liftedbase_{20,30,40,50}mm_
+    # 2026-09-14/): a fully free joint (E_composite, E_wire) fit ran away
+    # toward an unphysical E_wire (kept improving out to 300GPa -- the same
+    # asymptotic non-convergence pathology as the very first uniform-beam
+    # E-refit attempt this session, which ran away to 10,000MPa). Real
+    # nitinol's austenite-phase modulus is well documented at ~70-83GPa, so
+    # rather than let the optimizer chase an implausible number, wire_
+    # youngs_modulus_pa is FIXED at 75GPa (a standard literature value, not
+    # fit) and only effective_youngs_modulus_pa (the composite) is fit
+    # against it -> E_composite=1.60MPa, sumsqerr=0.0396 (vs the unconstrained
+    # fit's 0.0297 -- only mildly worse for pinning one parameter to a real
+    # physical value instead of an arbitrary number). Per-length slopeR:
+    # 20mm=0.874, 30mm=1.075, 40mm=1.134, 50mm=1.018 -- notably 50mm (where
+    # the wire contributes most, ~10mm of the 50mm exposed length) is now
+    # excellent, confirming the wire/tip split captures the dominant
+    # 40->50mm escalation that no uniform-material model could. A smaller
+    # residual trend still exists WITHIN the pure-composite 20-40mm range
+    # (where wire_len=0 for all three, so the split cannot be the cause) --
+    # a secondary, smaller effect this model doesn't explain, left for
+    # online feedback per the same reasoning as every earlier entry here.
+    # Default now True: this bimaterial model is the current best physical
+    # explanation and replaces the single-scalar E(L) fit as the default
+    # (youngs_modulus_for_insertion_length() below is kept for compatibility/
+    # for any caller not using use_bimaterial_beam).
+    use_bimaterial_beam: bool = True
+    # NOTE: this documents the tip length but is NOT itself wired to
+    # BeamModelConfig.L_tip_full (multiple solver-construction call sites
+    # hardcode 0.04 directly, e.g. model_factory.py/run_solver_smoke_test.py)
+    # -- it only works correctly today because both happen to equal 0.04m.
+    # Changing this value alone will NOT move the real wire/tip boundary;
+    # the hardcoded 0.04 literals would need updating too.
+    tip_length_m: float = 0.040
+    tip_overlap_length_m: float = 0.005
+    wire_diameter_m: float = 0.2e-3
+    wire_youngs_modulus_pa: float = 75.0e9
+    wire_poisson_ratio: float = 0.33
+
+    # 2026-09-15: opt-in gravity. Default False -- no change to existing
+    # behaviour. Threaded all the way through energy/gradient/solver/
+    # Jacobian this session and gradient-verified (elastic+gravity,
+    # full bimaterial+magnetic+gravity, and per-segment wire/tip gravity all
+    # checked FD-vs-analytic to <2e-6 relative error), but NOT yet validated
+    # against live data -- the free validation point flagged earlier
+    # (predicting the TCP=0.35 reference pose's ~33mm sag, already measured
+    # live) is still pending. When True, uses each section's own density
+    # (composite already known via calculate_composite_beam_properties;
+    # nitinol's below is a standard literature value) and cross-section to
+    # build a per-segment (wire/tip) force-density profile via
+    # make_wire_tip_gravity_force_density_fun when use_bimaterial_beam is
+    # also True, else a single uniform (composite-only) force density.
+    use_gravity: bool = False
+    wire_density_kg_m3: float = 6450.0
+
+
+# 2026-09-15: empirical E(L) fit -- see CompositeBeamConfig.
+# effective_youngs_modulus_pa's docstring for the full investigation
+# (joint length-offset fit rejected, pure-cubic elastic scaling rejected,
+# leading hypothesis is a non-uniform two-material beam -- stiffer wire
+# shaft + short soft magnetic tip -- not yet confirmed).
+# Fit against 4 cleanly-converged points (arc block, no_contact,
+# camera+insertion calibration fixed, close_loop_logs/
+# stiffness_campaign_liftedbase_{20,30,40,50}mm_2026-09-14):
+#   20mm->1.49MPa  30mm->2.46MPa  40mm->3.26MPa  50mm->5.54MPa
+# Quadratic beat linear (R^2 0.985 vs 0.937) and a pure power law (0.947).
+# Domain clamped to [20,50]mm (the fitted range) -- the quadratic curves
+# back up below its vertex at ~15mm, which is an artifact of the fit form,
+# not measured behaviour, so extrapolating outside [20,50]mm just holds the
+# nearest boundary value rather than following the curve unchecked.
+_YOUNGS_MODULUS_L_FIT_MM = (20.0, 50.0)  # clamp domain
+
+
+def youngs_modulus_for_insertion_length(insertion_m: float) -> float:
+    """Empirical E(L) [Pa] fit from the 2026-09-14 lifted-base campaign.
+
+    Quadratic in insertion length L [mm]: E(L) = 2.2575 - 0.09975*L +
+    0.0032750*L^2 [MPa]. Clamps L to the fitted [20,50]mm domain before
+    evaluating -- do not trust this outside that range without new data.
+    Callers that know their target/expected insertion length should call
+    this and set CompositeBeamConfig.effective_youngs_modulus_pa from the
+    result before building a model; the field's own default is just this
+    function evaluated at the historical L0=25mm reference, for callers
+    that do not know their own target length ahead of time.
+    """
+    L_mm = float(insertion_m) * 1e3
+    lo, hi = _YOUNGS_MODULUS_L_FIT_MM
+    L_mm = min(max(L_mm, lo), hi)
+    E_mpa = 2.2575 - 0.09975 * L_mm + 0.0032750 * L_mm**2
+    return E_mpa * 1e6
 
 
 @dataclass
@@ -470,8 +637,10 @@ def calculate_composite_components(
     from proper_research.simulation.magnetic_beam.run_solver_smoke_test import (
         calculate_composite_beam_properties,
         make_Kinv_fun,
+        make_bimaterial_Kinv_fun,
         make_induced_axial_transverse_m_local_factory,
         make_uniform_axial_m_local_factory,
+        make_wire_tip_axial_m_local_factory,
     )
 
     calculated = calculate_composite_beam_properties(
@@ -487,6 +656,7 @@ def calculate_composite_components(
     axis = np.asarray(composite_cfg.magnetisation_axis_local, dtype=float)
     axis /= np.linalg.norm(axis)
     model = getattr(composite_cfg, "magnetisation_model", "fixed_axial")
+    use_bimaterial = bool(getattr(composite_cfg, "use_bimaterial_beam", False))
     if model == "induced_axial_transverse":
         m_local_factory = make_induced_axial_transverse_m_local_factory(
             chi_axial=composite_cfg.induced_chi_axial,
@@ -494,11 +664,23 @@ def calculate_composite_components(
             local_axis=tuple(axis.tolist()),
             m_sat_A_m=composite_cfg.induced_m_sat_A_m,
         )
+        if use_bimaterial:
+            raise ValueError(
+                "use_bimaterial_beam=True is only implemented for "
+                "magnetisation_model='fixed_axial' so far."
+            )
     elif model == "fixed_axial":
-        m_local_factory = make_uniform_axial_m_local_factory(
-            moment_per_length=float(calculated["moment_per_length"]),
-            local_axis=tuple(axis.tolist()),
-        )
+        if use_bimaterial:
+            m_local_factory = make_wire_tip_axial_m_local_factory(
+                moment_per_length=float(calculated["moment_per_length"]),
+                local_axis=tuple(axis.tolist()),
+                overlap_length=composite_cfg.tip_overlap_length_m,
+            )
+        else:
+            m_local_factory = make_uniform_axial_m_local_factory(
+                moment_per_length=float(calculated["moment_per_length"]),
+                local_axis=tuple(axis.tolist()),
+            )
     else:
         raise ValueError(
             f"magnetisation_model must be 'fixed_axial' or "
@@ -506,15 +688,66 @@ def calculate_composite_components(
         )
     if not callable(m_local_factory):
         raise TypeError("Composite m_local_factory must be callable.")
-    Kinv_fun = make_Kinv_fun(
-        youngs_modulus=composite_cfg.effective_youngs_modulus_pa,
-        poisson_ratio=composite_cfg.poisson_ratio,
-        outer_diameter=composite_cfg.beam_diameter_m,
-        inner_diameter=composite_cfg.inner_diameter_m,
-    )
+    if use_bimaterial:
+        Kinv_fun = make_bimaterial_Kinv_fun(
+            tip_youngs_modulus=composite_cfg.effective_youngs_modulus_pa,
+            tip_poisson_ratio=composite_cfg.poisson_ratio,
+            tip_outer_diameter=composite_cfg.beam_diameter_m,
+            wire_youngs_modulus=composite_cfg.wire_youngs_modulus_pa,
+            wire_poisson_ratio=composite_cfg.wire_poisson_ratio,
+            wire_outer_diameter=composite_cfg.wire_diameter_m,
+            tip_inner_diameter=composite_cfg.inner_diameter_m,
+            overlap_length=composite_cfg.tip_overlap_length_m,
+        )
+    else:
+        Kinv_fun = make_Kinv_fun(
+            youngs_modulus=composite_cfg.effective_youngs_modulus_pa,
+            poisson_ratio=composite_cfg.poisson_ratio,
+            outer_diameter=composite_cfg.beam_diameter_m,
+            inner_diameter=composite_cfg.inner_diameter_m,
+        )
     if not callable(Kinv_fun):
         raise TypeError("Composite Kinv_fun must be callable.")
     return dict(calculated), m_local_factory, Kinv_fun
+
+
+def gravity_force_density_from_composite(
+    composite_cfg: CompositeBeamConfig,
+    calculated: dict[str, Any],
+):
+    """Build the gravity_force_density argument (see energy.py's
+    gravity_energy_from_centerline docstring for the two accepted forms)
+    from a CompositeBeamConfig, or None if composite_cfg.use_gravity=False.
+
+    Uses ``calculated["mass_per_length"]`` (already computed by
+    calculate_composite_beam_properties from the composite's own density/
+    diameter) for the tip, and composite_cfg.wire_density_kg_m3 for the wire.
+    Returns a per-segment (wire/tip) callable when use_bimaterial_beam is
+    also True, else a single uniform (composite-only) force-density vector.
+    """
+    if not getattr(composite_cfg, "use_gravity", False):
+        return None
+
+    from proper_research.simulation.magnetic_beam.run_solver_smoke_test import (
+        make_wire_tip_gravity_force_density_fun,
+    )
+
+    g = 9.81
+    tip_mass_per_length = float(calculated["mass_per_length"])
+    tip_fg = (0.0, 0.0, -tip_mass_per_length * g)
+
+    if not getattr(composite_cfg, "use_bimaterial_beam", False):
+        return np.array(tip_fg)
+
+    wire_area = 0.25 * np.pi * composite_cfg.wire_diameter_m ** 2
+    wire_mass_per_length = composite_cfg.wire_density_kg_m3 * wire_area
+    wire_fg = (0.0, 0.0, -wire_mass_per_length * g)
+
+    return make_wire_tip_gravity_force_density_fun(
+        wire_force_density=wire_fg,
+        tip_force_density=tip_fg,
+        overlap_length=composite_cfg.tip_overlap_length_m,
+    )
 
 
 class DirectForwardModelAdapter:

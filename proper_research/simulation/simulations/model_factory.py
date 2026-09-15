@@ -30,7 +30,7 @@ from beam_direction_magnetisation.cosserat_w_minimal_energy import (
 from beam_direction_magnetisation.quarternions.quarternions_functions import (
     T_to_p_quat_wxyz,
 )
-from proper_research.simulation.magnetic_beam.run_solver_smoke_test import make_Kinv_fun,make_uniform_axial_m_local_factory, calculate_composite_beam_properties
+from proper_research.simulation.magnetic_beam.run_solver_smoke_test import make_Kinv_fun,make_uniform_axial_m_local_factory, calculate_composite_beam_properties, make_bimaterial_Kinv_fun, make_wire_tip_axial_m_local_factory, make_wire_tip_gravity_force_density_fun
 
 mag_params = default_magnet_params()
 beam_params = default_beam_params()
@@ -503,7 +503,8 @@ def build_forward_model(
     contact_enabled: bool,
     use_lumen_jac: bool,
     contact_params: ContactParams | None,
-    m_local_factory=None
+    m_local_factory=None,
+    gravity_force_density=None,
 ):
     """
     Build a new magnetic_beam forward model instance.
@@ -579,6 +580,7 @@ def build_forward_model(
         m_body=m_body,
         lumen_query=lumen_query,
         m_local_factory=m_local_factory,
+        gravity_force_density=gravity_force_density,
     )
 
 
@@ -594,6 +596,33 @@ def build_model_bundle(
     use_physical_stiffness: bool = False,
     effective_youngs_modulus: float = 1.0e6,
     remanence_fraction: float = 1.0,
+    # 2026-09-15: opt-in TWO-MATERIAL beam (bare 0.2mm nitinol wire core +
+    # 40mm PDMS+iron-particle magnetic composite tip, ~5mm bonded overlap --
+    # user-confirmed physical construction). Mirrors CompositeBeamConfig.
+    # use_bimaterial_beam in beam_hardware_experiment_v2.py -- see that
+    # docstring for the full rationale; kept in sync between the online and
+    # offline model builders the same way effective_youngs_modulus always
+    # has been. Default False: no change to existing behaviour.
+    use_bimaterial_beam: bool = False,
+    tip_overlap_length_m: float = 0.005,
+    wire_diameter_m: float = 0.2e-3,
+    wire_youngs_modulus_pa: float = 75.0e9,  # real nitinol austenite modulus
+    wire_poisson_ratio: float = 0.33,
+    # 2026-09-15: opt-in gravity. gravity_force_density=None (default)
+    # preserves existing behaviour. Pass it explicitly (a plain (3,) uniform
+    # vector, or a callable fn(s, wire_len)->(3,len(s))) for full control, OR
+    # set use_gravity=True to auto-derive it from this function's own
+    # already-computed composite density/geometry (mirrors
+    # beam_hardware_experiment_v2.gravity_force_density_from_composite's
+    # logic, inlined here since this builder works from raw scalar params
+    # rather than a CompositeBeamConfig object) -- per-segment wire/tip aware
+    # when use_bimaterial_beam is also True. NOT yet validated end-to-end
+    # against live data (gradient-verified only) -- see
+    # CompositeBeamConfig.effective_youngs_modulus_pa's docstring in
+    # beam_hardware_experiment_v2.py for the investigation this responds to.
+    gravity_force_density=None,
+    use_gravity: bool = False,
+    wire_density_kg_m3: float = 6450.0,
     # Direction of the external source-magnet dipole in the magnet body frame.
     # Legacy default is body -x.  The lab magnet (mounted on the UR TCP, magnet
     # body frame == TCP frame) has its dipole along body -z (== TCP -z ==
@@ -692,7 +721,32 @@ def build_model_bundle(
         ),
     )
 
-    if use_composite_magnetisation:
+    if gravity_force_density is None and use_gravity:
+        _g = 9.81
+        _tip_fg = (0.0, 0.0, -float(composite["mass_per_length"]) * _g)
+        if use_bimaterial_beam:
+            _wire_area = 0.25 * np.pi * wire_diameter_m ** 2
+            _wire_fg = (0.0, 0.0, -wire_density_kg_m3 * _wire_area * _g)
+            gravity_force_density = make_wire_tip_gravity_force_density_fun(
+                wire_force_density=_wire_fg, tip_force_density=_tip_fg,
+                overlap_length=tip_overlap_length_m,
+            )
+        else:
+            gravity_force_density = np.array(_tip_fg)
+
+    if use_composite_magnetisation and use_bimaterial_beam:
+        m_local_factory = (
+            make_wire_tip_axial_m_local_factory(
+                moment_per_length=(
+                    composite[
+                        "moment_per_length"
+                    ]
+                ),
+                local_axis=(-1.0, 0.0, 0.0),
+                overlap_length=tip_overlap_length_m,
+            )
+        )
+    elif use_composite_magnetisation:
         m_local_factory = (
             make_uniform_axial_m_local_factory(
                 moment_per_length=(
@@ -753,7 +807,18 @@ def build_model_bundle(
         "A m^2",
     )
     # Change stiffness independently from magnetisation.
-    if use_physical_stiffness:
+    if use_physical_stiffness and use_bimaterial_beam:
+        Kinv_fun = make_bimaterial_Kinv_fun(
+            tip_youngs_modulus=effective_youngs_modulus,
+            tip_poisson_ratio=poisson_ratio,
+            tip_outer_diameter=beam_diameter,
+            wire_youngs_modulus=wire_youngs_modulus_pa,
+            wire_poisson_ratio=wire_poisson_ratio,
+            wire_outer_diameter=wire_diameter_m,
+            tip_inner_diameter=0.0,
+            overlap_length=tip_overlap_length_m,
+        )
+    elif use_physical_stiffness:
         Kinv_fun = make_Kinv_fun(
             youngs_modulus=(
                 effective_youngs_modulus
@@ -799,6 +864,7 @@ def build_model_bundle(
 
         # New distributed beam-magnetisation factory.
         m_local_factory=m_local_factory,
+        gravity_force_density=gravity_force_density,
     )
 
     forward_model_contact = (

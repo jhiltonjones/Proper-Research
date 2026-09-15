@@ -11,6 +11,9 @@ from pathlib import Path
 
 import numpy as np
 
+from proper_research.hardware.beam_hardware_experiment_v2 import (
+    youngs_modulus_for_insertion_length,
+)
 from proper_research.planning.offline_inverse_configuration import (
     InverseConfigurationPlannerConfig,
 )
@@ -302,10 +305,32 @@ def build_planning_context(
         # individually slope-matched to ~0.997-0.998). Joint fit across both
         # -> E=2.25MPa, which lands back near the ORIGINAL 2026-09-10 estimate
         # (2.5MPa) -- the whole 3.0->20.0->32.0 MPa escalation was chasing the
-        # contact-lumen artifact, not a real stiffness change. Kept identical
-        # to the online model's value.
+        # contact-lumen artifact, not a real stiffness change.
+        #
+        # 2026-09-15: that single constant was first replaced by a fitted
+        # empirical E(L) (a wider 4-length campaign, 20/30/40/50mm, found E
+        # genuinely grows with insertion length, 1.49 -> 5.54 MPa, not noise
+        # around one value), then SUPERSEDED again the same day by a proper
+        # two-material (bimaterial) beam model once the user confirmed the
+        # real physical construction: a 0.2mm nitinol wire core with a 40mm
+        # PDMS+iron-particle composite tip, ~5mm bonded overlap. A length-
+        # offset-only explanation was tested and rejected first (residual
+        # trend survives even at its best fit), and a pure elastic cantilever
+        # scaling law (E~L^3) fit badly (R^2=0.68) -- both pointed at a
+        # non-uniform beam, which the bimaterial model directly represents
+        # instead of curve-fitting around. Validated against the same 4
+        # lengths: composite-only E=1.60MPa (wire fixed at nitinol's real
+        # ~75GPa modulus, not fit -- letting both float ran away to an
+        # unphysical E_wire, same asymptotic-non-convergence pattern as the
+        # very first uniform-beam E-refit this session). See
+        # use_bimaterial_beam's docstring in beam_hardware_experiment_v2.py
+        # for the fit, residuals, and the still-open smaller residual within
+        # the pure-composite 20-40mm range. Kept identical to the online
+        # model (same E_composite, same wire parameters).
         use_physical_stiffness=True,
-        effective_youngs_modulus=2.25e6,
+        effective_youngs_modulus=1.60e6,
+        use_bimaterial_beam=True,
+        wire_youngs_modulus_pa=75.0e9,
         source_dipole_yaw_deg=-6.0,
     )
 

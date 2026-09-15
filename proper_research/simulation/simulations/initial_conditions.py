@@ -77,8 +77,16 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     # 30-38.8 mm) at the SAME 39 mm max, to push the planned trajectory closer
     # to the velocity/acceleration limits (a deliberate stress-test: see
     # beam-lateral-authority-limit memory, MPC-vs-inverse-Jacobian clipping
-    # investigation). Live beam must be set to 25 mm before a planned run on
-    # this plan.
+    # investigation).
+    # 2026-09-15: tried moving 0.025 -> 0.02 for the real-vessel
+    # (detect_blue-sourced lumen) planning campaign, per explicit request, but
+    # reverted: at L0=0.02 the vessel plan's chain-rule Jacobian validation
+    # fails (relative error 93.8% vs the 9% ceiling) while the identical
+    # config at L0=0.025 passes cleanly and proceeds into Layer 1 -- confirmed
+    # insertion-length-dependent, not a general vessel-planning bug. Root
+    # cause not yet found (not investigated: bimaterial wire/tip blend
+    # boundary vs. vessel contact-model geometry at short insertion). Left at
+    # 0.025 (known-working) pending that investigation.
     L_cmd = 0.025
     dt = 0.01
 

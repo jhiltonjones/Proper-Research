@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .contact import ContactParams, contact_energy_from_p
+from .energy import gravity_energy_from_centerline
 from .energy_optimized import _magnetic_energy_from_state
 from .kinematics import integrate_pq_and_sens_from_u, integrate_pq_from_u
 from .magnetism import _m_local_fun_is_field_dependent
@@ -55,6 +56,54 @@ def magnetic_energy_gradient_u_fd(
         up[k] += eps
         um[k] -= eps
         grad[k] = (w_m(up) - w_m(um)) / (2.0 * eps)
+    return grad
+
+
+def gravity_energy_gradient_u_fd(
+    u_flat: np.ndarray,
+    *,
+    p0: np.ndarray,
+    q0: np.ndarray,
+    s: np.ndarray,
+    gravity_force_density: np.ndarray,
+    wire_len: float = 0.0,
+    eps: float = 1.0e-7,
+) -> np.ndarray:
+    """Central-difference dW_g/du_flat.
+
+    2026-09-15: gravity's energy (``energy.gravity_energy_from_centerline``,
+    already wired into the total energy but never differentiated -- no
+    caller passed a non-None gravity_force_density, so this gap was never
+    exercised) is linear in the centerline position p, but p itself comes
+    from integrating u through the nonlinear Cosserat kinematic chain
+    (``integrate_pq_from_u``) -- differentiating that chain analytically is
+    real work, not a one-line derivative. Rather than re-derive it, this
+    follows the EXACT same precedent as ``magnetic_energy_gradient_u_fd``
+    (added for induced/field-dependent magnetisation, which has the same
+    "energy is simple but depends on p in a way the closed-form virtual-work
+    formula doesn't cover" shape): finite-difference the true energy
+    directly. Correct by construction; verify with
+    ``diagnostics.check_gradient_against_energy`` against the FULL energy
+    (elastic+magnetic+gravity) before trusting this in any live solve, per
+    the same FD-vs-analytic gate every other energy term in this file was
+    held to.
+    """
+    u_flat = np.asarray(u_flat, dtype=float).reshape(-1)
+
+    def w_g(u: np.ndarray) -> float:
+        p, _, _ = integrate_pq_from_u(u, p0=p0, q0=q0, s=s)
+        return gravity_energy_from_centerline(
+            p=p, s=s, gravity_force_density=gravity_force_density,
+            wire_len=wire_len,
+        )
+
+    grad = np.zeros_like(u_flat)
+    for k in range(u_flat.size):
+        up = u_flat.copy()
+        um = u_flat.copy()
+        up[k] += eps
+        um[k] -= eps
+        grad[k] = (w_g(up) - w_g(um)) / (2.0 * eps)
     return grad
 
 
@@ -121,6 +170,8 @@ def energy_gradient_u(
     use_magnetic: bool = True,
     use_contact: bool = True,
     contact: ContactParams | None = None,
+    gravity_force_density: np.ndarray | None = None,
+    wire_len: float = 0.0,
 ) -> np.ndarray:
     """
     Compute dΠ/du for the discretised Cosserat beam.
@@ -129,6 +180,9 @@ def energy_gradient_u(
       - elastic strain gradient
       - optional magnetic virtual-work gradient
       - optional contact/lumen penalty gradient
+      - optional gravity gradient (FD -- see gravity_energy_gradient_u_fd's
+        docstring; only active when gravity_force_density is not None, same
+        opt-in convention as energy_from_u's own gravity term)
     """
     u_flat = np.asarray(u_flat, float).reshape(-1)
     s = np.asarray(s, float).ravel()
@@ -227,6 +281,25 @@ def energy_gradient_u(
             )
 
         grad += grad_contact
+
+    if gravity_force_density is not None:
+        grad_gravity = gravity_energy_gradient_u_fd(
+            u_flat,
+            p0=p0,
+            q0=q0,
+            s=s,
+            gravity_force_density=gravity_force_density,
+            wire_len=wire_len,
+        )
+
+        grad_gravity = np.asarray(grad_gravity, float).reshape(-1)
+
+        if grad_gravity.size != expected:
+            raise ValueError(
+                f"gravity gradient has size {grad_gravity.size}, expected {expected}."
+            )
+
+        grad += grad_gravity
 
     if not np.all(np.isfinite(grad)):
         raise FloatingPointError("energy_gradient_u returned non-finite values.")

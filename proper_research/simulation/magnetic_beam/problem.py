@@ -72,6 +72,13 @@ class BeamSolveProblem:
 
     # New optional field must follow required fields.
     m_local_factory: MlocalFactory | None = None
+    # 2026-09-15: optional gravity. None disables it (default -- no change to
+    # existing behaviour). Either a plain (3,) force-density vector (uniform,
+    # legacy form) or a callable fn(s, wire_len) -> (3, len(s)) (per-segment,
+    # e.g. make_wire_tip_gravity_force_density_fun in
+    # run_solver_smoke_test.py) -- see energy.gravity_energy_from_centerline's
+    # docstring for the full convention.
+    gravity_force_density: Any | None = None
 
     def __post_init__(self):
         p0 = np.asarray(self.p0, float).reshape(3)

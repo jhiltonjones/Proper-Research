@@ -5,6 +5,7 @@ from typing import Any, Literal
 import numpy as np
 
 from .contact import ContactParams, LumenQuery, contact_energy_from_p
+from .energy import gravity_energy_from_centerline
 from .kinematics import integrate_pq_from_u
 from .magnetism import (
     magnetic_energy_quantities_cosserat_profile_segments,
@@ -247,10 +248,15 @@ def energy_from_state_optimized(
         detail=detail,
     )
 
-    W_g = 0.0
-    if gravity_force_density is not None:
-        fg = np.asarray(gravity_force_density, dtype=float).reshape(3)
-        W_g = float(-np.trapezoid(np.sum(fg[:, None] * p, axis=0), s))
+    # 2026-09-15: was a separate uniform-only inline computation, out of sync
+    # with energy.gravity_energy_from_centerline's per-segment (callable)
+    # support -- would have silently crashed or (worse) mismatched the
+    # gradient (which goes through gradients.py -> energy.py's version) had
+    # a callable gravity_force_density ever reached this optimized path.
+    # Reuse the one implementation instead of maintaining two.
+    W_g = gravity_energy_from_centerline(
+        p=p, s=s, gravity_force_density=gravity_force_density, wire_len=wire_len,
+    )
 
     W_cf = 0.0
     contact_parts: dict[str, Any] = {}

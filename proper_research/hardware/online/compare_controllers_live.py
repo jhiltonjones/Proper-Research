@@ -226,6 +226,7 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             mpc_conditioning_fix: bool = False,
             mpc_conditioning_fix_directional_damping: float = 0.1,
             mpc_conditioning_fix_input_increment_weight: float = 1.0e-4,
+            inv_position_gain: float = 0.6,
             inv_selective_damping_gain: float = 0.0,
             inv_selective_damping_floor: float = 0.01,
             tip_estimator: str = "raw",
@@ -283,6 +284,7 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     pf.CONFIG.mpc_conditioning_fix_input_increment_weight = float(
         mpc_conditioning_fix_input_increment_weight
     )
+    pf.CONFIG.position_gain = float(inv_position_gain)
     pf.CONFIG.inv_selective_damping_gain = float(inv_selective_damping_gain)
     pf.CONFIG.inv_selective_damping_floor = float(inv_selective_damping_floor)
     pf.CONFIG.tip_estimator = str(tip_estimator)
@@ -493,6 +495,17 @@ def main():
                         "--mpc-conditioning-fix (default 1e-4 -- deliberately not "
                         "as extreme as the 1e-6 tried before without directional "
                         "damping, which hurt solve time/tracking).")
+    p.add_argument("--inv-position-gain", type=float, default=0.6,
+                   help="inverse-Jacobian's row-space P-gain (PathFollowConfig."
+                        "position_gain, default 0.6 -- corrects 60%% of the "
+                        "current tip error per tick). 2026-09-15 theory check: "
+                        "raising toward 1.0 scales the row-space (tip-effective) "
+                        "command up directly, unlike lowering `damping` (the "
+                        "DLS Levenberg term), which is already negligible "
+                        "relative to this beam's two well-conditioned singular "
+                        "values (~0.10, ~0.04) and only suppresses the near-null "
+                        "third direction (~1.5e-6) -- see mpc_vs_inv_deep_analysis "
+                        "2026-09-15 Part 4.")
     p.add_argument("--inv-selective-damping-gain", type=float, default=0.0,
                    help="inverse-Jacobian SDLS refinement (0 = disabled, plain "
                         "isotropic DLS): per-singular-value extra damping on the "
@@ -554,12 +567,12 @@ def main():
     p.add_argument("--mpc-wall-avoidance-beam-radius-mm", type=float, default=1.0,
                    help="beam physical radius used for the wall-avoidance "
                         "clearance calculation (matches ContactParams.r_beam).")
-    p.add_argument("--_worker", nargs=30, default=None,
+    p.add_argument("--_worker", nargs=31, default=None,
                    metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON",
                             "BEAMLEN", "FF", "FORCE_MPC_FF", "FF_HOLD_SWITCH", "RD_WEIGHT",
                             "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "DIR_DAMPING",
                             "DIR_DAMPING_FLOOR", "COND_FIX", "COND_FIX_DIR_DAMPING",
-                            "COND_FIX_RD", "INV_SEL_GAIN", "INV_SEL_FLOOR",
+                            "COND_FIX_RD", "INV_POS_GAIN", "INV_SEL_GAIN", "INV_SEL_FLOOR",
                             "TIP_ESTIMATOR", "KF_Q", "KF_R", "NO_DARE", "STATE_TRACK_W",
                             "VESSEL_LUMEN_FILE", "WALL_GAIN", "WALL_MARGIN", "WALL_BEAM_RADIUS"))
     args = p.parse_args()
@@ -568,7 +581,7 @@ def main():
         (kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff, force_mpc_ff,
          ff_hold_switch, rd_weight, r_override, rd_override,
          time_limit, dir_damping, dir_damping_floor, cond_fix, cond_fix_dir_damping,
-         cond_fix_rd, inv_sel_gain, inv_sel_floor, tip_estimator, kf_q, kf_r,
+         cond_fix_rd, inv_pos_gain, inv_sel_gain, inv_sel_floor, tip_estimator, kf_q, kf_r,
          no_dare, state_track_w, vessel_lumen_file, wall_gain, wall_margin,
          wall_beam_radius) = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
@@ -580,7 +593,8 @@ def main():
                          None if time_limit == "none" else float(time_limit),
                          float(dir_damping), float(dir_damping_floor),
                          bool(int(cond_fix)), float(cond_fix_dir_damping),
-                         float(cond_fix_rd), float(inv_sel_gain), float(inv_sel_floor),
+                         float(cond_fix_rd), float(inv_pos_gain),
+                         float(inv_sel_gain), float(inv_sel_floor),
                          tip_estimator, float(kf_q), float(kf_r), bool(int(no_dare)),
                          None if state_track_w == "none" else float(state_track_w),
                          vessel_lumen_file, float(wall_gain), float(wall_margin),
@@ -630,6 +644,7 @@ def main():
                    "1" if args.mpc_conditioning_fix else "0",
                    str(args.mpc_conditioning_fix_directional_damping),
                    str(args.mpc_conditioning_fix_input_increment_weight),
+                   str(args.inv_position_gain),
                    str(args.inv_selective_damping_gain),
                    str(args.inv_selective_damping_floor),
                    args.tip_estimator,

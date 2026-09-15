@@ -270,6 +270,174 @@ def make_uniform_axial_m_local_factory(
     return m_local_factory
 
 
+def make_wire_tip_axial_m_local_factory(
+    *,
+    moment_per_length: float,
+    local_axis: np.ndarray | tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    overlap_length: float = 0.0,
+):
+    """Two-zone magnetisation: zero along the bare wire, full ``moment_per_
+    length`` along the magnetic composite tip, linearly ramped across
+    ``overlap_length`` centred on the wire/tip boundary.
+
+    2026-09-15: the ``wire_len``/``tip_len`` split ``m_local_factory``
+    accepts was already threaded through the whole solver stack (see
+    ``kinematics.effective_lengths``, ``L_tip_full`` default 0.04m already
+    matching the real beam's measured 40mm composite tip) but every
+    magnetisation factory before this one discarded it and returned a
+    uniform moment over the WHOLE modelled length. That mismatch -- treating
+    bare, non-magnetic nitinol wire as if it were magnetic composite once
+    insertion exceeds the tip's own length -- is the leading candidate
+    explanation for why a uniform-material fit needed E to grow with
+    insertion length (see CompositeBeamConfig.effective_youngs_modulus_pa's
+    docstring in beam_hardware_experiment_v2.py). User-confirmed construction
+    2026-09-15: 0.2mm nitinol wire core, 40mm PDMS+iron-particle composite
+    tip, ~5mm bonded overlap at the boundary.
+    """
+    moment_per_length = float(moment_per_length)
+    local_axis = np.asarray(local_axis, float).reshape(3)
+    axis_norm = float(np.linalg.norm(local_axis))
+    overlap_length = float(overlap_length)
+
+    if moment_per_length < 0:
+        raise ValueError("moment_per_length must be non-negative.")
+    if axis_norm < 1e-12:
+        raise ValueError("local_axis must be nonzero.")
+    if overlap_length < 0:
+        raise ValueError("overlap_length must be non-negative.")
+
+    local_axis = local_axis / axis_norm
+
+    def m_local_factory(*, L_model: float, wire_len: float, tip_len: float):
+        del L_model, tip_len
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+
+        def m_local_fun(s_mid, unused_parameter):
+            del unused_parameter
+            s = np.asarray(s_mid, float).reshape(-1)
+            if half_overlap > 0.0:
+                frac = (s - (wire_len - half_overlap)) / overlap_length
+                frac = np.clip(frac, 0.0, 1.0)
+            else:
+                frac = (s >= wire_len).astype(float)
+            m_mag = moment_per_length * frac
+            return np.outer(local_axis, m_mag)
+
+        return m_local_fun
+
+    return m_local_factory
+
+
+def make_bimaterial_Kinv_fun(
+    *,
+    tip_youngs_modulus: float,
+    tip_poisson_ratio: float,
+    tip_outer_diameter: float,
+    wire_youngs_modulus: float,
+    wire_poisson_ratio: float,
+    wire_outer_diameter: float,
+    tip_inner_diameter: float = 0.0,
+    overlap_length: float = 0.0,
+):
+    """Two-zone Cosserat compliance: bare-wire section (thin, stiff nitinol),
+    magnetic composite tip section (thick, soft PDMS+particle), blended
+    linearly IN STIFFNESS (EI/GJ, not compliance) across ``overlap_length``
+    centred on the wire/tip boundary -- a smooth mechanical transition is
+    more physical than a step change at a co-molded bonded joint.
+
+    See ``make_wire_tip_axial_m_local_factory``'s docstring for why this
+    two-zone split exists -- same rationale, applied to elastic stiffness
+    instead of magnetisation. Both zones' geometry/material come from the
+    user-confirmed construction (2026-09-15): 0.2mm nitinol wire, 40mm PDMS+
+    iron-particle composite tip (2mm diameter), ~5mm overlap.
+    """
+
+    def _EI_GJ(E, nu, d_outer, d_inner):
+        E = float(E); nu = float(nu); d_outer = float(d_outer); d_inner = float(d_inner)
+        if E <= 0:
+            raise ValueError("youngs_modulus must be positive.")
+        if not -1.0 < nu < 0.5:
+            raise ValueError("poisson_ratio must lie between -1 and 0.5.")
+        if d_outer <= 0:
+            raise ValueError("outer_diameter must be positive.")
+        if d_inner < 0 or d_inner >= d_outer:
+            raise ValueError(
+                "inner_diameter must be non-negative and smaller than outer_diameter."
+            )
+        G = E / (2.0 * (1.0 + nu))
+        I = np.pi * (d_outer**4 - d_inner**4) / 64.0
+        J = np.pi * (d_outer**4 - d_inner**4) / 32.0
+        return E * I, G * J
+
+    EI_tip, GJ_tip = _EI_GJ(tip_youngs_modulus, tip_poisson_ratio, tip_outer_diameter, tip_inner_diameter)
+    EI_wire, GJ_wire = _EI_GJ(wire_youngs_modulus, wire_poisson_ratio, wire_outer_diameter, 0.0)
+    overlap_length = float(overlap_length)
+
+    def Kinv_fun(smid, wire_len):
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+        s = np.asarray(smid, float).reshape(-1)
+        if half_overlap > 0.0:
+            frac_tip = (s - (wire_len - half_overlap)) / overlap_length
+            frac_tip = np.clip(frac_tip, 0.0, 1.0)
+        else:
+            frac_tip = (s >= wire_len).astype(float)
+        EI = EI_wire + frac_tip * (EI_tip - EI_wire)
+        GJ = GJ_wire + frac_tip * (GJ_tip - GJ_wire)
+        n = s.size
+        Kinv = np.zeros((3, 3, n))
+        Kinv[0, 0, :] = 1.0 / GJ
+        Kinv[1, 1, :] = 1.0 / EI
+        Kinv[2, 2, :] = 1.0 / EI
+        return Kinv
+
+    return Kinv_fun
+
+
+def make_wire_tip_gravity_force_density_fun(
+    *,
+    wire_force_density: np.ndarray | tuple[float, float, float],
+    tip_force_density: np.ndarray | tuple[float, float, float],
+    overlap_length: float = 0.0,
+):
+    """Two-zone gravity force density (N/m): bare-wire weight below the wire/
+    tip boundary, magnetic-composite weight above it, linearly ramped across
+    ``overlap_length`` -- same wire/tip split and rationale as
+    ``make_bimaterial_Kinv_fun``/``make_wire_tip_axial_m_local_factory``, but
+    evaluated AT THE NODES (not segment midpoints), matching
+    ``energy.gravity_energy_from_centerline``'s trapezoidal-integration
+    convention against ``s`` directly.
+
+    Typical use: ``force_density = -rho*A*g`` (world -Z) for each section,
+    using each section's own density and cross-section -- e.g. for the
+    2026-09-15 user-confirmed construction, the composite tip's weight/length
+    is ~53x the bare 0.2mm nitinol wire's (thin cross-section dominates over
+    nitinol's higher volumetric density), so the tip's weight dominates
+    sag except at insertions well past the 40mm tip length.
+
+    Returns a callable ``gravity_force_density_fun(s, wire_len) -> (3, len(s))``
+    directly usable as ``energy_from_u``'s/``energy_gradient_u``'s
+    ``gravity_force_density`` argument.
+    """
+    wire_fg = np.asarray(wire_force_density, float).reshape(3)
+    tip_fg = np.asarray(tip_force_density, float).reshape(3)
+    overlap_length = float(overlap_length)
+
+    def gravity_force_density_fun(s, wire_len):
+        s = np.asarray(s, float).reshape(-1)
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+        if half_overlap > 0.0:
+            frac_tip = (s - (wire_len - half_overlap)) / overlap_length
+            frac_tip = np.clip(frac_tip, 0.0, 1.0)
+        else:
+            frac_tip = (s >= wire_len).astype(float)
+        return wire_fg[:, None] + frac_tip[None, :] * (tip_fg - wire_fg)[:, None]
+
+    return gravity_force_density_fun
+
+
 def make_induced_axial_transverse_m_local_factory(
     *,
     chi_axial: float,

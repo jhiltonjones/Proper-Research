@@ -31,6 +31,7 @@ class MagneticBeamForwardModelOptimized(LegacyMagneticBeamForwardModel):
         m_body: np.ndarray,
         lumen_query,
         m_local_factory=None,
+        gravity_force_density=None,
         result_detail: str = "contact",
         store_history: bool = False,
         store_vectors_in_info: bool = False,
@@ -45,6 +46,7 @@ class MagneticBeamForwardModelOptimized(LegacyMagneticBeamForwardModel):
             m_body=m_body,
             lumen_query=lumen_query,
             m_local_factory=m_local_factory,
+            gravity_force_density=gravity_force_density,
         )
         if result_detail not in {"none", "contact", "full"}:
             raise ValueError("result_detail must be 'none', 'contact', or 'full'.")

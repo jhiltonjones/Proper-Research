@@ -248,6 +248,8 @@ def _gradient(u_flat: np.ndarray, prepared: _PreparedProblem) -> np.ndarray:
             use_magnetic=True,
             use_contact=bool(p.use_contact_in_jacobian),
             contact=p.contact,
+            gravity_force_density=p.gravity_force_density,
+            wire_len=p.wire_len,
         ),
         dtype=float,
     ).reshape(-1)

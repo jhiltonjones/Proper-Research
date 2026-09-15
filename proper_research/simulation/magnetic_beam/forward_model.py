@@ -50,6 +50,7 @@ class MagneticBeamForwardModel:
         m_body: np.ndarray,
         lumen_query: LumenQuery | None,
         m_local_factory=None,
+        gravity_force_density=None,
     ):
         beam.validate()
         contact.validate()
@@ -69,6 +70,12 @@ class MagneticBeamForwardModel:
 
         # None preserves the existing behaviour.
         self.m_local_factory = m_local_factory
+
+        # 2026-09-15: None preserves existing behaviour (gravity disabled).
+        # Either a plain (3,) uniform force-density vector or a callable
+        # fn(s, wire_len) -> (3, len(s)) for a bimaterial (wire/tip) beam --
+        # see energy.gravity_energy_from_centerline's docstring.
+        self.gravity_force_density = gravity_force_density
 
         if (
             self.contact_cfg.enabled
@@ -670,6 +677,7 @@ class MagneticBeamForwardModel:
 
             # New.
             m_local_factory=self.m_local_factory,
+            gravity_force_density=self.gravity_force_density,
         )
     def set_lumen(self, lumen_C: np.ndarray, lumen_R: np.ndarray, *, reset_cache: bool = True):
         lumen_C = np.asarray(lumen_C, float)

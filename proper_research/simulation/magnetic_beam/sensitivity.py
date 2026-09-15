@@ -163,6 +163,8 @@ def ake_energy_grad_fun_for_problem(
             use_magnetic=True,
             use_contact=problem.use_contact_in_jacobian,
             contact=problem.contact,
+            gravity_force_density=problem.gravity_force_density,
+            wire_len=wire_len,
         )
 
     return grad_fun

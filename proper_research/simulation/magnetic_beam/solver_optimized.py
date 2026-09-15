@@ -237,6 +237,7 @@ def solve_energy_min_3d_optimized(
             lumen_query=problem.lumen_query,
             use_lumen=use_contact,
             contact=contact,
+            gravity_force_density=problem.gravity_force_density,
             detail="none",
         )
         value = float(W / energy_scale)
@@ -272,6 +273,8 @@ def solve_energy_min_3d_optimized(
             use_magnetic=True,
             use_contact=use_contact,
             contact=contact,
+            gravity_force_density=problem.gravity_force_density,
+            wire_len=problem.wire_len,
         )
         value = (u_scale / energy_scale) * np.asarray(
             grad_u, dtype=float

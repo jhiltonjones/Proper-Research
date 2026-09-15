@@ -1,0 +1,10 @@
+{
+  "plan_dir": "/home/jack/.claude/jobs/3710eca5/tmp/plans_bimaterial/ushape_10x15mm_bimaterial/time_parameterized_configuration_path",
+  "speed_scale": [
+    1.0
+  ],
+  "reps": 1,
+  "out_dir": "close_loop_logs/openloop_ushape10x15mm_bimaterial_exp25_2026-09-15",
+  "analyze_only": null,
+  "compare_dir": null
+}

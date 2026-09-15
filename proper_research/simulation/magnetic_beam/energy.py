@@ -214,17 +214,42 @@ def gravity_energy_from_centerline(
     p: np.ndarray,
     s: np.ndarray,
     gravity_force_density: np.ndarray | None,
+    wire_len: float = 0.0,
 ) -> float:
     """
     Optional gravitational potential contribution.
 
     If gravity_force_density is None, gravity is disabled.
+
+    ``gravity_force_density`` accepts two forms:
+      - a plain (3,) array/tuple: UNIFORM force density along the whole beam
+        (the original behaviour -- kept for backward compatibility and for
+        any single-material use).
+      - a callable ``fn(s, wire_len) -> (3, len(s))`` array: force density
+        evaluated AT THE NODES (not segment midpoints -- this integrates via
+        trapezoidal rule against ``s`` directly, unlike Kinv_fun/m_local_fun
+        which operate on segment midpoints), for a bimaterial (wire/tip)
+        beam where the weight-per-length genuinely differs by section. See
+        ``make_wire_tip_gravity_force_density_fun`` in
+        run_solver_smoke_test.py for the standard wire/tip factory.
     """
     if gravity_force_density is None:
         return 0.0
 
-    fg = np.asarray(gravity_force_density, float).reshape(3)
-    return float(-np.trapezoid(np.sum(fg[:, None] * p, axis=0), s))
+    s = np.asarray(s, float).ravel()
+
+    if callable(gravity_force_density):
+        fg = np.asarray(gravity_force_density(s, wire_len), float)
+        if fg.shape != (3, s.size):
+            raise ValueError(
+                f"gravity_force_density(s, wire_len) must return shape "
+                f"(3, {s.size}), got {fg.shape}."
+            )
+    else:
+        fg_uniform = np.asarray(gravity_force_density, float).reshape(3)
+        fg = np.repeat(fg_uniform[:, None], s.size, axis=1)
+
+    return float(-np.trapezoid(np.sum(fg * p, axis=0), s))
 
 
 def energy_from_u(
@@ -290,6 +315,7 @@ def energy_from_u(
         p=p,
         s=s,
         gravity_force_density=gravity_force_density,
+        wire_len=wire_len,
     )
 
     W_cf = 0.0

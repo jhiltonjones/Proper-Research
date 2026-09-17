@@ -106,15 +106,42 @@ class PathFollowConfig:
     shape_axis_v: str = "b_x"
 
     # --- controller ----------------------------------------------
-    #   "naive_inverse_jacobian" : InverseJacobianBeamController (resolved-rate)
+    #   "naive_inverse_jacobian"     : InverseJacobianBeamController (resolved-rate)
+    #   "naive_inverse_jacobian_ltv" : same, but Jacobian comes from the SAME
+    #                                  precomputed per-sample schedule
+    #                                  mpc_ltv_offline uses ("inverse-LTV",
+    #                                  the matched baseline -- needs an
+    #                                  external schedule, see build_offline_solver)
     #   "mpc_lti"                : BeamOutputTrackingMPC, one frozen Jacobian
     #   "mpc_ltv_offline"        : one Jacobian per reference sample (== mpc_lti
     #                              here, since the beam Jacobian is frozen)
+    #   "inv_2dof_trim"          : persistent nominal feedforward + non-
+    #                              integrating feedback trim (see
+    #                              inverse_jacobian_2dof_trim.py) -- needs
+    #                              accumulator_seam=True,
+    #                              feedforward_joint_trajectory=False; live-
+    #                              validated development point trim_kp=0.6,
+    #                              trim_kn=0.0 (rectangle_stage_a/README.md)
     controller_kind: str = "naive_inverse_jacobian"
     position_gain: float = 0.6
     damping: float = 5.0e-2
     nullspace_gain: float = 0.0
+    trim_kp: float = 0.6
+    trim_kn: float = 0.0
+    trim_damping: float = 5.0e-2
+    trim_q_max: float = 0.03
+    trim_enable_logging: bool = False
     feedforward: bool = False
+    # 2026-09-17: full, UNPROJECTED reference-input feedforward inside
+    # InverseJacobianBeamController.solve() (command += reference_input,
+    # not command += projector @ reference_input). The projected version
+    # (feedforward=True) only lets through the nullspace-consistent part of
+    # the planned velocity, which is why the direct-apply-seam INV run
+    # underperformed open-loop-FF -- the null-space projection was starving
+    # it of most of the planned motion on top of the seam problem. Only
+    # meaningful when feedforward=True (it replaces that term, doesn't add
+    # to it -- see solve()). naive_inverse_jacobian(_ltv) only.
+    feedforward_full: bool = False
     control_insertion: bool = True
 
     # --- MPC (controller_kind == "mpc_lti" / "mpc_ltv_offline") ---
@@ -143,6 +170,29 @@ class PathFollowConfig:
     # feedforward anyway, e.g. to collect instrumented data diagnosing *why* it is
     # worse instead of just avoiding the mode.
     force_mpc_feedforward: bool = False
+    # 2026-09-17: THIRD seam, replacing the "fair-seam" direct-apply mode
+    # (q_target = q_meas + delta_q) for future comparisons. The direct-apply
+    # seam was invalidated: `servoJ` only realizes ~beta=0.2 of a relative
+    # position-target error per tick (see servoj-realization-gain memory),
+    # so q_meas+delta_q lets the un-realized ~80% of every commanded
+    # increment compound into unbounded lag (measured 0->0.26 rad over one
+    # run) -- not a controller-architecture problem, a seam problem. The old
+    # anchored seam (feedforward_joint_trajectory=True, q_target =
+    # ref_state[target_index]+trim) avoided this because the planner's own
+    # absolute target self-corrects every tick, but that ties the command to
+    # the PLANNER, not the controller -- unfair to a controller that wants
+    # to depart from the plan.
+    #   The accumulator seam keeps the "absolute-target" property (servoJ
+    # behaves well with those) without anchoring to the planner: the
+    # CONTROLLER owns a running commanded-trajectory state
+    # q_cmd_{k+1} = q_cmd_k + dt*u_k, and q_target_k = q_cmd_{k+1}. Missed
+    # low-level motion is never reset away (unlike q_meas+delta_q, which
+    # re-zeros the base every tick), but if the controller changes its mind
+    # q_cmd moves with it (unlike ref_state+trim, which is locked to the
+    # plan). Takes precedence over feedforward_joint_trajectory's q_target
+    # branch below when True; feedforward_joint_trajectory still controls
+    # the MPC ref_input double-count subtraction into `corr`.
+    accumulator_seam: bool = False
     # 2026-09-11 fix #2 (diagnosed root cause: MPC's u0 does not shrink to zero
     # as the tracking error shrinks/grows the way inverse-Jacobian's does --
     # corr(|u0|,error) collapses to ~0.03-0.14 at the hold vs inverse-Jacobian's
@@ -203,6 +253,38 @@ class PathFollowConfig:
     # default (1.0) unchanged; set to 0.0 to test removing this term
     # entirely in FF mode.
     mpc_state_tracking_weight_override: float | None = None
+    # 2026-09-16: null-space-motion diagnostic Experiment 3 -- zeroes the
+    # R-term's reference target (cost becomes v^T R v instead of
+    # (v-v_ref)^T R (v-v_ref)) while leaving Q, Qp and Rd untouched. See
+    # ConfigurationMPCConfig.diagnostic_zero_input_reference_in_R's comment.
+    mpc_diagnostic_zero_input_reference_in_R: bool = False
+    # 2026-09-16: mpc_ltv_sqp_online ("tick-frozen") real-time-latency fix --
+    # the genuinely state-dependent jac_provider costs ~254ms/call on measured
+    # (off-reference-manifold) states versus ~9ms along the smooth precomputed
+    # schedule, which on hardware collapsed the real control rate from the
+    # nominal 10Hz to ~3.2Hz and produced a 9.46mm divergent run (root-caused
+    # via jacobian_at() timing + inter-tick dt comparison against inv/lti/ltv,
+    # all of which held a steady 0.100s/tick). Confirmed offline in a
+    # nonlinear-plant closed-loop simulation that throttling relinearisation
+    # to every 2-20 ticks costs ~0 tracking accuracy on the S-curve shape
+    # (RMS flat at 0.115mm from every=1 to every=20) while cutting Jacobian
+    # calls proportionally -- see mpc_variants.build_sqp_online_mpc's
+    # relinearise_every docstring. 1 = relinearise every tick (original,
+    # real-time-latency-limited behaviour); N > 1 reuses the last evaluated
+    # Jacobian for N-1 ticks between relinearisations. Ignored by the other
+    # three controller kinds.
+    mpc_relinearise_every: int = 1
+    # 2026-09-17: inverse-Jacobian static-vs-LTV Jacobian characterisation
+    # study. When True, freezes the SAME schedule naive_inverse_jacobian_ltv
+    # already uses (from_model_bundle-derived, matching mpc_ltv_offline's
+    # source exactly) to its first sample and holds it for the whole run --
+    # mirroring mpc_lti's freeze trick. This keeps the static and LTV
+    # inverse-Jacobian conditions using the IDENTICAL Jacobian model,
+    # differing only in whether it updates along the trajectory, avoiding
+    # the frozen-AnalyticalBeamJacobianProvider-vs-complete-model confound
+    # found in naive_inverse_jacobian's live behaviour. Ignored by all other
+    # controller kinds.
+    inv_freeze_schedule_at_start: bool = False
     # 2026-09-11: real-time-fairness safety net -- confirmed via
     # target_index-jump-per-tick analysis that mpc_ltv_offline overran the
     # 100ms/10Hz control budget on 73% of ticks on a hard (ill-conditioned)
@@ -277,6 +359,19 @@ class PathFollowConfig:
     control_hz: float = 10.0
     servo_lookahead_s: float = 0.20
     servo_gain: int = 200
+    # 2026-09-17 (condition "C" of the A/B/C seam-and-rate identification
+    # test -- see servoj-realization-gain memory): only meaningful when
+    # accumulator_seam=True. When > control_hz, the outer 10Hz control loop
+    # still ticks at control_hz (sensing, solve, one accumulator update per
+    # tick), but the segment from the OLD q_cmd to the NEW q_cmd is linearly
+    # interpolated into round(servo_stream_hz/control_hz) intermediate
+    # absolute joint targets, each sent via its own servoJ call spaced
+    # 1/servo_stream_hz apart. Live-identified: this on its own (holding the
+    # accumulator seam fixed) cut mean command-tracking error 11.8->2.7mrad
+    # and max 36.2->8.7mrad on a benign single-joint step, on top of the
+    # seam fix's own G 0.199->1.0 jump. Default 10.0 = same as control_hz,
+    # i.e. exactly one servoJ call per tick (today's unchanged behaviour).
+    servo_stream_hz: float = 10.0
     # 2026-09-11: briefly raised 0.006 -> 0.012 -> 0.018 while diagnosing why
     # pure-feedback inverse-Jacobian doesn't reach the 20mm triangle's corners
     # (see beam-lateral-authority-limit memory: the old 0.006 cap was pinned
@@ -613,14 +708,42 @@ def main() -> None:
     import sys
 
     cfg = CONFIG
-    if cfg.controller_kind not in ("naive_inverse_jacobian", "mpc_lti", "mpc_ltv_offline"):
+    if cfg.controller_kind not in (
+        "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
+        "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online",
+        # 2026-09-17: OPEN-LOOP-FF baseline for the rectangle Stage A
+        # comparison (u=u_ref exactly, no correction) -- handled entirely by
+        # a build_offline_solver monkeypatch in the calling script, not by
+        # any branch in this file.
+        "open_loop_ff",
+        # 2026-09-17: 2DOF nominal-feedforward + non-integrating feedback
+        # trim (windup fix after the INV-LTV-1.0/accumC run) -- also handled
+        # entirely by a build_offline_solver monkeypatch in the calling
+        # script.
+        "inv_2dof_trim",
+    ):
         raise NotImplementedError(
             f"controller_kind={cfg.controller_kind!r} not supported; use "
-            "'naive_inverse_jacobian', 'mpc_lti' or 'mpc_ltv_offline'."
+            "'naive_inverse_jacobian', 'naive_inverse_jacobian_ltv', 'mpc_lti', "
+            "'mpc_ltv_offline', 'mpc_ltv_sqp_online', 'open_loop_ff' or "
+            "'inv_2dof_trim'."
         )
+    # 2026-09-16: mpc_ltv_sqp_online's state-dependent jac_provider needs
+    # build_planning_context() (~3.3s, pure offline model build, no live
+    # camera/robot dependency). Built HERE, before any camera/vision setup
+    # starts below, not at its point of use later in this function -- doing
+    # it there (after the vision stream is already running) left the first
+    # ticks' measured state stale enough to trip stale_vision on 2 out of 2
+    # live attempts before this fix (control_steps=3 and 1 respectively).
+    _tf_bundle_cache: tuple[Any, Any] | None = None
+    if cfg.controller_kind == "mpc_ltv_sqp_online":
+        from proper_research.planning.planning_context import build_planning_context
+
+        _, _tf_bundle, _tf_controller_pack, _ = build_planning_context()
+        _tf_bundle_cache = (_tf_bundle, _tf_controller_pack)
     if (
         cfg.feedforward_joint_trajectory
-        and cfg.controller_kind != "naive_inverse_jacobian"
+        and cfg.controller_kind not in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv")
         and not cfg.force_mpc_feedforward
     ):
         # The MPC formulation (state prediction from the measured state, Delta-u
@@ -631,7 +754,7 @@ def main() -> None:
         # to run it anyway (diagnostic runs).
         print(f"[path] feedforward_joint_trajectory auto-disabled for {cfg.controller_kind}")
         cfg = replace_dc(cfg, feedforward_joint_trajectory=False)
-    elif cfg.feedforward_joint_trajectory and cfg.controller_kind != "naive_inverse_jacobian":
+    elif cfg.feedforward_joint_trajectory and cfg.controller_kind not in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv"):
         print(
             f"[path] force_mpc_feedforward=True: leaving feedforward_joint_trajectory=True "
             f"for {cfg.controller_kind} (known-bad mode, running for diagnostics)"
@@ -727,6 +850,9 @@ def main() -> None:
 
     steps = 0
     ins_trim = 0.0   # accumulated feedback insertion correction (FF mode)
+    q_cmd: Any = None       # controller-owned commanded joints (accumulator_seam)
+    q_cmd_prev: Any = None  # q_cmd before this tick's update (for 50Hz interpolation)
+    ins_cmd: float | None = None  # controller-owned commanded insertion (accumulator_seam)
     abort_reason = ""
     started_moving = False
     jac_provider: Any = None
@@ -744,6 +870,9 @@ def main() -> None:
     des_log: list[np.ndarray] = []
     err_log: list[float] = []
     tsec_log: list[float] = []
+    # e_servo_k = q_meas_k - q_cmd_k (execution-layer fidelity, distinct
+    # from p_des-p_meas beam tracking) -- accumulator_seam only.
+    servo_err_log: list[float] = []
 
     try:
         _assert_robot_ready()
@@ -820,7 +949,52 @@ def main() -> None:
         )
 
         # --- frozen beam Jacobian -----------------------------
-        if cfg.jacobian_source == "analytical_beam":
+        if cfg.controller_kind == "mpc_ltv_sqp_online":
+            # 2026-09-16: mpc_ltv_sqp_online ("tick-frozen") is only
+            # meaningful if its jacobian_provider genuinely relinearises at
+            # the measured state each tick -- AnalyticalBeamJacobianProvider
+            # (the default under jacobian_source="analytical_beam") computes
+            # its Jacobian ONCE at construction and its __call__ ignores the
+            # state argument entirely (a real-time-budget tradeoff, ~112ms
+            # for the 7 finite-differenced get_forward_kinematics calls it
+            # needs -- fine as a frozen mpc_lti-style Jacobian, silently
+            # wrong for a controller whose entire purpose is per-tick
+            # relinearisation). Bypass it here: build the same
+            # from_model_bundle-based provider compare_controllers_live.py
+            # uses for the LTV schedule -- already verified both genuinely
+            # state-dependent (relinearisation_count increments, command
+            # changes between calls) and fast enough (~8.8ms mean, ~27ms max,
+            # well inside the 100ms tick budget) in this session's smoke
+            # tests. Every other controller_kind is unaffected -- mpc_lti's
+            # and mpc_ltv_offline's own Jacobian source is the precomputed
+            # schedule, not jac_provider; naive_inverse_jacobian keeps its
+            # existing (frozen, jacobian_source-controlled) behaviour.
+            print(
+                "[path] mpc_ltv_sqp_online: building a genuinely "
+                "state-dependent Jacobian provider (from_model_bundle), "
+                "bypassing the frozen AnalyticalBeamJacobianProvider"
+            )
+            from proper_research.controllers.beam_jacobian_providers import from_model_bundle
+
+            assert _tf_bundle_cache is not None, (
+                "mpc_ltv_sqp_online reached jac_provider construction without "
+                "the pre-built bundle/controller_pack cache from the top of main()."
+            )
+            _bundle, _controller_pack = _tf_bundle_cache
+            jac_provider = from_model_bundle(
+                bundle=_bundle, controller_pack=_controller_pack, contact=False
+            )
+            # BeamJacobianProvider (unlike AnalyticalBeamJacobianProvider) has
+            # no last_condition attribute, but several unconditional log/dump
+            # sites below read jac_provider.last_condition. Attach one, valued
+            # at the initial state -- a representative snapshot, consistent
+            # with how AnalyticalBeamJacobianProvider's own last_condition is
+            # itself only ever set once (never updated per call either).
+            _J0 = np.asarray(
+                jac_provider(np.concatenate([q0, [insertion_m]])), dtype=float
+            ).reshape(3, 7)
+            jac_provider.last_condition = float(np.linalg.cond(_J0[:, :6]))
+        elif cfg.jacobian_source == "analytical_beam":
             print("[path] building analytic beam Jacobian (forward-model solve + FK)...")
             tcp_pose6 = np.asarray(
                 robot.get_tcp_pose() if robot.get_tcp_pose() is not None else q0 * 0.0,
@@ -878,7 +1052,7 @@ def main() -> None:
 
         mpc_config = _mpc_config(cfg, dt)
         beam_config = None
-        if cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline"):
+        if cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online"):
             from proper_research.simulation.simulations.simulate_time_parameterized_beam_output_mpc import (
                 BeamOutputMPCConfig,
             )
@@ -966,6 +1140,15 @@ def main() -> None:
                         cfg.mpc_state_tracking_weight_override
                     ),
                 )
+            if cfg.mpc_diagnostic_zero_input_reference_in_R:
+                print(
+                    "[path] null-space diagnostic Experiment 3: zeroing the "
+                    "R-term's v_ref target (cost -> v^T R v; Q/Qp/Rd unchanged)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    diagnostic_zero_input_reference_in_R=True,
+                )
             if cfg.mpc_solver_time_limit_s is not None:
                 print(
                     f"[path] setting OSQP solver_time_limit_s -> "
@@ -1025,10 +1208,16 @@ def main() -> None:
         # A comparison harness sets `close_loop_path_follow._SCHEDULE_OVERRIDE`
         # to a relinearised-along-the-reference schedule so mpc_lti (frozen at
         # sample 0) and mpc_ltv_offline (full schedule) are compared on the
-        # SAME model, differing only in time-variation.  Ignored by
-        # naive_inverse_jacobian (which relinearises live off `jac_provider`).
+        # SAME model, differing only in time-variation. Also consumed by
+        # naive_inverse_jacobian_ltv ("inverse-LTV") to match mpc_ltv_offline's
+        # Jacobian *source* exactly -- see build_offline_solver's docstring.
+        # Ignored by plain naive_inverse_jacobian (which uses `jac_provider`).
         schedule_override = globals().get("_SCHEDULE_OVERRIDE")
-        if schedule_override is not None and beam_config is not None:
+        _schedule_applies = (
+            beam_config is not None
+            or cfg.controller_kind == "naive_inverse_jacobian_ltv"
+        )
+        if schedule_override is not None and _schedule_applies:
             schedule_override = np.asarray(schedule_override, dtype=float)
             if schedule_override.shape != (reference.sample_count, 3, 7):
                 raise ValueError(
@@ -1036,6 +1225,18 @@ def main() -> None:
                     f"({reference.sample_count}, 3, 7)"
                 )
             print(f"[path] using external Jacobian schedule {schedule_override.shape}")
+            if (
+                cfg.inv_freeze_schedule_at_start
+                and cfg.controller_kind == "naive_inverse_jacobian_ltv"
+            ):
+                schedule_override = np.repeat(
+                    schedule_override[0:1], schedule_override.shape[0], axis=0
+                )
+                print(
+                    "[path] naive_inverse_jacobian_ltv: freezing the schedule "
+                    "to sample 0 for the whole run (static-Jacobian condition, "
+                    "same underlying model as the LTV condition)"
+                )
         else:
             schedule_override = None
 
@@ -1055,15 +1256,34 @@ def main() -> None:
             damping=cfg.damping,
             nullspace_gain=cfg.nullspace_gain,
             feedforward=cfg.feedforward,
+            feedforward_full=cfg.feedforward_full,
             allow_undeclared_jacobian=True,
             selective_damping_gain=cfg.inv_selective_damping_gain,
             selective_damping_floor=cfg.inv_selective_damping_floor,
+            relinearise_every=int(cfg.mpc_relinearise_every),
+            trim_kp=cfg.trim_kp,
+            trim_kn=cfg.trim_kn,
+            trim_damping=cfg.trim_damping,
+            trim_q_max=cfg.trim_q_max,
+            trim_enable_logging=cfg.trim_enable_logging,
         )
+        # Exposed so a calling script can retrieve controller-internal state
+        # after main() returns -- e.g. inv_2dof_trim's per-tick task/null/
+        # trim decomposition log (trim_enable_logging=True) or the Q-
+        # ablation scripts' baseline-vs-counterfactual replay. Mirrors
+        # `_SCHEDULE_OVERRIDE`'s pattern: read as
+        # `close_loop_path_follow.LAST_SOLVER.controller` after `main()`.
+        globals()["LAST_SOLVER"] = solver
         print(
             f"[path] controller = {cfg.controller_kind}"
             + (
                 f" (horizon={cfg.mpc_prediction_horizon}, freeze@{cfg.mpc_freeze_index})"
                 if beam_config is not None
+                else ""
+            )
+            + (
+                f" (relinearise_every={cfg.mpc_relinearise_every})"
+                if cfg.controller_kind == "mpc_ltv_sqp_online"
                 else ""
             )
             + "; closing the loop"
@@ -1103,12 +1323,54 @@ def main() -> None:
                 jac_dump["mpc_use_dare_terminal_cost"] = bool(
                     cfg.mpc_use_dare_terminal_cost
                 )
+                if cfg.controller_kind == "mpc_ltv_sqp_online":
+                    jac_dump["mpc_relinearise_every"] = int(cfg.mpc_relinearise_every)
             jac_dump_path = output_dir / "frozen_jacobian.json"
             with jac_dump_path.open("w", encoding="utf-8") as handle:
                 json.dump(jac_dump, handle, indent=1)
             print(f"[path] frozen Jacobian (+schedule) -> {jac_dump_path}")
         except Exception as exc:  # pragma: no cover -- diagnostics must never break the run
             print(f"[path] WARNING: failed to dump frozen_jacobian.json: {exc!r}")
+
+        # 2026-09-17: building the solver (LTV schedule = one beam solve per
+        # reference sample, ~90-150s of largely single-threaded numeric work
+        # for a 264-sample plan) leaves getActualQ() returning the SAME
+        # cached packet indefinitely, no exception raised -- confirmed live
+        # (73% of polls were exact repeats right after one such build). A
+        # passive wait does not clear this; only a fresh receive-connection
+        # handshake does. Reconnect explicitly, then confirm freshness.
+        if reader.latest_joints(cfg.robot_max_age_s) is None:
+            print(
+                f"[path] joint reader stale after solver build "
+                f"(reads={reader.reads} stale_repeats={reader.stale_repeats}) "
+                f"-- reconnecting receive interface..."
+            )
+            reader.reconnect_receive()
+            _joint_wait_deadline = now_monotonic() + 2.0
+            while (
+                reader.latest_joints(cfg.robot_max_age_s) is None
+                and now_monotonic() < _joint_wait_deadline
+            ):
+                time.sleep(0.02)
+        print(
+            f"[path] joint-reader post-solver-build check: "
+            f"fresh={reader.latest_joints(cfg.robot_max_age_s) is not None} "
+            f"reads={reader.reads} read_failures={reader.read_failures} "
+            f"stale_repeats={reader.stale_repeats} last_error={reader.last_error!r}"
+        )
+        # 2026-09-17: the joint-reader reconnect above briefly stops/restarts
+        # its polling thread on the main thread -- confirmed live to leave
+        # the camera's last frame stale enough (>cfg.max_state_age_s) that
+        # the very first tick's camera.latest() check aborted immediately
+        # with stale_vision, right after a run that otherwise built cleanly.
+        # Camera runs its own independent thread and needs no reconnect,
+        # just a moment to publish a fresh frame.
+        _cam_wait_deadline = now_monotonic() + 2.0
+        while (
+            camera.latest(cfg.max_state_age_s)[0] is None
+            and now_monotonic() < _cam_wait_deadline
+        ):
+            time.sleep(0.02)
 
         safety_check_every = max(1, int(round(cfg.control_hz)))
         next_tick = now_monotonic()
@@ -1182,7 +1444,9 @@ def main() -> None:
             # The MPC command already contains the planned (feedforward) input
             # in its cost; the resolved-rate command is pure correction.  In FF
             # mode, subtract the planned input for MPC so we don't double-count.
-            is_mpc = cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline")
+            is_mpc = cfg.controller_kind in (
+                "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online",
+            )
             corr = command.copy()
             if cfg.feedforward_joint_trajectory and is_mpc:
                 corr = command - ref_input[target_index]
@@ -1206,12 +1470,22 @@ def main() -> None:
                     (ref_state[target_index, 6] - ref_state[prev_ix, 6]) / dt
                 )
 
+            # 2026-09-17: captured for the r_seam audit metric (z_cmd vs the
+            # MPC's own z_meas+dt*u0 prediction) -- this is the RATE actually
+            # sent to the linear-advancer hardware, distinct from the tracked
+            # `insertion_m` state below (which is reference-anchored the same
+            # way q_target is; this is not -- see the seam-mismatch audit).
+            insertion_rate_cmd_m_s = (
+                float(corr[6]) if cfg.feedforward_joint_trajectory else float(command[6])
+            ) + ff_ins_rate
             if advancer is not None:
-                advancer.submit_rate(
-                    (float(corr[6]) if cfg.feedforward_joint_trajectory else float(command[6]))
-                    + ff_ins_rate, dt
-                )
-            if cfg.feedforward_joint_trajectory:
+                advancer.submit_rate(insertion_rate_cmd_m_s, dt)
+            if cfg.accumulator_seam:
+                if ins_cmd is None:
+                    ins_cmd = float(insertion_m)
+                ins_cmd = float(np.clip(ins_cmd + float(corr[6]) * dt, 0.005, 0.20))
+                insertion_m = ins_cmd
+            elif cfg.feedforward_joint_trajectory:
                 ins_trim += float(corr[6]) * dt
                 insertion_m = float(np.clip(ref_state[target_index, 6] + ins_trim, 0.005, 0.20))
             elif advancer is not None:
@@ -1225,7 +1499,22 @@ def main() -> None:
                 cfg.joint_velocity_limit_rad_s,
             )
             delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
-            if cfg.feedforward_joint_trajectory and not (
+            if cfg.accumulator_seam:
+                # controller-owned running command trajectory -- see the
+                # accumulator_seam field docstring. Seeded at the first
+                # measured joints so it starts exactly where the robot is;
+                # from then on it only ever advances by delta_q, never by
+                # re-reading q_meas, so it is immune to the ~beta=0.2
+                # servoJ realization gain the direct-apply seam fell victim
+                # to (that gain attenuates how far q_meas moves toward
+                # q_target, not what q_target itself is).
+                if q_cmd is None:
+                    q_cmd = q.copy()
+                q_cmd_prev = q_cmd.copy()
+                servo_err_log.append(float(np.linalg.norm(q - q_cmd_prev)))
+                q_cmd = q_cmd + delta_q
+                q_target = q_cmd
+            elif cfg.feedforward_joint_trajectory and not (
                 cfg.ff_trim_base_switch_at_hold and terminal_hold
             ):
                 # servo the PLANNED joints + the controller correction as a trim
@@ -1238,12 +1527,41 @@ def main() -> None:
 
             t_servo = now_monotonic()
             if not cfg.dry_run:
-                robot.servo_j(
-                    q_target,
-                    time_s=2.0 * dt,
-                    lookahead_time=cfg.servo_lookahead_s,
-                    gain=cfg.servo_gain,
-                )
+                # condition "C" of the 2026-09-17 A/B/C seam-and-rate
+                # identification test: interpolate the accumulator's move
+                # from q_cmd_prev to q_target into servo_stream_hz/control_hz
+                # intermediate absolute targets instead of sending q_target
+                # once. Live-validated to cut mean/max command-tracking
+                # error ~4x versus sending once at 10Hz (see
+                # servoj-realization-gain memory). No-op (n_inner=1) unless
+                # accumulator_seam is on and servo_stream_hz > control_hz.
+                n_inner = 1
+                if cfg.accumulator_seam and cfg.servo_stream_hz > cfg.control_hz + 1e-9:
+                    n_inner = max(1, int(round(cfg.servo_stream_hz / cfg.control_hz)))
+                if n_inner > 1 and q_cmd_prev is not None:
+                    dt_inner = dt / n_inner
+                    q_start, q_end = q_cmd_prev[:6], q_target[:6]
+                    lookahead_inner = min(cfg.servo_lookahead_s, 2.5 * dt_inner)
+                    next_inner = t_servo
+                    for m in range(1, n_inner + 1):
+                        q_servo = q_start + (m / n_inner) * (q_end - q_start)
+                        robot.servo_j(
+                            q_servo,
+                            time_s=2.0 * dt_inner,
+                            lookahead_time=lookahead_inner,
+                            gain=cfg.servo_gain,
+                        )
+                        next_inner += dt_inner
+                        sleep_s = next_inner - now_monotonic()
+                        if sleep_s > 0:
+                            time.sleep(sleep_s)
+                else:
+                    robot.servo_j(
+                        q_target,
+                        time_s=2.0 * dt,
+                        lookahead_time=cfg.servo_lookahead_s,
+                        gain=cfg.servo_gain,
+                    )
                 if np.any(np.abs(delta_q) > 1e-9):
                     started_moving = True
             servo_ms = 1e3 * (now_monotonic() - t_servo)
@@ -1275,6 +1593,21 @@ def main() -> None:
                 "insertion_length_m": round(float(insertion_m), 5),
                 "q_meas_rad": [round(float(v), 6) for v in q],
                 "q_target_delta_rad": [round(float(v), 6) for v in delta_q],
+                # 2026-09-17: absolute applied joint target (not just the
+                # delta) -- needed for the r_seam audit metric, since in FF
+                # mode q_target is anchored to ref_state[target_index], not to
+                # q_meas, and reconstructing that anchor from this row alone
+                # would require the (potentially stale) plan file.
+                "q_target_rad": [round(float(v), 6) for v in q_target],
+                # e_servo_k = q_meas_k - q_cmd_k: execution-layer fidelity,
+                # distinct from p_des-p_meas beam tracking (error_mm above).
+                # accumulator_seam only; None otherwise (no q_cmd to compare).
+                "q_servo_error_rad": (
+                    [round(float(v), 6) for v in (q - q_cmd_prev)]
+                    if cfg.accumulator_seam and q_cmd_prev is not None
+                    else None
+                ),
+                "insertion_rate_cmd_m_s": round(float(insertion_rate_cmd_m_s), 6),
                 "servo_ms": round(servo_ms, 1),
                 "dry_run": cfg.dry_run,
                 # --- controller-internals diagnostics (2026-09-11) ---
@@ -1366,6 +1699,13 @@ def main() -> None:
         ),
         "final_error_mm": round(err_log[-1], 3) if err_log else None,
         "max_error_mm": round(max(err_log), 3) if err_log else None,
+        # execution-layer fidelity e_servo=q_meas-q_cmd (accumulator_seam only,
+        # rad) -- keep separate from the beam-tracking error above.
+        "servo_error_rms_rad": (
+            round(float(np.sqrt(np.mean(np.square(servo_err_log)))), 6)
+            if servo_err_log else None
+        ),
+        "servo_error_max_rad": round(max(servo_err_log), 6) if servo_err_log else None,
         "vision_detection_failures": mapper.detection_failures,
     }
     with (output_dir / "summary.json").open("w", encoding="utf-8") as handle:

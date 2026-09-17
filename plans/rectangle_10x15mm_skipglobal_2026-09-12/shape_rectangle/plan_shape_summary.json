@@ -1,0 +1,27 @@
+{
+  "shape": "rectangle",
+  "size_mm": 10.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": true,
+  "planner_tip0_world": [
+    0.5005794864881917,
+    -0.669607395033303,
+    -0.01656004894946191
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 101,
+  "perimeter_mm": 48.10124513986316,
+  "time_param_samples": 265,
+  "time_param_duration_s": 26.400000000000002,
+  "time_param_dir": "plans/rectangle_10x15mm_skipglobal_2026-09-12/time_parameterized_configuration_path"
+}

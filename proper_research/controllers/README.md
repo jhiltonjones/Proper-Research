@@ -9,6 +9,7 @@ one rung over another.
 |---|---|
 | `beam_jacobian_providers.py` | Contact-aware and contact-free 3×7 tip Jacobians, with provenance attached. |
 | `inverse_jacobian_controller.py` | Damped resolved-rate control with nullspace configuration regulation. |
+| `inverse_jacobian_2dof_trim.py` | Persistent nominal feedforward + non-integrating feedback trim -- for the `accumulator_seam` execution layer specifically (see its module docstring and `hardware/online/rectangle_stage_a/README.md`); not a drop-in replacement for the rung above under the older seam. |
 | `mpc_variants.py` | The three MPC rungs: LTI, LTV offline schedule, LTV SQP online. |
 | `test_controllers.py` | All four against the real MPC modules, on a mock plant. |
 

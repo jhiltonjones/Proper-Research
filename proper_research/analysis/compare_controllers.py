@@ -87,6 +87,7 @@ Array = np.ndarray
 
 CONTROLLER_NAMES = (
     "naive_inverse_jacobian",
+    "naive_inverse_jacobian_ltv",
     "mpc_lti",
     "mpc_ltv_offline",
     "mpc_ltv_sqp_online",
@@ -844,7 +845,18 @@ def _arguments() -> argparse.Namespace:
              "equilibrium. 'contact' is the control condition; 'pack' uses "
              "whatever the pack was built with.",
     )
-    parser.add_argument("--resolved-rate-gain", type=float, default=1.0)
+    parser.add_argument(
+        "--resolved-rate-gain", type=float, default=0.6,
+        help="proportional gain (kp) for the inverse-Jacobian controllers' "
+             "task-space correction. 0.6 matches close_loop_path_follow.py's "
+             "live-hardware default. The previous default here (1.0) is a "
+             "full deadbeat one-step correction that is only stable with zero "
+             "sensor noise/delay -- confirmed 2026-09-16 it makes this offline, "
+             "noise-free harness rank inverse-Jacobian far above MPC (0.0135mm "
+             "vs 0.089mm RMS on the S-curve), a ranking that reverses (0.182mm "
+             "vs 0.088mm) once matched to the real hardware gain. See "
+             "close_loop_logs/nullspace_motion_investigation_2026-09-16.md.",
+    )
     parser.add_argument("--resolved-rate-damping", type=float, default=1.0e-3)
     parser.add_argument("--nullspace-gain", type=float, default=1.0)
     parser.add_argument("--initial-joint-offset-deg", type=float, nargs=6, default=(0.0,) * 6)
@@ -1035,6 +1047,29 @@ def main() -> None:
                         position_gain=float(args.resolved_rate_gain),
                         damping=float(args.resolved_rate_damping),
                         nullspace_gain=float(args.nullspace_gain),
+                    ),
+                )
+            if name == "naive_inverse_jacobian_ltv":
+                # 2026-09-16: "inverse-LTV" -- the matched baseline for
+                # mpc_ltv_offline. Same `schedule` (built once above, shared
+                # with every MPC variant), same mpc_config; only the control
+                # law differs. See
+                # close_loop_logs/nullspace_motion_investigation_2026-09-16.md
+                # §5-6 for why plain naive_inverse_jacobian vs mpc_lti was a
+                # confounded comparison (they shared a frozen Jacobian source
+                # by accident on hardware) and why this exists.
+                return ControllerAdapter(
+                    name,
+                    "Damped resolved-rate inverse Jacobian, nullspace-regulated, "
+                    "matched to mpc_ltv_offline's precomputed per-sample schedule",
+                    inverse_module.build_inverse_jacobian_controller(
+                        reference=reference,
+                        jacobian_provider=jacobian_provider,
+                        mpc_config=mpc_config,
+                        position_gain=float(args.resolved_rate_gain),
+                        damping=float(args.resolved_rate_damping),
+                        nullspace_gain=float(args.nullspace_gain),
+                        reference_position_jacobians=schedule,
                     ),
                 )
             controller = mpc_variants[name]

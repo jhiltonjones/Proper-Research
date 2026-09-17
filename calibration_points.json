@@ -1,13 +1,15 @@
 {
   "points_px": [
     [
-      222,
-      248
+      25.452627182006836,
+      142.1134033203125
     ],
     [
-      223,
-      192
+      222.55018615722656,
+      233.82186889648438
     ]
   ],
-  "distance_px": 56.00892639160156
+  "distance_px": 217.3887939453125,
+  "known_distance_mm": 80.62257748298549,
+  "source": "1cm-square checkerboard grid (8x5 internal corners), diagonal baseline (opposite corners, 7x4 squares), sub-pixel corner detection, 2026-09-14. Supersedes the earlier hand-clicked two-point calibration (38.0mm assumed distance); this diagonal-baseline measurement agrees with the old value to ~0.4% (0.3709 vs 0.3725 mm/px), so the old calibration was not a real error source, but this is derived from many more samples (67 corner-to-corner spacings cross-checked) and a single long baseline, which is less sensitive to sub-pixel corner-detection noise than the original short two-point click."
 }

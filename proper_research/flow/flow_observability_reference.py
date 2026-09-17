@@ -413,7 +413,7 @@ def self_test(verbose: bool = True) -> bool:
     y = np.linspace(0.0, 1.0, 200_001)
     worst_mc = 0.0
     for a in (1.0, 3.0, 7.0, 15.0):
-        integral = 2.0 * np.trapezoid(profile_phasor(a, y) * y, y)
+        integral = 2.0 * np.trapz(profile_phasor(a, y) * y, y)
         worst_mc = max(worst_mc, abs(integral - vmean_phasor(a)))
     ok &= _check("T3  mass conservation (integral f == vmean)", worst_mc < 1e-9,
                  f"max |error| {worst_mc:.2e}")

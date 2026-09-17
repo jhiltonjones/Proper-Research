@@ -1452,8 +1452,18 @@ def simulate_time_parameterized_beam_output_mpc(
     output_dir: str | Path | None,
     initial_state: Any | None = None,
     jacobian_source: str = "analytical provider",
+    controller: Any | None = None,
 ) -> ConfigurationSimulationResult:
-    """Run output-aware MPC against the sequential nonlinear beam plant."""
+    """Run output-aware MPC against the sequential nonlinear beam plant.
+
+    ``controller`` lets a caller hand in an already-built controller (e.g. an
+    ``OnlineSQPBeamOutputMPC`` from ``mpc_variants.build_sqp_online_mpc``, to
+    test online/throttled relinearisation against this same nonlinear plant
+    loop) instead of the default ``BeamOutputTrackingMPC`` built from
+    ``reference_position_jacobians``.  It must still be a
+    ``BeamOutputTrackingMPC`` built against this ``reference``/``config``/
+    ``beam_config`` — the loop below only calls ``.solve(...)``.
+    """
     simulation_config.validate()
     reference.validate(
         require_planned_beam_feasible=(
@@ -1496,7 +1506,7 @@ def simulate_time_parameterized_beam_output_mpc(
     if forward6d is None:
         raise KeyError("controller_pack does not contain 'forward6d_plant'.")
 
-    mpc = BeamOutputTrackingMPC(
+    mpc = controller if controller is not None else BeamOutputTrackingMPC(
         reference=reference,
         config=mpc_config,
         beam_config=beam_config,

@@ -61,8 +61,13 @@ __all__ = [
     "JsonlStepLogger",
 ]
 
-_MPC_KINDS = ("mpc_lti", "mpc_ltv_offline")
-_ALL_KINDS = ("naive_inverse_jacobian",) + _MPC_KINDS
+_MPC_KINDS = ("mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online")
+_TRIM_KINDS = ("inv_2dof_trim",)
+_TRIVIAL_KINDS = ("open_loop_ff",)
+_ALL_KINDS = (
+    ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv")
+    + _MPC_KINDS + _TRIM_KINDS + _TRIVIAL_KINDS
+)
 
 
 # ==========================================================================
@@ -275,6 +280,48 @@ class OfflineJointControllerAdapter:
         return SolveResult(u0=command, infeasible=infeasible, info=info)
 
 
+@dataclass
+class _TrivialFeedforwardStep:
+    command: Array
+    info: dict
+    success: bool = True
+    status: str = "open_loop_ff"
+    iterations: int = 0
+    solve_time_s: float = 0.0
+    planned_input: Array | None = None
+
+
+class TrivialFeedforwardController:
+    """``solve()`` that ignores tracking error entirely: ``command = u_ref[index]``.
+
+    2026-09-17: the OPEN-LOOP-FF acceptance test for a new execution seam --
+    "does the plan itself, with zero correction, reproduce reasonable tip
+    motion through this seam" -- before trusting any closed-loop controller
+    comparison run through the same seam. Originally a monkeypatch in a
+    one-off script; promoted here once it became a standing part of the
+    Stage-A pipeline (see ``hardware/online/rectangle_stage_a/``).
+    """
+
+    name = "open_loop_ff"
+
+    def __init__(self, reference: Any) -> None:
+        self.reference = reference
+
+    def reset(self) -> None:
+        return None
+
+    def solve(
+        self, *, measured_state: Any, measured_beam_position: Any,
+        control_index: int, previous_input: Any,
+    ) -> _TrivialFeedforwardStep:
+        idx = int(np.clip(control_index, 0, self.reference.sample_count - 1))
+        u_ref = np.asarray(self.reference.input[idx], dtype=float).reshape(7)
+        return _TrivialFeedforwardStep(
+            command=u_ref, planned_input=u_ref.copy(),
+            info={"status": "open_loop_ff", "success": True},
+        )
+
+
 # ==========================================================================
 # controller construction
 # ==========================================================================
@@ -293,18 +340,50 @@ def build_offline_solver(
     damping: float = 1.0e-3,
     nullspace_gain: float = 1.0,
     feedforward: bool = True,
+    feedforward_full: bool = False,
     allow_undeclared_jacobian: bool = False,
     joint_state_getter: Optional[JointStateGetter] = None,
     selective_damping_gain: float = 0.0,
     selective_damping_floor: float = 0.01,
+    relinearise_every: int = 1,
+    trim_kp: float = 0.6,
+    trim_kn: float = 0.0,
+    trim_damping: float = 5.0e-2,
+    trim_q_max: float = 0.03,
+    trim_max_joint_step_rad: float = 0.010,
+    trim_enable_logging: bool = False,
 ) -> OfflineJointControllerAdapter:
-    """Build one of the three offline controllers and wrap it for the runner.
+    """Build one of the five offline controllers and wrap it for the runner.
 
-    ``kind``: ``"naive_inverse_jacobian"``, ``"mpc_lti"`` or
-    ``"mpc_ltv_offline"`` — the same three names
-    ``compare_controllers.CONTROLLER_NAMES`` uses (the fourth,
-    ``mpc_ltv_sqp_online``, relinearises on the measured state and is not part
-    of this request).
+    ``kind``: ``"naive_inverse_jacobian"``, ``"naive_inverse_jacobian_ltv"``,
+    ``"mpc_lti"``, ``"mpc_ltv_offline"`` or ``"mpc_ltv_sqp_online"``.
+
+    2026-09-16: ``naive_inverse_jacobian_ltv`` ("inverse-LTV") is the matched
+    baseline for ``mpc_ltv_offline``: same precomputed per-sample Jacobian
+    schedule (``schedule``/``reference_position_jacobians``), same
+    ``mpc_config`` (sample period, box and rate limits), same reference
+    progression -- the only thing that differs from ``mpc_ltv_offline`` is
+    the control law itself (one-step damped-least-squares resolved-rate vs.
+    finite-horizon QP). Exists because the original inv-vs-MPC comparisons
+    were confounded: ``naive_inverse_jacobian`` and ``mpc_lti`` turned out to
+    share the same frozen ``AnalyticalBeamJacobianProvider`` by accident (see
+    `close_loop_logs/nullspace_motion_investigation_2026-09-16.md` §5), so
+    "MPC beats inverse" conclusions were never cleanly isolating the control
+    law. Needs a ``schedule`` built the same (state-dependent) way
+    ``mpc_ltv_offline``'s is -- passing a frozen ``jacobian_provider`` here
+    with no external ``schedule`` would silently build a degenerate,
+    all-identical "schedule" and defeat the point; this is the same caveat
+    the MPC kinds already carry, not a new one.
+
+    2026-09-16: wired in ``mpc_ltv_sqp_online`` (previously only reachable from
+    ``mpc_variants.py``'s offline/simulation module) to serve as the "tick-frozen"
+    condition in the null-space-motion diagnostic protocol: at each real control
+    tick it relinearises at the *measured* state (unlike mpc_lti's run-long freeze
+    or mpc_ltv_offline's precomputed per-sample schedule) and holds that single
+    Jacobian across the whole prediction horizon (``relinearise_horizon=False``,
+    ``inner_iterations=1`` -- one relinearisation per tick, the standard
+    real-time SQP). Costs one extra beam-Jacobian evaluation per tick versus the
+    other two MPC kinds; not used by any existing comparison unless requested.
 
     ``jacobian_provider`` is whatever ``beam_jacobian_providers.from_model_bundle``
     (or ``from_controller_pack``) returned — the same provider the simulation
@@ -312,6 +391,16 @@ def build_offline_solver(
     ``mpc_config`` is a ``ConfigurationMPCConfig`` (shared sample period, box
     and rate limits); ``beam_config`` is a ``BeamOutputMPCConfig``, required
     for the two MPC kinds.
+
+    2026-09-16: ``relinearise_every`` throttles ``mpc_ltv_sqp_online``'s
+    per-tick relinearisation (see ``mpc_variants.build_sqp_online_mpc`` for
+    why: a genuinely state-dependent Jacobian provider can cost far more per
+    call off the smooth reference manifold than on it, and calling it every
+    tick can blow the real-time budget badly enough to starve the robot of
+    commands -- confirmed offline against a nonlinear-plant closed-loop
+    simulation to cost ~0 tracking accuracy out to every=20 on the S-curve
+    shape, while cutting Jacobian evaluations ~20x). Ignored for the other
+    three kinds.
     """
     if kind not in _ALL_KINDS:
         raise ValueError(f"kind must be one of {_ALL_KINDS}; got {kind!r}")
@@ -331,10 +420,61 @@ def build_offline_solver(
             damping=damping,
             nullspace_gain=nullspace_gain,
             feedforward=feedforward,
+            feedforward_full=feedforward_full,
             allow_undeclared_jacobian=allow_undeclared_jacobian,
             selective_damping_gain=selective_damping_gain,
             selective_damping_floor=selective_damping_floor,
         )
+    elif kind == "naive_inverse_jacobian_ltv":
+        from proper_research.controllers.inverse_jacobian_controller import (
+            build_inverse_jacobian_controller,
+        )
+
+        if schedule is None:
+            schedule = mpc_variants.precompute_schedule(
+                reference=reference,
+                jacobian_provider=jacobian_provider,
+                allow_undeclared_jacobian=allow_undeclared_jacobian,
+            )
+        controller = build_inverse_jacobian_controller(
+            reference=reference,
+            jacobian_provider=jacobian_provider,
+            mpc_config=mpc_config,
+            position_gain=position_gain,
+            damping=damping,
+            nullspace_gain=nullspace_gain,
+            feedforward=feedforward,
+            feedforward_full=feedforward_full,
+            allow_undeclared_jacobian=allow_undeclared_jacobian,
+            selective_damping_gain=selective_damping_gain,
+            selective_damping_floor=selective_damping_floor,
+            reference_position_jacobians=schedule,
+        )
+    elif kind == "inv_2dof_trim":
+        # 2026-09-17: see inverse_jacobian_2dof_trim.py's module docstring
+        # for the full architecture and the windup diagnosis that motivated
+        # it. Requires the caller's harness to run the accumulator seam
+        # (PathFollowConfig.accumulator_seam=True,
+        # feedforward_joint_trajectory=False) -- this controller reproduces
+        # that seam's own q_cmd update internally so the two stay in
+        # lockstep, but does not set the harness config itself.
+        from proper_research.controllers.inverse_jacobian_2dof_trim import (
+            build_inv_2dof_trim_controller,
+        )
+
+        controller = build_inv_2dof_trim_controller(
+            reference=reference,
+            jacobian_provider=jacobian_provider,
+            kp=trim_kp,
+            kn=trim_kn,
+            damping=trim_damping,
+            q_trim_max=trim_q_max,
+            dt=float(mpc_config.sample_period_s),
+            max_joint_step_rad=trim_max_joint_step_rad,
+            enable_logging=trim_enable_logging,
+        )
+    elif kind == "open_loop_ff":
+        controller = TrivialFeedforwardController(reference)
     else:
         if beam_config is None:
             raise ValueError(f"beam_config is required to build {kind!r}.")
@@ -356,8 +496,27 @@ def build_offline_solver(
         )
         if kind == "mpc_lti":
             controller = mpc_variants.build_lti_mpc(freeze_index=freeze_index, **shared)
-        else:  # mpc_ltv_offline
+        elif kind == "mpc_ltv_offline":
             controller = mpc_variants.build_ltv_offline_mpc(**shared)
+        else:  # mpc_ltv_sqp_online, "tick-frozen": relinearise at the measured
+            # state each tick, hold that single Jacobian across the horizon.
+            # build_sqp_online_mpc doesn't accept jacobian_provenance directly
+            # (it derives provenance itself via declare_provider on
+            # jacobian_provider) or reference_position_jacobians as a bare
+            # kwarg name under `shared` conflicting with its own signature --
+            # unpack `shared` explicitly rather than reusing it blindly.
+            controller = mpc_variants.build_sqp_online_mpc(
+                reference=reference,
+                config=mpc_config,
+                beam_config=beam_config,
+                reference_position_jacobians=schedule,
+                jacobian_provider=jacobian_provider,
+                inner_iterations=1,
+                relinearise_horizon=False,
+                relinearise_every=relinearise_every,
+                nominal_reference_positions_m=nominal_reference_positions_m,
+                allow_undeclared_jacobian=allow_undeclared_jacobian,
+            )
 
     return OfflineJointControllerAdapter(
         controller=controller,

@@ -55,7 +55,21 @@ DEFAULT_PLAN = "plans/triangle_8mm_2026-09-10/time_parameterized_configuration_p
 REF_JOINTS = np.array(
     [-0.85634357, -1.94584002, -1.76176286, -1.03319450, 1.56234264, -2.05640871]
 )
-KIND = {"inv": "naive_inverse_jacobian", "lti": "mpc_lti", "ltv": "mpc_ltv_offline"}
+KIND = {
+    "inv": "naive_inverse_jacobian", "lti": "mpc_lti", "ltv": "mpc_ltv_offline",
+    # 2026-09-16: "tick-frozen" condition for the null-space-motion diagnostic
+    # protocol -- relinearises at the measured state every real tick (unlike
+    # lti's run-long freeze or ltv's precomputed per-sample schedule) but
+    # holds that one Jacobian across the whole prediction horizon.
+    "tf": "mpc_ltv_sqp_online",
+    # 2026-09-16: matched baseline for "ltv" -- same precomputed per-sample
+    # Jacobian schedule as mpc_ltv_offline, damped-least-squares resolved-rate
+    # control law instead of the QP. See
+    # close_loop_logs/nullspace_motion_investigation_2026-09-16.md §5-6 for
+    # why "inv" vs "lti"/"ltv" was confounded before this existed (inv and
+    # lti turned out to share the same frozen Jacobian source by accident).
+    "inv_ltv": "naive_inverse_jacobian_ltv",
+}
 RUN_TIMEOUT_S = 240.0
 # ur_rtde's RTDEControlInterface wedges (FK failures / segfaults) if a new
 # control client connects within ~1 min of the previous one closing; give the
@@ -221,6 +235,8 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             mpc_input_tracking_weight_override: float | None = None,
             mpc_input_increment_weight_override: float | None = None,
             mpc_solver_time_limit_s: float | None = None,
+            mpc_diagnostic_zero_vref_in_R: bool = False,
+            mpc_relinearise_every: int = 1,
             mpc_directional_damping: float = 0.0,
             mpc_directional_damping_floor: float = 0.01,
             mpc_conditioning_fix: bool = False,
@@ -237,7 +253,11 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
             vessel_lumen_file: str = "",
             mpc_wall_avoidance_gain: float = 0.0,
             mpc_wall_avoidance_margin_mm: float = 0.5,
-            mpc_wall_avoidance_beam_radius_mm: float = 1.0) -> int:
+            mpc_wall_avoidance_beam_radius_mm: float = 1.0,
+            max_joint_step_rad: float = 0.006,
+            inv_freeze_schedule: bool = False,
+            inv_internal_feedforward: bool = False,
+            joint_velocity_limit_rad_s: float = 0.10) -> int:
     import proper_research.hardware.online.close_loop_path_follow as pf
 
     # Always move to reference first: besides resetting drift it "primes" the
@@ -254,8 +274,9 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     print(f"[worker] beam {1e3 * L:.1f} mm; running {KIND[kind_key]}")
     time.sleep(1.0)
 
-    if kind_key in ("lti", "ltv"):
+    if kind_key in ("lti", "ltv", "tf", "inv_ltv"):
         pf._SCHEDULE_OVERRIDE = np.load(sched_npz)["schedule"]
+    if kind_key in ("lti", "ltv", "tf"):
         pf.CONFIG.mpc_prediction_horizon = int(horizon)
         pf.CONFIG.mpc_freeze_index = 0
     pf.CONFIG.dry_run = False
@@ -268,13 +289,34 @@ def _worker(kind_key: str, rep: int, out_dir: Path, sched_npz: Path,
     pf.CONFIG.initial_insertion_m = beam_len_mm * 1e-3
     pf.CONFIG.exposure = 29.0
     pf.CONFIG.max_control_steps = 800
+    pf.CONFIG.max_joint_step_rad = float(max_joint_step_rad)
+    pf.CONFIG.inv_freeze_schedule_at_start = bool(inv_freeze_schedule)
+    # 2026-09-17: naive_inverse_jacobian(_ltv)'s OWN internal planner-feedforward
+    # term (v += P_DLS @ u_ref inside InverseJacobianBeamController.solve()) --
+    # distinct from feedforward_joint_trajectory, which only controls the
+    # EXTERNAL apply seam (q_ref+trim vs q_meas+delta). This CLI never set it
+    # before today, so every prior compare_controllers_live.py inv_ltv run had
+    # it False -- for the rectangle architecturally-fair INV-vs-MPC comparison,
+    # pair --inv-internal-feedforward (this stays True) with feedforward
+    # left OFF (direct-apply seam, matching MPC's own default non-FF seam).
+    pf.CONFIG.feedforward = bool(inv_internal_feedforward)
     pf.CONFIG.feedforward_joint_trajectory = bool(feedforward)
+    # 2026-09-17 rectangle Stage A: the QP's/INV's OWN internal velocity bound
+    # (distinct from max_joint_step_rad's downstream position-step clip) --
+    # never previously exposed here, so every prior run used the dataclass
+    # default 0.10 rad/s, inconsistent with the real 0.006rad/0.1s actuator
+    # limit. For MPC this is a genuine QP constraint, not just a clip -- see
+    # the 2026-09-17 triangle constrained-feedback diagnosis for why this
+    # matters (mpc_triangle_constrained_feedback_diagnosis_2026-09-17.md).
+    pf.CONFIG.joint_velocity_limit_rad_s = float(joint_velocity_limit_rad_s)
     pf.CONFIG.force_mpc_feedforward = bool(force_mpc_feedforward)
     pf.CONFIG.ff_trim_base_switch_at_hold = bool(ff_trim_base_switch_at_hold)
     pf.CONFIG.mpc_ff_input_increment_weight = mpc_ff_input_increment_weight
     pf.CONFIG.mpc_input_tracking_weight_override = mpc_input_tracking_weight_override
     pf.CONFIG.mpc_input_increment_weight_override = mpc_input_increment_weight_override
     pf.CONFIG.mpc_solver_time_limit_s = mpc_solver_time_limit_s
+    pf.CONFIG.mpc_diagnostic_zero_input_reference_in_R = bool(mpc_diagnostic_zero_vref_in_R)
+    pf.CONFIG.mpc_relinearise_every = int(mpc_relinearise_every)
     pf.CONFIG.mpc_directional_damping = float(mpc_directional_damping)
     pf.CONFIG.mpc_directional_damping_floor = float(mpc_directional_damping_floor)
     pf.CONFIG.mpc_conditioning_fix = bool(mpc_conditioning_fix)
@@ -383,7 +425,8 @@ def analyse(out_dir: Path):
         return
     bp = np.array([0.525575, -0.670028, -0.016567])
     u = np.array([-1.0, 0.0, 0.0]); v = np.array([0.0, 1.0, 0.0])
-    col = {"inv": "tab:blue", "lti": "tab:orange", "ltv": "tab:red"}
+    col = {"inv": "tab:blue", "lti": "tab:orange", "ltv": "tab:red", "tf": "tab:green",
+           "inv_ltv": "tab:purple"}
 
     fig, ax = plt.subplots(1, len(keys), figsize=(5.4 * len(keys), 5), squeeze=False)
     for j, k in enumerate(keys):
@@ -464,6 +507,74 @@ def main():
                         "never structurally handicapped vs inverse-Jacobian's "
                         "near-instant solve. See beam-lateral-authority-limit "
                         "memory for the diagnosis.")
+    p.add_argument("--mpc-diagnostic-zero-vref-in-R", action="store_true",
+                   help="null-space-motion diagnostic Experiment 3: zero the "
+                        "R-term's reference target so the input cost becomes "
+                        "v^T R v instead of (v-v_ref)^T R (v-v_ref), leaving "
+                        "Q (state tracking), Qp (output tracking) and Rd "
+                        "(increment smoothing) unchanged. Tests whether the "
+                        "R-term's pull toward v_ref is driving the MPC to "
+                        "reproduce v_ref's own null-space content.")
+    p.add_argument("--mpc-relinearise-every", type=int, default=1,
+                   help="throttle for 'tf' (mpc_ltv_sqp_online): relinearise "
+                        "the beam Jacobian at the measured state every N "
+                        "control ticks instead of every tick, reusing the "
+                        "last evaluated Jacobian in between. 1 = original "
+                        "behaviour. Exists because a genuinely state-dependent "
+                        "provider costs far more per call off the smooth "
+                        "reference manifold than on it (~254ms vs ~9ms, "
+                        "measured 2026-09-16) -- calling it every tick "
+                        "collapsed the real control rate from 10Hz to ~3.2Hz "
+                        "on hardware and produced a 9.46mm divergent run. "
+                        "Confirmed offline in a nonlinear-plant closed-loop "
+                        "simulation that throttling to every 2-20 ticks costs "
+                        "~0 tracking accuracy (RMS flat at 0.115mm) while "
+                        "cutting Jacobian calls proportionally; try 5-10 "
+                        "first. Ignored by inv/lti/ltv.")
+    p.add_argument("--joint-velocity-limit-rad-s", type=float, default=0.10,
+                   help="PathFollowConfig.joint_velocity_limit_rad_s -- the "
+                        "controller's OWN internal velocity bound: for INV it "
+                        "gates _clip()'s first clip stage, for MPC it is a "
+                        "genuine QP constraint (not just a downstream clip). "
+                        "Never exposed here before 2026-09-17; every prior run "
+                        "used the dataclass default 0.10 rad/s, inconsistent "
+                        "with the real 0.006rad/0.1s=0.06rad/s actuator limit "
+                        "-- see mpc_triangle_constrained_feedback_diagnosis_"
+                        "2026-09-17.md for why this matters for MPC "
+                        "specifically. Pass 0.06 for a constraint-consistent "
+                        "comparison.")
+    p.add_argument("--max-joint-step-rad", type=float, default=0.006,
+                   help="per-tick joint position-step clip applied AFTER the "
+                        "controller solves, before servo_j (close_loop_path_"
+                        "follow.py's max_joint_step_rad). Default 0.006 rad "
+                        "(6 mrad) is tighter than the QP's own 0.10 rad/s "
+                        "velocity limit implies at 100ms (~0.010 rad) -- "
+                        "confirmed 2026-09-16 this clip binds on the "
+                        "overwhelming majority of triangle ticks for mpc_ltv "
+                        "(96.6 pct) far more than inv_ltv (6.8 pct). Try "
+                        "0.010 to match the QP's own understood limit exactly.")
+    p.add_argument("--inv-freeze-schedule", action="store_true",
+                   help="static-Jacobian condition for 'inv_ltv': freeze its "
+                        "schedule (the same from_model_bundle-derived source "
+                        "mpc_ltv_offline uses) to sample 0 and hold it for "
+                        "the whole run, instead of updating it along the "
+                        "trajectory. Pairs with --inv-position-gain for the "
+                        "2026-09-17 inverse-Jacobian static-vs-LTV x "
+                        "kp=0.6/1.0 characterisation study. Ignored by all "
+                        "other controller kinds.")
+    p.add_argument("--inv-internal-feedforward", action="store_true",
+                   help="naive_inverse_jacobian(_ltv)'s OWN internal planner "
+                        "feedforward term (v += P_DLS @ u_ref inside the "
+                        "controller's solve(), distinct from --feedforward's "
+                        "external reference-anchored apply seam). This CLI "
+                        "never set it before 2026-09-17, so every prior "
+                        "inv_ltv run had it OFF. Use together with omitting "
+                        "--feedforward for an architecturally-fair inv-vs-MPC "
+                        "comparison: both controllers keep their own internal "
+                        "feedforward, but the external apply seam is "
+                        "q_target=q_meas+clip(dt*u,+-0.006) for both, not "
+                        "inv's historical q_ref+trim. Ignored by all other "
+                        "controller kinds.")
     p.add_argument("--mpc-directional-damping", type=float, default=0.0,
                    help="anisotropic input regularisation gain (0 = disabled): "
                         "penalises only the near-null singular direction of "
@@ -567,23 +678,28 @@ def main():
     p.add_argument("--mpc-wall-avoidance-beam-radius-mm", type=float, default=1.0,
                    help="beam physical radius used for the wall-avoidance "
                         "clearance calculation (matches ContactParams.r_beam).")
-    p.add_argument("--_worker", nargs=31, default=None,
+    p.add_argument("--_worker", nargs=37, default=None,
                    metavar=("KIND", "REP", "OUT_DIR", "SCHED_NPZ", "PLAN_DIR", "HORIZON",
                             "BEAMLEN", "FF", "FORCE_MPC_FF", "FF_HOLD_SWITCH", "RD_WEIGHT",
-                            "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "DIR_DAMPING",
+                            "R_OVERRIDE", "RD_OVERRIDE", "TIME_LIMIT", "ZERO_VREF_R",
+                            "RELIN_EVERY",
+                            "DIR_DAMPING",
                             "DIR_DAMPING_FLOOR", "COND_FIX", "COND_FIX_DIR_DAMPING",
                             "COND_FIX_RD", "INV_POS_GAIN", "INV_SEL_GAIN", "INV_SEL_FLOOR",
                             "TIP_ESTIMATOR", "KF_Q", "KF_R", "NO_DARE", "STATE_TRACK_W",
-                            "VESSEL_LUMEN_FILE", "WALL_GAIN", "WALL_MARGIN", "WALL_BEAM_RADIUS"))
+                            "VESSEL_LUMEN_FILE", "WALL_GAIN", "WALL_MARGIN", "WALL_BEAM_RADIUS",
+                            "MAX_JOINT_STEP", "INV_FREEZE_SCHED", "INV_INTERNAL_FF",
+                            "JOINT_VEL_LIMIT"))
     args = p.parse_args()
 
     if args._worker:
         (kind_key, rep, out_dir, sched, plan_dir, horizon, blen, ff, force_mpc_ff,
          ff_hold_switch, rd_weight, r_override, rd_override,
-         time_limit, dir_damping, dir_damping_floor, cond_fix, cond_fix_dir_damping,
+         time_limit, zero_vref_r, relin_every, dir_damping, dir_damping_floor, cond_fix, cond_fix_dir_damping,
          cond_fix_rd, inv_pos_gain, inv_sel_gain, inv_sel_floor, tip_estimator, kf_q, kf_r,
          no_dare, state_track_w, vessel_lumen_file, wall_gain, wall_margin,
-         wall_beam_radius) = args._worker
+         wall_beam_radius, max_joint_step, inv_freeze_sched, inv_internal_ff,
+         joint_vel_limit) = args._worker
         sys.exit(_worker(kind_key, int(rep), Path(out_dir), Path(sched),
                          plan_dir, int(horizon), float(blen), bool(int(ff)),
                          bool(int(force_mpc_ff)), bool(int(ff_hold_switch)),
@@ -591,6 +707,8 @@ def main():
                          None if r_override == "none" else float(r_override),
                          None if rd_override == "none" else float(rd_override),
                          None if time_limit == "none" else float(time_limit),
+                         bool(int(zero_vref_r)),
+                         int(relin_every),
                          float(dir_damping), float(dir_damping_floor),
                          bool(int(cond_fix)), float(cond_fix_dir_damping),
                          float(cond_fix_rd), float(inv_pos_gain),
@@ -598,7 +716,9 @@ def main():
                          tip_estimator, float(kf_q), float(kf_r), bool(int(no_dare)),
                          None if state_track_w == "none" else float(state_track_w),
                          vessel_lumen_file, float(wall_gain), float(wall_margin),
-                         float(wall_beam_radius)))
+                         float(wall_beam_radius), float(max_joint_step),
+                         bool(int(inv_freeze_sched)), bool(int(inv_internal_ff)),
+                         float(joint_vel_limit)))
 
     if args.analyze_only:
         analyse(Path(args.analyze_only))
@@ -614,10 +734,10 @@ def main():
     order = [k.strip() for k in args.controllers.split(",") if k.strip()]
     for k in order:
         if k not in KIND:
-            raise SystemExit(f"unknown controller {k!r}; use inv,lti,ltv")
+            raise SystemExit(f"unknown controller {k!r}; use inv,inv_ltv,lti,ltv,tf")
 
     sched_npz = out_dir / "ltv_schedule.npz"
-    if any(k in ("lti", "ltv") for k in order):
+    if any(k in ("lti", "ltv", "tf", "inv_ltv") for k in order):
         build_ltv_schedule(args.plan_dir, sched_npz)
 
     results: list[dict] = []
@@ -639,6 +759,8 @@ def main():
                     else str(args.mpc_input_increment_weight)),
                    ("none" if args.mpc_solver_time_limit_s is None
                     else str(args.mpc_solver_time_limit_s)),
+                   "1" if args.mpc_diagnostic_zero_vref_in_R else "0",
+                   str(args.mpc_relinearise_every),
                    str(args.mpc_directional_damping),
                    str(args.mpc_directional_damping_floor),
                    "1" if args.mpc_conditioning_fix else "0",
@@ -656,7 +778,11 @@ def main():
                    args.vessel_lumen_file,
                    str(args.mpc_wall_avoidance_gain),
                    str(args.mpc_wall_avoidance_margin_mm),
-                   str(args.mpc_wall_avoidance_beam_radius_mm)]
+                   str(args.mpc_wall_avoidance_beam_radius_mm),
+                   str(args.max_joint_step_rad),
+                   "1" if args.inv_freeze_schedule else "0",
+                   "1" if args.inv_internal_feedforward else "0",
+                   str(args.joint_velocity_limit_rad_s)]
             rc, rd = None, None
             for attempt in range(1, MAX_ATTEMPTS_PER_RUN + 1):
                 if not first:

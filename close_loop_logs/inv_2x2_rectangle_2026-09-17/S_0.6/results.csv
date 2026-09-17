@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian_ltv,inv_ltv,1,close_loop_logs/inv_2x2_rectangle_2026-09-17/S_0.6/runs/inv_ltv_rep1_20260917T110205Z,path_complete,285,263,1.354268907478961,1.1702737642585552,3.087,2.630199999999998,0.6131363636363636,0.745,56.3041

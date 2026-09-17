@@ -142,6 +142,7 @@ class RobotJointStream:
     def __init__(
         self, ip: str, *, poll_hz: float = 125.0, receive_only: bool = True
     ) -> None:
+        self._ip = str(ip)
         self._receive_only = bool(receive_only)
         self._robot = None
         self._rtde_r = None
@@ -162,12 +163,55 @@ class RobotJointStream:
         self.reads = 0
         self.read_failures = 0
         self.last_error = ""
+        # 2026-09-17: RTDE's getActualQ()/getActualTCPPose() can silently
+        # keep returning the SAME cached packet (no exception, socket still
+        # "connected") if the underlying data stream stalls -- confirmed
+        # live twice (see servoj-realization-gain memory): joints_slot kept
+        # refreshing its timestamp on a bit-identical reading for an entire
+        # ~28s run, so cfg.robot_max_age_s's staleness bound never tripped
+        # and a fully stale joint feed was consumed as "fresh" throughout.
+        # Track the last raw reading per channel so an exact repeat can be
+        # told apart from genuine (always-noisy) robot motion.
+        self._last_raw_joints: Optional[np.ndarray] = None
+        self._last_raw_pose: Optional[np.ndarray] = None
+        self.stale_repeats = 0
 
     def start(self) -> None:
         self._loop = HeartbeatLoop(
             "robot-poll", self._poll_body, period_s=1.0 / self._poll_hz
         )
         self._loop.start()
+
+    def reconnect_receive(self) -> None:
+        """Tear down and rebuild the receive-only RTDE connection.
+
+        2026-09-17: ``getActualQ()``/``getActualTCPPose()`` have been
+        observed to keep returning the SAME cached packet indefinitely, with
+        no exception, after a stretch of heavy CPU-bound work in this same
+        process (e.g. an LTV Jacobian schedule build -- confirmed live: 73%
+        of polls were exact repeats right after one such build finished, see
+        servoj-realization-gain memory). Waiting alone does not clear it --
+        the stuck socket needs a fresh handshake. Call this after any such
+        stretch and before trusting ``latest_joints``/``latest_pose`` again.
+        Receive-only mode only.
+        """
+        if not self._receive_only:
+            raise RuntimeError("reconnect_receive only applies to receive_only=True")
+        if self._loop is not None:
+            self._loop.stop()
+            self._loop = None
+        try:
+            self._rtde_r.disconnect()
+        except Exception:
+            pass
+        import rtde_receive
+
+        self._rtde_r = rtde_receive.RTDEReceiveInterface(self._ip)
+        if not self._rtde_r.isConnected():
+            raise RuntimeError(f"rtde_receive could not reconnect to {self._ip}")
+        self._last_raw_joints = None
+        self._last_raw_pose = None
+        self.start()
 
     def _poll_body(self, _t_start: float) -> None:
         try:
@@ -186,10 +230,26 @@ class RobotJointStream:
                 except Exception:
                     pass
             return
+        # Only refresh the slot (and its freshness timestamp) when the raw
+        # reading actually changed. A real robot's joints/pose are never
+        # bit-identical two polls in a row (sensor noise alone rules that
+        # out) -- an exact repeat means the underlying RTDE stream is stuck,
+        # not that the robot is stationary. Leaving the slot's old timestamp
+        # in place lets max_age_s correctly age it out instead of treating
+        # a frozen feed as live.
         if joints is not None:
-            self.joints_slot.set(np.asarray(joints, dtype=float).reshape(6))
+            joints_arr = np.asarray(joints, dtype=float).reshape(6)
+            if self._last_raw_joints is None or not np.array_equal(joints_arr, self._last_raw_joints):
+                self._last_raw_joints = joints_arr
+                self.joints_slot.set(joints_arr)
+            else:
+                self.stale_repeats += 1
+                self.last_error = "stale_repeat: getActualQ() returned an identical reading"
         if pose is not None:
-            self.pose_slot.set(np.asarray(pose, dtype=float).reshape(6))
+            pose_arr = np.asarray(pose, dtype=float).reshape(6)
+            if self._last_raw_pose is None or not np.array_equal(pose_arr, self._last_raw_pose):
+                self._last_raw_pose = pose_arr
+                self.pose_slot.set(pose_arr)
         self.reads += 1
 
     @property

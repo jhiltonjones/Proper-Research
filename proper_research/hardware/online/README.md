@@ -143,3 +143,16 @@ progress tracking, not the controller maths, which `compare_controllers.py
 
 `speed_l`, `speed_j`, `speed_stop`, `servo_l`, `servo_stop`, `get_tcp_speed`,
 `init_period`, `wait_period`, `set_watchdog`.
+
+## The other path-following stack: `close_loop_path_follow.py`
+
+The architecture above (`OnlineMPCRunner`/`RobotSink`) is one of two live
+control loops in this directory. `close_loop_path_follow.py` is the other --
+built for tracking a full timed shape (not a single setpoint), with its own
+`PathFollowConfig`/`main()`, and it's what
+`proper_research/hardware/online/rectangle_stage_a/` is built on. See that
+package's README for the full offline-plan-to-controller-comparison-to-plots
+pipeline, the accumulator-seam execution layer ("layer C") it validated
+there, and the `RobotJointStream`/Jacobian-schedule bugs found and fixed
+along the way (both in `state_stream.py` and `close_loop_path_follow.py`,
+not specific to that one package).

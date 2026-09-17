@@ -36,7 +36,13 @@ class URRTDERobot:
     SAFETY_MODE_NORMAL = 1
     SAFETY_MODE_REDUCED = 2
 
-    def __init__(self, ip: str, frequency: float = 125.0) -> None:
+    def __init__(
+        self,
+        ip: str,
+        frequency: float = 125.0,
+        external_control: bool = False,
+        external_control_port: int = 50002,
+    ) -> None:
         if not ip or not isinstance(ip, str):
             raise ValueError("ip must be the robot's IPv4 address or hostname")
         if not math.isfinite(frequency) or frequency <= 0.0 or frequency > 500.0:
@@ -44,6 +50,15 @@ class URRTDERobot:
 
         self.ip = ip
         self.frequency = float(frequency)
+        # 2026-09-17: External Control URCap connection, added after diagnosing
+        # that plain Remote Control (the branch below with no flags) produces
+        # "another thread is already controlling the robot" / failed script
+        # uploads / std::bad_alloc against a pendant configured for External
+        # Control. See memory servoj-realization-gain.md. When True, requires
+        # pressing Play on the pendant's External Control program AFTER this
+        # constructor starts (it listens on external_control_port).
+        self.external_control = bool(external_control)
+        self.external_control_port = int(external_control_port)
         self._control: Optional[rtde_control.RTDEControlInterface] = None
         self._receive: Optional[rtde_receive.RTDEReceiveInterface] = None
         self._lock = threading.RLock()
@@ -73,9 +88,18 @@ class URRTDERobot:
 
             self._disconnect_unlocked(stop_script=False)
             try:
-                self._control = rtde_control.RTDEControlInterface(
-                    self.ip, self.frequency
-                )
+                if self.external_control:
+                    flags = (
+                        rtde_control.RTDEControlInterface.FLAG_USE_EXT_UR_CAP
+                        | rtde_control.RTDEControlInterface.FLAG_VERBOSE
+                    )
+                    self._control = rtde_control.RTDEControlInterface(
+                        self.ip, self.frequency, flags, self.external_control_port
+                    )
+                else:
+                    self._control = rtde_control.RTDEControlInterface(
+                        self.ip, self.frequency
+                    )
                 self._receive = rtde_receive.RTDEReceiveInterface(
                     self.ip, self.frequency
                 )

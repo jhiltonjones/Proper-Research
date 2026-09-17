@@ -249,7 +249,7 @@ def gravity_energy_from_centerline(
         fg_uniform = np.asarray(gravity_force_density, float).reshape(3)
         fg = np.repeat(fg_uniform[:, None], s.size, axis=1)
 
-    return float(-np.trapezoid(np.sum(fg * p, axis=0), s))
+    return float(-np.trapz(np.sum(fg * p, axis=0), s))
 
 
 def energy_from_u(

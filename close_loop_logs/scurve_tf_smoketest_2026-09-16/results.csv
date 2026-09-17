@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_sqp_online,tf,1,close_loop_logs/scurve_tf_smoketest_2026-09-16/runs/tf_rep1_20260916T094334Z,path_complete,193,171,1.6192763472887786,1.22687134502924,3.919,3.4645,0.2946363636363636,0.281,40.6547

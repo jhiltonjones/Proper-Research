@@ -1,0 +1,47 @@
+{
+  "tf": {
+    "n": 1,
+    "rms_track_mm": {
+      "mean": 0.368,
+      "std": 0.0,
+      "vals": [
+        0.368
+      ]
+    },
+    "mean_track_mm": {
+      "mean": 0.368,
+      "std": 0.0,
+      "vals": [
+        0.368
+      ]
+    },
+    "max_track_mm": {
+      "mean": 0.368,
+      "std": 0.0,
+      "vals": [
+        0.368
+      ]
+    },
+    "p95_track_mm": {
+      "mean": 0.368,
+      "std": 0.0,
+      "vals": [
+        0.368
+      ]
+    },
+    "mean_hold_mm": {
+      "mean": NaN,
+      "std": NaN,
+      "vals": [
+        NaN
+      ]
+    },
+    "final_mm": {
+      "mean": 0.368,
+      "std": 0.0,
+      "vals": [
+        0.368
+      ]
+    }
+  }
+}

@@ -93,12 +93,12 @@ def magnetic_tip_wrench_about_interface(p, q, s, *, r_src, m_src, m_local_fun, m
             f"Incompatible shapes: f_mag.shape={f_mag.shape}, tau_mag.shape={tau_mag.shape}, len(s_tip)={len(s_tip)}"
         )
 
-    F_tip = np.trapezoid(f_mag, s_int, axis=1)
-    Tau_tip = np.trapezoid(tau_mag, s_int, axis=1)
+    F_tip = np.trapz(f_mag, s_int, axis=1)
+    Tau_tip = np.trapz(tau_mag, s_int, axis=1)
 
     lever = p_force - p_int[:, None]
     force_moment_density = np.cross(lever.T, f_mag.T).T
-    M_force = np.trapezoid(force_moment_density, s_int, axis=1)
+    M_force = np.trapz(force_moment_density, s_int, axis=1)
 
     M_total = Tau_tip + M_force
 

@@ -115,9 +115,11 @@ class InverseJacobianBeamController:
         damping: float = 1.0e-3,
         nullspace_gain: float = 1.0,
         feedforward: bool = True,
+        feedforward_full: bool = False,
         allow_undeclared_jacobian: bool = False,
         selective_damping_gain: float = 0.0,
         selective_damping_floor: float = 0.01,
+        reference_position_jacobians: Any = None,
     ) -> None:
         self.reference = reference
         # The controller records what it was handed. Ask any instance
@@ -126,6 +128,25 @@ class InverseJacobianBeamController:
         self.jacobian_provider, self.jacobian_provenance = declare_provider(
             jacobian_provider, allow_undeclared=allow_undeclared_jacobian
         )
+        # 2026-09-16: "inverse-LTV" -- a matched baseline for MPC-LTV. When
+        # given, `solve()` looks up this precomputed per-sample Jacobian
+        # instead of calling `jacobian_provider(state)`, exactly mirroring how
+        # `mpc_ltv_offline` uses `reference_position_jacobians[index]`. This
+        # exists because the fairest test of "does the MPC horizon help" is
+        # holding the Jacobian *source* fixed and varying only the control
+        # law (one-step resolved-rate vs finite-horizon QP) -- not comparing
+        # a live/frozen provider against a scheduled one. See
+        # `close_loop_logs/nullspace_motion_investigation_2026-09-16.md` §5-6.
+        self._schedule: Array | None = None
+        if reference_position_jacobians is not None:
+            schedule = np.asarray(reference_position_jacobians, dtype=float)
+            expected = (int(reference.sample_count), 3, 7)
+            if schedule.shape != expected or not np.all(np.isfinite(schedule)):
+                raise ValueError(
+                    "reference_position_jacobians must have shape "
+                    f"{expected}; received {schedule.shape}."
+                )
+            self._schedule = schedule
         self.jacobian_is_contact_free = (
             self.jacobian_provenance.get("contact_used_in_jacobian") is False
         )
@@ -146,6 +167,7 @@ class InverseJacobianBeamController:
         self.damping = float(damping)
         self.nullspace_gain = float(nullspace_gain)
         self.feedforward = bool(feedforward)
+        self.feedforward_full = bool(feedforward_full)
         if self.damping <= 0.0:
             raise ValueError("damping must be positive; it is a Levenberg parameter.")
         self.selective_damping_gain = float(selective_damping_gain)
@@ -159,12 +181,19 @@ class InverseJacobianBeamController:
         return {
             "controller": self.name,
             "description": self.description,
-            "jacobian": provenance_line(self.jacobian_provenance),
+            "jacobian": (
+                "scheduled (offline, one Jacobian per reference sample -- "
+                "matches mpc_ltv_offline's schedule)"
+                if self._schedule is not None
+                else provenance_line(self.jacobian_provenance)
+            ),
             "jacobian_provenance": dict(self.jacobian_provenance),
+            "jacobian_scheduled": self._schedule is not None,
             "position_gain": self.position_gain,
             "damping": self.damping,
             "nullspace_gain": self.nullspace_gain,
             "feedforward": self.feedforward,
+            "feedforward_full": self.feedforward_full,
             "selective_damping_gain": self.selective_damping_gain,
             "selective_damping_floor": self.selective_damping_floor,
         }
@@ -195,9 +224,12 @@ class InverseJacobianBeamController:
         reference_state = np.asarray(self.reference.state, dtype=float)[index]
         reference_input = np.asarray(self.reference.input, dtype=float)[index]
 
-        jacobian = np.asarray(
-            self.jacobian_provider(state), dtype=float
-        ).reshape(3, 7)
+        if self._schedule is not None:
+            jacobian = self._schedule[index]
+        else:
+            jacobian = np.asarray(
+                self.jacobian_provider(state), dtype=float
+            ).reshape(3, 7)
         if not np.all(np.isfinite(jacobian)):
             raise FloatingPointError("The beam Jacobian is not finite.")
 
@@ -214,7 +246,17 @@ class InverseJacobianBeamController:
             self.nullspace_gain * (reference_state - state) / self.dt
         )
         command = task_velocity + nullspace_velocity
-        if self.feedforward:
+        if self.feedforward_full:
+            # Full 2DOF feedforward: add the reference input UNPROJECTED.
+            # task_velocity already corrects the tip error relative to the
+            # planner's own desired position, so this does not double-count
+            # the planned tip motion -- it is what lets the controller
+            # actually track the reference velocity instead of only ever
+            # producing the (small) correction term. Distinct from the
+            # nullspace-only feedforward below, which was found to starve
+            # the commanded velocity of most of the planned motion.
+            command = command + reference_input
+        elif self.feedforward:
             # The feedforward is a nullspace-consistent addition: the task term
             # already contains the tip motion the reference asks for, so adding
             # the reference velocity outright would double-count it.
@@ -303,15 +345,19 @@ def build_inverse_jacobian_controller(
     damping: float = 1.0e-3,
     nullspace_gain: float = 1.0,
     feedforward: bool = True,
+    feedforward_full: bool = False,
     allow_undeclared_jacobian: bool = True,
     selective_damping_gain: float = 0.0,
     selective_damping_floor: float = 0.01,
+    reference_position_jacobians: Any = None,
 ) -> InverseJacobianBeamController:
     """Build it from the same ``ConfigurationMPCConfig`` the MPCs use.
 
     Sharing the config is what guarantees the baseline gets the same limits,
     the same sample period and the same state box as the controllers it is
-    being compared against.
+    being compared against. Pass ``reference_position_jacobians`` (the same
+    schedule ``mpc_ltv_offline`` uses) to additionally match the Jacobian
+    *source* -- the "inverse-LTV" baseline.
     """
     return InverseJacobianBeamController(
         reference=reference,
@@ -325,9 +371,11 @@ def build_inverse_jacobian_controller(
         damping=damping,
         nullspace_gain=nullspace_gain,
         feedforward=feedforward,
+        feedforward_full=feedforward_full,
         allow_undeclared_jacobian=allow_undeclared_jacobian,
         selective_damping_gain=selective_damping_gain,
         selective_damping_floor=selective_damping_floor,
+        reference_position_jacobians=reference_position_jacobians,
     )
 
 

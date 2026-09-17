@@ -182,6 +182,7 @@ def build_sqp_online_mpc(
     jacobian_provider: Callable[[Array], Array],
     inner_iterations: int = 1,
     relinearise_horizon: bool = False,
+    relinearise_every: int = 1,
     nominal_reference_positions_m: Any | None = None,
     allow_undeclared_jacobian: bool = True,
 ) -> Any:
@@ -201,6 +202,17 @@ def build_sqp_online_mpc(
     at the current index — a cheap way to keep some of the path variation while
     still correcting for where the plant really is.  Neither costs an extra
     beam solve beyond the one Jacobian call.
+
+    ``relinearise_every`` throttles how often ``jacobian_provider`` is actually
+    called: 1 calls it every control step (the original behaviour); N > 1 calls
+    it every N-th step and reuses the last evaluated Jacobian on the steps in
+    between.  This exists because a genuinely state-dependent provider can cost
+    far more per call off the smooth reference manifold than on it (a nonlinear
+    beam-equilibrium solve needs more Newton iterations from an arbitrary
+    measured state than from a warm-started neighbour on a precomputed
+    schedule) — calling it every step can blow the real-time budget and starve
+    the plant of commands even though the *linear algebra* is fine.  Throttling
+    trades relinearisation freshness for a bounded, predictable per-step cost.
     """
     module = _beam_output_module()
     jacobian_at, provenance = declare_provider(
@@ -213,6 +225,7 @@ def build_sqp_online_mpc(
             f"received {schedule.shape}."
         )
     iterations = max(1, int(inner_iterations))
+    every = max(1, int(relinearise_every))
 
     class OnlineSQPBeamOutputMPC(module.BeamOutputTrackingMPC):  # type: ignore[misc]
         """``BeamOutputTrackingMPC`` whose Jacobian follows the measurement."""
@@ -222,17 +235,29 @@ def build_sqp_online_mpc(
             self._offline_schedule = schedule.copy()
             self.relinearisation_count = 0
             self.jacobian_time_s = 0.0
+            self._relinearise_every = every
+            self._last_jacobian: Array | None = None
+            self._relinearise_step_counter = 0
 
         def relinearise(self, state: Array, control_index: int) -> Array:
             import time as _time
 
-            started = _time.perf_counter()
-            jacobian = np.asarray(
-                jacobian_at(np.asarray(state, dtype=float).reshape(7)),
-                dtype=float,
-            ).reshape(3, 7)
-            self.jacobian_time_s += _time.perf_counter() - started
-            self.relinearisation_count += 1
+            due = (
+                self._last_jacobian is None
+                or self._relinearise_step_counter % self._relinearise_every == 0
+            )
+            self._relinearise_step_counter += 1
+            if due:
+                started = _time.perf_counter()
+                jacobian = np.asarray(
+                    jacobian_at(np.asarray(state, dtype=float).reshape(7)),
+                    dtype=float,
+                ).reshape(3, 7)
+                self.jacobian_time_s += _time.perf_counter() - started
+                self.relinearisation_count += 1
+                self._last_jacobian = jacobian
+            else:
+                jacobian = self._last_jacobian
             if relinearise_horizon:
                 index = int(
                     np.clip(control_index, 0, self._offline_schedule.shape[0] - 1)
@@ -283,8 +308,8 @@ def build_sqp_online_mpc(
     return _tag(
         controller,
         "mpc_ltv_sqp_online",
-        f"condensed QP relinearised at the measured state, {iterations} SQP "
-        f"iteration(s) per step, "
+        f"condensed QP relinearised at the measured state every {every} step(s), "
+        f"{iterations} SQP iteration(s) per relinearisation, "
         + (
             "horizon shape retained"
             if relinearise_horizon

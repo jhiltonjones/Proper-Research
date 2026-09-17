@@ -275,6 +275,10 @@ class ConfigurationMPCConfig:
     input_increment_weight: float = 1.0e-3
     terminal_weight_multiplier: float = 20.0
     hessian_regularization: float = 1.0e-9
+    # 2026-09-16: null-space-motion diagnostic Experiment 3 (see
+    # _linear_cost's docstring comment for the full rationale). False =
+    # normal behaviour, no change to any existing run.
+    diagnostic_zero_input_reference_in_R: bool = False
 
     solver_backend: Literal["auto", "osqp", "scipy"] = "auto"
     solver_absolute_tolerance: float = 1.0e-7
@@ -780,6 +784,17 @@ class ConfigurationTrackingMPC:
         free_state = self.E @ state
         state_reference_vector = state_reference.reshape(self.nu)
         input_reference_vector = input_reference.reshape(self.nu)
+        # 2026-09-16: null-space-motion diagnostic Experiment 3. When set, the
+        # R-term's reference target is zeroed -- cost becomes v^T R v instead
+        # of (v-v_ref)^T R (v-v_ref) -- while Q's state-tracking term (still
+        # keyed to state_reference_vector) and Rd's previous-input smoothing
+        # term are untouched. Tests whether the R-term's pull toward v_ref is
+        # what's driving the MPC to reproduce v_ref's own null-space content
+        # (see mpc_vs_inv_deep_analysis_2026-09-15 Part 4 and the null-space
+        # decomposition experiments that followed it). False = normal
+        # behaviour, no change to any existing run.
+        if getattr(self.config, "diagnostic_zero_input_reference_in_R", False):
+            input_reference_vector = np.zeros_like(input_reference_vector)
         previous_vector = np.zeros(self.nu, dtype=float)
         previous_vector[: self.m] = previous_input
         return 2.0 * (

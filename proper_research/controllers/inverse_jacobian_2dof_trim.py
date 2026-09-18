@@ -129,9 +129,20 @@ class TwoDOFTrimController:
         reference: Any,
         jacobian_provider: Callable[[Array], Array],
         config: TwoDOFTrimConfig | None = None,
+        schedule: Array | None = None,
     ) -> None:
         self.reference = reference
         self.jacobian_provider = jacobian_provider
+        # 2026-09-18: optional path-indexed Jacobian schedule (e.g. the
+        # genuine LTV schedule). When given, `schedule[idx]` is used instead
+        # of `jacobian_provider(state)` -- for a controlled A/B against
+        # inverse_jacobian_2dof_delay_aware.py's `schedule[idx+3]`, so the
+        # two conditions differ ONLY in which index they read, not also in
+        # Jacobian source (live per-state eval vs schedule lookup). None
+        # (the default) preserves the original behaviour for every existing
+        # caller -- this is additive, not a change to the validated
+        # kp=0.6/kn=0 baseline runs that didn't pass it.
+        self.schedule = None if schedule is None else np.asarray(schedule, dtype=float)
         self.config = config or TwoDOFTrimConfig()
         self.q_nom: Array | None = None   # 7-vector persistent nominal accumulator
         self.q_cmd6: Array | None = None  # mirrors the harness's accumulator_seam q_cmd[:6]
@@ -177,7 +188,10 @@ class TwoDOFTrimController:
 
         self.q_nom = self.q_nom + cfg.dt * u_ref
 
-        jac = np.asarray(self.jacobian_provider(state), dtype=float).reshape(3, 7)
+        if self.schedule is not None:
+            jac = self.schedule[idx]
+        else:
+            jac = np.asarray(self.jacobian_provider(state), dtype=float).reshape(3, 7)
         Jq = jac[:, :6]
         gram = Jq @ Jq.T + (cfg.damping ** 2) * np.eye(3)
         Jq_pinv = Jq.T @ np.linalg.solve(gram, np.eye(3))
@@ -241,15 +255,18 @@ def build_inv_2dof_trim_controller(
     dt: float = 0.1,
     max_joint_step_rad: float = 0.010,
     enable_logging: bool = False,
+    schedule: Array | None = None,
 ) -> TwoDOFTrimController:
     """Build the 2DOF trim controller with the live-validated defaults.
 
     ``kp=0.6, kn=0`` is the rectangle Stage-A development point (2026-09-17)
-    -- see the module docstring's live-validation numbers.
+    -- see the module docstring's live-validation numbers. ``schedule``: see
+    ``TwoDOFTrimController.__init__``'s docstring note.
     """
     return TwoDOFTrimController(
         reference=reference,
         jacobian_provider=jacobian_provider,
+        schedule=schedule,
         config=TwoDOFTrimConfig(
             kp=kp, kn=kn, damping=damping, q_trim_max=q_trim_max,
             dt=dt, max_joint_step_rad=max_joint_step_rad,

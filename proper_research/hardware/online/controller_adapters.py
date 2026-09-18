@@ -62,7 +62,7 @@ __all__ = [
 ]
 
 _MPC_KINDS = ("mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online")
-_TRIM_KINDS = ("inv_2dof_trim",)
+_TRIM_KINDS = ("inv_2dof_trim", "inv_2dof_map_trim", "inv_2dof_delay_aware")
 _TRIVIAL_KINDS = ("open_loop_ff",)
 _ALL_KINDS = (
     ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv")
@@ -267,6 +267,14 @@ class OfflineJointControllerAdapter:
                 None if predicted_beam_positions is None
                 else np.asarray(predicted_beam_positions, dtype=float).reshape(-1, 3)[0].tolist()
             ),
+            # 2026-09-18: full horizon stack (not just stage 0) -- needed to
+            # compute E_pred,+j = RMS||p_meas,k+j - p_hat_k+j|k|| post-hoc for
+            # the delay-aware-MPC live A/B. Additive only; existing consumers
+            # that only read the *_0_m keys above are unaffected.
+            "predicted_beam_positions_m": (
+                None if predicted_beam_positions is None
+                else np.asarray(predicted_beam_positions, dtype=float).tolist()
+            ),
             "predicted_beam_error_0_m": (
                 None if predicted_beam_errors is None
                 else np.asarray(predicted_beam_errors, dtype=float).reshape(-1, 3)[0].tolist()
@@ -352,6 +360,8 @@ def build_offline_solver(
     trim_q_max: float = 0.03,
     trim_max_joint_step_rad: float = 0.010,
     trim_enable_logging: bool = False,
+    dmap: Optional[Array] = None,
+    map_schedule: Optional[Array] = None,
 ) -> OfflineJointControllerAdapter:
     """Build one of the five offline controllers and wrap it for the runner.
 
@@ -465,6 +475,62 @@ def build_offline_solver(
         controller = build_inv_2dof_trim_controller(
             reference=reference,
             jacobian_provider=jacobian_provider,
+            schedule=schedule,
+            kp=trim_kp,
+            kn=trim_kn,
+            damping=trim_damping,
+            q_trim_max=trim_q_max,
+            dt=float(mpc_config.sample_period_s),
+            max_joint_step_rad=trim_max_joint_step_rad,
+            enable_logging=trim_enable_logging,
+        )
+    elif kind == "inv_2dof_map_trim":
+        # 2026-09-18: see inverse_jacobian_2dof_map_trim.py's module
+        # docstring -- adds a path-indexed feedforward correction for a
+        # repeatable beam-model discrepancy on top of the frozen
+        # inv_2dof_trim architecture. dmap/map_schedule are REQUIRED and
+        # must be the artifacts this specific controller was validated
+        # against offline (dmap_final_lambda1000.npz's `dmap`, and the
+        # genuine LTV schedule `mpc_genuine_ltv_schedule.npy` -- NOT a
+        # frozen/live-state jacobian_provider re-evaluation, see that
+        # module's __init__ docstring for why).
+        from proper_research.controllers.inverse_jacobian_2dof_map_trim import (
+            build_inv_2dof_map_trim_controller,
+        )
+
+        if dmap is None or map_schedule is None:
+            raise ValueError("inv_2dof_map_trim requires both dmap and map_schedule")
+        controller = build_inv_2dof_map_trim_controller(
+            reference=reference,
+            jacobian_provider=jacobian_provider,
+            dmap=dmap,
+            map_schedule=map_schedule,
+            kp=trim_kp,
+            kn=trim_kn,
+            damping=trim_damping,
+            q_trim_max=trim_q_max,
+            dt=float(mpc_config.sample_period_s),
+            max_joint_step_rad=trim_max_joint_step_rad,
+            enable_logging=trim_enable_logging,
+        )
+    elif kind == "inv_2dof_delay_aware":
+        # 2026-09-18: see inverse_jacobian_2dof_delay_aware.py's module
+        # docstring -- delay-only ablation against inv_2dof_trim (same
+        # kp/kn/damping/limits/execution), previewing the nominal channel
+        # and task correction to the validated realization stage r=k+3
+        # (d=2 samples, unit-tested indexing) instead of k+1. `schedule`,
+        # when given, is used for BOTH inv_2dof_trim (schedule[idx]) and
+        # this controller (schedule[idx+3]) in a paired A/B so the two
+        # conditions differ ONLY in which index they read, not also in
+        # Jacobian source -- see that module's __init__ docstring.
+        from proper_research.controllers.inverse_jacobian_2dof_delay_aware import (
+            build_inv_2dof_delay_aware_controller,
+        )
+
+        controller = build_inv_2dof_delay_aware_controller(
+            reference=reference,
+            jacobian_provider=jacobian_provider,
+            schedule=schedule,
             kp=trim_kp,
             kn=trim_kn,
             damping=trim_damping,
@@ -689,7 +755,17 @@ def run_self_test() -> None:
             frame_index=step,
         )
 
+    mock_dmap = 1.0e-4 * np.ones((reference.sample_count, 3))
+    mock_map_schedule = np.stack(
+        [jacobian_provider(np.zeros(7)) for _ in range(reference.sample_count)], axis=0
+    )
+
     for kind in _ALL_KINDS:
+        extra = {}
+        if kind == "inv_2dof_map_trim":
+            extra = {"dmap": mock_dmap, "map_schedule": mock_map_schedule}
+        elif kind == "inv_2dof_delay_aware":
+            extra = {"schedule": mock_map_schedule}
         solver = build_offline_solver(
             kind,
             reference=reference,
@@ -700,6 +776,7 @@ def run_self_test() -> None:
                 progress_mode="wallclock", terminal_hold_steps=3
             ),
             allow_undeclared_jacobian=True,
+            **extra,
         )
         t0 = 100.0  # arbitrary monotonic origin, unrelated to wall time
         seen_indices = []

@@ -29,12 +29,45 @@ Usage
     python -m proper_research.hardware.online.rectangle_stage_a.run_inv_2dof_trim \\
         --plan-dir plans/rectangle_10x15mm_bimaterial/time_parameterized_configuration_path \\
         --out-dir close_loop_logs/my_run --kp 0.6 --kn 0.0
+
+Pass --schedule-cache to use the genuine path-indexed LTV schedule (J_k)
+instead of the default live per-state jacobian_provider -- for a paired A/B
+against run_inv_2dof_delay_aware.py (J_{k+3}), so the two conditions differ
+ONLY in which index they read, not also in Jacobian source. Omit it for the
+original (2026-09-17-validated) behaviour, unchanged.
 """
 import argparse
+import os
+
+import numpy as np
 
 import proper_research.hardware.online.close_loop_path_follow as pf
+from proper_research.controllers import mpc_variants
+from proper_research.controllers.beam_jacobian_providers import from_model_bundle
+from proper_research.planning.planning_context import build_planning_context
+from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
+    load_configuration_reference,
+)
 
 from . import common
+
+
+def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
+    if cache_path and os.path.exists(cache_path):
+        print(f"[inv_2dof_trim] loading cached genuine LTV schedule from {cache_path}")
+        return np.load(cache_path)
+    print("[inv_2dof_trim] building genuine from_model_bundle Jacobian schedule "
+          "(one beam solve per reference sample, ~90-150s)...")
+    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
+    _, bundle, controller_pack, _ = build_planning_context()
+    jac_provider = from_model_bundle(bundle=bundle, controller_pack=controller_pack, contact=False)
+    schedule = mpc_variants.precompute_schedule(
+        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
+    )
+    if cache_path:
+        np.save(cache_path, schedule)
+        print(f"[inv_2dof_trim] schedule cached -> {cache_path}")
+    return schedule
 
 
 def main() -> None:
@@ -51,12 +84,20 @@ def main() -> None:
                    help="log ||dq_task||, ||dq_null||, ||dq_trim||, |dL_null| etc "
                         "per tick -- retrieve via close_loop_path_follow.LAST_SOLVER"
                         ".controller.log after this script returns")
+    p.add_argument("--schedule-cache", default=None,
+                   help="use the genuine path-indexed LTV schedule (J_k) instead of the "
+                        "default live per-state jacobian_provider -- see module docstring")
     p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
     p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
     p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
     args = p.parse_args()
+
+    if args.schedule_cache:
+        schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache)
+        pf._SCHEDULE_OVERRIDE = schedule
+        print(f"[inv_2dof_trim] schedule: {schedule.shape} (paired-A/B mode: J_k)")
 
     if args.skip_preflight:
         q0, l0 = common.load_plan_initial_state(args.plan_dir)

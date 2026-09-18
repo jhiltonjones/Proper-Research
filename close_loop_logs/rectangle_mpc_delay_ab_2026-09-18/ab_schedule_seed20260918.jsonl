@@ -1,0 +1,6 @@
+{"run_index": 0, "condition": "A", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.212061266298623, "t_unix": 1789741096.9725037}
+{"run_index": 1, "condition": "B", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.192553641772587, "t_unix": 1789741146.2703216}
+{"run_index": 2, "condition": "B", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.197634648424316, "t_unix": 1789741201.3399825}
+{"run_index": 3, "condition": "A", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.192905935109714, "t_unix": 1789741323.8076565}
+{"run_index": 4, "condition": "B", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.075582499612924, "t_unix": 1789741379.7027564}
+{"run_index": 5, "condition": "A", "seed": 20260918, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.11450058479683, "t_unix": 1789741440.2538002}

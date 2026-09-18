@@ -131,6 +131,13 @@ class PathFollowConfig:
     trim_damping: float = 5.0e-2
     trim_q_max: float = 0.03
     trim_enable_logging: bool = False
+    # "inv_2dof_map_trim" only: path to a .npz with a `dmap` key, (N,3)
+    # metres -- see inverse_jacobian_2dof_map_trim.py. The controller's
+    # map_schedule comes from _SCHEDULE_OVERRIDE (the genuine LTV schedule,
+    # same as naive_inverse_jacobian_ltv/mpc_ltv_offline use), NOT a
+    # separate config field -- a caller running this controller kind must
+    # set _SCHEDULE_OVERRIDE the same way run_mpc_ltv.py does.
+    dmap_path: str = ""
     feedforward: bool = False
     # 2026-09-17: full, UNPROJECTED reference-input feedforward inside
     # InverseJacobianBeamController.solve() (command += reference_input,
@@ -721,12 +728,33 @@ def main() -> None:
         # entirely by a build_offline_solver monkeypatch in the calling
         # script.
         "inv_2dof_trim",
+        # 2026-09-18: inv_2dof_trim + a learned path-indexed feedforward map
+        # for the repeatable beam-model discrepancy found on the open-loop
+        # rectangle repeats (see inverse_jacobian_2dof_map_trim.py). Needs
+        # cfg.dmap_path AND _SCHEDULE_OVERRIDE set (see that check above).
+        "inv_2dof_map_trim",
+        # 2026-09-18: delay-only ablation against inv_2dof_trim (same kp/kn/
+        # damping/limits/execution) -- previews the nominal channel and task
+        # correction to the validated realization stage r=k+3 instead of
+        # k+1 (see inverse_jacobian_2dof_delay_aware.py). Uses
+        # _SCHEDULE_OVERRIDE the same way inv_2dof_map_trim does (see that
+        # check above) so this and inv_2dof_trim differ ONLY in which
+        # schedule index they read for a paired A/B, not also in Jacobian
+        # source.
+        "inv_2dof_delay_aware",
+        # 2026-09-18: delay-aware MPC (d=2, beta_d=1, V_f=0) -- live A/B
+        # against mpc_ltv_offline (with mpc_use_dare_terminal_cost=False, the
+        # same V_f=0 baseline the offline ablation used). Handled entirely by
+        # a build_offline_solver monkeypatch in the calling script, same as
+        # the inv_2dof_* variants above -- see
+        # proper_research/controllers/mpc_delay_aware/online_adapter.py.
+        "mpc_delay_aware",
     ):
         raise NotImplementedError(
             f"controller_kind={cfg.controller_kind!r} not supported; use "
             "'naive_inverse_jacobian', 'naive_inverse_jacobian_ltv', 'mpc_lti', "
-            "'mpc_ltv_offline', 'mpc_ltv_sqp_online', 'open_loop_ff' or "
-            "'inv_2dof_trim'."
+            "'mpc_ltv_offline', 'mpc_ltv_sqp_online', 'open_loop_ff', "
+            "'inv_2dof_trim', 'inv_2dof_map_trim' or 'mpc_delay_aware'."
         )
     # 2026-09-16: mpc_ltv_sqp_online's state-dependent jac_provider needs
     # build_planning_context() (~3.3s, pure offline model build, no live
@@ -1052,7 +1080,9 @@ def main() -> None:
 
         mpc_config = _mpc_config(cfg, dt)
         beam_config = None
-        if cfg.controller_kind in ("mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online"):
+        if cfg.controller_kind in (
+            "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online", "mpc_delay_aware",
+        ):
             from proper_research.simulation.simulations.simulate_time_parameterized_beam_output_mpc import (
                 BeamOutputMPCConfig,
             )
@@ -1215,7 +1245,17 @@ def main() -> None:
         schedule_override = globals().get("_SCHEDULE_OVERRIDE")
         _schedule_applies = (
             beam_config is not None
-            or cfg.controller_kind == "naive_inverse_jacobian_ltv"
+            or cfg.controller_kind in (
+                "naive_inverse_jacobian_ltv", "inv_2dof_map_trim",
+                # 2026-09-18: paired A/B -- both read the SAME schedule
+                # (inv_2dof_trim at idx, inv_2dof_delay_aware at idx+3) so
+                # the comparison isolates the index, not the Jacobian
+                # source. Only takes effect when the calling script sets
+                # _SCHEDULE_OVERRIDE; inv_2dof_trim's existing callers that
+                # don't set it are unaffected (schedule stays None -> falls
+                # back to jacobian_provider(state), unchanged behaviour).
+                "inv_2dof_trim", "inv_2dof_delay_aware",
+            )
         )
         if schedule_override is not None and _schedule_applies:
             schedule_override = np.asarray(schedule_override, dtype=float)
@@ -1240,6 +1280,21 @@ def main() -> None:
         else:
             schedule_override = None
 
+        dmap_kwargs = {}
+        if cfg.controller_kind == "inv_2dof_map_trim":
+            if not cfg.dmap_path:
+                raise ValueError("inv_2dof_map_trim requires cfg.dmap_path")
+            if schedule_override is None:
+                raise ValueError(
+                    "inv_2dof_map_trim requires _SCHEDULE_OVERRIDE set to the "
+                    "genuine LTV schedule (same as run_mpc_ltv.py does) -- "
+                    "the map term must use the same schedule it was validated "
+                    "against offline, not the default frozen jacobian_provider"
+                )
+            dmap_arr = np.load(cfg.dmap_path)["dmap"]
+            print(f"[path] loaded dmap {dmap_arr.shape} from {cfg.dmap_path}")
+            dmap_kwargs = {"dmap": dmap_arr, "map_schedule": schedule_override}
+
         solver = build_offline_solver(
             cfg.controller_kind,
             reference=reference,
@@ -1261,6 +1316,7 @@ def main() -> None:
             selective_damping_gain=cfg.inv_selective_damping_gain,
             selective_damping_floor=cfg.inv_selective_damping_floor,
             relinearise_every=int(cfg.mpc_relinearise_every),
+            **dmap_kwargs,
             trim_kp=cfg.trim_kp,
             trim_kn=cfg.trim_kn,
             trim_damping=cfg.trim_damping,
@@ -1426,6 +1482,17 @@ def main() -> None:
                 command[6] = 0.0
             if not np.all(np.isfinite(command)):
                 abort_reason = "nonfinite_command"
+                break
+            # 2026-09-18: process-isolated MPC adapters (mpc_worker_process.py)
+            # apply u=0 and hold q_cmd on an isolated deadline miss -- a
+            # legitimate, already-logged fallback, not an abort condition on
+            # its own. Several IN A ROW means the worker is genuinely stuck
+            # (crashed, deadlocked, or persistently over budget), not a one-
+            # off scheduling hiccup -- that's a real infrastructure failure,
+            # not something to keep silently holding through.
+            consecutive_misses = int(info.get("consecutive_deadline_misses", 0))
+            if consecutive_misses >= 5:
+                abort_reason = f"mpc_worker_persistent_failure(consecutive_misses={consecutive_misses})"
                 break
 
             tip = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)

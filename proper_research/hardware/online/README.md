@@ -156,3 +156,16 @@ pipeline, the accumulator-seam execution layer ("layer C") it validated
 there, and the `RobotJointStream`/Jacobian-schedule bugs found and fixed
 along the way (both in `state_stream.py` and `close_loop_path_follow.py`,
 not specific to that one package).
+
+## Advancer-excitation identification: `advancer_excitation/`
+
+A separate, narrower live test -- robot fixed (never commanded), only the
+linear advancer moves -- asking whether smooth commanded insertion excites
+real beam-tip vibration that a closed-loop controller would then chase.
+Built from `CameraSource`/`AdvancerSink`/`RobotJointStream` directly rather
+than `close_loop_path_follow.py` (no controller or robot control connection
+involved at all). See `proper_research/hardware/online/advancer_excitation/README.md`
+for the protocol, metric definitions, and a real rectification bug caught
+and fixed in the frequency/damping-ratio estimation (`r_3D = ||r(t)||`
+folds the true oscillation frequency onto 2x itself in a PSD -- confirmed
+and fixed on synthetic ground-truth data before running this on hardware).

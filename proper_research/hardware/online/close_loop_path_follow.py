@@ -131,6 +131,14 @@ class PathFollowConfig:
     trim_damping: float = 5.0e-2
     trim_q_max: float = 0.03
     trim_enable_logging: bool = False
+    # "inv_7dof_delay_aware" only: normalized-DLS actuator scales (see
+    # inverse_jacobian_7dof_delay_aware.py) and the insertion channel's
+    # per-tick position-step clip (== dt * insertion_velocity_limit_m_s,
+    # matched to MPC's own |u_L|<=2mm/s so the two controllers share the
+    # same physical authority).
+    trim_su_joint: float = 0.05
+    trim_su_insertion: float = 5.0e-3
+    trim_max_l_step_m: float = 2.0e-4
     # "inv_2dof_map_trim" only: path to a .npz with a `dmap` key, (N,3)
     # metres -- see inverse_jacobian_2dof_map_trim.py. The controller's
     # map_schedule comes from _SCHEDULE_OVERRIDE (the genuine LTV schedule,
@@ -427,7 +435,17 @@ class PathFollowConfig:
     joint_acceleration_limit_rad_s2: float = 0.40
     insertion_rate_limit_m_s: float = 2.0e-3
 
-    workspace_xyz_min_m: tuple[float, float, float] = (0.20, -1.20, -0.30)
+    # x_min widened 0.20->0.19->0.15 (2026-09-21): the frame-mismatch-fixed
+    # gamma=0/R700/w_L=0 controller repeatably stopped at
+    # tcp_out_of_workspace right at the rectangle path's terminal corner
+    # (x~=0.198m, then x=0.190m exactly after the first 1cm widening --
+    # i.e. the trajectory sits right at whatever the current bound is),
+    # every time with excellent tracking right up to that tick (<0.1mm
+    # error) -- not a runaway, this specific path's terminal corner
+    # genuinely reaches this x range. Widened further with real margin
+    # (4cm) per explicit user confirmation this is not a safety concern;
+    # y/z bounds and x_max are untouched.
+    workspace_xyz_min_m: tuple[float, float, float] = (0.15, -1.20, -0.30)
     workspace_xyz_max_m: tuple[float, float, float] = (1.10, -0.20, 0.70)
 
     # --- robot / vision (mirrors StateStreamConfig) ----------
@@ -456,6 +474,19 @@ CONFIG = PathFollowConfig()
 # set, mpc_lti / mpc_ltv_offline use it instead of freezing / recomputing off the
 # frozen jac_provider.  None -> normal behaviour.
 _SCHEDULE_OVERRIDE = None
+
+# Planner(P) -> live-robot(R) rigid transform (p_R = R_fit@p_P + t_fit),
+# computed once per run by `_load_plan_reference` from the live-measured
+# start tip (2026-09-21). Exposed as module state, same pattern as
+# _SCHEDULE_OVERRIDE, so a runner script's build_offline_solver override
+# can read it and register it with a process-isolated adapter -- the
+# worker is spawned+warmed BEFORE this fit exists (before preflight even
+# runs), so it always solves in the raw planner frame P; only the
+# measurement crossing into the worker process needs this transform, see
+# process_isolated_adapter.py's ProcessIsolatedDelayAwareAdapter. None for
+# reference_source != "plan_dir" (the synthetic-shape path has no planner
+# frame to fit) or before _load_plan_reference has run.
+_PLANNER_TO_LIVE_TRANSFORM: tuple | None = None
 
 _AXIS_COLUMN = {"b_x": 0, "b_y": 1, "b_z": 2}
 
@@ -703,6 +734,21 @@ def _load_plan_reference(
         f"[path]   plan des[0] {np.round(1e3 * des_R[0], 1).tolist()} mm  "
         f"des[-1] {np.round(1e3 * des_R[-1], 1).tolist()} mm  (robot frame)"
     )
+
+    # Regression check (2026-09-21, frame-mismatch fix): R_fit@p_des^P +
+    # t_fit must reproduce this SAME des_R construction at several sample
+    # indices -- catches a transposition/sign error in whatever consumes
+    # r_fit/t_fit downstream (the process-isolated adapter), not just a
+    # tautology about des_R's own construction above.
+    spot_idx = np.linspace(0, des_planner.shape[0] - 1, num=5, dtype=int)
+    spot_err = np.max(np.abs((des_planner[spot_idx] @ r_fit.T + t_fit) - des_R[spot_idx]))
+    assert spot_err < 1e-9, f"planner->R fit self-consistency check failed: {spot_err:.3e} m"
+    orth_err = float(np.max(np.abs(r_fit.T @ r_fit - np.eye(3))))
+    assert orth_err < 1e-9, f"R_fit not orthogonal: {orth_err:.3e}"
+
+    global _PLANNER_TO_LIVE_TRANSFORM
+    _PLANNER_TO_LIVE_TRANSFORM = (r_fit.copy(), t_fit.copy())
+
     return replace(reference, desired_position_m=des_R, desired_tangent=tan_R)
 
 
@@ -742,6 +788,15 @@ def main() -> None:
         # schedule index they read for a paired A/B, not also in Jacobian
         # source.
         "inv_2dof_delay_aware",
+        # 2026-09-21: matched-authority 7DOF extension of inv_2dof_delay_aware
+        # -- SAME delay-aware preview/e_pred architecture, but the feedback
+        # allocation step is a normalized-DLS pinv over all 7 actuators
+        # (joints + insertion) instead of a 6-column joint-only pinv, so the
+        # inverse-vs-MPC comparison is no longer confounded by MPC having 7
+        # feedback channels and inverse having 6 (see
+        # inverse_jacobian_7dof_delay_aware.py's module docstring for the
+        # normalization derivation and the exact-reduction-to-INV-6 unit test).
+        "inv_7dof_delay_aware",
         # 2026-09-18: delay-aware MPC (d=2, beta_d=1, V_f=0) -- live A/B
         # against mpc_ltv_offline (with mpc_use_dare_terminal_cost=False, the
         # same V_f=0 baseline the offline ablation used). Handled entirely by
@@ -754,7 +809,7 @@ def main() -> None:
             f"controller_kind={cfg.controller_kind!r} not supported; use "
             "'naive_inverse_jacobian', 'naive_inverse_jacobian_ltv', 'mpc_lti', "
             "'mpc_ltv_offline', 'mpc_ltv_sqp_online', 'open_loop_ff', "
-            "'inv_2dof_trim', 'inv_2dof_map_trim' or 'mpc_delay_aware'."
+            "'inv_2dof_trim', 'inv_2dof_map_trim', 'inv_7dof_delay_aware' or 'mpc_delay_aware'."
         )
     # 2026-09-16: mpc_ltv_sqp_online's state-dependent jac_provider needs
     # build_planning_context() (~3.3s, pure offline model build, no live
@@ -1254,7 +1309,7 @@ def main() -> None:
                 # _SCHEDULE_OVERRIDE; inv_2dof_trim's existing callers that
                 # don't set it are unaffected (schedule stays None -> falls
                 # back to jacobian_provider(state), unchanged behaviour).
-                "inv_2dof_trim", "inv_2dof_delay_aware",
+                "inv_2dof_trim", "inv_2dof_delay_aware", "inv_7dof_delay_aware",
             )
         )
         if schedule_override is not None and _schedule_applies:
@@ -1322,6 +1377,9 @@ def main() -> None:
             trim_damping=cfg.trim_damping,
             trim_q_max=cfg.trim_q_max,
             trim_enable_logging=cfg.trim_enable_logging,
+            trim_su_joint=cfg.trim_su_joint,
+            trim_su_insertion=cfg.trim_su_insertion,
+            trim_max_l_step_m=cfg.trim_max_l_step_m,
         )
         # Exposed so a calling script can retrieve controller-internal state
         # after main() returns -- e.g. inv_2dof_trim's per-tick task/null/
@@ -1493,6 +1551,15 @@ def main() -> None:
             consecutive_misses = int(info.get("consecutive_deadline_misses", 0))
             if consecutive_misses >= 5:
                 abort_reason = f"mpc_worker_persistent_failure(consecutive_misses={consecutive_misses})"
+                break
+            # Generic hook (2026-09-21): an adapter may set this to signal an
+            # abort condition it alone can see (e.g. an accumulator-state
+            # safety monitor independent of the optimization -- see
+            # ProcessIsolatedDelayAwareAdapter's insertion_offset_abort_m).
+            # No-op for every controller that doesn't set it.
+            adapter_abort = info.get("abort_reason")
+            if adapter_abort:
+                abort_reason = str(adapter_abort)
                 break
 
             tip = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)

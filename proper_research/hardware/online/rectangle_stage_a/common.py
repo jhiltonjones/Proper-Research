@@ -133,14 +133,36 @@ def check_robot_safe(robot_ip: str = ROBOT_IP) -> None:
         robot.close()
 
 
-def check_camera_healthy(min_valid_fraction: float = 0.8, n_frames: int = 20) -> None:
+def check_camera_healthy(
+    min_valid_fraction: float = 0.8, n_frames: int = 20,
+    *, expected_insertion_m: float | None = None, insertion_tol_mm: float = 3.0,
+) -> None:
     """Raise if the camera/vision pipeline can't reliably find the tip.
 
     Does not touch the robot connection at all -- safe to run before or
     after any robot health check, in either order.
+
+    `expected_insertion_m`, if given, ALSO verifies the PHYSICAL insertion
+    length via the camera (2026-09-21) -- the advancer (/dev/ttyACM0) has
+    no position encoder; the software-side `insertion_m` accumulator
+    resets to the plan's L0 at the start of every run regardless of where
+    the physical catheter/wire actually is, since nothing else ever
+    re-homes or verifies it. A prior run that stopped mid-path (e.g.
+    tcp_out_of_workspace, stale_vision) can leave the physical advancer
+    extended well past the next run's assumed starting length, with no
+    warning -- this is the only automatic check for that gap.
+
+    Reuses `advancer_excitation.measure_l0`'s own convention exactly
+    (||tip_position_m - PIVOT_XYZ||, the same already-validated
+    base-to-tip chord measurement that tool uses to seed --l0-mm) rather
+    than `StateEstimate.vision_beam_length_mm`, which this project's
+    live pipeline (NewFrameTipMapper's frame_processor fast path) never
+    actually populates -- confirmed empirically (0/20 valid readings
+    despite 20/20 valid tip detections in the same frames).
     """
     from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
     from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
+    from proper_research.hardware.online.advancer_excitation.measure_l0 import PIVOT_XYZ
 
     scfg = StateStreamConfig(exposure=29.0, marker_min_count=2)
     mapper = NewFrameTipMapper(scfg)
@@ -158,10 +180,14 @@ def check_camera_healthy(min_valid_fraction: float = 0.8, n_frames: int = 20) ->
     try:
         time.sleep(1.0)
         found = 0
+        lengths_mm: list[float] = []
         for _ in range(n_frames):
             est, _age = camera.latest(0.5)
             if est is not None:
                 found += 1
+                tip = np.asarray(est.tip_position_m, dtype=float)
+                if np.all(np.isfinite(tip)):
+                    lengths_mm.append(float(np.linalg.norm(tip - PIVOT_XYZ)) * 1e3)
             time.sleep(0.1)
         frac = found / n_frames
         print(f"[health] camera: {found}/{n_frames} frames had a valid tip estimate")
@@ -170,15 +196,39 @@ def check_camera_healthy(min_valid_fraction: float = 0.8, n_frames: int = 20) ->
                 f"camera unhealthy: only {found}/{n_frames} frames found the tip "
                 f"(need >= {min_valid_fraction:.0%})"
             )
+        if expected_insertion_m is not None:
+            expected_mm = expected_insertion_m * 1000.0
+            if len(lengths_mm) < int(min_valid_fraction * n_frames):
+                raise RuntimeError(
+                    f"insertion-length check: only {len(lengths_mm)}/{n_frames} frames had a "
+                    f"valid vision_beam_length_mm reading -- cannot verify physical insertion "
+                    f"against the plan's expected L0={expected_mm:.1f}mm. Refusing to proceed "
+                    f"rather than assume the software accumulator's value is correct."
+                )
+            measured_mm = float(np.median(lengths_mm))
+            diff_mm = abs(measured_mm - expected_mm)
+            print(f"[health] insertion length: measured={measured_mm:.1f}mm "
+                  f"(median of {len(lengths_mm)} frames) expected={expected_mm:.1f}mm "
+                  f"diff={diff_mm:.1f}mm")
+            if diff_mm > insertion_tol_mm:
+                raise RuntimeError(
+                    f"insertion mismatch: camera-measured physical length {measured_mm:.1f}mm "
+                    f"differs from the plan's expected L0={expected_mm:.1f}mm by {diff_mm:.1f}mm "
+                    f"(tolerance {insertion_tol_mm:.1f}mm). The advancer likely retained an "
+                    f"extension from a previous run -- physically retract/re-home it to the "
+                    f"plan's start before proceeding."
+                )
     finally:
         camera.stop()
 
 
-def preflight(plan_dir: str, *, robot_ip: str = ROBOT_IP) -> tuple[np.ndarray, float]:
+def preflight(
+    plan_dir: str, *, robot_ip: str = ROBOT_IP, insertion_tol_mm: float = 3.0,
+) -> tuple[np.ndarray, float]:
     """Full pre-run sequence: health checks + reset. Returns (q0, L0) from the plan."""
     q0, l0 = load_plan_initial_state(plan_dir)
     print(f"[preflight] plan initial state: q0={np.round(q0, 4).tolist()} L0={l0*1000:.2f}mm")
-    check_camera_healthy()
+    check_camera_healthy(expected_insertion_m=l0, insertion_tol_mm=insertion_tol_mm)
     reset_to_plan_initial(q0, robot_ip=robot_ip)
     check_robot_safe(robot_ip=robot_ip)
     return q0, l0

@@ -62,7 +62,7 @@ __all__ = [
 ]
 
 _MPC_KINDS = ("mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online")
-_TRIM_KINDS = ("inv_2dof_trim", "inv_2dof_map_trim", "inv_2dof_delay_aware")
+_TRIM_KINDS = ("inv_2dof_trim", "inv_2dof_map_trim", "inv_2dof_delay_aware", "inv_7dof_delay_aware")
 _TRIVIAL_KINDS = ("open_loop_ff",)
 _ALL_KINDS = (
     ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv")
@@ -360,6 +360,9 @@ def build_offline_solver(
     trim_q_max: float = 0.03,
     trim_max_joint_step_rad: float = 0.010,
     trim_enable_logging: bool = False,
+    trim_su_joint: float = 0.05,
+    trim_su_insertion: float = 5.0e-3,
+    trim_max_l_step_m: float = 2.0e-4,
     dmap: Optional[Array] = None,
     map_schedule: Optional[Array] = None,
 ) -> OfflineJointControllerAdapter:
@@ -537,6 +540,30 @@ def build_offline_solver(
             q_trim_max=trim_q_max,
             dt=float(mpc_config.sample_period_s),
             max_joint_step_rad=trim_max_joint_step_rad,
+            enable_logging=trim_enable_logging,
+        )
+    elif kind == "inv_7dof_delay_aware":
+        # 2026-09-21: matched-authority 7DOF extension -- SAME delay-aware
+        # preview (d_k, z_hat_base, e_pred, r=k+3) as inv_2dof_delay_aware,
+        # only the feedback-allocation step differs (normalized-DLS pinv
+        # over all 7 actuators instead of a 6-column joint-only pinv). See
+        # inverse_jacobian_7dof_delay_aware.py's module docstring.
+        from proper_research.controllers.inverse_jacobian_7dof_delay_aware import (
+            build_inv_7dof_delay_aware_controller,
+        )
+
+        controller = build_inv_7dof_delay_aware_controller(
+            reference=reference,
+            jacobian_provider=jacobian_provider,
+            schedule=schedule,
+            kp=trim_kp,
+            kn=trim_kn,
+            damping=trim_damping,
+            su_joint=trim_su_joint,
+            su_insertion=trim_su_insertion,
+            dt=float(mpc_config.sample_period_s),
+            max_joint_step_rad=trim_max_joint_step_rad,
+            max_L_step_m=trim_max_l_step_m,
             enable_logging=trim_enable_logging,
         )
     elif kind == "open_loop_ff":
@@ -764,7 +791,7 @@ def run_self_test() -> None:
         extra = {}
         if kind == "inv_2dof_map_trim":
             extra = {"dmap": mock_dmap, "map_schedule": mock_map_schedule}
-        elif kind == "inv_2dof_delay_aware":
+        elif kind in ("inv_2dof_delay_aware", "inv_7dof_delay_aware"):
             extra = {"schedule": mock_map_schedule}
         solver = build_offline_solver(
             kind,

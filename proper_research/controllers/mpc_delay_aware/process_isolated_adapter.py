@@ -56,6 +56,20 @@ class _BaseProcessIsolatedAdapter:
         self._prev_input = np.zeros(7, dtype=float)
         self.deadline_misses = 0
         self.consecutive_deadline_misses = 0
+        # NOTE (2026-09-21): the planner(P)<->live-robot(R) frame-mismatch
+        # fix does NOT live in this adapter. p_meas, J, and the
+        # task-nullspace projector C are all natively robot-frame already
+        # (J is built via real robot FK in build_or_load_schedule, labelled
+        # "R.x,R.y,R.z" in its own console dump); only p_des/p_nominal
+        # (defaulting from reference.desired_position_m) were wrong. The
+        # fix is applied ONCE, worker-side, via
+        # `MPCWorkerHandle.set_frame_transform(R_fit, t_fit)` -- see
+        # worker_process.py. This adapter stays frame-agnostic, exactly as
+        # originally designed; an earlier attempt to transform
+        # measured_beam_position at this boundary was reverted after an
+        # equivalence unit test showed it mixes frames (transforming p_meas
+        # without also transforming J/C is not equivalent to the correct
+        # fix unless R_fit happens to be near-identity).
 
     def reset(self) -> None:
         self._t0 = None
@@ -164,6 +178,7 @@ class ProcessIsolatedBaselineAdapter(_BaseProcessIsolatedAdapter):
                 else np.asarray(resp["predicted_beam_positions"], dtype=float).tolist()
             ),
             "measured_joint_state": z_meas,
+            "abort_reason": None,
         }
         return SolveResult(u0=command, infeasible=not success, info=info)
 
@@ -182,11 +197,29 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
 
     def __init__(
         self, *, joint_velocity_limit_rad_s: float, max_joint_step_rad: float,
-        prediction_log_path: Optional[str] = None, **kwargs,
+        prediction_log_path: Optional[str] = None,
+        controller_kind: str = "new",
+        controller_label: str = "mpc_delay_aware_process_isolated",
+        insertion_offset_abort_m: Optional[float] = None,
+        **kwargs,
     ) -> None:
+        """`insertion_offset_abort_m`: if set, an independent safety monitor
+        (2026-09-21) -- NOT part of the optimization, does not clip or alter
+        `self._ins_cmd`'s own dynamics -- that abort_reason (via the generic
+        info["abort_reason"] hook close_loop_path_follow.py now checks) once
+        |insertion_m - L_ref,reference_index| exceeds this threshold. Added
+        after a live insertion-position-drift failure mode (workspace abort,
+        2026-09-21); see CONTROLLER_JUSTIFICATION.md's insertion-anchor
+        section for how the threshold should be chosen from prior runs, not
+        invented ad hoc."""
         super().__init__(**kwargs)
         self._vlim = float(joint_velocity_limit_rad_s)
         self._max_step = float(max_joint_step_rad)
+        self._controller_kind = controller_kind
+        self._controller_label = controller_label
+        self._insertion_offset_abort_m = (
+            None if insertion_offset_abort_m is None else float(insertion_offset_abort_m)
+        )
         self._q_cmd: Optional[Array] = None
         self._q_cmd_prev: Optional[Array] = None
         self._ins_cmd: Optional[float] = None
@@ -208,6 +241,11 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         progress_index = self._progress_index(estimate)
         reference_index = min(progress_index, sample_count - 1)
         z_meas = self._joint_state(estimate, reference_index)
+        # measured_beam_position: real, robot-frame tip measurement from the
+        # camera -- sent to the worker UNCHANGED. The worker's own p_des/
+        # p_nominal are now kept frame-consistent via
+        # MPCWorkerHandle.set_frame_transform (worker_process.py), not by
+        # transforming this measurement -- see this class's __init__ note.
         measured_beam_position = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
 
         if self._q_cmd is None:
@@ -216,7 +254,7 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             self._ins_cmd = float(z_meas[6])
 
         resp = self._worker.try_solve(
-            kind="new", z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
+            kind=self._controller_kind, z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
             insertion_cmd=self._ins_cmd, measured_beam_position=measured_beam_position,
             control_index=reference_index, previous_input=self._prev_input,
             deadline_s=self._deadline_s,
@@ -233,7 +271,7 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             self.consecutive_deadline_misses += 1
             if resp is None:
                 print(f"[process_isolated_adapter] tick {self._counter}: DEADLINE MISS "
-                      f"(seq={seq}, deadline={self._deadline_s*1e3:.0f}ms) -- holding q_cmd")
+                      f"(deadline={self._deadline_s*1e3:.0f}ms) -- holding q_cmd")
             else:
                 print(f"[process_isolated_adapter] tick {self._counter}: worker status="
                       f"{resp['status']!r} error={resp.get('error')!r} -- holding q_cmd")
@@ -248,6 +286,7 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                     None if resp is None or resp.get("predicted_beam_positions") is None
                     else np.asarray(resp["predicted_beam_positions"], dtype=float).tolist()
                 ),
+                "measured_beam_position_m": measured_beam_position.tolist(),
                 "success": success,
                 "deadline_miss": resp is None,
                 "t_solve_ms": resp["t_solve_ms"] if resp else None,
@@ -262,11 +301,23 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         self._q_cmd = self._q_cmd + delta_q
         self._ins_cmd = float(np.clip(self._ins_cmd + command[6] * dt, 0.005, 0.20))
 
+        adapter_abort_reason = None
+        if self._insertion_offset_abort_m is not None:
+            L_ref = float(np.asarray(self.reference.state, dtype=float)[reference_index, 6])
+            L_offset_m = self._ins_cmd - L_ref
+            if abs(L_offset_m) > self._insertion_offset_abort_m:
+                adapter_abort_reason = (
+                    f"insertion_offset_exceeded(|L-Lref|={L_offset_m*1e3:.2f}mm > "
+                    f"{self._insertion_offset_abort_m*1e3:.1f}mm)"
+                )
+                print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
+                      f"{adapter_abort_reason}")
+
         self._prev_input = command.copy()
         self._counter += 1
 
         info = {
-            "controller": "mpc_delay_aware_process_isolated",
+            "controller": self._controller_label,
             "progress_index": progress_index, "reference_index": reference_index,
             "terminal_hold": bool(progress_index >= sample_count - 1),
             "success": success,
@@ -278,5 +329,6 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 else np.asarray(resp["predicted_beam_positions"], dtype=float).tolist()
             ),
             "measured_joint_state": z_meas,
+            "abort_reason": adapter_abort_reason,
         }
         return SolveResult(u0=command, infeasible=not success, info=info)

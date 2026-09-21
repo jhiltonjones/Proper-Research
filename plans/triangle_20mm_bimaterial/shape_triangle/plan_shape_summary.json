@@ -1,0 +1,27 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.5005820546791916,
+    -0.6695089513990475,
+    -0.016558422038837062
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 111,
+  "perimeter_mm": 52.217800704830054,
+  "time_param_samples": 224,
+  "time_param_duration_s": 22.3,
+  "time_param_dir": "/home/jack/.claude/jobs/3710eca5/tmp/plans_bimaterial/triangle_20mm_bimaterial/time_parameterized_configuration_path"
+}

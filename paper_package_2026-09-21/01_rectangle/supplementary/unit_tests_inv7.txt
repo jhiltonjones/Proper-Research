@@ -1,0 +1,18 @@
+[test1] max |INV-6 - INV-7(no insertion authority)| over joints = 1.388e-16
+[test1] PASS: insertion-disabled INV-7 reproduces INV-6 exactly (joint channels)
+[test1] max |INV-6 - INV-7(no insertion authority)| over insertion = 6.072e-18
+[test1] PASS: insertion channel also reduces exactly
+[test2] pure-x error: peak du_task=[ 7.10078330e-05 -7.11761524e-06  3.55132676e-05  7.08021093e-06
+  1.42165283e-05 -2.13154414e-05  1.98868038e-04], insertion fraction of |du| sum = 0.560
+[test2] PASS: pure-x error produces substantial insertion feedback
+[test3] pure-y error: peak du_task=[-0.00032066 -0.00078545  0.00029384 -0.00103125  0.00066255 -0.00053965
+  0.00019177]
+[test3] PASS: pure-y error correction stays predominantly in joints
+[test4] cos(J@du_task, e_pred) = 1.0000
+[test4] PASS: J@du_task points toward the corrective direction pre-saturation
+[test5] max phys diff joints=1.388e-16, insertion(m/s)=2.017e-17
+[test5] PASS: scaling invariance holds -- normalization is unit-consistent
+[test6] max |u_q|=0.10000 rad/s (limit 0.10), max |u_L|=0.002000 m/s (limit 2.0e-3)
+[test6] PASS: total command respects the same hard limits as MPC
+
+ALL 6 UNIT TESTS PASSED

@@ -445,8 +445,29 @@ class PathFollowConfig:
     # genuinely reaches this x range. Widened further with real margin
     # (4cm) per explicit user confirmation this is not a safety concern;
     # y/z bounds and x_max are untouched.
-    workspace_xyz_min_m: tuple[float, float, float] = (0.15, -1.20, -0.30)
-    workspace_xyz_max_m: tuple[float, float, float] = (1.10, -0.20, 0.70)
+    # 2026-09-21: z_min and y_max tightened after a live MPC-FJ/U-shape run
+    # diverged (tracking error grew to ~12mm, manually stopped) without ever
+    # approaching the old bounds -- the TCP stayed >190mm inside the old
+    # workspace box the whole time, so the box wasn't the safety net. The
+    # divergent run's own trajectory dropped to z=0.110m and drifted up to
+    # y=-0.396m (both normal good runs only reach z=[0.308,0.333],
+    # y=[-0.743,-0.618]), confirming z-dropping/y-rising-toward-zero was the
+    # actual runaway direction. New bounds sit just outside normal operation
+    # (z_min=0.30, ~8mm margin below the observed floor; y_max=-0.483, from
+    # a live TCP read at the time -- both verified against two clean U-shape
+    # runs before adopting, so normal tracking is unaffected but a repeat of
+    # this specific runaway direction is caught early instead of running to
+    # ~12mm error before a human has to intervene).
+    # z_min loosened from an initial 0.30 to 0.20 after checking it against
+    # the one clean FJ run on file: legitimate (non-runaway) FJ tracking on
+    # the U-shape dips to z=0.267 during normal mid-path turns
+    # (terminal_hold=False, error 1.2-2.0mm) -- 0.30 would have false-tripped
+    # that clean run. 0.20 keeps ~67mm headroom below observed normal FJ
+    # operation while still catching a repeat of the 2026-09-21 MPC-FJ
+    # divergence (which continued past 0.30 down to z=0.110) around halfway
+    # through, instead of only at the very end.
+    workspace_xyz_min_m: tuple[float, float, float] = (0.15, -1.20, 0.20)
+    workspace_xyz_max_m: tuple[float, float, float] = (1.10, -0.483, 0.70)
 
     # --- robot / vision (mirrors StateStreamConfig) ----------
     robot_ip: str = "192.168.56.101"

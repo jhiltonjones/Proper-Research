@@ -1,0 +1,23 @@
+SJ 20260921T112405Z: h=3: beta1=0.3722 beta0=1.7069  h=10: beta1=0.3139 beta0=0.3244
+SJ 20260921T112843Z: h=3: beta1=0.3397 beta0=1.6114  h=10: beta1=0.2514 beta0=0.3215
+SJ 20260921T114154Z: h=3: beta1=0.3818 beta0=1.6112  h=10: beta1=0.2988 beta0=0.2270
+SJ 20260921T114458Z: h=3: beta1=0.4049 beta0=1.6430  h=10: beta1=0.3127 beta0=0.2344
+SJ 20260921T114842Z: h=3: beta1=0.3777 beta0=1.6643  h=10: beta1=0.2983 beta0=0.2616
+FJ 20260921T115330Z: h=3: beta1=0.4891 beta0=4.1045  h=10: beta1=0.2884 beta0=1.1736
+FJ 20260921T115945Z: h=3: beta1=0.4997 beta0=4.0276  h=10: beta1=0.2881 beta0=1.1250
+FJ 20260921T120231Z: h=3: beta1=0.4832 beta0=3.8995  h=10: beta1=0.2822 beta0=1.0786
+FJ 20260921T120526Z: h=3: beta1=0.4574 beta0=3.8872  h=10: beta1=0.2689 beta0=1.0814
+FJ 20260921T120917Z: h=3: beta1=0.4471 beta0=4.1080  h=10: beta1=0.2582 beta0=1.1587
+
+SJ h= 3: beta1(persistence ON)  mean=0.3753 sd=0.0210 values=[np.float64(0.3722), np.float64(0.3397), np.float64(0.3818), np.float64(0.4049), np.float64(0.3777)]
+          beta0(persistence OFF) mean=1.6474 sd=0.0359 values=[np.float64(1.7069), np.float64(1.6114), np.float64(1.6112), np.float64(1.643), np.float64(1.6643)]
+          Delta(beta0-beta1) = +1.2721mm  (ON HELPS)
+SJ h=10: beta1(persistence ON)  mean=0.2950 sd=0.0228 values=[np.float64(0.3139), np.float64(0.2514), np.float64(0.2988), np.float64(0.3127), np.float64(0.2983)]
+          beta0(persistence OFF) mean=0.2738 sd=0.0418 values=[np.float64(0.3244), np.float64(0.3215), np.float64(0.227), np.float64(0.2344), np.float64(0.2616)]
+          Delta(beta0-beta1) = -0.0212mm  (ON HURTS/NEUTRAL)
+FJ h= 3: beta1(persistence ON)  mean=0.4753 sd=0.0198 values=[np.float64(0.4891), np.float64(0.4997), np.float64(0.4832), np.float64(0.4574), np.float64(0.4471)]
+          beta0(persistence OFF) mean=4.0054 sd=0.0960 values=[np.float64(4.1045), np.float64(4.0276), np.float64(3.8995), np.float64(3.8872), np.float64(4.108)]
+          Delta(beta0-beta1) = +3.5301mm  (ON HELPS)
+FJ h=10: beta1(persistence ON)  mean=0.2772 sd=0.0118 values=[np.float64(0.2884), np.float64(0.2881), np.float64(0.2822), np.float64(0.2689), np.float64(0.2582)]
+          beta0(persistence OFF) mean=1.1234 sd=0.0388 values=[np.float64(1.1736), np.float64(1.125), np.float64(1.0786), np.float64(1.0814), np.float64(1.1587)]
+          Delta(beta0-beta1) = +0.8463mm  (ON HELPS)

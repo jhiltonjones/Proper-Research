@@ -1,0 +1,12 @@
+phi_y(k): mean=36.2deg  max=96.6deg  at k=264: 29.7deg
+
+=== corrected directional-reliability: causal +3 lookahead, TOTAL feedback (joint+insertion) ===
+INV7-SJ : P(useful_y>0, causal +3, total-fb) mean=0.555  values=[0.52, 0.591, 0.524, 0.566, 0.573]
+          eta_y,net (signed aggregate, mm/unit-effort) mean=0.0672  values=[0.0511, 0.063, 0.0663, 0.0899, 0.0658]
+MPC-SJ  : P(useful_y>0, causal +3, total-fb) mean=0.705  values=[0.691, 0.753, 0.688, 0.699, 0.693]
+          eta_y,net (signed aggregate, mm/unit-effort) mean=0.1386  values=[0.125, 0.1697, 0.1356, 0.1381, 0.1248]
+INV7-FJ : P(useful_y>0, causal +3, total-fb) mean=0.545  values=[0.566, 0.498, 0.598, 0.55, 0.515]
+          eta_y,net (signed aggregate, mm/unit-effort) mean=0.0332  values=[0.0379, 0.0026, 0.0589, 0.0348, 0.0315]
+MPC-FJ  : P(useful_y>0, causal +3, total-fb) mean=0.820  values=[0.816, 0.809, 0.842, 0.814, 0.817]
+          eta_y,net (signed aggregate, mm/unit-effort) mean=0.1871  values=[0.1907, 0.1808, 0.191, 0.1833, 0.1898]
+saved directional_reliability_v2.png

@@ -1,0 +1,27 @@
+{
+  "shape": "rectangle",
+  "size_mm": 10.0,
+  "closed": false,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.5005820546791916,
+    -0.6695089513990475,
+    -0.016558422038837062
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 81,
+  "perimeter_mm": 38.734163426568784,
+  "time_param_samples": 213,
+  "time_param_duration_s": 21.200000000000003,
+  "time_param_dir": "/home/jack/.claude/jobs/3710eca5/tmp/plans_bimaterial/ushape_10x15mm_bimaterial/time_parameterized_configuration_path"
+}

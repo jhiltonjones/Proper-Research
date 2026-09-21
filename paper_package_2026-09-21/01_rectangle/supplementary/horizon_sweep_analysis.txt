@@ -1,0 +1,16 @@
+=== first-command deviation u0 - u_ref, joint/insertion split, per horizon ===
+N= 3: RMS(||S_u,q^-1 du_q||)=0.4680   RMS(|du_L|/S_u,L)=0.1172
+N= 5: RMS(||S_u,q^-1 du_q||)=0.3251   RMS(|du_L|/S_u,L)=0.1046
+N=10: RMS(||S_u,q^-1 du_q||)=0.3346   RMS(|du_L|/S_u,L)=0.1024
+N=15: RMS(||S_u,q^-1 du_q||)=0.3565   RMS(|du_L|/S_u,L)=0.1031
+
+=== corrected directional-reliability, per horizon (causal +3, total fb) ===
+N= 3: P(useful_y>0) mean=0.667  values=[0.663, 0.712, 0.679, 0.618, 0.664]   eta_y,net mean=0.1404  values=[0.143, 0.187, 0.1224, 0.1227, 0.1269]
+N= 5: P(useful_y>0) mean=0.676  values=[0.675, 0.712, 0.679, 0.647, 0.668]   eta_y,net mean=0.1492  values=[0.1388, 0.1859, 0.1439, 0.1435, 0.1341]
+N=10: P(useful_y>0) mean=0.696  values=[0.679, 0.741, 0.684, 0.691, 0.689]   eta_y,net mean=0.1425  values=[0.1276, 0.1736, 0.1411, 0.1422, 0.128]
+N=15: P(useful_y>0) mean=0.705  values=[0.691, 0.753, 0.688, 0.699, 0.693]   eta_y,net mean=0.1386  values=[0.125, 0.1696, 0.1356, 0.1381, 0.1249]
+
+saved horizon_u0_agreement.png
+N= 3 vs N=15: mean cos=0.827  median cos=0.970  frac cos>0.9=0.70  frac cos<0=0.045
+N= 5 vs N=15: mean cos=0.967  median cos=0.995  frac cos>0.9=0.95  frac cos<0=0.009
+N=10 vs N=15: mean cos=0.997  median cos=1.000  frac cos>0.9=1.00  frac cos<0=0.000

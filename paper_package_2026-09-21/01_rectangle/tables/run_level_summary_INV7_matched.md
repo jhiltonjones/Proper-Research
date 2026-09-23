@@ -16,7 +16,14 @@
 
 ## Factorial contrasts (run-level means, n=5 each)
 
-| metric | Delta_law (MPC-INV) | Delta_schedule (SJ-FJ) | Delta_interaction |
+**Do not quote these as "MPC's law advantage" or "the schedule effect"** — the
+FJ/SJ interaction is enormous on this shape (see below), so the factorial
+main effects average over two very different regimes and overstate the
+effect under the actual operating condition (SJ). Use the simple effects
+table below for the paper's primary comparison; these factorial contrasts
+are supporting evidence for the interaction, not standalone physical effects.
+
+| metric | Delta_law (MPC-INV, factorial avg.) | Delta_schedule (SJ-FJ, factorial avg.) | Delta_interaction |
 |---|---|---|---|
 | RMS error (mm) | -0.7999 | -0.7309 | +1.1195 |
 | x-axis RMS (mm) | -0.0351 | -0.0361 | -0.1933 |
@@ -29,3 +36,21 @@
 | RMS error, straight segments (mm) | -0.6848 | -0.5937 | +0.8892 |
 | corr(predicted, realized) +3 error reduction | +0.1376 | +0.2263 | +0.1472 |
 | slope(realized vs predicted) +3 error reduction | +0.1709 | +0.2677 | +0.2738 |
+
+## Simple effects (recommended primary comparisons, RMS error mm)
+
+SJ is the intended, valid operating model; FJ is a model-mismatch robustness
+stress test, not a second "equal" arm of the design. Report these
+conditional/simple effects as the headline numbers, not the factorial
+averages above:
+
+| effect | value | interpretation |
+|---|---|---|
+| Delta_law\|SJ = MPC_SJ − INV7_SJ | **−0.2401 mm** | actuator-authority-matched law advantage under the real operating model |
+| Delta_law\|FJ = MPC_FJ − INV7_FJ | −1.3596 mm | MPC-INV7 difference is substantially larger under frozen J (corrected 2026-09-22 — a prior draft said "collapses further," backwards: the gap widens, not shrinks) |
+| Delta_schedule\|INV7 = INV7_SJ − INV7_FJ | −1.2907 mm | INV-7 is severely schedule-dependent |
+| Delta_schedule\|MPC = MPC_SJ − MPC_FJ | −0.1712 mm | MPC is comparatively robust to a frozen Jacobian |
+
+The large positive Delta_interaction (+1.12 mm) is exactly the statement
+that Delta_schedule\|INV7 (−1.29) is far more negative than Delta_schedule\|MPC
+(−0.17): scheduling matters much more for INV-7 than for MPC on this shape.

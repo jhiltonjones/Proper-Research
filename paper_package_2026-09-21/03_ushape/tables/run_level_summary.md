@@ -1,5 +1,17 @@
 # U-shape (10x15mm, bimaterial) -- MPC-FJ excluded, see notes: run-level summary (n=5 per condition)
 
+**Axis split (SJ, mm):** INV-7 is actually better in x (0.254 vs MPC's
+0.319); MPC's advantage is driven entirely by y (0.498 → 0.372, a 25%
+reduction). This supports the reading that the remaining law advantage is
+primarily lateral/magnetic-steering, not insertion/axial tracking.
+
+**INV7-FJ has high dispersion** — the mean±sd (1.95±1.31mm) makes this
+condition look more stable than the underlying distribution really is. Per-run
+RMS (mm): [0.839, 1.365, 1.482, 1.558, 4.516]. **Median=1.48mm, range =
+[0.84, 4.52]mm** — one run (4.52mm) is a clear outlier; without it the other
+4 runs cluster around 1.06–1.56mm. Keep the individual points visible in any
+figure using this condition; don't present the mean alone.
+
 | metric | INV7-FJ | INV7-SJ | MPC-SJ |
 |---|---|---|---|
 | RMS error (mm) | 1.9519 ± 1.3063 | 0.5595 ± 0.0239 | 0.4902 ± 0.0173 |

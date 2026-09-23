@@ -1,8 +1,29 @@
 % =============================================================
-% Methodology section -- magnetically actuated continuum beam.
+% Methods sections -- magnetically actuated continuum beam.
 % IEEEtran (journal). Standalone compilable excerpt: the full
-% paper supplies title/abstract/introduction/experiments/
-% validation/discussion. Section numbering renumbers on merge.
+% paper supplies title/abstract/introduction/results/discussion.
+% Section numbering renumbers on merge; this excerpt uses three
+% top-level \section commands (System Modeling and Reference
+% Generation / Feedback Control / Experimental Methods) rather
+% than one "Methodology" section, matching the architecture of
+% comparable T-RO continuum-robot papers.
+%
+% Rewritten 2026-09-22 (fourth pass): editorial re-architecture on
+% top of three prior rounds that (1) replaced a stale controller
+% description with the validated INV-7/MPC comparison, (2) fixed
+% dimensional/notational bugs found by close technical review, and
+% (3) trimmed implementation-documentation material. This pass:
+% splits the single Methodology section into three; folds A1-A5
+% into the paragraphs they belong to instead of an enumerated list;
+% removes remaining implementation/software detail (frame-check
+% assertion, worker spawn ordering, R_d bug history, manipulator
+% Jacobian column formula); fixes remaining notation (P_N stage
+% indexing, undefined Delta u_{-1|k}, kappa_k reused for two
+% concepts, S_Delta,u table units, an M0-era Jacobian architecture
+% figure edge, z=[q;L] "measured" contradicting insertion being
+% command-integrated); removes defensive ("not a claim that...")
+% phrasing in favor of direct positive statements; breaks two
+% equations that overflowed the IEEE column width when compiled.
 %
 % Bibliography entries carry short "% VERIFY" notes where the
 % volume/issue/page/DOI fields still need completing.
@@ -19,264 +40,187 @@
 
 \begin{document}
 
-\section{Methodology}
-\label{sec:methodology}
+\section{System Modeling and Reference Generation}
+\label{sec:system}
 
-\subsection{Problem Formulation and Assumptions}
+\subsection{System and Task Definition}
 \label{sec:problem}
 
 A flexible, permanently magnetized beam is advanced through a fixed
 insertion point while a permanent magnet, carried by the end-effector of a
 six-axis manipulator, shapes it through magnetic interaction. Given a
-desired tip trajectory $p^\star(t)$, the control problem is to select the
-manipulator joint velocities and the insertion rate that drive the
-measured beam tip along $p^\star(t)$, subject to the manipulator's
-velocity, acceleration and joint-range limits, using only the beam shape
-observed by an external camera.
+desired tip trajectory $p^\star(t)$, the control problem is to select
+manipulator joint velocities and an insertion rate that drive the beam tip
+along $p^\star(t)$, subject to the manipulator's velocity, acceleration
+and joint-range limits, using only the beam shape observed by an external
+camera.
 
-The models developed below rest on five assumptions, stated here once and
-used throughout.
-
-\begin{enumerate}
-\item[(A1)] \emph{Quasi-static beam response.} The beam is assumed to
-reach mechanical equilibrium quickly relative to the control period, so
-its shape at each control instant is the static energy minimizer for the
-instantaneous magnet pose. This is the standard modeling choice for
-magnetically steered elastic rods and catheters at the actuation
-bandwidths considered here~\cite{kratchman2017guiding,wu2025closedloop}.
-\item[(A2)] \emph{Hard magnetization.} The beam carries a fixed
-(hard-magnetized) magnetic moment density, specified in the body frame and
-unchanged by the applied field; no induced or field-dependent
-magnetization is modeled.
-\item[(A3)] \emph{Point-dipole source.} The actuating magnet is modeled as
-an ideal point dipole, valid at the beam--magnet separations used here.
-\item[(A4)] \emph{Planar deformation.} The beam is calibrated to deform
-within a single plane, which the vision pipeline of
-Sec.~\ref{sec:vision} also assumes when reconstructing the tip.
-\item[(A5)] \emph{Ideal insertion.} The advancer imposes the commanded
-insertion length without slip or buckling, and friction at the insertion
-point is neglected.
-\end{enumerate}
-
-\subsection{System Overview}
-\label{sec:overview}
-
-The physical input to the beam is the pose of the actuating magnet
-together with the insertion length,
+The physical input to the beam is the actuating magnet's pose together
+with the insertion length,
 \begin{equation}
 \theta = \big[\,p_a;\ \phi_a;\ \ell\,\big]\in\mathbb{R}^{7},
 \label{eq:theta}
 \end{equation}
-where $p_a\in\mathbb{R}^3$ is the magnet position, $\phi_a\in\mathbb{R}^3$
-a minimal (axis--angle) parameterization of its orientation, and $\ell$
-the inserted beam length. Since the magnet is rigidly mounted on the
-end-effector, its pose is determined by the six joint angles
-$q\in\mathbb{R}^6$ through the manipulator's forward kinematics. The
-quantity commanded and measured at each control step is therefore the
-configuration
+$p_a\in\mathbb{R}^3$ the magnet position and $\phi_a\in\mathbb{R}^3$ a
+minimal (axis--angle) parameterization of its orientation. Since the
+magnet is rigidly mounted on the end-effector, $\theta$ is determined by
+the six joint angles $q\in\mathbb{R}^6$ through the manipulator's forward
+kinematics, so the quantity commanded and tracked at each control step is
+the configuration
 \begin{equation}
-z = \big[\,q;\ \ell\,\big]\in\mathbb{R}^{7},
+z = \big[\,q;\ L\,\big]\in\mathbb{R}^{7}, \qquad u=\dot z,
 \label{eq:config}
 \end{equation}
-whose rate $v=\dot z$ (six joint velocities and one insertion rate) is the
-control signal produced by both controllers of Sec.~\ref{sec:control}.
-Fig.~\ref{fig:architecture} shows the closed loop.
+where $q$ is measured from the manipulator and $L$ is command-integrated
+from the applied insertion rate (Sec.~\ref{sec:online}), not
+independently sensed: the advancer is assumed to realize its commanded
+length without slip or buckling, an assumption revisited in Limitations.
+$u=\dot z$ (six joint velocities and one insertion rate) is the control
+signal produced by both controllers of Sec.~\ref{sec:control}.
 
-\begin{figure}[t]
-\centering
-\begin{tikzpicture}[
-  node distance=6mm and 10mm,
-  box/.style={draw, rounded corners, align=center, minimum height=8mm, minimum width=24mm, font=\small},
-  >={Latex[length=2mm]}
-]
-\node[box] (cam) {Camera\\(tip estimate)};
-\node[box, right=of cam] (state) {State\\estimate};
-\node[box, right=of state] (ctrl) {Controller\\DLS / MPC};
-\node[box, below=of ctrl] (robot) {Manipulator\\(joint rates)};
-\node[box, left=of robot] (adv) {Advancer\\(insertion rate)};
-\draw[->] (cam) -- (state);
-\draw[->] (state) -- (ctrl);
-\draw[->] (ctrl) -- (robot);
-\draw[->] (ctrl) -- (adv);
-\draw[->] (robot.west) -- (adv.east);
-\end{tikzpicture}
-\caption{Closed-loop architecture. Vision, manipulator joint state and
-insertion length are fused into a single state estimate each control tick;
-the active controller maps this and the offline reference trajectory to
-joint and insertion rate commands.}
-\label{fig:architecture}
-\end{figure}
+The beam is assumed to deform within a single, calibrated plane, an
+assumption shared by the vision reconstruction of Sec.~\ref{sec:online}
+and by the two-dimensional task projection introduced with the shared
+control model in Sec.~\ref{sec:common}. The offline reference path
+(Sec.~\ref{sec:planner}) is defined in a planner frame $\mathcal F_P$;
+sensing, manipulator kinematics, and feedback control are all expressed
+in the robot-base frame $\mathcal F_R$. A calibrated rigid transform maps
+reference tip positions between them,
+\begin{equation}
+{}^{R}p_{\mathrm{des}} = {}^{R}R_P\,{}^{P}p_{\mathrm{des}} + {}^{R}t_P,
+\label{eq:frame-fit}
+\end{equation}
+applied once, at startup, to every planner-frame target consumed
+downstream. The measured tip position, the control Jacobian, and the task
+projection are already expressed in $\mathcal F_R$ and are not further
+transformed. All task-space quantities from Sec.~\ref{sec:common} onward
+are expressed in $\mathcal F_R$ and the frame superscript is omitted.
+% VERIFY: report the physical calibration accuracy of R_P/t_P (e.g.
+% residual at held-out calibration points).
 
-\subsection{Magnetic Beam Model}
+\subsection{Quasi-Static Magnetic Beam Model}
 \label{sec:beam-model}
 
-\subsubsection{Kinematics and constitutive model}
 The beam is modeled as a Cosserat rod of inserted length $\ell$ and
-circular cross section, following geometrically exact rod
-theory~\cite{rucker2010geometrically} under a piecewise-constant-strain
-(PCS) discretization~\cite{renda2018discrete}: the centerline is divided
-into $n_s$ nodes, and the local strain
-$u(s)=[u_1(s);u_2(s);u_3(s)]$ --- one torsion and two bending curvatures,
-expressed in the body frame --- is constant on each of the $n_s-1$
-segments. The material is linear elastic with cross-sectional stiffness
-\begin{equation}
-K = \operatorname{diag}\big(G I_p,\ E I,\ E I\big),
-\label{eq:stiffness}
-\end{equation}
-where $E$ and $G=E/(2(1+\nu))$ are the composite Young's and shear moduli
-for Poisson's ratio $\nu$, and $I$, $I_p$ are the second and polar moments
-of area. Given the strain field, the centerline pose $(p(s),R(s))$ follows
-from the rod reconstruction equations
-\begin{equation}
-p'(s) = R(s)\,e_3, \qquad R'(s) = R(s)\,\widehat{u(s)},
-\label{eq:reconstruction}
-\end{equation}
-integrated from the fixed insertion point, with $\widehat{(\cdot)}$ the
-skew-symmetric operator.
+circular cross section under a piecewise-constant-strain (PCS)
+discretization~\cite{rucker2010geometrically,renda2018discrete}: the
+centerline is divided into $n_s$ nodes, and the local strain $u(s)$ (one
+torsion, two bending curvatures, body frame) is constant on each segment,
+with linear-elastic cross-sectional stiffness
+$K=\operatorname{diag}(GI_p,EI,EI)$, $G=E/(2(1+\nu))$. The beam is assumed
+to reach mechanical equilibrium quickly relative to the control period, so
+its shape at each instant is the static energy minimizer for the
+instantaneous magnet pose --- the standard modeling choice at the
+actuation bandwidths considered
+here~\cite{kratchman2017guiding,wu2025closedloop}.
 
-\subsubsection{Magnetic actuation}
-Under (A3) the actuating magnet is an ideal point dipole of moment $m_a$
-at position $p_a$, producing at a field point $x$
+The beam carries a fixed (hard-magnetized) moment density $m(s)$, and the
+actuating magnet is modeled as an ideal point-dipole source, valid at the
+beam--magnet separations realized during path
+following~\cite{fu2023magnetic,kratchman2017guiding}.
+% VERIFY: report the min/max magnet-to-beam separation actually spanned
+% by the reference paths.
+Writing $\Delta=x-p_a$, $r=\lVert\Delta\rVert$, and
+$\hat\Delta=\Delta/r$, the dipole field is
 \begin{equation}
-B(x;\theta) = \frac{\mu_0}{4\pi\lVert \Delta\rVert^{3}}
-\Big(3(\hat{\Delta}\cdot m_a)\,\hat{\Delta} - m_a\Big),
-\quad \Delta = x-p_a,\ \hat{\Delta}=\frac{\Delta}{\lVert\Delta\rVert},
+B(x;\theta) = \frac{\mu_0}{4\pi r^{3}}
+\Big[3(\hat\Delta^{\top}m_a)\hat\Delta - m_a\Big],
 \label{eq:dipole-field}
 \end{equation}
-the standard dipole model used throughout the magnetic continuum robot
-literature~\cite{fu2023magnetic,kratchman2017guiding}. Under (A2) the beam
-carries a hard-magnetized moment density $m(s)$, fixed in the body frame,
-so that its world-frame moment at arclength $s$ is $R(s)m(s)$ and the
-magnetic potential energy is
+and the magnetic potential energy, with the beam's world-frame moment at
+arclength $s$ given by $R(s)m(s)$, is
 \begin{equation}
 W_m[u;\theta] = -\int_0^{\ell} \big(R(s)m(s)\big)\cdot
 B\big(p(s);\theta\big)\,ds,
 \label{eq:magnetic-energy}
 \end{equation}
-evaluated at segment midpoints under the PCS discretization.
-
-\subsubsection{Quasi-static equilibrium}
-The elastic energy of the deformed rod is
+with $(p(s),R(s))$ the centerline pose from the rod reconstruction
+equations $p'=Re_3$, $R'=R\hat u$, integrated from the insertion point.
+The total potential energy is $\Pi=W_{el}+W_m$, where
+$W_{el}=\tfrac12\int_0^\ell(u-u^\circ)^\top K(u-u^\circ)\,ds$ is the
+elastic energy about rest strain $u^\circ$; the implemented model also
+supports gravitational and lumen-contact energy terms, identically zero
+for the free-space, horizontally supported configuration evaluated here
+and given in full in the supplementary material. By the quasi-static
+assumption, the beam shape at a given input is
 \begin{equation}
-W_{el}[u] = \tfrac12\int_0^{\ell}\big(u(s)-u^{\circ}\big)^{\!\top} K
-\big(u(s)-u^{\circ}\big)\,ds,
-\label{eq:elastic-energy}
-\end{equation}
-with $u^{\circ}$ the rest strain (zero for an initially straight beam).
-The model additionally supports a gravitational term
-$W_g[u]=\int_0^{\ell}\rho A\,g\cdot p(s)\,ds$, for mass per unit length
-$\rho A$ and gravity vector $g$, and a lumen-contact penalty $W_{cf}[u]$
-for operation inside a confining tube of local radius $R_\text{lum}(s)$.
-Writing $\delta(s)$ for the distance from the beam centerline to the lumen
-centerline and $r_b$ for the beam radius, the penetration
-$\varphi(s)=\delta(s)+r_b-R_\text{lum}(s)$ enters through a smoothed
-one-sided quadratic penalty
-\begin{equation}
-\varphi_+(s)=\tfrac12\Big(\varphi(s)+\sqrt{\varphi(s)^2+\epsilon^2}\Big),
-\quad
-W_{cf}[u]=\int_0^{\ell}\tfrac12 k_c\,\varphi_+(s)^2\,ds,
-\label{eq:contact-energy}
-\end{equation}
-with contact stiffness $k_c$ and smoothing parameter $\epsilon$. Both
-terms are retained for generality; the free-space, horizontally supported
-configuration considered in this work sets $W_g\equiv W_{cf}\equiv 0$. The
-total potential energy is
-\begin{equation}
-\Pi(u;\theta) = W_{el}[u] + W_m[u;\theta] + W_g[u] + W_{cf}[u],
-\label{eq:total-energy}
-\end{equation}
-and, by (A1), the beam shape at a given input is its minimizer
-\begin{equation}
-u^{*}(\theta) = \operatorname*{arg\,min}_{u}\ \Pi(u;\theta).
+u^{*}(\theta) = \operatorname*{arg\,min}_{u}\ \Pi(u;\theta),
 \label{eq:equilibrium}
 \end{equation}
-Equation~\eqref{eq:equilibrium} is solved by bound-constrained quasi-Newton
-minimization (L-BFGS-B~\cite{byrd1995lbfgsb}) on analytic energy
-gradients. Because insertion is physically incremental, the solve uses
-quasi-static continuation in $\ell$: the equilibrium at one insertion
-length warm-starts the next, which accelerates convergence and prevents
-the non-convex energy from admitting equilibria unreachable by the
-physical insertion sequence. The regulated output is the tip pose
-\begin{equation}
-y(\theta) = \big[\,p(\ell);\ R(\ell)e_3\,\big]\in\mathbb{R}^6,
-\label{eq:output}
-\end{equation}
-i.e.\ tip position and tip tangent.
+solved by bound-constrained quasi-Newton minimization
+(L-BFGS-B~\cite{byrd1995lbfgsb}) on analytic energy gradients, with
+quasi-static continuation in $\ell$ (each insertion length warm-started
+from the previous) to track the equilibrium branch physically reached by
+incremental insertion. The regulated output used by the offline planner
+is the tip pose $y(\theta)=[p(\ell);R(\ell)e_3]\in\mathbb{R}^6$; the
+online controllers (Sec.~\ref{sec:control}) regulate only its position
+component, projected into the task plane of Sec.~\ref{sec:common}.
+
+\emph{Calibration.} The beam is a bimaterial composite (a stiffer core
+wire, softer magnetized outer matrix); $E$ denotes the effective
+(matrix-dominated) bending modulus, fit to $\approx2.5$\,MPa against
+measured static deflection under a known magnet pose, with $\nu=0.49$ for
+the matrix. Beam diameter, node count $n_s$, and the magnet's grade and
+dimensions are manufacturer/geometric values (Table~\ref{tab:params}).
+% VERIFY: core-wire modulus/Poisson ratio and weighting in the effective
+% composite K; magnet dipole moment and beam magnetic moment density (or
+% the calibration fit that produced them).
 
 \subsection{Control Jacobian}
 \label{sec:jacobian}
 
-Both the planner (Sec.~\ref{sec:planner}) and the controllers
-(Sec.~\ref{sec:control}) require the sensitivity of the output
-\eqref{eq:output} to the input, $J_b(\theta)=\partial y/\partial\theta$.
-Rather than re-solving \eqref{eq:equilibrium} repeatedly under finite
-perturbations, $J_b$ is obtained by implicit differentiation of the
-equilibrium condition. Differentiating $\nabla_u\Pi(u^{*};\theta)=0$ with
-respect to $\theta$ gives
+The planner (Sec.~\ref{sec:planner}) and controllers
+(Sec.~\ref{sec:control}) require $J_b(\theta)=\partial y/\partial\theta$.
+Rather than re-solving \eqref{eq:equilibrium} under finite perturbations,
+$J_b$ is obtained by implicit differentiation of the equilibrium
+condition: differentiating $\nabla_u\Pi(u^*;\theta)=0$ gives
 \begin{equation}
-\Pi_{uu}\,\frac{\partial u^{*}}{\partial\theta} + \Pi_{u\theta} = 0
-\ \Longrightarrow\
 \frac{\partial u^{*}}{\partial\theta} = -\,\Pi_{uu}^{-1}\,\Pi_{u\theta},
 \label{eq:ift}
 \end{equation}
-where $\Pi_{uu}$ and $\Pi_{u\theta}$ denote the second derivatives of the
-total energy at equilibrium, evaluated by finite differencing of the
-analytic energy gradient. The beam Jacobian follows by the chain rule,
+with $\Pi_{uu},\Pi_{u\theta}$ the second derivatives of the total energy
+at equilibrium (finite-differenced from the analytic gradient;
+% VERIFY: FD step size),
+and the beam Jacobian follows by the chain rule,
 \begin{equation}
 J_b(\theta) = \frac{\partial y}{\partial u}
 \frac{\partial u^{*}}{\partial\theta}
 + \left.\frac{\partial y}{\partial\theta}\right\rvert_{u=u^{*}}
-\in\mathbb{R}^{6\times7},
+\in\mathbb{R}^{6\times7}.
 \label{eq:jacobian-chain}
 \end{equation}
-the second term capturing the explicit dependence of the forward
-kinematics on $\theta$ at fixed strain, e.g.\ through $\ell$. This
-implicit route contrasts with the finite-difference Jacobian obtained from
-repeated boundary-value solves in~\cite{kratchman2017guiding}, and with
-the analytic sensitivity boundary-value problem of~\cite{wu2025closedloop},
-which is formulated around a shooting rather than an energy-minimization
-solution.
-
-Because the magnet pose is realized by the manipulator, the full
-configuration-space Jacobian is
+This implicit route contrasts with the finite-difference Jacobian
+in~\cite{kratchman2017guiding} and the shooting-based sensitivity
+of~\cite{wu2025closedloop}. Composing with the manipulator's geometric
+Jacobian $J_r(q)\in\mathbb{R}^{6\times6}$ (standard closed-form revolute
+expressions~\cite{lynchpark2017modern} from the same calibrated
+Denavit--Hartenberg parameters used for forward kinematics) gives the full
+configuration-space Jacobian
+$J(z)=J_b(\theta(z))\operatorname{blkdiag}(J_r(q),1)\in\mathbb{R}^{6\times7}$.
+Both online controllers regulate tip position only, so they use its
+position-only sub-block: with $E_p=[\,I_3\ \ 0_{3\times3}\,]$,
 \begin{equation}
-J(z) = J_b\big(\theta(z)\big)\,
-\operatorname{blkdiag}\!\big(J_r(q),\,1\big)\in\mathbb{R}^{6\times7},
-\label{eq:full-jacobian}
+J_p(z) = E_p\,J(z)\in\mathbb{R}^{3\times7},
+\label{eq:jp}
 \end{equation}
-where $J_r(q)\in\mathbb{R}^{6\times6}$ is the manipulator Jacobian,
-computed in closed form rather than by finite differencing: for joint $i$
-with axis $a_i$ and origin $o_i$ in the base frame, obtained from the
-Denavit--Hartenberg product of transforms, the geometric Jacobian columns
-are the standard revolute expressions~\cite{lynchpark2017modern}
-\begin{equation}
-J_r(q)\big[:,i\big] =
-\begin{bmatrix} a_i\times(p_e-o_i)\\ a_i\end{bmatrix},
-\label{eq:robot-jacobian}
-\end{equation}
-with $p_e$ the end-effector origin. The same per-robot calibrated
-Denavit--Hartenberg parameters are used for \eqref{eq:robot-jacobian} and
-for the forward kinematics, so that the calibrated positioning accuracy of
-the arm carries over to the control Jacobian used by the planner and both
-controllers.
-
-$J(z)$ is severely ill-conditioned: only a low-dimensional subspace of the
-seven-dimensional configuration space produces appreciable tip motion, a
-direct consequence of the limited lateral steering authority available
-from a single external magnet. Comparable rank deficiency is reported for
-related single-magnet systems~\cite{kratchman2017guiding}. This property
-motivates the explicit treatment of near-singular directions in both
-controllers below.
+precomputed once per reference sample (Sec.~\ref{sec:planner}) and reused
+online, never re-differentiated live. A single external magnet provides
+few independent steering directions, so $J_p(z)$ is rank-deficient over
+much of the workspace --- comparable rank deficiency is reported for
+related single-magnet systems~\cite{kratchman2017guiding}; quantitative
+conditioning data along the evaluated paths are reported in the
+supplementary material. % VERIFY: representative singular-value ratios /
+% condition-number range of J_p(z) along the evaluated reference paths.
+This motivates the explicit treatment of near-null directions in the
+predictive controller (Sec.~\ref{sec:mpc}).
 
 \subsection{Offline Reference Trajectory Generation}
 \label{sec:planner}
 
 A reference trajectory is generated offline in two stages and supplied to
-both controllers as a feedforward term.
-
-\subsubsection{Geometric path}
-Waypoint configurations $\chi_j=[q;\ell]_j$ are obtained sequentially by
-nonlinear least squares on the residual
+both controllers as a feedforward term. Waypoint configurations
+$\chi_j=[q;\ell]_j$ are obtained sequentially by nonlinear least squares
+on
 \begin{equation}
 r(\chi_j) =
 \begin{bmatrix}
@@ -287,201 +231,437 @@ r(\chi_j) =
 \end{bmatrix},
 \label{eq:planner-residual}
 \end{equation}
-whose blocks are, in order, the tip position and tangent errors normalized
-by tolerances $\tau_p,\tau_t$; a continuity term penalizing departure from
-the previous waypoint (weight $w_c$, scale $d_c$); and a regularizer
-holding the redundant configuration near a nominal posture $\chi_0$
-(weight $w_0$, scale $d_0$). Equation~\eqref{eq:planner-residual} is
-minimized by a bound-constrained trust-region-reflective least-squares
-solver with Jacobian scaling, supplied with the analytic Jacobian
-\eqref{eq:full-jacobian} and convergence tolerances of $10^{-9}$ on cost,
-step and gradient. Because the problem is non-convex and
-\eqref{eq:full-jacobian} is ill-conditioned, each waypoint is attempted
-from an ordered set of initial guesses --- the previous waypoint's solution
-extrapolated forward, followed by randomly perturbed restarts --- and the
-first converged candidate is accepted. Acceptance is not delegated to the
-optimizer's convergence flag: each candidate is re-validated by
-re-evaluating the full nonlinear forward model from that waypoint's frozen
-continuation baseline before it is committed to the path.
+whose blocks are the tip position/tangent errors (tolerances
+$\tau_p,\tau_t$), a continuity term against the previous waypoint (weight
+$w_c$, scale $d_c$), and a regularizer holding the redundant configuration
+near a nominal posture $\chi_0$ (weight $w_0$, scale $d_0$); waypoints are
+warm-started sequentially from the previous solution, with restarts as
+needed given the non-convexity of \eqref{eq:planner-residual}, and each
+accepted solution is validated against the full nonlinear forward model.
+At convergence $p_{\mathrm{tip}}(\chi_j)\approx p_{\mathrm{des},j}$, so the
+desired and model-consistent tip targets coincide along the accepted
+path; Sec.~\ref{sec:common} therefore uses a single symbol,
+$p_{\mathrm{des},k}$, for this reference tip target.
 
-\subsubsection{Time parameterization}
 The geometric path is then time-parameterized by reachability-based
 time-optimal path
-parameterization~\cite{bobrow1985timeoptimal,shinmckay1985minimumtime,phampham2018reachability}.
-With $\sigma$ the path parameter, $\beta=\dot\sigma^{2}$ and
-$\alpha=\ddot\sigma$, a backward pass computes the controllable set and a
-forward pass the maximum feasible speed profile, subject to per-joint and
-insertion velocity and acceleration bounds scaled by a fixed safety factor
-below their physical limits. The resulting timing law is smoothed by a
-$C^2$ natural cubic spline to remove knot-velocity discontinuities, and
-its duration is dilated to an exact multiple of the control period
-$\Delta t$ so that reference samples align with control ticks. The stage
-yields, for each reference sample $k$, a reference configuration $z^\star_k$
-and a reference rate $v^\star_k$.
+parameterization~\cite{bobrow1985timeoptimal,shinmckay1985minimumtime,phampham2018reachability}:
+a backward pass computes the controllable set and a forward pass the
+maximum feasible speed profile subject to per-joint and insertion
+velocity/acceleration bounds, the resulting timing law smoothed by a
+$C^2$ spline and its duration dilated to an exact multiple of the control
+period $\Delta t$ so reference samples align with control ticks. The
+stage yields, for each reference sample $k$, a reference configuration
+$z_{\mathrm{ref},k}$ and reference rate $u_{\mathrm{ref},k}$.
 
-\subsection{Vision-Based Tip Estimation}
-\label{sec:vision}
-
-The measured tip position $p_k$ is produced by a single overhead camera
-and a planar reconstruction consistent with (A4), running on a dedicated
-thread decoupled from both the frame-grab thread and the control loop; the
-controller consumes the most recent reconstruction at each tick.
-
-Two marker colors serve distinct roles. Red markers identify tracked
-points on the beam --- its base, one or more intermediate points, and the
-tip --- and are detected by HSV thresholding with a dual hue-range test
-accommodating the wraparound of red hues, followed by morphological
-opening, contour extraction within a calibrated region of interest, and
-area-filtered centroid extraction from image moments,
-$\big(M_{10}/M_{00},\,M_{01}/M_{00}\big)$. A fixed pair of green markers,
-separated by a known distance $d_{\mathrm{cal}}$, is not tracked per frame
-but provides the pixel-to-metric scale
-$\gamma = d_{\mathrm{cal}}/\lVert g_1-g_2\rVert_{\mathrm{px}}$.
-
-Reconstruction is planar rather than a full triangulation or
-perspective-$n$-point solve. Three proximal red markers define a local
-beam frame by principal component analysis: the axial axis is the leading
-singular vector of the centered marker coordinates, sign-disambiguated
-against the base-to-tangent direction, with the lateral axis completing
-the orthonormal pair. Each detected marker, including the tip, is
-projected onto this frame, scaled by $\gamma$, and embedded with zero
-out-of-plane component as
-$p_{\mathrm{local}}=[\,\xi,\ \zeta,\ 0\,]^{\top}$. A fixed, separately
-calibrated rigid transform about the insertion point maps this into the
-manipulator base frame,
-$p_k = T_{\mathrm{piv}}\,p_{\mathrm{local}}$. The estimate is used
-unfiltered.
-
-\subsection{Closed-Loop Control}
+\section{Feedback Control}
 \label{sec:control}
 
-Both controllers track the reference $\{z^\star_k,v^\star_k\}$ and reuse
-$v^\star_k$ as feedforward, correcting only the residual rather than
-re-deriving the trajectory online. At control step $k$, $z_k$ is the
-measured configuration, $p_k$ the measured tip position,
-$p^\star_{k+1}$ the next reference tip position, and
-$e_k = p^\star_{k+1}-p_k$ the tracking error.
+Both controllers track the same offline reference
+$\{z_{\mathrm{ref},k},u_{\mathrm{ref},k},p_{\mathrm{des},k}\}$
+(Sec.~\ref{sec:planner}) and reuse $u_{\mathrm{ref},k}$ as feedforward,
+correcting only the residual rather than re-deriving the trajectory
+online.
 
-\subsubsection{Damped least-squares controller}
-\label{sec:dls}
-The baseline controller re-evaluates the Jacobian at the measured
-configuration at every tick, $J_k=J(z_k)$, and inverts it with Tikhonov
-regularization~\cite{nakamura1986inverse,wampler1986manipulator}
-\begin{equation}
-J_k^{+} = J_k^{\top}\big(J_kJ_k^{\top}+\lambda^{2}I\big)^{-1},
-\label{eq:dls}
-\end{equation}
-the damping $\lambda$ trading tracking accuracy against command magnitude
-near singularities~\cite{chiaverini1994review}. Redundancy is resolved by
-projecting a posture term and the feedforward rate into the null space of
-$J_k$~\cite{liegeois1977automatic}, so that neither perturbs the tracked
-output:
-\begin{equation}
-v_k = J_k^{+}\frac{k_p e_k}{\Delta t}
-+ \big(I-J_k^{+}J_k\big)
-\left(\frac{k_n\big(z^\star_k-z_k\big)}{\Delta t} + v^\star_k\right).
-\label{eq:dls-full}
-\end{equation}
-The command is then limited in sequence by a velocity bound, an
-acceleration bound relative to the previous command, and the
-configuration box, with a final velocity re-clip. An anisotropic variant,
-replacing the isotropic $\lambda^2 I$ in \eqref{eq:dls} with a
-singular-value-dependent penalty from the decomposition of $J_k$, is
-available but inactive in the present implementation.
+\subsection{Common Delay-Aware Prediction Model}
+\label{sec:common}
 
-\subsubsection{Output-tracking model predictive controller}
-\label{sec:mpc}
-The predictive controller models the configuration over an $N$-step
-horizon as a single integrator, $z_{k+i+1}=z_{k+i}+\Delta t\,v_{k+i}$,
-condensed onto the stacked command
-$V=[v_k;\dots;v_{k+N-1}]$ as
+Tip position is regulated through a task-plane projector
+$C\in\mathbb{R}^{2\times3}$ (the beam's axial and lateral in-plane
+directions), giving the task Jacobian
+$J_{\mathrm{task},k}=CJ_{p,k}\in\mathbb{R}^{2\times7}$ from the Jacobian
+source $J_{p,k}$ defined below. Both controllers have real feedback
+authority over all seven actuated coordinates --- six joints and
+insertion --- under the same physical velocity/acceleration limits
+(Table~\ref{tab:params}); this, not any particular normalization, is what
+\emph{matched authority} refers to throughout this paper. On top of that
+shared physical authority, both controllers are compared under the same
+actuator normalization,
 \begin{equation}
-Z = \Phi z_k + S V,
-\label{eq:condensed}
+S_u = \operatorname{diag}\big(0.05,\dots,0.05,\,5\times10^{-3}\big)
+\in\mathbb{R}^{7\times7}
+\label{eq:su}
 \end{equation}
-with $S$ block lower triangular in $\Delta t\,I$ and $\Phi$ the stacking
-matrix; $D$ denotes the first-difference operator on $V$. Linearizing the
-output map about the reference gives the predicted tip error
-\begin{equation}
-\Delta Y = \bar J S V + c,
-\qquad
-\bar J = \operatorname{blkdiag}\big(J_k,\dots,J_{k+N-1}\big),
-\label{eq:output-prediction}
-\end{equation}
-where $c$ stacks the predicted tip error under zero correction. Offset-free
-tracking is obtained by including in $c$ a constant output-disturbance
-estimate $\hat d_k = p_k - y\big(\theta(z_k)\big)$, the discrepancy between
-the measured tip and the model prediction at the measured configuration,
-held fixed across the horizon.
+(joints in rad/s, insertion in m/s), and
+$S_z=\operatorname{diag}(0.5^{\circ},\dots,0.5^{\circ},\,0.25\text{mm})$
+for configuration-space quantities; $S_u$ makes INV-7's seven-channel
+allocation (Sec.~\ref{sec:inv7}) unit-consistent and gives the normalized
+feedback-effort metric (Sec.~\ref{sec:metrics}) an identical,
+controller-agnostic scale for both controllers.
 
-Two Jacobian schedules are considered. The linear time-invariant (LTI)
-variant freezes $\bar J$ at a single reference sample for the whole run;
-the linear time-varying (LTV) variant evaluates a schedule once, offline,
-at each reference sample. Both therefore condition the prediction on the
-planned trajectory rather than on the measured configuration, in contrast
-to the per-tick re-evaluation of Sec.~\ref{sec:dls}.
-
-The command is the solution of the convex quadratic program
+\emph{Jacobian source.} Two conditions are compared as a robustness
+stress test (Sec.~\ref{sec:protocol}):
 \begin{align}
-\min_{V}\ & \big(Z-Z^\star\big)^{\!\top}\bar Q\big(Z-Z^\star\big)
-+ V^{\top}\bar R V + (DV)^{\top}\bar R_d (DV) \notag\\
-&\quad + \Delta Y^{\top}\bar Q_p \Delta Y + V^{\top}\Lambda_{dd}V
-+ \big(z_N-z^\star_N\big)^{\!\top} P \big(z_N-z^\star_N\big)
-\label{eq:mpc-cost}\\
-\text{s.t.}\ & v_{\min}\le v_{k+i}\le v_{\max},\notag\\
-& \big\lVert v_{k+i}-v_{k+i-1}\big\rVert\le a_{\max}\Delta t,\notag\\
-& z_{\min}\le z_{k+i}\le z_{\max},\qquad i=0,\dots,N-1,\notag
+\text{Scheduled-}J\ \text{(SJ)}:&\quad J_{p,k} = J_{p,\mathrm{ref},k},
+\label{eq:sj}\\
+\text{Frozen-}J\ \text{(FJ)}:&\quad J_{p,k} = J_p(z_{\mathrm{ref},0})\ \forall k,
+\label{eq:fj}
 \end{align}
-solved by operator splitting~\cite{osqp2020}, of which only $v_k$ is
-applied before the horizon recedes. Here $\bar Q_p$ weights tip-output
-tracking and is the primary objective, while $\bar R$ and $\bar R_d$
-penalize command magnitude and command increments. The configuration-space
-weight $\bar Q$ is deliberately small: driving the configuration towards
-the planned trajectory duplicates both the feedforward term and the
-output-tracking objective, and the three compete for the same command
-budget. It is retained at a small positive value because the terminal
-weight $P$, the solution of the discrete algebraic Riccati equation for
-the prediction model under combined weight
-$\bar Q + J_N^{\top}\bar Q_p J_N$, requires $\bar Q$ to keep that weight
-full rank given the rank deficiency of $J$ noted in
-Sec.~\ref{sec:jacobian}. The terminal term supplies a cost-to-go
-approximation beyond the horizon; no terminal set is imposed and no
-nominal stability guarantee is claimed for the nonlinear plant.
-$\Lambda_{dd}$ is an optional anisotropic penalty on near-null command
-directions, formed per horizon step from the decomposition
-$J_{k+i}=U\Sigma\Psi^{\top}$ with a floor on the penalty weight to
-preserve conditioning of the quadratic program; it is the predictive
-counterpart of the anisotropic variant in Sec.~\ref{sec:dls} and is
-likewise inactive in the present implementation.
+where $J_{p,\mathrm{ref},k}=J_p(z_{\mathrm{ref},k})$ is the schedule
+\eqref{eq:jp} evaluated once, offline, at every reference sample. FJ holds
+the initial reference Jacobian fixed for the entire run and is used as a
+controlled model-staleness stress test; SJ is the intended operating
+condition. Both controllers draw $J_{p,k}$ from the same source for a
+given run, including the MPC's nullspace-projector construction
+(Sec.~\ref{sec:mpc}): an FJ run freezes every quantity derived from $J_p$
+together, not the prediction model alone.
 
-Both controllers are subject to the same velocity, acceleration and
-configuration bounds. They differ in how the bounds are enforced: the
-damped least-squares law applies them as a sequence of post-hoc limits on
-an already-computed command, whereas the predictive controller enforces
-them as hard constraints within \eqref{eq:mpc-cost}.
+\emph{Delay.} Both controllers account for a measured delay of $d=2$
+control ticks between a newly issued joint-velocity command and its first
+effect on the manipulator's commanded joint position (identified for the
+six joints; the insertion advancer responds without this delay). Writing
+$c_{k}$ for the joint-position command already committed at tick $k$ and
+$u_{q,r|k}$ for the joint-rate command chosen for horizon stage $r$ at
+tick $k$,
+\begin{equation}
+q^{\mathrm{phys}}_{j|k} =
+\begin{cases}
+c_{k-1}, & j=1,\\
+c_{k}, & j=2,\\[2pt]
+\displaystyle c_{k} + \Delta t\sum_{r=0}^{j-3}u_{q,r|k}, & j=3,\dots,N,
+\end{cases}
+\label{eq:delay-stages}
+\end{equation}
+so stage $j{=}3$ is the first predicted stage the newly optimized command
+$u_{q,0|k}$ can affect, and every later stage accumulates all joint
+commands decided so far in the horizon; stages $j{=}1,2$ are already
+committed. Insertion integrates without this offset,
+$L_{j|k}=L_k+\Delta t\sum_{r=0}^{j-1}u_{L,r|k}$. This is why the
+mechanistic evaluation and horizon ablation (Sec.~\ref{sec:replay}) are
+stated at the $+3$ stage, and why the minimum causally responsive horizon
+is $N=3$.
 
-\subsection{Real-Time Implementation}
+\emph{Persistent output-disturbance prediction.} A per-tick
+output-disturbance estimate,
+\begin{equation}
+d_k = C p_{\mathrm{meas},k} -
+\Big[C p_{\mathrm{des},k} +
+J_{\mathrm{task},k}\big(z_{\mathrm{meas},k}-z_{\mathrm{ref},k}\big)\Big]
+\in\mathbb{R}^2,
+\label{eq:residual}
+\end{equation}
+is formed for the MPC's horizon prediction and, at its own preview index,
+by INV-7 (Sec.~\ref{sec:inv7}); the same residual is reused offline as a
+common evaluator for both controllers' recorded runs
+(Sec.~\ref{sec:replay}). Writing $\delta z_{j|k}=z^{\mathrm{phys}}_{j|k}-z_{\mathrm{ref},k+j}$,
+the MPC prediction holds $d_k$ fixed across the horizon,
+\begin{align}
+\hat p_{j|k} &= C p_{\mathrm{des},k+j}
++ J_{\mathrm{task},k+j}\,\delta z_{j|k}
++ \beta_d\,d_k,
+\label{eq:disturbance-prediction}\\
+\beta_d &= 1,\notag
+\end{align}
+i.e.\ it assumes the observed model-mismatch persists rather than
+decaying. We call this \emph{persistent output-disturbance prediction}
+rather than ``offset-free'' tracking: \eqref{eq:residual} is a per-tick
+estimate, not an integrated state, and carries no guarantee of zero
+steady-state error for the nonlinear plant.
+
+\subsection{Matched-Authority Inverse-Jacobian Controller (INV-7)}
+\label{sec:inv7}
+INV-7 (named for its seven actuated coordinates) is delay-aware through a
+one-shot preview rather than the committed-command propagation
+\eqref{eq:delay-stages} used by the receding-horizon MPC. Let $r_k$ be the
+runtime-logged reference index at tick $k$ and define the realization
+index
+\begin{equation}
+\kappa_k = r_k+1+d,
+\label{eq:kappa}
+\end{equation}
+the same $+3$ causal offset as \eqref{eq:delay-stages}: the first
+reference sample tick $k$'s decision can affect. The current-tick residual
+\eqref{eq:residual} is formed at $r_k$. The preview joint configuration is
+read directly from the reference trajectory at $\kappa_k$ (not propagated
+from INV-7's own recent commands), concatenated with a feedforward-only
+insertion preview $\ell_k$ ($\ell_{k+1}=\ell_k+\Delta t\,u_{L,\mathrm{ref},k}$,
+undelayed):
+\begin{equation}
+\hat z_{\kappa_k|k} = \big[\,z_{\mathrm{ref},\kappa_k}[1{:}6];\ \ell_k\,\big].
+\label{eq:inv7-preview-state}
+\end{equation}
+$\ell_k$ is only this preview \emph{base}; insertion still receives
+feedback like the six joints, through the insertion component of the trim
+$\delta z_k$ below, applied to $\hat z_{\kappa_k|k}$ before the command is
+realized (Sec.~\ref{sec:online}). With the preview task Jacobian
+$J_{\mathrm{task},\kappa_k}=CJ_{p,\kappa_k}$ (evaluated at $\kappa_k$, from
+the SJ/FJ source of Sec.~\ref{sec:common}),
+\begin{align}
+\hat p_{\kappa_k|k} &= C p_{\mathrm{des},\kappa_k} +
+J_{\mathrm{task},\kappa_k}\big(\hat z_{\kappa_k|k}-z_{\mathrm{ref},\kappa_k}\big)
++ d_k,
+\label{eq:inv7-preview-error}\\
+e_{\kappa_k|k} &= C p_{\mathrm{des},\kappa_k} - \hat p_{\kappa_k|k}.
+\notag
+\end{align}
+With $J_{u,\kappa_k}=J_{\mathrm{task},\kappa_k}S_u$ the normalized preview
+task Jacobian, the correction is a normalized damped-least-squares
+step~\cite{nakamura1986inverse,wampler1986manipulator},
+\begin{align}
+J_{u,\kappa_k}^{+} &= J_{u,\kappa_k}^{\top}
+\big(J_{u,\kappa_k}J_{u,\kappa_k}^{\top}+\lambda_u^2 I\big)^{-1},
+\qquad \lambda_u = 2.5\times10^{-3},
+\label{eq:inv7-pinv}\\
+\delta z_k &= S_u\Big(J_{u,\kappa_k}^{+}\,k_p\,e_{\kappa_k|k}\Big),
+\qquad k_p=1,
+\notag
+\end{align}
+$\lambda_u$ trading tracking accuracy against command magnitude near
+singularities~\cite{chiaverini1994review}; $\delta z_k$ is a physical-unit
+configuration trim, not a rate. No redundancy/posture regularization is
+applied ($k_n=0$): $u_{\mathrm{ref},k}$ carries the entire nominal
+(including planned insertion) motion. The command is realized as an
+absolute position trim, the same accumulator mechanism as MPC
+(Sec.~\ref{sec:online}): the persistent commanded configuration $c_k$ is
+advanced toward $\hat z_{\kappa_k|k}+\delta z_k$, clipped componentwise to
+the physical rate/acceleration limits, and the clipped step divided by
+$\Delta t$ is issued. INV-7 draws $J_{p,\kappa_k}$ from the SJ/FJ source
+(never from $z_{\mathrm{meas},k}$ directly) and runs in-process, a single
+closed-form solve per tick.
+
+\subsection{Delay-Aware Output-Tracking MPC}
+\label{sec:mpc}
+The predictive controller optimizes a horizon of $N=15$ rate commands
+$U=[u_{0|k};\dots;u_{N-1|k}]$ against \eqref{eq:delay-stages}--\eqref{eq:disturbance-prediction},
+with $u_{-1|k}=u_{k-1}$ (the previously applied command) so the rate
+constraint below is well-defined at $j=0$, and an \emph{exact}
+nullspace-only configuration regularizer in place of a full-state weight.
+At horizon stage $j$, let $J_{s,j|k}=J_{\mathrm{task},k+j}S_z$ and
+\begin{equation}
+J_{s,j|k}=U_{j|k}\Sigma_{j|k}\big[\,V_{r,j|k}\ \ V_{n,j|k}\,\big]^{\top},
+\qquad P_{N,j|k}=V_{n,j|k}V_{n,j|k}^{\top},
+\label{eq:pn}
+\end{equation}
+its full singular value decomposition, $V_{n,j|k}$ spanning the numerical
+null space: a full, rank-revealing SVD is used so that $P_{N,j|k}$ is an
+exact orthogonal null-space projector, constructed fresh at every stage.
+Writing $\tilde z_{j|k}=S_z^{-1}\delta z_{j|k}$ and
+$\Delta u_{j|k}=u_{j|k}-u_{j-1|k}$, the command is the solution of
+\begin{subequations}
+\label{eq:mpc}
+\begin{align}
+\min_{U}\quad &
+\sum_{j=1}^{N}\big\lVert \hat p_{j|k}-Cp_{\mathrm{des},k+j}\big\rVert^2_{Q_p}
++ \sum_{j=0}^{N-1}\big\lVert u_{j|k}-u_{\mathrm{ref},k+j}\big\rVert^2_{R}
+\notag\\
+&\ + \sum_{j=0}^{N-1}\big\lVert \Delta u_{j|k}\big\rVert^2_{R_d}
++ \sum_{j=1}^{N}\big\lVert P_{N,j|k}\,\tilde z_{j|k}\big\rVert^2
+\label{eq:mpc-objective}\\
+\text{s.t.}\quad & u_{\min}\le u_{j|k}\le u_{\max},
+\label{eq:mpc-input}\\
+& \Delta u_{\min}\le \Delta u_{j|k}\le \Delta u_{\max},
+\label{eq:mpc-rate}\\
+& z_{\min}\le z^{\mathrm{phys}}_{j|k}\le z_{\max}.
+\label{eq:mpc-state}
+\end{align}
+\end{subequations}
+All inequalities are componentwise; \eqref{eq:mpc-input}--\eqref{eq:mpc-rate}
+apply for $j=0,\dots,N-1$ and \eqref{eq:mpc-state} for $j=1,\dots,N$. The
+program is solved by operator splitting~\cite{osqp2020}, of which only
+$u_{0|k}$ is applied before the horizon recedes. $Q_p$ weights tip-output
+tracking at a $0.5$\,mm error scale (weight $1.0$) and is the primary
+objective. $R$ and $R_d$ use two separate normalization scales, $S_u$
+\eqref{eq:su} and a distinct increment scale
+$S_{\Delta u}=\operatorname{diag}(0.04,\dots,0.04,\,2\times10^{-3})$
+rad/s ($\times6$), m/s, giving
+\begin{equation}
+R = 7.0\,S_u^{-\top}S_u^{-1}, \qquad
+R_d = 1\times10^{-3}\,S_{\Delta u}^{-\top}S_{\Delta u}^{-1}.
+\label{eq:r-rd}
+\end{equation}
+Only null-space configuration error is penalized: the configuration
+regularizer contains no row-space component, while $R$ and $R_d$ remain
+active in all directions, including row-space (task-relevant) motion. The
+null-space term discourages drift, at each stage's own linearization, in
+directions locally task-null to first order; it does not guarantee the
+corresponding motion remains task-null over a finite step, a distinction
+explored directly in a manipulability-objective investigation reported in
+the supplementary material. There is no terminal cost, terminal set, or
+directional damping term, and no nominal stability guarantee is claimed
+for the nonlinear plant. INV-7 enforces the same bounds as a sequence of
+post-hoc limits on an already-computed command; MPC enforces them as hard
+constraints in \eqref{eq:mpc}.
+
+\section{Experimental Methods}
+\label{sec:experiments}
+
+\subsection{Vision and Real-Time Control}
 \label{sec:online}
 
-Both controllers execute inside a single multi-threaded process on the
-workstation of Table~\ref{tab:hardware}, whose real-time kernel provides
-deterministic loop timing. Camera-based tip estimation, manipulator joint
-angles and advancer insertion length are fused into one state estimate per
-tick, and each controller is presented to the runtime through a common
-solver interface, making them interchangeable without altering the
-surrounding system. A supervisor halts motion on stale vision, an
-unresponsive worker thread, a manipulator protective stop, a commanded
-pose outside the calibrated workspace, or a non-finite command.
+An overhead camera tracks colored fiducials on the beam (base, one or
+more intermediate points, and tip), segmented by HSV thresholding and
+localized by centroid; three proximal markers define a local beam-plane
+frame by principal component analysis, each marker is projected into it
+and scaled to metric units by a fixed reference pair of known separation,
+and a calibrated rigid transform maps the result into the robot frame.
+Reconstruction runs on a dedicated thread, unfiltered, decoupled from the
+control loop, which consumes the most recent estimate each tick.
 
-The manipulator is addressed over its real-time data exchange interface at
-its native rate, with a dedicated thread re-issuing the current joint
-velocity command between control ticks and a watchdog stopping motion if
-commands cease. The advancer is driven over a serial link by a stepper
-controller. The outer perception-and-control loop --- vision
-reconstruction, state estimation, and the controller solve --- runs at
-$\Delta t$. All computation is performed on CPU. Timing and platform
-parameters are listed in Table~\ref{tab:hardware}, model and controller
-parameters in Table~\ref{tab:params}.
+Both controllers realize their commanded rate through a shared mechanism:
+a persistent, controller-owned absolute command $c_k$, advanced each tick
+as $c_{k+1}=c_k+\Delta t\,u_k$ and interpolated at the manipulator's
+command-stream rate, rather than isolated per-tick velocity impulses. The
+insertion component of this accumulator is clipped to a physically
+realizable range at every update and is the sole source of the
+controller's insertion state; it is never corrected from the
+vision-derived beam length. INV-7's command is a single closed-form
+solve per tick; the MPC solve was executed in a pre-warmed,
+process-isolated worker with a 70\,ms per-tick deadline, holding the
+previously committed position on a missed deadline rather than applying a
+stale solve. Runs were automatically terminated on stale vision,
+solver/worker failure, a manipulator protective stop, a non-finite
+command, or violation of a predeclared Cartesian workspace bound on the
+measured tool-center-point position --- bounds tight enough to
+auto-terminate a divergent run (Sec.~\ref{sec:protocol}) without manual
+intervention. Platform and timing parameters are in
+Table~\ref{tab:hardware}, model/controller parameters in
+Table~\ref{tab:params}.
+
+\subsection{Experimental Protocol}
+\label{sec:protocol}
+
+The two controllers are compared on three path geometries (rectangle,
+triangle, U-shape; nominal dimensions in Table~\ref{tab:params}), using
+the beam and platform of Sec.~\ref{sec:beam-model}--\ref{sec:online}.
+Controller parameters are fixed once and not retuned between geometries,
+licensing the three geometries as a generalization check on a single
+design rather than three separately tuned instances.
+
+The primary comparison is INV-7 vs.\ MPC under scheduled-$J$
+(Sec.~\ref{sec:common}), 5 repeated live runs per controller and path
+(the run, not the tick, is the experimental unit,
+Sec.~\ref{sec:metrics}). A second, factorial comparison crosses controller
+with Jacobian condition (SJ, FJ) on the rectangle and triangle paths,
+again 5 repeated runs per cell, as a robustness stress test to model
+staleness. On the U-shape path, both attempted MPC-FJ trials developed
+rapidly increasing tracking error in the same path region and were
+safety-terminated (Sec.~\ref{sec:online}) before completing the path; no
+complete-path metric is reported for that cell, and it is reported as a
+genuine failure mode rather than omitted or imputed.
+
+Each run starts from the same calibrated home configuration, after the
+frame transform \eqref{eq:frame-fit} and workspace bounds are
+(re-)verified; the reference trajectory, actuator limits, and control
+period are identical across controllers and conditions for a given path.
+On the rectangle path, the two controllers' runs for a given Jacobian
+condition were collected as separate blocks (all MPC-SJ, then all MPC-FJ;
+all INV-7-SJ and INV-7-FJ runs interleaved with each other), all within a
+single session, and no controller-order effect is assumed without
+checking for one. % VERIFY: confirm and generalize this run-ordering
+% description to the triangle and U-shape sessions, and state the
+% inter-run reset procedure beyond returning to the home configuration.
+
+\subsection{Evaluation Metrics and Statistical Analysis}
+\label{sec:metrics}
+
+Every per-tick error uses the runtime-logged reference index $r_k$
+(Sec.~\ref{sec:inv7}), not an assumed tick-to-sample correspondence:
+\begin{equation}
+e_k = C\big(p_{\mathrm{meas},k}-p_{\mathrm{des},r_k}\big).
+\label{eq:tick-error}
+\end{equation}
+Tracking accuracy is the run-level RMS of \eqref{eq:tick-error},
+\begin{equation}
+E_{\mathrm{RMS}} = \sqrt{\tfrac1T\textstyle\sum_{k=1}^{T}\lVert e_k\rVert^2},
+\label{eq:e-rms}
+\end{equation}
+decomposed by axis as $E_{x,\mathrm{RMS}}$, $E_{y,\mathrm{RMS}}$.
+Feedback effort is the run-level RMS of the $S_u$-normalized deviation
+from feedforward,
+\begin{equation}
+E_u = \sqrt{\tfrac1T\textstyle\sum_{k=1}^{T}
+\big\lVert S_u^{-1}\big(u_k-u_{\mathrm{ref},r_k}\big)\big\rVert^2},
+\label{eq:e-u}
+\end{equation}
+dimensionless, on the same $S_u$ for both controllers. Two
+constraint-activity fractions are reported, each the fraction of
+evaluated ticks at which the corresponding bound of \eqref{eq:mpc} is
+active to within a numerical tolerance of $10^{-6}$: \emph{insertion
+velocity-limit activity} \eqref{eq:mpc-input}, and \emph{joint
+command-increment (acceleration-limit) activity} \eqref{eq:mpc-rate} ---
+the joint velocity bound itself is rarely approached.
+
+The independent experimental unit is the \emph{run}: with
+$T\!\approx\!250$--$290$ ticks per run and 5 runs per condition, tables
+report run-level mean$\,\pm\,$SD and figures show individual run-level
+points together with the run-level mean and a 95\% confidence interval
+$\bar x\pm t_{0.975,4}\,s/\sqrt5$, $t_{0.975,4}\approx2.776$, computed
+from the 5 run-level values, not the $\approx\!1300$ pooled (non-independent)
+ticks. Tick-resolved traces are used only for time/path-resolved
+visualization and the mechanistic analyses of Sec.~\ref{sec:replay}, not
+as additional statistical samples. Given $n=5$, cross-geometry claims are
+stated as heterogeneous in effect size (large on the rectangle, smaller on
+the triangle and U-shape) rather than as a uniform effect.
+
+\subsection{Offline Mechanistic Replay and Ablations}
+\label{sec:replay}
+
+Two further analyses are computed offline against recorded runs, using
+\eqref{eq:residual} applied identically regardless of which controller or
+Jacobian source produced the recorded command --- a common evaluator. For
+a recorded tick with logged command $u_{0|k}$ and feedforward
+$u_{\mathrm{ref},k}$, the model predicts the causal $+3$ task-plane error
+twice: with the logged command, $\hat e_{3|k}$, and with
+$u_{\mathrm{ref},k}$ substituted (``no new correction''),
+$\hat e_{3|k}^{\,\mathrm{base}}$, both through
+\eqref{eq:disturbance-prediction} with the same logged $d_k$. A correction
+is \emph{useful} when
+$\lvert e_y\rvert^{\mathrm{base}}_{3|k}-\lvert e_y\rvert_{3|k}>0$; the
+directional-reliability metrics are the fraction of ticks meeting this,
+\begin{equation}
+P(\text{useful}_y{>}0) =
+\tfrac1K\textstyle\sum_k \mathbb{1}\big[\lvert e_y\rvert^{\mathrm{base}}_{3|k}
+-\lvert e_y\rvert_{3|k}>0\big],
+\label{eq:p-useful}
+\end{equation}
+and the signed aggregate net correction per unit normalized joint effort,
+\begin{equation}
+\eta_{y,\mathrm{net}} =
+\frac{\sum_k\big(\lvert e_y\rvert^{\mathrm{base}}_{3|k}-\lvert e_y\rvert_{3|k}\big)}
+{\sum_k\big\lVert S_{u,q}^{-1}(u_{q,0|k}-u_{q,\mathrm{ref},k})\big\rVert},
+\label{eq:eta-y}
+\end{equation}
+where harmful corrections (negative numerator terms) are counted, not
+discarded. The numerator is lateral ($y$) task correction while the
+denominator is joint effort specifically: this metric isolates the
+lateral magnetic-steering efficiency examined in the mechanism analysis,
+and insertion's own contribution to lateral correction is small in the
+actuator decomposition (supplementary).
+
+The same recorded-tick replay is also used for two targeted ablations on
+the rectangle path: (i) disabling persistent-disturbance prediction
+($\beta_d=0$ vs.\ the validated $\beta_d=1$) and re-evaluating the $+3$
+predicted error, paired per recorded trajectory; and (ii) sweeping the
+prediction horizon $N\in\{3,5,10,15\}$ and comparing the resulting
+$u_{q,0}$ by cosine similarity against its $N{=}15$ value. These replays
+quantify short-horizon decision-level counterfactual effects from
+recorded states; they are not alternative realized closed-loop hardware
+trajectories, and are not treated as equivalent to an additional live-run
+comparison.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=6mm and 8mm,
+  box/.style={draw, rounded corners, align=center, minimum height=8mm, minimum width=20mm, font=\small},
+  >={Latex[length=2mm]}
+]
+\node[box] (cam) {Camera\\(tip estimate)};
+\node[box, right=of cam] (state) {State\\estimate};
+\node[box, right=of state] (ctrl) {Controller\\INV-7 / MPC};
+\node[box, below=of ctrl] (robot) {Manipulator\\(joint rates)};
+\node[box, left=of robot] (adv) {Advancer\\(insertion rate)};
+\draw[->] (cam) -- (state);
+\draw[->] (state) -- (ctrl);
+\draw[->] (ctrl) -- (robot);
+\draw[->] (ctrl) -- (adv);
+\end{tikzpicture}
+\caption{Closed-loop information flow. Vision, manipulator joint state and
+insertion length are fused into one state estimate per tick; the active
+controller maps this and the offline reference to joint and insertion
+rate commands.}
+\label{fig:architecture}
+\end{figure}
 
 \begin{table}[t]
 \centering
@@ -492,40 +672,52 @@ parameters in Table~\ref{tab:params}.
 \toprule
 Quantity & Value \\
 \midrule
-CPU & Intel Core i7-11700K, 8C/16T, 3.60\,GHz \\
-Memory & 32\,GB \\
-Operating system & Ubuntu 22.04 LTS \\
-Kernel & Linux 5.15, \texttt{PREEMPT\_RT} \\
 Manipulator & Universal Robots UR10e \\
-Robot interface rate & 500\,Hz \\
-Command-stream rate & 125\,Hz \\
-Watchdog rate & 10\,Hz \\
+Manipulator connection & External Control URCap \\
+Command-stream rate & 125\,Hz \\ % VERIFY: re-confirm against the exact
+% final validated run configuration. Full platform specification (CPU,
+% memory, OS/kernel, frame-grab rate, advancer link/baud, watchdog rate)
+% is given in the supplementary material.
 Control period $\Delta t$ & 0.1\,s (10\,Hz) \\
-Frame-grab rate & up to 250\,Hz \\
-Advancer link & 115200\,baud, 50\,Hz dispatch \\
 Advancer resolution & 0.166\,mm/step \\
+MPC worker solve deadline & 70\,ms \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
-\caption{Model and controller parameters.}
+\caption{Model and controller parameters (settled values used to produce
+all reported results).}
 \label{tab:params}
 \small
 \begin{tabular}{@{}ll@{}}
 \toprule
 Quantity & Value \\
 \midrule
+Rectangle path (nominal) & $15\times10$\,mm \\
+Triangle path, base (nominal) & 25\,mm \\
+U-shape path (nominal envelope) & $15\times10$\,mm \\ % VERIFY: confirm
+% triangle height/apex extent and U-shape channel width (Fig. 1 shows
+% all three to scale).
 Beam nodes $n_s$ & 10 \\
 Beam diameter & 2.0\,mm \\
+Matrix modulus $E$ (fitted) & $\approx2.5$\,MPa \\
+Matrix Poisson ratio $\nu$ & 0.49 \\
 Actuating magnet & N52 NdFeB, $100\times100$\,mm cylinder \\
+Joint/insertion delay $d$ & 2 / 0 ticks \\
+Disturbance persistence $\beta_d$ & 1 (constant over horizon) \\
 MPC horizon $N$ & 15 \\
-Configuration weight $\bar Q$ & $1\times10^{-3}$ \\
-Output weight $\bar Q_p$ & $1.0$ at $0.5$\,mm error scale \\
-Terminal cost $P$ & enabled (Riccati) \\
-Anisotropic damping $\Lambda_{dd}$ & inactive \\
-DLS damping $\lambda$ & $1\times10^{-3}$ \\
+Output weight $Q_p$ scale & 0.5\,mm, weight 1.0 \\
+Command weight $R$ ($S_u$-normalized) & 7.0 \\
+Increment weight $R_d$ ($S_{\Delta u}$-normalized) & $1\times10^{-3}$ \\
+INV-7 gains $k_p,\,k_n$ & $1.0,\ 0.0$ (locked) \\
+INV-7 damping $\lambda_u$ & $2.5\times10^{-3}$ \\
+$S_u$ (joint / insertion) & $0.05$\,rad/s / $5\times10^{-3}$\,m/s \\
+$S_{\Delta u}$ (joint / insertion) & $0.04$\,rad/s / $2\times10^{-3}$\,m/s \\
+$S_z$ (joint / insertion) & $0.5^{\circ}$ / $0.25$\,mm \\
+Velocity limit (joint / insertion) & $0.10$\,rad/s / $2\times10^{-3}$\,m/s \\
+Acceleration limit (joint / insertion) & $0.40$\,rad/s$^2$ / $0.02$\,m/s$^2$ \\
 Marker calibration distance $d_{\mathrm{cal}}$ & 38\,mm \\
 \bottomrule
 \end{tabular}
@@ -590,12 +782,6 @@ S.~Chiaverini, B.~Siciliano, and O.~Egeland, ``Review of the Damped
 Least-Squares Inverse Kinematics With Experiments on an Industrial Robot
 Manipulator,'' \emph{IEEE Transactions on Control Systems Technology},
 vol.~2, no.~2, pp.~123--134, 1994.
-% VERIFY: pages/DOI.
-
-\bibitem{liegeois1977automatic}
-A.~Li\'{e}geois, ``Automatic Supervisory Control of the Configuration and
-Behavior of Multibody Mechanisms,'' \emph{IEEE Transactions on Systems,
-Man, and Cybernetics}, vol.~7, no.~12, pp.~868--871, 1977.
 % VERIFY: pages/DOI.
 
 \bibitem{bobrow1985timeoptimal}

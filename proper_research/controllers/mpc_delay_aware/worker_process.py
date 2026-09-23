@@ -110,6 +110,8 @@ def _worker_main(
     enable_nullspace_r700: bool = False,
     nullspace_r700_config_kwargs: Optional[dict] = None,
     insertion_state_anchor_weight: float = 0.0,
+    enable_exact_qn_zero: bool = False,
+    exact_qn_zero_config_kwargs: Optional[dict] = None,
 ) -> None:
     """Entry point for Process B. Constructs its OWN MPC instances (old +
     new, so one worker can answer requests for either condition -- the
@@ -127,6 +129,16 @@ def _worker_main(
     stored schedule before reporting ready (see the assertions block
     below) -- the live per-tick solve path is untouched from what was
     replayed.
+
+    `enable_exact_qn_zero` (2026-09-23): also build
+    `ExactQNZeroTaskNullspaceDelayAwareMPC` -- the vessel-navigation
+    model-necessity study's frozen Q_N=0 condition (P_N=P_R=0 exactly at
+    every stage, not merely gamma=0, which leaves P_N fully active). Kept
+    fully separate from `enable_nullspace_r700`/`null_controller` -- both
+    may be enabled simultaneously without interacting; each is dispatched
+    by its own `kind` string. Verified offline (before this was wired in)
+    to reproduce the study's own `DecoupledProjectorMPC(projector=None)`
+    bit-for-bit (max command diff 0.0 across 6 test states).
     """
     if single_threaded:
         _force_single_threaded_blas()
@@ -223,6 +235,20 @@ def _worker_main(
         print(f"[worker] delay_samples={delay_samples} beta_d={beta_d} "
               f"horizon={mpc_config.prediction_horizon} terminal_cost=False (V_f=0)")
 
+    exact_qn0_controller = None
+    if enable_exact_qn_zero:
+        from proper_research.controllers.mpc_delay_aware.exact_qn_zero_mpc import (
+            ExactQNZeroTaskNullspaceDelayAwareMPC,
+        )
+
+        exact_qn0_mpc_config = ConfigurationMPCConfig(**(exact_qn_zero_config_kwargs or {}))
+        exact_qn0_controller = ExactQNZeroTaskNullspaceDelayAwareMPC(
+            gamma=0.0, reference=reference, config=exact_qn0_mpc_config, beam_config=beam_config,
+            reference_position_jacobians=schedule, delay_samples=delay_samples, beta_d=beta_d,
+        )
+        print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
+              f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
+
     def _apply_frame_transform(controller, R_fit: np.ndarray, t_fit: np.ndarray) -> None:
         """Planner(P)->live-robot(R) frame-mismatch fix (2026-09-21): p_des
         and p_nominal are the ONLY quantities wrong here (they default from
@@ -277,6 +303,11 @@ def _worker_main(
             z_meas=np.concatenate([q0, [l0]]), q_cmd=q0, q_cmd_prev=q0, insertion_m=l0,
             measured_beam_position=p0, control_index=0, previous_input=zeros7,
         )
+    if exact_qn0_controller is not None:
+        exact_qn0_controller.solve_delay_aware(
+            z_meas=np.concatenate([q0, [l0]]), q_cmd=q0, q_cmd_prev=q0, insertion_m=l0,
+            measured_beam_position=p0, control_index=0, previous_input=zeros7,
+        )
 
     conn.send({"status": "ready"})
 
@@ -323,6 +354,8 @@ def _worker_main(
             _apply_frame_transform(new_controller, R_fit, t_fit)
             if null_controller is not None:
                 _apply_frame_transform(null_controller, R_fit, t_fit)
+            if exact_qn0_controller is not None:
+                _apply_frame_transform(exact_qn0_controller, R_fit, t_fit)
             frame_ready = True
             print(f"[worker] frame transform applied: |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm "
                   f"det(R_fit)={det:+.6f} -- p_des/p_nominal now frame-consistent, frame_ready=True")
@@ -357,6 +390,21 @@ def _worker_main(
                         "enable_nullspace_r700=True"
                     )
                 step = null_controller.solve_delay_aware(
+                    z_meas=np.asarray(req["z_meas"], dtype=float),
+                    q_cmd=np.asarray(req["q_cmd"], dtype=float),
+                    q_cmd_prev=np.asarray(req["q_cmd_prev"], dtype=float),
+                    insertion_m=float(req["insertion_cmd"]),
+                    measured_beam_position=np.asarray(req["measured_beam_position"], dtype=float),
+                    control_index=int(req["control_index"]),
+                    previous_input=np.asarray(req["previous_input"], dtype=float),
+                )
+            elif req["kind"] == "exact_qn0":
+                if exact_qn0_controller is None:
+                    raise RuntimeError(
+                        "kind='exact_qn0' requested but worker was not started with "
+                        "enable_exact_qn_zero=True"
+                    )
+                step = exact_qn0_controller.solve_delay_aware(
                     z_meas=np.asarray(req["z_meas"], dtype=float),
                     q_cmd=np.asarray(req["q_cmd"], dtype=float),
                     q_cmd_prev=np.asarray(req["q_cmd_prev"], dtype=float),
@@ -409,6 +457,8 @@ class MPCWorkerHandle:
         enable_nullspace_r700: bool = False,
         nullspace_r700_config_kwargs: Optional[dict] = None,
         insertion_state_anchor_weight: float = 0.0,
+        enable_exact_qn_zero: bool = False,
+        exact_qn_zero_config_kwargs: Optional[dict] = None,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -422,6 +472,8 @@ class MPCWorkerHandle:
                 enable_nullspace_r700=enable_nullspace_r700,
                 nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
                 insertion_state_anchor_weight=insertion_state_anchor_weight,
+                enable_exact_qn_zero=enable_exact_qn_zero,
+                exact_qn_zero_config_kwargs=exact_qn_zero_config_kwargs,
             ),
         )
         self._proc.start()

@@ -201,6 +201,10 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         controller_kind: str = "new",
         controller_label: str = "mpc_delay_aware_process_isolated",
         insertion_offset_abort_m: Optional[float] = None,
+        magnet_transform_fn: Optional[Callable[[Array], Array]] = None,
+        magnet_z_bounds_m: Optional[tuple] = None,
+        magnet_exclusion_lumen_C_m: Optional[Array] = None,
+        magnet_exclusion_radius_m: Optional[float] = None,
         **kwargs,
     ) -> None:
         """`insertion_offset_abort_m`: if set, an independent safety monitor
@@ -211,7 +215,48 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         after a live insertion-position-drift failure mode (workspace abort,
         2026-09-21); see CONTROLLER_JUSTIFICATION.md's insertion-anchor
         section for how the threshold should be chosen from prior runs, not
-        invented ad hoc."""
+        invented ad hoc.
+
+        `magnet_transform_fn`/`magnet_z_bounds_m` (2026-09-23): a SECOND,
+        independent safety monitor -- computes the source magnet's own
+        Cartesian z (via `magnet_transform_fn(q6) -> xyz`, the project's own
+        verified forward-kinematics model, NOT the robot controller's own
+        `getActualTCPPose()`) from the MEASURED joints every tick, and
+        aborts if it leaves `magnet_z_bounds_m=(z_min, z_max)`. Added after
+        a live Q_N=0 run (vessel study, 2026-09-23) drove three joints to
+        their velocity limit simultaneously for 1+ second, raising the
+        magnet 12.6cm in 1.4s -- well past this project's own documented
+        ~8cm safe-rise envelope -- while `close_loop_path_follow.py`'s
+        generic `tcp_out_of_workspace` check (which reads
+        `RobotJointStream.latest_pose()`, i.e. the ROBOT CONTROLLER'S OWN
+        configured TCP offset) never fired, for reasons not fully
+        root-caused (suspected: the controller's configured TCP offset does
+        not match this project's own magnet-mount model, so the two checks
+        are silently watching different points in space). This check does
+        not depend on that TCP-offset configuration being correct -- it
+        recomputes the magnet position itself, independently, from the same
+        verified DH+T_F_M model this project's planning/offline work
+        already relies on.
+
+        `magnet_exclusion_lumen_C_m`/`magnet_exclusion_radius_m`
+        (2026-09-23): a THIRD independent safety monitor -- the offline
+        plan's magnet-exclusion-radius constraint (minimum distance from
+        the magnet to the vessel lumen centreline, set from an empirically
+        validated closest-safe-approach joint state) is baked into the
+        offline reference trajectory but was never enforced ONLINE. With
+        Q_N=0 removing all posture anchoring, the redundant joint DOF
+        (7 actuators for a 3-DOF tip-tracking task) are free to wander
+        arbitrarily far from that reference configuration while still
+        tracking the tip well -- confirmed live 2026-09-23: both the
+        no-contact and contact runs violated the exclusion radius by
+        25-33mm mid-run (magnet getting CLOSER to the lumen than the
+        validated safe minimum), unrelated to and undetected by either of
+        the other two monitors. This check recomputes min-distance(magnet,
+        lumen_C) every tick from the measured joints and aborts if it
+        drops below `magnet_exclusion_radius_m` -- the magnet is fully
+        free to approach right up to that boundary (getting close is the
+        physically desired behavior for steering authority), only crossing
+        it aborts."""
         super().__init__(**kwargs)
         self._vlim = float(joint_velocity_limit_rad_s)
         self._max_step = float(max_joint_step_rad)
@@ -220,6 +265,27 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         self._insertion_offset_abort_m = (
             None if insertion_offset_abort_m is None else float(insertion_offset_abort_m)
         )
+        self._magnet_transform_fn = magnet_transform_fn
+        self._magnet_z_bounds_m = (
+            None if magnet_z_bounds_m is None else
+            (float(magnet_z_bounds_m[0]), float(magnet_z_bounds_m[1]))
+        )
+        if self._magnet_z_bounds_m is not None and self._magnet_transform_fn is None:
+            raise ValueError("magnet_z_bounds_m requires magnet_transform_fn.")
+        self._magnet_exclusion_lumen_C_m = (
+            None if magnet_exclusion_lumen_C_m is None
+            else np.asarray(magnet_exclusion_lumen_C_m, dtype=float).reshape(-1, 3)
+        )
+        self._magnet_exclusion_radius_m = (
+            None if magnet_exclusion_radius_m is None else float(magnet_exclusion_radius_m)
+        )
+        if self._magnet_exclusion_radius_m is not None and (
+            self._magnet_transform_fn is None or self._magnet_exclusion_lumen_C_m is None
+        ):
+            raise ValueError(
+                "magnet_exclusion_radius_m requires magnet_transform_fn and "
+                "magnet_exclusion_lumen_C_m."
+            )
         self._q_cmd: Optional[Array] = None
         self._q_cmd_prev: Optional[Array] = None
         self._ins_cmd: Optional[float] = None
@@ -309,6 +375,39 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 adapter_abort_reason = (
                     f"insertion_offset_exceeded(|L-Lref|={L_offset_m*1e3:.2f}mm > "
                     f"{self._insertion_offset_abort_m*1e3:.1f}mm)"
+                )
+                print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
+                      f"{adapter_abort_reason}")
+
+        # Computed from the MEASURED joints (z_meas, this tick's actual
+        # robot state, not the commanded/predicted one) -- an independent
+        # monitor must watch where the magnet actually is, not where the
+        # controller intends it to go. Shared between the z-bounds and
+        # exclusion-radius checks below (one FK call, not two).
+        magnet_xyz = None
+        if self._magnet_transform_fn is not None and (
+            self._magnet_z_bounds_m is not None or self._magnet_exclusion_radius_m is not None
+        ):
+            magnet_xyz = np.asarray(self._magnet_transform_fn(z_meas[:6]), dtype=float).reshape(3)
+
+        if adapter_abort_reason is None and self._magnet_z_bounds_m is not None:
+            z_min, z_max = self._magnet_z_bounds_m
+            if magnet_xyz[2] < z_min or magnet_xyz[2] > z_max:
+                adapter_abort_reason = (
+                    f"magnet_z_out_of_bounds(z={magnet_xyz[2]*1e3:.1f}mm, "
+                    f"bounds=[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
+                )
+                print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
+                      f"{adapter_abort_reason}")
+
+        if adapter_abort_reason is None and self._magnet_exclusion_radius_m is not None:
+            gap_m = float(np.min(np.linalg.norm(
+                self._magnet_exclusion_lumen_C_m - magnet_xyz[None, :], axis=1
+            )))
+            if gap_m < self._magnet_exclusion_radius_m:
+                adapter_abort_reason = (
+                    f"magnet_exclusion_violated(gap={gap_m*1e3:.1f}mm < "
+                    f"{self._magnet_exclusion_radius_m*1e3:.1f}mm)"
                 )
                 print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
                       f"{adapter_abort_reason}")

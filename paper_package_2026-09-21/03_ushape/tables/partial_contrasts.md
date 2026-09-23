@@ -1,6 +1,11 @@
 # U-shape partial contrasts (MPC-FJ unavailable -- see MPC-FJ_excluded_notes.md)
 
-## SJ-only law contrast (MPC vs INV-7, both under scheduled J)
+This is the shape's primary comparison table (SJ is the intended operating
+model) -- these are "simple effects" (Delta_law|SJ, Delta_schedule|INV7 in
+the terminology used for rectangle/triangle), not factorial averages; MPC-FJ
+being unavailable means no factorial average could be computed here anyway.
+
+## SJ-only law contrast = Delta_law|SJ (MPC vs INV-7, both under scheduled J)
 
 | metric | Delta(MPC-INV7, SJ) |
 |---|---|
@@ -16,7 +21,7 @@
 | corr_chosen_actual | +0.2115 |
 | slope_actual_vs_chosen | +0.3784 |
 
-## Schedule effect within INV-7 only (SJ vs FJ; MPC-FJ N/A)
+## Schedule effect within INV-7 only = Delta_schedule|INV7 (SJ vs FJ; MPC-FJ N/A)
 
 | metric | Delta(SJ-FJ, INV7) |
 |---|---|

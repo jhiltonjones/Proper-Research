@@ -47,12 +47,18 @@ def main() -> None:
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true",
                    help="skip the health checks + reset (only if you just ran one)")
+    p.add_argument("--insertion-tol-mm", type=float, default=3.0,
+                   help="preflight refuses to proceed unless the camera-measured physical "
+                        "insertion is within this of the plan's expected L0 (see common.py's "
+                        "check_camera_healthy) -- matches the same flag on "
+                        "run_mpc_delay_aware_insertion_anchor.py / run_inv_7dof_delay_aware.py, "
+                        "added here for consistency (this script previously had no override).")
     args = p.parse_args()
 
     if args.skip_preflight:
         q0, l0 = common.load_plan_initial_state(args.plan_dir)
     else:
-        q0, l0 = common.preflight(args.plan_dir)
+        q0, l0 = common.preflight(args.plan_dir, insertion_tol_mm=args.insertion_tol_mm)
 
     cfg = pf.CONFIG
     cfg.controller_kind = "open_loop_ff"

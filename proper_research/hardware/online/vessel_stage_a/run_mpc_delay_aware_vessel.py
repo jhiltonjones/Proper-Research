@@ -230,11 +230,31 @@ def _wrapped_make_output_dir(cfg):
 pf._make_output_dir = _wrapped_make_output_dir
 
 
+def build_magnet_exclusion_schedule(reference) -> tuple[np.ndarray, np.ndarray]:
+    """Analytic magnet-position Jacobian + nominal magnet position at every
+    reference sample -- the schedule the in-QP magnet-exclusion constraint
+    linearizes about (see `delay_aware_mpc.py`'s `_configure_magnet_
+    exclusion` docstring). Same `_robot_kin`/`geometric_jacobian` this
+    module already uses for `_magnet_transform_fn`, just evaluated over the
+    whole reference trajectory instead of one live pose -- position Jacobian
+    only (rows 0:3 of the 6x6 spatial Jacobian), since the magnet is rigidly
+    on the end effector and its position never depends on insertion L."""
+    q = np.asarray(reference.state[:, :6], dtype=float)
+    jacobians = np.empty((q.shape[0], 3, 6), dtype=float)
+    positions = np.empty((q.shape[0], 3), dtype=float)
+    for i in range(q.shape[0]):
+        fk = urik.forward_kinematics(q[i], _robot_kin.dh, _robot_kin.T_F_M)
+        positions[i] = fk.T_R_target[:3, 3]
+        jacobians[i] = urik.geometric_jacobian(q[i], _robot_kin.dh, _robot_kin.T_F_M)[:3, :]
+    return jacobians, positions
+
+
 def spawn_and_warm_worker(
     *, plan_dir: str, schedule_cache: str, control_hz: float, prediction_horizon: int,
     joint_velocity_limit_rad_s: float, insertion_rate_limit_m_s: float,
     joint_acceleration_limit_rad_s2: float, position_error_scale_mm: float,
     position_tracking_weight: float, insertion_max_m: float,
+    magnet_exclusion_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -262,12 +282,14 @@ def spawn_and_warm_worker(
         mpc_config_kwargs=exact_qn0_config_kwargs, beam_config_kwargs=beam_config_kwargs,
         delay_samples=2, beta_d=1.0, single_threaded=True,
         enable_exact_qn_zero=True, exact_qn_zero_config_kwargs=exact_qn0_config_kwargs,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
     print(f"[vessel-mpc] CONTROLLER CONFIRMED: exact Q_N=0 (P_N=P_R=0), R700 "
           f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), contact={_CONTACT}, "
-          f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm")
+          f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm, "
+          f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}")
     worker.require_frame_transform()
     print("[vessel-mpc] worker will refuse solves until set_frame_transform() is called "
           "(happens once preflight computes the live registration)")
@@ -484,6 +506,12 @@ def main() -> None:
                          "a real violation), while the two actual incidents were 25-37mm "
                          "violations -- comfortable margin for a small tolerance here")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
+                    help="disable the linearized magnet-to-vessel-wall exclusion constraint "
+                         "wired directly into the QP (2026-09-28) -- the independent post-hoc "
+                         "measured-joint safety monitor (--magnet-exclusion-tolerance-mm) stays "
+                         "on regardless of this flag; see delay_aware_mpc.py's "
+                         "_configure_magnet_exclusion docstring for why this was added")
     args = p.parse_args()
 
     _DEADLINE_MS = args.deadline_ms
@@ -534,6 +562,23 @@ def main() -> None:
           f"(rise_limit={args.magnet_rise_limit_mm:.1f}mm, floor_margin="
           f"{_MAGNET_Z_FLOOR_MARGIN_M*1e3:.1f}mm)")
 
+    magnet_exclusion_kwargs = None
+    if not args.disable_magnet_exclusion_in_qp:
+        _reference_for_schedule = load_configuration_reference(
+            args.plan_dir, require_planned_beam_feasible=False,
+        )
+        mag_jacobians, mag_positions = build_magnet_exclusion_schedule(_reference_for_schedule)
+        magnet_exclusion_kwargs = dict(
+            position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
+            lumen_C_m=_MAGNET_EXCLUSION_LUMEN_C_M, radius_m=_MAGNET_EXCLUSION_RADIUS_M,
+        )
+        print(f"[vessel-mpc] magnet-exclusion constraint will be wired INTO the QP "
+              f"(radius={_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm, same radius as the post-hoc "
+              f"monitor) -- pass --disable-magnet-exclusion-in-qp to turn this off")
+    else:
+        print("[vessel-mpc] --disable-magnet-exclusion-in-qp set: magnet exclusion stays "
+              "ONLY a post-hoc monitor, not visible to the optimizer")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -542,6 +587,7 @@ def main() -> None:
         joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
         position_error_scale_mm=0.5, position_tracking_weight=1.0,
         insertion_max_m=args.insertion_max_mm * 1.0e-3,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
     )
 
     if args.skip_preflight:

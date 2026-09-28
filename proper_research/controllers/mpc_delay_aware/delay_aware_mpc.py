@@ -94,6 +94,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         nominal_reference_positions_m: Any | None = None,
         delay_samples: int = 2,
         beta_d: float = 1.0,
+        magnet_exclusion: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -114,6 +115,10 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self.delay_samples = int(delay_samples)
         self.beta_d = float(beta_d)
         n_joints = self.n - 1  # 6
+
+        self._magnet_excl_radius: float | None = None
+        if magnet_exclusion is not None:
+            self._configure_magnet_exclusion(**magnet_exclusion)
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -140,18 +145,178 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             # `_setup_osqp()` (sparsity from H alone) is wrong here and
             # `_setup_variable_hessian_osqp()` (includes the dense runtime
             # G.T@Qpbar@G term) is required.
-            self._setup_variable_hessian_osqp()
+            if self._magnet_excl_radius is not None:
+                self._setup_osqp_with_magnet_exclusion()
+            else:
+                self._setup_variable_hessian_osqp()
+
+    # ------------------------------------------------------------------
+    # magnet-to-vessel-wall exclusion, wired directly into the QP (2026-09-28)
+    # ------------------------------------------------------------------
+    def _configure_magnet_exclusion(
+        self, *, position_jacobians: Any, nominal_positions_m: Any,
+        lumen_C_m: Any, radius_m: float,
+    ) -> None:
+        """Add a linearized "magnet stays >= radius_m from the vessel
+        centreline" inequality to every horizon stage of the QP, so the
+        optimizer itself can see this limit -- previously it was enforced
+        ONLY as a post-hoc monitor in `process_isolated_adapter.py`,
+        computed from the MEASURED joints after the command had already
+        been applied. That monitor stays on unchanged as a second line of
+        defense; this is a first line of defense inside the optimization.
+
+        Root cause this closes: the frozen-Jacobian run
+        (close_loop_logs/myrun/vessel_live_trimmed6mm_mpc_frozen_
+        20260928T140358Z) aborted at 143/525 ticks on
+        `magnet_exclusion_violated`, yet EVERY logged QP solve that whole
+        run reports status='ok'/success=True -- the optimizer was never
+        infeasible, it simply had no term in its own constraint set that
+        knew the wall existed, so a fully valid-by-its-own-lights solution
+        walked the real magnet into the abort radius.
+
+        Fixed schedule (like `reference_position_jacobians` for the beam-
+        tracking term): for each reference sample, find the closest point
+        on `lumen_C_m` to the magnet's own NOMINAL (planned) position
+        there, and linearize the distance-to-that-point about that nominal
+        magnet position and its analytic position Jacobian w.r.t. q
+        (`position_jacobians`, (S,3,6), NOT a function of insertion L --
+        the magnet is rigidly on the end effector). Re-anchored every solve
+        to the ACTUAL commanded state via (Ec, Sc) -- the same command
+        stack the joint-position box already uses, deliberately not the
+        delayed physical prediction -- so the constraint tracks where the
+        robot is actually being told to go, tick to tick, even though the
+        (index -> nominal point/Jacobian/normal) schedule itself is fixed
+        offline from the reference trajectory.
+        """
+        jacobians = np.asarray(position_jacobians, dtype=float)
+        positions = np.asarray(nominal_positions_m, dtype=float)
+        lumen = np.asarray(lumen_C_m, dtype=float).reshape(-1, 3)
+        n_joints = self.n - 1
+        expected_j = (self.reference.sample_count, 3, n_joints)
+        expected_p = (self.reference.sample_count, 3)
+        if jacobians.shape != expected_j or not np.all(np.isfinite(jacobians)):
+            raise ValueError(
+                "magnet_exclusion['position_jacobians'] must have shape "
+                f"{expected_j}; received {jacobians.shape}."
+            )
+        if positions.shape != expected_p or not np.all(np.isfinite(positions)):
+            raise ValueError(
+                "magnet_exclusion['nominal_positions_m'] must have shape "
+                f"{expected_p}; received {positions.shape}."
+            )
+        if lumen.ndim != 2 or lumen.shape[1] != 3 or not np.all(np.isfinite(lumen)):
+            raise ValueError("magnet_exclusion['lumen_C_m'] must be finite with shape (K,3).")
+        radius = float(radius_m)
+        if radius <= 0.0:
+            raise ValueError("magnet_exclusion['radius_m'] must be positive.")
+
+        diffs = positions[:, None, :] - lumen[None, :, :]              # (S,K,3)
+        dists = np.linalg.norm(diffs, axis=2)                           # (S,K)
+        closest = np.argmin(dists, axis=1)                              # (S,)
+        rows_idx = np.arange(positions.shape[0])
+        d_nom = dists[rows_idx, closest]                                 # (S,)
+        normal = diffs[rows_idx, closest] / np.maximum(d_nom, 1.0e-9)[:, None]  # (S,3)
+
+        self._magnet_excl_jacobians = jacobians
+        self._magnet_excl_d_nom = d_nom
+        self._magnet_excl_normal = normal
+        self._magnet_excl_radius = radius
+        self._magnet_excl_min_nominal_margin_m = float(np.min(d_nom - radius))
+
+        # Placeholder magnet rows: force full sparsity in every column so a
+        # later OSQP Ax-update can write ANY real coefficient (including an
+        # exact zero) into every slot -- same trick `_setup_variable_hessian_
+        # osqp` already uses for the Hessian's own upper-triangular pattern.
+        placeholder = np.full((self.N, self.nu), 1.0e-30, dtype=float)
+        self._magnet_excl_row_start = self.A.shape[0]
+        self.A = np.vstack((self.A, placeholder))
+
+    def _setup_osqp_with_magnet_exclusion(self) -> None:
+        """Same as the base class's `_setup_variable_hessian_osqp`, except
+        it does NOT reuse that method's own dummy-bounds call (which is
+        hard-sized to the base 3-block `self.A` and would mismatch the
+        extra magnet-exclusion rows) -- it builds correctly-sized dummy
+        bounds itself and caches `self._a_pattern` so later solves can push
+        real row values in via `update(Ax=...)`."""
+        import osqp as _osqp
+
+        self._p_pattern = sp.triu(
+            sp.csc_matrix(np.ones((self.nu, self.nu), dtype=float)), format="csc",
+        )
+        setup_values = self._upper_values(self._base_hessian)
+        setup_values[np.abs(setup_values) < 1.0e-30] = 1.0e-30
+        P = sp.csc_matrix(
+            (setup_values, self._p_pattern.indices.copy(), self._p_pattern.indptr.copy()),
+            shape=(self.nu, self.nu),
+        )
+        base_lower, base_upper = self._constraint_bounds(
+            state=np.zeros(7), previous_input=np.zeros(7), validate_state=False,
+        )
+        magnet_lower = np.full(self.N, -1.0e6, dtype=float)
+        magnet_upper = np.full(self.N, 1.0e6, dtype=float)
+        lower = np.concatenate([base_lower, magnet_lower])
+        upper = np.concatenate([base_upper, magnet_upper])
+        self._a_pattern = sp.csc_matrix(self.A)
+        self._solver = _osqp.OSQP()
+        setup_kwargs = dict(
+            P=P, q=np.zeros(self.nu), A=self._a_pattern, l=lower, u=upper,
+            eps_abs=float(self.config.solver_absolute_tolerance),
+            eps_rel=float(self.config.solver_relative_tolerance),
+            max_iter=int(self.config.solver_maximum_iterations),
+            polish=bool(self.config.solver_polish),
+            verbose=bool(self.config.solver_verbose),
+            warm_start=True,
+        )
+        if float(self.config.solver_time_limit_s) > 0.0:
+            setup_kwargs["time_limit"] = float(self.config.solver_time_limit_s)
+        self._solver.setup(**setup_kwargs)
+
+    def _a_values(self, A_dense: Array) -> Array:
+        values = np.empty(self._a_pattern.nnz, dtype=float)
+        for column in range(self.nu):
+            start = self._a_pattern.indptr[column]
+            stop = self._a_pattern.indptr[column + 1]
+            rows = self._a_pattern.indices[start:stop]
+            values[start:stop] = A_dense[rows, column]
+        return values
+
+    def _magnet_exclusion_bounds(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        if self._magnet_excl_radius is None:
+            return np.empty(0, dtype=float), np.empty(0, dtype=float)
+        indices = self._reference_indices(control_index, future=True)
+        J = self._magnet_excl_jacobians[indices]                       # (N,3,6)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+        d_nom = self._magnet_excl_d_nom[indices]                        # (N,)
+        normal = self._magnet_excl_normal[indices]                      # (N,3)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+
+        c = np.einsum("nj,njk->nk", normal, J)                          # (N,6): n_j^T J_j
+        rows = np.zeros((self.N, self.nu), dtype=float)
+        lower = np.empty(self.N, dtype=float)
+        for j in range(self.N):
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            rows[j, :] = c[j] @ self.Sc[stage_rows, :]
+            lower[j] = self._magnet_excl_radius - d_nom[j] + c[j] @ q_nom[j] - c[j] @ free_cmd[j]
+        upper = np.full(self.N, np.inf, dtype=float)
+        self.A[self._magnet_excl_row_start:self._magnet_excl_row_start + self.N, :] = rows
+        return lower, upper
 
     # ------------------------------------------------------------------
     # overridden prediction-dependent pieces
     # ------------------------------------------------------------------
     def _constraint_bounds_exec(
-        self, *, x_exec: Array, previous_input: Array,
+        self, *, x_exec: Array, previous_input: Array, control_index: int,
     ) -> tuple[Array, Array]:
         """Same as the base class's `_constraint_bounds`, EXCEPT the joint-
         position box uses (Ec, Sc) -- the COMMAND stack -- not the physical
         prediction. Velocity/rate terms are untouched (still act on the
-        decision v and previous_input exactly as before)."""
+        decision v and previous_input exactly as before). Appends the
+        magnet-exclusion rows (see `_magnet_exclusion_bounds`) when
+        `magnet_exclusion` was configured at construction; a no-op
+        (0-length concatenation) otherwise, so every existing caller that
+        never passes `magnet_exclusion` is completely unaffected."""
         previous_input = _finite_vector(previous_input, self.m, "previous_input")
         input_lower = np.tile(-self.velocity_limit, self.N)
         input_upper = np.tile(self.velocity_limit, self.N)
@@ -163,9 +328,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         delta = np.tile(self.dt * self.acceleration_limit, self.N)
         increment_lower = change - delta
         increment_upper = change + delta
+        magnet_lower, magnet_upper = self._magnet_exclusion_bounds(
+            x_exec=x_exec, control_index=control_index,
+        )
         return (
-            np.concatenate((input_lower, state_lower, increment_lower)),
-            np.concatenate((input_upper, state_upper, increment_upper)),
+            np.concatenate((input_lower, state_lower, increment_lower, magnet_lower)),
+            np.concatenate((input_upper, state_upper, increment_upper, magnet_upper)),
         )
 
     def _linear_cost_exec(
@@ -262,14 +430,19 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             estimated_residual=estimated,
         )
         input_reference = beam_terms["input_reference"]
-        lower, upper = self._constraint_bounds_exec(x_exec=x_exec, previous_input=previous)
+        lower, upper = self._constraint_bounds_exec(
+            x_exec=x_exec, previous_input=previous, control_index=control_index,
+        )
         warm_start = self._feasible_warm_start(
             input_reference=input_reference, previous_input=previous,
         )
 
         if self.backend == "osqp":
             assert self._solver is not None
-            self._solver.update(Px=self._upper_values(hessian), q=linear_cost, l=lower, u=upper)
+            update_kwargs = dict(Px=self._upper_values(hessian), q=linear_cost, l=lower, u=upper)
+            if self._magnet_excl_radius is not None:
+                update_kwargs["Ax"] = self._a_values(self.A)
+            self._solver.update(**update_kwargs)
             self._solver.warm_start(x=warm_start)
             result = self._solver.solve()
             status = str(result.info.status).lower()

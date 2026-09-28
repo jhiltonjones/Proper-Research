@@ -178,7 +178,15 @@ preflight, will refuse to proceed anyway if the measured and expected
 insertion differ by more than `--insertion-tol-mm`, so this catches drift
 even if you forget — but retracting first avoids the failure.)
 
-## 6. (Optional) Validate the model against real hardware
+## 6. Run the closed-loop MPC
+
+Once the open-loop check passes, see `HOWTO_CLOSED_LOOP_MPC.md` in this
+same directory for the full closed-loop controller workflow
+(`run_mpc_delay_aware_vessel.py`) -- prerequisites, CLI flags, safety
+monitors (including the magnet-exclusion constraint now wired directly
+into the QP), and how to read the run's output.
+
+## 7. (Optional) Validate the model against real hardware
 
 `checkpoint_beam_shape_campaign.py` and
 `plot_checkpoint_beam_shape_campaign.py` run a static-checkpoint

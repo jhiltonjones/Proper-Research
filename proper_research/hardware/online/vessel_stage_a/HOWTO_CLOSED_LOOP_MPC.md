@@ -169,7 +169,20 @@ what actually stopped the run, not a solver problem.
 | `--skip-preflight` | off | skip the automatic reset-to-start + insertion check |
 | `--dry-run` | off | suppress servoJ streaming only (preflight motion still runs) |
 
-## 5. If something goes wrong mid-run
+## 5. Running the contact vs no-contact vs frozen-Jacobian comparison
+
+`run_jacobian_schedule_experiments.sh` in this directory is a heavily
+commented, step-by-step reference script for the three-way comparison used
+throughout the model-necessity study: scheduled contact-aware Jacobian,
+scheduled no-contact Jacobian, and a frozen (start-of-path-only) Jacobian.
+It resets insertion before every run (required -- the advancer has no
+encoder and insertion drifts between runs), uses a separate schedule cache
+file per condition, and builds the frozen schedule from the contact
+schedule via `np.repeat(sj[0:1], sj.shape[0], axis=0)`. Read it top to
+bottom and run one block at a time rather than executing it straight
+through -- confirm each run's `stop_reason` before moving to the next.
+
+## 6. If something goes wrong mid-run
 
 - **Preflight refuses the reset move**: the straight-line joint-space path
   to the plan's start would cross the magnet-exclusion radius or z-bounds.

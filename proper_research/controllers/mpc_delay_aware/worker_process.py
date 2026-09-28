@@ -431,16 +431,40 @@ def _worker_main(
                     previous_input=np.asarray(req["previous_input"], dtype=float),
                 )
             t_solve_ms = (time.monotonic() - t0) * 1e3
+            # Extra diagnostic-only fields (2026-09-28 instrumentation pass):
+            # all read from values `step` already computed -- nothing here
+            # feeds back into the solve, so a missing/odd value can never
+            # change what gets commanded. `jacobian_used` only exists on
+            # `DelayAwareBeamOutputMPCStep` (not the legacy "old" controller's
+            # step type), hence the getattr default.
+            jacobian_used = getattr(step, "jacobian_used", None)
             conn.send({
                 "seq": seq, "status": "ok" if step.success else "infeasible",
                 "command": np.asarray(step.command, dtype=float),
                 "predicted_beam_positions": np.asarray(step.predicted_beam_positions, dtype=float),
                 "t_solve_ms": t_solve_ms, "error": None,
+                "predicted_states": np.asarray(step.predicted_states, dtype=float),
+                "qp_objective": float(step.objective),
+                "qp_status": str(step.status),
+                "qp_success": bool(step.success),
+                "qp_iterations": int(step.iterations),
+                "qp_solve_time_s": float(step.solve_time_s),
+                "qp_primal_residual": float(step.primal_residual),
+                "qp_dual_residual": float(step.dual_residual),
+                "jacobian_used": None if jacobian_used is None else np.asarray(jacobian_used, dtype=float),
+                "dual_y": (
+                    None if getattr(step, "dual_y", None) is None
+                    else np.asarray(step.dual_y, dtype=float)
+                ),
             })
         except Exception as exc:  # noqa: BLE001 -- must never crash silently, always reply
             conn.send({
                 "seq": seq, "status": "error", "command": None,
                 "predicted_beam_positions": None, "t_solve_ms": float("nan"), "error": repr(exc),
+                "predicted_states": None, "qp_objective": float("nan"), "qp_status": "error",
+                "qp_success": False, "qp_iterations": 0, "qp_solve_time_s": float("nan"),
+                "qp_primal_residual": float("nan"), "qp_dual_residual": float("nan"),
+                "jacobian_used": None, "dual_y": None,
             })
 
 

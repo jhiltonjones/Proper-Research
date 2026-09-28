@@ -73,6 +73,16 @@ __all__ = ["DelayAwareBeamOutputMPCStep", "DelayAwareBeamOutputTrackingMPC"]
 @dataclass
 class DelayAwareBeamOutputMPCStep(beam_module.BeamOutputMPCStep):
     predicted_commands: Array = None  # (N, 7) -- q_cmd_stack, NOT the physical prediction
+    # (2026-09-28 instrumentation pass) the exact (3, n) tip-Jacobian this
+    # tick's QP was actually built with -- jacobians[0] from
+    # `_beam_prediction_terms_exec`, read back out of `beam_terms["Jbar"]`'s
+    # top-left block rather than threading a new value through every
+    # `_dynamic_qp_terms_exec` override (see `solve_delay_aware`). Purely a
+    # read of an already-computed matrix; does not affect the solve.
+    jacobian_used: Array = None
+    # (2026-09-28) raw OSQP dual vector for this solve, or None off the osqp
+    # backend / on solver failure -- see `solve_delay_aware`'s osqp branch.
+    dual_y: Array = None
 
 
 class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
@@ -453,6 +463,14 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
                 "iterations": int(result.info.iter), "solve_time_s": float(result.info.run_time),
                 "primal_residual": float(getattr(result.info, "prim_res", getattr(result.info, "pri_res", np.nan))),
                 "dual_residual": float(getattr(result.info, "dual_res", getattr(result.info, "dua_res", np.nan))),
+                # (2026-09-28 instrumentation pass) raw OSQP dual variables --
+                # already computed by `.solve()`, just read out here. Row
+                # ordering matches `self.A` (input-rate, state-box,
+                # increment, then magnet-exclusion rows if configured -- see
+                # `_constraint_bounds_exec`); mapping row index to semantic
+                # constraint name is NOT done here, left for post-hoc
+                # analysis against that same row layout.
+                "dual_y": None if result.y is None else np.asarray(result.y, dtype=float).copy(),
             }
         else:
             solution, diagnostic = self._solve_scipy_dynamic(
@@ -485,12 +503,18 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         predicted_beam = predicted_beam_vector.reshape(self.N, 3)
         predicted_error = predicted_beam - beam_terms["desired_position"]
         first_error = float(np.linalg.norm(predicted_error[0]))
+        # Current-tick (3, n) Jacobian: block_diag's first block is exactly
+        # jacobians[0] from `_beam_prediction_terms_exec` -- a read of the
+        # already-built Jbar, not a new computation.
+        jacobian_used = np.asarray(beam_terms["Jbar"][:3, : self.n], dtype=float).copy()
 
         return DelayAwareBeamOutputMPCStep(
             command=command,
             planned_input=np.asarray(input_reference[0], dtype=float).copy(),
             predicted_states=predicted_states,
             predicted_commands=predicted_commands,
+            jacobian_used=jacobian_used,
+            dual_y=diagnostic.get("dual_y"),
             predicted_inputs=predicted_inputs,
             objective=objective,
             status=str(diagnostic["status"]), success=bool(diagnostic["success"]),

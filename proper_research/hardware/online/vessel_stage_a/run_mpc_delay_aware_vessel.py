@@ -80,6 +80,36 @@ with three vessel-specific additions:
    measured joints and aborts if it drops below the validated radius --
    see `process_isolated_adapter.py`'s `magnet_exclusion_radius_m`.
 
+   REWORKED 2026-09-28 (same day as the in-QP wiring below): the
+   exclusion point-set is now the fixed BEAM-BASE point (210.43mm, this
+   project's originally-established floor -- see
+   `vessel_magnet_initial_position_2026-09-27.json` and
+   `run_open_loop_vessel.py`'s `BEAM_BASE_PIVOT_XYZ`), not the vessel
+   lumen centreline. The vessel-centreline version was itself only a few
+   hours old and depended on an empirically-captured "closest-safe-
+   approach" reference-joints file that turned out fragile (a near-
+   singular Jacobian artifact in its offline schedule, and a frozen-
+   Jacobian run that aborted on it at 143/525 ticks); this reverts to the
+   simpler, longer-established, already-validated-elsewhere single-point
+   floor. `compute_magnet_exclusion` no longer reads a reference-joints
+   file or builds the vessel planning context at all -- see its
+   docstring. `--magnet-exclusion-reference-joints` is kept as an
+   accepted-but-unused CLI flag purely so existing invocations don't
+   break; a note is printed if it's passed.
+
+6b. NEW 2026-09-28: magnet z-workspace bounds wired directly into the QP
+   (`delay_aware_mpc.py`'s `_configure_magnet_workspace`), the same
+   proactive upgrade fix 6's in-QP wiring gave the point-exclusion
+   constraint, applied to the existing post-hoc `_MAGNET_Z_BOUNDS_M`
+   monitor's own numbers. Closes a blind spot the point-exclusion
+   constraint alone does NOT cover: a frozen-Jacobian run swung the arm's
+   flange to z=0.262m (~25cm above normal operating height) while every
+   QP solve that run reported success -- none of the QP's existing
+   constraints (per-joint box, rate limits, point exclusion) bound
+   general Cartesian/TCP-workspace excursions, so this was only ever
+   catchable after the fact by the external `tcp_out_of_workspace`
+   monitor. See `_configure_magnet_workspace`'s docstring.
+
 Everything else is frozen identically to the validated rectangle run:
 R=700*R0, original Qp/Rd/u_ref, d=2, beta_d=1, N=15, V_f=0, insertion
 authority (s_u,L=5mm/s, |u_L|<=2mm/s), execution-C, process isolation,
@@ -216,8 +246,19 @@ _INSERTION_OFFSET_ABORT_M = 0.005  # 5mm, matches the validated rectangle defaul
 _WORKER: MPCWorkerHandle | None = None
 _CONTACT: bool = True
 _MAGNET_Z_BOUNDS_M: tuple | None = None  # set in main() from the plan's own start pose
-_MAGNET_EXCLUSION_LUMEN_C_M = None  # set in main(); vessel centreline for the exclusion check
+_MAGNET_EXCLUSION_LUMEN_C_M = None  # set in main(); single beam-base point for the exclusion check
 _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
+
+# --- fix 6 (reworked 2026-09-28): magnet-to-beam-base exclusion, fixed
+# 210.43mm floor -- same point/radius `run_open_loop_vessel.py`'s
+# BEAM_BASE_PIVOT_XYZ / capture_live_start_position.py's
+# BEAM_BASE_XYZ_RAISED30MM already use elsewhere in this package (raised
+# +30mm frame, matching this script's own zraise_patch.apply(30.0)
+# convention). See module docstring's fix 6 for why this replaced the
+# vessel-centreline version.
+_BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])
+_BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043
+_MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
 
 
 def _wrapped_make_output_dir(cfg):
@@ -255,6 +296,7 @@ def spawn_and_warm_worker(
     joint_acceleration_limit_rad_s2: float, position_error_scale_mm: float,
     position_tracking_weight: float, insertion_max_m: float,
     magnet_exclusion_kwargs: dict | None = None,
+    magnet_workspace_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -283,13 +325,15 @@ def spawn_and_warm_worker(
         delay_samples=2, beta_d=1.0, single_threaded=True,
         enable_exact_qn_zero=True, exact_qn_zero_config_kwargs=exact_qn0_config_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        magnet_workspace_kwargs=magnet_workspace_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
     print(f"[vessel-mpc] CONTROLLER CONFIRMED: exact Q_N=0 (P_N=P_R=0), R700 "
           f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), contact={_CONTACT}, "
           f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm, "
-          f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}")
+          f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}, "
+          f"magnet-workspace-in-qp={'ON' if magnet_workspace_kwargs is not None else 'OFF'}")
     worker.require_frame_transform()
     print("[vessel-mpc] worker will refuse solves until set_frame_transform() is called "
           "(happens once preflight computes the live registration)")
@@ -332,7 +376,11 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "plan_dir": str(cfg.plan_dir),
             "z_raise_m": common.Z_RAISE_M,
             "magnet_z_bounds_m": list(_MAGNET_Z_BOUNDS_M) if _MAGNET_Z_BOUNDS_M else None,
+            "magnet_exclusion_point_R": _MAGNET_EXCLUSION_LUMEN_C_M[0].tolist()
+                if _MAGNET_EXCLUSION_LUMEN_C_M is not None else None,
             "magnet_exclusion_radius_m": _MAGNET_EXCLUSION_RADIUS_M,
+            "magnet_exclusion_source": "beam_base_fixed_210.43mm",
+            "magnet_constraints_in_qp": _MAGNET_CONSTRAINTS_IN_QP,
             "planner_to_live_R_fit": r_fit.tolist(),
             "planner_to_live_t_fit_m": t_fit.tolist(),
             "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
@@ -399,31 +447,30 @@ def _raised_make_initial_poses():
     return p, s, L, dt
 
 
-def compute_magnet_exclusion(*, lumen_file: str, insertion_max_mm: float, reference_joints_path: str):
-    """Same computation as plan_vessel_path.py's own magnet-exclusion-radius
-    logic: min distance from the magnet (at the saved, empirically
-    validated closest-safe-approach joint state) to the vessel centreline.
-    Cheap -- builds the vessel context (wires in the real lumen) but does
-    NOT run the expensive per-tick schedule build, so this is called
-    regardless of whether the Jacobian schedule itself is cache-hit."""
-    _initial_conditions_mod.make_initial_poses = _raised_make_initial_poses
-    _planning_context_mod.make_initial_poses = _raised_make_initial_poses
-    exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = (
-        build_vessel_planning_context(
-            lumen_file=lumen_file, insertion_max_m=insertion_max_mm * 1.0e-3,
-        )
-    )
-    with open(reference_joints_path) as f:
-        ref = json.load(f)
-    joints_rad = np.asarray(ref["joints_rad"], dtype=float)
-    magnet_ref_xyz = _magnet_transform_fn(joints_rad)
-    lumen_C_arr = np.asarray(lumen_C, dtype=float).reshape(-1, 3)
-    gaps_ref = np.linalg.norm(lumen_C_arr - magnet_ref_xyz[None, :], axis=1)
-    exclusion_radius_m = float(gaps_ref.min())
-    print(f"[vessel-mpc] magnet exclusion radius from {reference_joints_path}: "
-          f"magnet@{np.round(magnet_ref_xyz, 3).tolist()} -> {exclusion_radius_m*1e3:.1f}mm "
-          f"({lumen_C_arr.shape[0]} lumen samples)")
-    return lumen_C_arr, exclusion_radius_m
+def compute_magnet_exclusion(*, reference_joints_path: str | None = None):
+    """REWORKED 2026-09-28 (see module docstring's fix 6): the magnet
+    exclusion is now a FIXED single point/radius -- the beam base,
+    210.43mm -- not a computation against the vessel lumen or the
+    empirically-captured reference-joints file. No longer builds the
+    vessel planning context or does any FK/IK work; this is now a pure
+    constant lookup, kept as a function (rather than inlined at the call
+    site) only so `main()`'s call site and log message stay unchanged in
+    shape.
+
+    `reference_joints_path`: accepted-but-UNUSED, purely so existing
+    `--magnet-exclusion-reference-joints <file>` invocations (this flag
+    is still accepted by argparse, see `main()`) don't need to change --
+    a note is printed if a path is actually passed, so it's obvious this
+    is now a no-op rather than silently ignored."""
+    if reference_joints_path is not None:
+        print(f"[vessel-mpc] NOTE: --magnet-exclusion-reference-joints "
+              f"({reference_joints_path}) is no longer used -- the magnet exclusion "
+              f"is now a fixed beam-base point/radius, not derived from this file "
+              f"(see module docstring's fix 6)")
+    print(f"[vessel-mpc] magnet exclusion: beam-base point "
+          f"{_BEAM_BASE_PIVOT_XYZ_R[0].tolist()} -> {_BEAM_BASE_EXCLUSION_RADIUS_M*1e3:.2f}mm "
+          f"(fixed floor, not vessel-centreline-derived)")
+    return _BEAM_BASE_PIVOT_XYZ_R.copy(), _BEAM_BASE_EXCLUSION_RADIUS_M
 
 
 def build_or_load_schedule(
@@ -463,7 +510,7 @@ def build_or_load_schedule(
 
 def main() -> None:
     global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M
-    global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M
+    global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
@@ -471,11 +518,11 @@ def main() -> None:
     p.add_argument("--schedule-cache", required=True)
     p.add_argument("--lumen-file", required=True)
     p.add_argument("--insertion-max-mm", type=float, required=True)
-    p.add_argument("--magnet-exclusion-reference-joints", required=True,
-                    help="path to the saved JSON with the empirically validated closest-safe-"
-                         "approach joint state (e.g. vessel_magnet_exclusion_reference_joints_"
-                         "2026-09-22.json) -- used to compute the magnet-exclusion-radius "
-                         "safety monitor, see module docstring's fix 6")
+    p.add_argument("--magnet-exclusion-reference-joints", default=None,
+                    help="DEPRECATED/UNUSED as of 2026-09-28 -- the magnet exclusion is now a "
+                         "fixed beam-base point/210.43mm radius, not derived from this file. "
+                         "Still accepted (no longer required) purely so existing invocations "
+                         "don't break; a note is printed if passed. See module docstring's fix 6.")
     contact_group = p.add_mutually_exclusive_group(required=True)
     contact_group.add_argument("--contact", dest="contact", action="store_true")
     contact_group.add_argument("--no-contact", dest="contact", action="store_false")
@@ -507,11 +554,13 @@ def main() -> None:
                          "violations -- comfortable margin for a small tolerance here")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
-                    help="disable the linearized magnet-to-vessel-wall exclusion constraint "
-                         "wired directly into the QP (2026-09-28) -- the independent post-hoc "
-                         "measured-joint safety monitor (--magnet-exclusion-tolerance-mm) stays "
-                         "on regardless of this flag; see delay_aware_mpc.py's "
-                         "_configure_magnet_exclusion docstring for why this was added")
+                    help="disable BOTH linearized magnet safety constraints wired directly into "
+                         "the QP (2026-09-28): the magnet-to-beam-base point exclusion and the "
+                         "magnet z-workspace bounds. The independent post-hoc measured-joint "
+                         "safety monitors (--magnet-exclusion-tolerance-mm, --magnet-rise-limit-mm/"
+                         "--magnet-floor-margin-mm) stay on regardless of this flag; see "
+                         "delay_aware_mpc.py's _configure_magnet_exclusion/_configure_magnet_"
+                         "workspace docstrings for why these were added")
     args = p.parse_args()
 
     _DEADLINE_MS = args.deadline_ms
@@ -528,7 +577,6 @@ def main() -> None:
           f"deadline={args.deadline_ms:.0f}ms, insertion-offset-abort={args.insertion_offset_abort_mm:.1f}mm")
 
     _MAGNET_EXCLUSION_LUMEN_C_M, exclusion_radius_true_m = compute_magnet_exclusion(
-        lumen_file=args.lumen_file, insertion_max_mm=args.insertion_max_mm,
         reference_joints_path=args.magnet_exclusion_reference_joints,
     )
     _MAGNET_EXCLUSION_RADIUS_M = exclusion_radius_true_m - args.magnet_exclusion_tolerance_mm * 1e-3
@@ -563,7 +611,13 @@ def main() -> None:
           f"{_MAGNET_Z_FLOOR_MARGIN_M*1e3:.1f}mm)")
 
     magnet_exclusion_kwargs = None
+    magnet_workspace_kwargs = None
+    _MAGNET_CONSTRAINTS_IN_QP = not args.disable_magnet_exclusion_in_qp
     if not args.disable_magnet_exclusion_in_qp:
+        # Same schedule (magnet position + its position-Jacobian at every
+        # reference sample) feeds BOTH new in-QP constraints -- one real
+        # FK/Jacobian pass over the reference trajectory, computed once,
+        # not duplicated per constraint.
         _reference_for_schedule = load_configuration_reference(
             args.plan_dir, require_planned_beam_feasible=False,
         )
@@ -575,9 +629,17 @@ def main() -> None:
         print(f"[vessel-mpc] magnet-exclusion constraint will be wired INTO the QP "
               f"(radius={_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm, same radius as the post-hoc "
               f"monitor) -- pass --disable-magnet-exclusion-in-qp to turn this off")
+        magnet_workspace_kwargs = dict(
+            position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
+            z_min_m=_MAGNET_Z_BOUNDS_M[0], z_max_m=_MAGNET_Z_BOUNDS_M[1],
+        )
+        print(f"[vessel-mpc] magnet z-workspace constraint will be wired INTO the QP "
+              f"(z in [{_MAGNET_Z_BOUNDS_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_M[1]*1e3:.1f}]mm, "
+              f"same bounds as the post-hoc monitor) -- pass --disable-magnet-exclusion-in-qp "
+              f"to turn this off too")
     else:
-        print("[vessel-mpc] --disable-magnet-exclusion-in-qp set: magnet exclusion stays "
-              "ONLY a post-hoc monitor, not visible to the optimizer")
+        print("[vessel-mpc] --disable-magnet-exclusion-in-qp set: magnet exclusion and "
+              "z-workspace bounds stay ONLY post-hoc monitors, not visible to the optimizer")
 
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
@@ -588,6 +650,7 @@ def main() -> None:
         position_error_scale_mm=0.5, position_tracking_weight=1.0,
         insertion_max_m=args.insertion_max_mm * 1.0e-3,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        magnet_workspace_kwargs=magnet_workspace_kwargs,
     )
 
     if args.skip_preflight:

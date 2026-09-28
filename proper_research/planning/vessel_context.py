@@ -89,47 +89,60 @@ def build_vessel_planning_context(
     real_query = LumenQuery(lumen_C, lumen_R)
     contact_model.lumen_query = real_query
 
+    # 2026-09-27 BUGFIX: `controller_pack` (built above by
+    # `build_planning_context()`) is NOT actually wired to `contact_model`
+    # by reference -- `build_controller()` (which `build_planning_context()`
+    # calls internally) does `owned_plant_model = copy.deepcopy(plant_model)`,
+    # baking a SNAPSHOT of the contact model into the adapter at that time.
+    # Setting `contact_model.lumen_query = real_query` immediately above only
+    # mutates `bundle.models["contact"]`, a now-separate object from the one
+    # already deep-copied into controller_pack's adapters. Every caller that
+    # left `insertion_max_m=None` (i.e. every vessel plan built before this
+    # fix) therefore solved against the ORIGINAL placeholder lumen_query (a
+    # permissive 100-point straight tube starting at the beam base), NOT the
+    # real digitized vessel -- confirmed by inspecting
+    # controller_pack["plant_diagnostic_joint_adapter"].model.lumen_query.C
+    # directly. The rebuild below is now unconditional so controller_pack
+    # always reflects the real lumen, regardless of insertion_max_m.
+    from dataclasses import replace as _dc_replace
+
+    from proper_research.planning.planning_context import (
+        make_design_config,
+        make_robot_config,
+    )
+    from proper_research.simulation.simulations.controller_factory_joint_space import (
+        build_controller,
+    )
+    from proper_research.simulation.simulations.initial_conditions import (
+        make_initial_poses,
+    )
+
+    _, start_point, L0, dt = make_initial_poses()
+    plant_key = "contact" if exp_cfg.model.plant_contact else "no_contact"
+    plant_model = bundle.models[plant_key]
+    jacobian_model = bundle.models[exp_cfg.model.jacobian_variant]
+    effective_insertion_max_m = (
+        float(insertion_max_m) if insertion_max_m is not None else make_robot_config().insertion_max_m
+    )
+    wide_robot_cfg = _dc_replace(make_robot_config(), insertion_max_m=effective_insertion_max_m)
+    controller_pack = build_controller(
+        start_point=start_point,
+        L0=L0,
+        dt=dt,
+        plant_model=plant_model,
+        jacobian_model=jacobian_model,
+        lumen_C=lumen_C,
+        lumen_R=lumen_R,
+        run_cfg=exp_cfg.controller,
+        design_cfg=make_design_config(),
+        robot_cfg=wide_robot_cfg,
+    )
     if insertion_max_m is not None:
-        # planning_context.make_robot_config() hardcodes insertion_max_m=0.05
-        # (50mm) -- the project's usual advancer travel limit. This vessel's
-        # own centreline can genuinely need more (confirmed: reaching this
-        # vessel's true end needs ~64.5mm of insertion via the same
-        # insertion-synchronised tracking that worked for the first ~50mm).
-        # Rebuild controller_pack with a wider insertion ceiling rather than
-        # touching build_planning_context()'s shared default, which every
-        # free-space shape this session also relies on.
-        from dataclasses import replace as _dc_replace
-
-        from proper_research.planning.planning_context import (
-            make_design_config,
-            make_robot_config,
-        )
-        from proper_research.simulation.simulations.controller_factory_joint_space import (
-            build_controller,
-        )
-        from proper_research.simulation.simulations.initial_conditions import (
-            make_initial_poses,
-        )
-
-        _, start_point, L0, dt = make_initial_poses()
-        plant_key = "contact" if exp_cfg.model.plant_contact else "no_contact"
-        plant_model = bundle.models[plant_key]
-        jacobian_model = bundle.models[exp_cfg.model.jacobian_variant]
-        wide_robot_cfg = _dc_replace(make_robot_config(), insertion_max_m=float(insertion_max_m))
-        controller_pack = build_controller(
-            start_point=start_point,
-            L0=L0,
-            dt=dt,
-            plant_model=plant_model,
-            jacobian_model=jacobian_model,
-            lumen_C=lumen_C,
-            lumen_R=lumen_R,
-            run_cfg=exp_cfg.controller,
-            design_cfg=make_design_config(),
-            robot_cfg=wide_robot_cfg,
-        )
         print(f"[vessel-context] insertion_max_m overridden to {1e3*insertion_max_m:.1f} mm "
-              f"(library default 50.0 mm) -- controller_pack rebuilt.")
+              f"(library default 50.0 mm) -- controller_pack rebuilt with the real lumen wired in.")
+    else:
+        print(f"[vessel-context] controller_pack rebuilt with the real lumen wired in "
+              f"(insertion_max_m left at the library default {1e3*effective_insertion_max_m:.1f} mm).")
 
     no_contact_model = bundle.models.get("no_contact")
     if no_contact_model is not None and getattr(no_contact_model, "lumen_query", None) is not None:

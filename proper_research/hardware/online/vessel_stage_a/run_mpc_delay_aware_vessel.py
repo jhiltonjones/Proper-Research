@@ -335,6 +335,13 @@ def spawn_and_warm_worker(
         # 2026-09-28 is NOT the cause (measured directly: ~0.02ms, 3
         # orders of magnitude below the deadline) before adding this.
         solver_time_limit_s=float(solver_time_limit_s),
+        # See ConfigurationMPCConfig.accept_time_limit_solution's docstring
+        # (2026-09-29 fix): without this, setting solver_time_limit_s only
+        # made time-limited solves get classified as outright failures
+        # faster, not usable ones -- defeating the whole point. Tied
+        # directly to solver_time_limit_s being on, since there's no
+        # reason to set one without the other for this script.
+        accept_time_limit_solution=float(solver_time_limit_s) > 0.0,
     )
     s = float(position_error_scale_mm) * 1.0e-3
     beam_config_kwargs = dict(

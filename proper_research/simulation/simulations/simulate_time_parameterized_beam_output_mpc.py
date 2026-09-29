@@ -1250,6 +1250,19 @@ class BeamOutputTrackingMPC(_base.ConfigurationTrackingMPC):
             result = self._solver.solve()
             status = str(result.info.status).lower()
             success = status in {"solved", "solved inaccurate"}
+            # See ConfigurationMPCConfig.accept_time_limit_solution's
+            # docstring: opt-in acceptance of OSQP's best-effort iterate on
+            # a solver_time_limit_s early exit, rather than treating it as
+            # an outright failure. Only reachable when solver_time_limit_s
+            # was itself explicitly set positive (that's the only way this
+            # status string can occur), so this can never change behaviour
+            # for a caller who left both at their defaults.
+            if (
+                not success and status == "run time limit reached"
+                and result.x is not None
+                and bool(getattr(self.config, "accept_time_limit_solution", False))
+            ):
+                success = True
             solution = (
                 None
                 if result.x is None

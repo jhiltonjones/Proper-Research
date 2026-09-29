@@ -583,6 +583,18 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             result = self._solver.solve()
             status = str(result.info.status).lower()
             success = status in {"solved", "solved inaccurate"}
+            # See ConfigurationMPCConfig.accept_time_limit_solution's
+            # docstring (2026-09-29 fix) -- this class has its own,
+            # separate OSQP call from simulate_time_parameterized_beam_
+            # output_mpc.py's base-class one (same fix applied there too),
+            # so needs the same opt-in acceptance of a solver_time_limit_s
+            # early exit repeated here.
+            if (
+                not success and status == "run time limit reached"
+                and result.x is not None
+                and bool(getattr(self.config, "accept_time_limit_solution", False))
+            ):
+                success = True
             solution = None if result.x is None else np.asarray(result.x, dtype=float).reshape(self.nu)
             diagnostic = {
                 "status": status, "success": success,

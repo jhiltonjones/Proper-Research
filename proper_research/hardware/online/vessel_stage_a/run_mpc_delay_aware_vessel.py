@@ -256,7 +256,16 @@ _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 # +30mm frame, matching this script's own zraise_patch.apply(30.0)
 # convention). See module docstring's fix 6 for why this replaced the
 # vessel-centreline version.
-_BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])
+# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace beam-
+# base point (z=0.013433), regardless of --z-raise-mm (which didn't exist
+# yet) -- silently checking the magnet-exclusion/z-workspace QP constraints
+# against a raised point even for an unraised plan, a 30mm safety-margin
+# error. Now recomputed in main() from common.Z_RAISE_M after --z-raise-mm
+# is applied (see build_vessel_plan.py / run_open_loop_vessel.py's own
+# 2026-09-29 fixes for the same bug elsewhere in this package).
+_BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
+_BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
+_BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])  # overwritten in main()
 _BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043
 _MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
 
@@ -511,7 +520,18 @@ def build_or_load_schedule(
 def main() -> None:
     global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M
     global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
+    global _BEAM_BASE_PIVOT_XYZ_R
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--z-raise-mm", type=float, default=0.0,
+                    help="rigid z-shift applied to the beam-base pivot, the offline-"
+                         "planner pivot/start-point, AND the live vision reconstruction "
+                         "plane -- 0.0 (default) for an unraised/original-height "
+                         "workspace, 30.0 to reproduce the 2026-09-27/28 raised-"
+                         "workspace runs. MUST match whether --lumen-file (and the plan "
+                         "it built) was itself built raised or unraised -- a mismatch "
+                         "here silently misreads real camera detections AND checks the "
+                         "magnet-exclusion/z-workspace QP safety constraints against the "
+                         "wrong beam-base point, by the z-raise amount.")
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-name", default="mpc_delay_aware_vessel_accumC")
@@ -562,6 +582,14 @@ def main() -> None:
                          "delay_aware_mpc.py's _configure_magnet_exclusion/_configure_magnet_"
                          "workspace docstrings for why these were added")
     args = p.parse_args()
+
+    common.Z_RAISE_M = args.z_raise_mm / 1000.0
+    _BEAM_BASE_PIVOT_XYZ_R = np.array([[
+        _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1],
+        _BEAM_BASE_PIVOT_Z_UNRAISED + common.Z_RAISE_M,
+    ]])
+    print(f"[vessel-mpc] z_raise_mm = {args.z_raise_mm} "
+          f"beam_base_pivot_xyz = {_BEAM_BASE_PIVOT_XYZ_R[0].tolist()}")
 
     _DEADLINE_MS = args.deadline_ms
     _INSERTION_OFFSET_ABORT_M = args.insertion_offset_abort_mm * 1e-3

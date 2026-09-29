@@ -281,7 +281,7 @@ _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 _BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
 _BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 _BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])  # overwritten in main()
-_BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043
+_BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043  # overwritten in main() from --beam-base-exclusion-floor-mm
 _MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
 
 
@@ -425,7 +425,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "magnet_exclusion_point_R": _MAGNET_EXCLUSION_LUMEN_C_M[0].tolist()
                 if _MAGNET_EXCLUSION_LUMEN_C_M is not None else None,
             "magnet_exclusion_radius_m": _MAGNET_EXCLUSION_RADIUS_M,
-            "magnet_exclusion_source": "beam_base_fixed_210.43mm",
+            "magnet_exclusion_source": f"beam_base_fixed_{_BEAM_BASE_EXCLUSION_RADIUS_M*1e3:.2f}mm",
             "magnet_constraints_in_qp": _MAGNET_CONSTRAINTS_IN_QP,
             "planner_to_live_R_fit": r_fit.tolist(),
             "planner_to_live_t_fit_m": t_fit.tolist(),
@@ -557,7 +557,7 @@ def build_or_load_schedule(
 def main() -> None:
     global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M
     global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
-    global _BEAM_BASE_PIVOT_XYZ_R
+    global _BEAM_BASE_PIVOT_XYZ_R, _BEAM_BASE_EXCLUSION_RADIUS_M
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--z-raise-mm", type=float, default=0.0,
                     help="rigid z-shift applied to the beam-base pivot, the offline-"
@@ -580,6 +580,17 @@ def main() -> None:
                          "fixed beam-base point/210.43mm radius, not derived from this file. "
                          "Still accepted (no longer required) purely so existing invocations "
                          "don't break; a note is printed if passed. See module docstring's fix 6.")
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=210.43,
+                    help="the TRUE magnet-to-beam-base exclusion floor (before "
+                         "--magnet-exclusion-tolerance-mm is subtracted to get the live "
+                         "abort/QP threshold). Default 210.43mm matches the project's "
+                         "established value; 2026-09-29 made overridable after a v3-vessel "
+                         "centreline-tracking run aborted at gap=205.4mm < 205.4mm -- i.e. "
+                         "crossed the live threshold by a hair, and post-hoc wall-clearance "
+                         "analysis of that run showed zero actual lumen-wall penetration, "
+                         "consistent with the shortfall being linearization/tracking-lag "
+                         "error (see delay_aware_mpc.py's _configure_magnet_exclusion "
+                         "docstring) rather than a real large safety breach.")
     contact_group = p.add_mutually_exclusive_group(required=True)
     contact_group.add_argument("--contact", dest="contact", action="store_true")
     contact_group.add_argument("--no-contact", dest="contact", action="store_false")
@@ -635,6 +646,7 @@ def main() -> None:
                          "workspace docstrings for why these were added")
     args = p.parse_args()
 
+    _BEAM_BASE_EXCLUSION_RADIUS_M = args.beam_base_exclusion_floor_mm / 1000.0
     common.Z_RAISE_M = args.z_raise_mm / 1000.0
     _BEAM_BASE_PIVOT_XYZ_R = np.array([[
         _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1],

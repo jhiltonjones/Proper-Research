@@ -568,18 +568,21 @@ def main() -> None:
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
     p.add_argument("--deadline-ms", type=float, default=70.0)
-    p.add_argument("--solver-time-limit-s", type=float, default=0.05,
+    p.add_argument("--solver-time-limit-s", type=float, default=0.03,
                     help="OSQP's own wall-clock cutoff per solve (0 = disabled/OSQP "
                          "default, the behaviour every run before 2026-09-29). At an "
                          "ill-conditioned tick, OSQP's ADMM iterations can spike into "
-                         "the hundreds-to-thousands, occasionally exceeding "
-                         "--deadline-ms outright (measured: 1300+ iterations, 64ms+ "
-                         "solve, against a typical ~120-150/~10ms). OSQP's iterate is "
-                         "a valid, if less-converged, solution at any point, so "
-                         "bounding solve time directly is safe -- it trades solution "
-                         "quality on a rare hard tick for guaranteeing the deadline is "
-                         "never missed on that tick's account. Default 0.05s leaves "
-                         "20ms of --deadline-ms's 70ms for IPC/scheduling overhead.")
+                         "the thousands, occasionally exceeding --deadline-ms outright "
+                         "(measured: 2000+ iterations, 50-58ms solve, against a "
+                         "typical ~150-300/~7-10ms). OSQP's iterate is a valid, if "
+                         "less-converged, solution at any point, so bounding solve "
+                         "time directly is safe -- it trades solution quality on a "
+                         "rare hard tick for guaranteeing the deadline is never missed "
+                         "on that tick's account. Default 0.03s (NOT 0.05 -- measured "
+                         "live 2026-09-29 that non-OSQP per-tick overhead alone can "
+                         "spike to ~28ms, so 0.05+0.028=0.078s exceeded the 70ms "
+                         "deadline even with the cap active; 0.03s leaves real margin "
+                         "against that overhead, not just against --deadline-ms.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
     p.add_argument("--magnet-rise-limit-mm", type=float, default=_MAGNET_RISE_LIMIT_M * 1e3,

@@ -162,7 +162,22 @@ _RealStateStreamConfig = state_stream_mod.StateStreamConfig
 def _RaisedStateStreamConfig(**kwargs):
     """Drop-in for StateStreamConfig with T_robot_beam_pose6's z raised by
     common.Z_RAISE_M -- called exactly like the real dataclass (positional
-    defaults preserved), only the pose default changes."""
+    defaults preserved), only the pose default changes.
+
+    2026-09-29: also defaults marker_min_count/marker_max_count to 2 -- the
+    physical rig's middle (tangent_start) marker was permanently removed,
+    so only base+tip are ever visible now. StateStreamConfig's own
+    _tip_and_tangent_start_px already handles the 2-marker case correctly
+    (falls back to a zero chord tangent, tip position unaffected) -- see
+    its docstring -- and this project's live vessel MPC only tracks tip
+    POSITION (n_out=3), never tangent, so losing the tangent is a no-op
+    for control. Only the DEFAULT changes (explicit marker_min_count/
+    marker_max_count kwargs, if ever passed, still win), so this is
+    isolated to this script's own patched StateStreamConfig, not the
+    shared class default other (unmodified) rigs elsewhere in this
+    project still rely on for a real 3-4-marker tangent."""
+    kwargs.setdefault("marker_min_count", 2)
+    kwargs.setdefault("marker_max_count", 2)
     cfg = _RealStateStreamConfig(**kwargs)
     if "T_robot_beam_pose6" not in kwargs:
         pose6 = list(cfg.T_robot_beam_pose6)

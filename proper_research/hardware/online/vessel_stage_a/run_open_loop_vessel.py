@@ -24,16 +24,43 @@ Usage
 from __future__ import annotations
 
 import argparse
+import dataclasses
 
 import numpy as np
 
-from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
-
 import proper_research.hardware.online.close_loop_path_follow as pf
+import proper_research.hardware.online.state_stream as state_stream_mod
 from proper_research.hardware.online.vessel_stage_a import common
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
+
+_RealStateStreamConfig = state_stream_mod.StateStreamConfig
+
+
+def _patch_state_stream_config(z_raise_mm: float) -> None:
+    """Patch pf.StateStreamConfig with (a) T_robot_beam_pose6's z raised by
+    z_raise_mm (this script no longer routes through zshift_grid_toolkit.
+    zraise_patch -- that helper no-ops entirely at z_raise_mm=0.0, which
+    would have silently skipped part (b) below on every one of today's
+    unraised runs) and (b) marker_min_count/marker_max_count defaulted to
+    2 -- see run_mpc_delay_aware_vessel.py's identical 2026-09-29 fix for
+    why (the physical rig's middle marker was permanently removed; tip
+    position tracking is unaffected, only the now-unused chord tangent
+    is). Only the DEFAULT changes; explicit kwargs still win."""
+    z_raise_m = float(z_raise_mm) / 1000.0
+
+    def _patched_state_stream_config(**kwargs):
+        kwargs.setdefault("marker_min_count", 2)
+        kwargs.setdefault("marker_max_count", 2)
+        cfg = _RealStateStreamConfig(**kwargs)
+        if z_raise_m != 0.0 and "T_robot_beam_pose6" not in kwargs:
+            pose6 = list(cfg.T_robot_beam_pose6)
+            pose6[2] += z_raise_m
+            cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
+        return cfg
+
+    pf.StateStreamConfig = _patched_state_stream_config
 
 # 2026-09-29 fix: this used to hardcode the +30mm raised-workspace pivot
 # (z=0.013433) and unconditionally call zraise_patch.apply(30.0) at import
@@ -127,7 +154,7 @@ def main() -> None:
                          "real camera detections by the z-raise amount.")
     args = p.parse_args()
 
-    zraise_patch.apply(args.z_raise_mm)
+    _patch_state_stream_config(args.z_raise_mm)
     beam_base_pivot_xyz = np.array([[
         BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
         BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,

@@ -43,9 +43,11 @@ original unconstrained behaviour.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import math
+import signal
 import tempfile
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -54,6 +56,38 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 from scipy.optimize import Bounds, minimize, least_squares
 from scipy.spatial.transform import Rotation as Rot
+
+
+class NodeSolveTimeoutError(TimeoutError):
+    """Raised when a single per-guess node solve exceeds node_timeout_s.
+    Subclasses TimeoutError (an Exception) so it is caught by
+    _solve_one_node's existing `except Exception as exc:` handling and
+    recorded as an ordinary failed attempt -- see
+    InverseConfigurationPlannerConfig.node_timeout_s's docstring."""
+
+
+@contextlib.contextmanager
+def _node_solve_deadline(seconds: float):
+    """Wall-clock deadline around a single scipy solver call. SIGALRM-based
+    (main-thread/Unix only -- this project's planning scripts are single-
+    process and synchronous, so that's always satisfied here). A no-op when
+    seconds is None or <= 0 (the default, matching all prior behaviour)."""
+    if not seconds or seconds <= 0:
+        yield
+        return
+
+    def _handler(signum, frame):
+        raise NodeSolveTimeoutError(
+            f"node solve exceeded {seconds:.0f}s wall-clock deadline"
+        )
+
+    previous_handler = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(int(math.ceil(seconds)))
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 Array = np.ndarray
@@ -124,6 +158,20 @@ class InverseConfigurationPlannerConfig:
 
     maximum_function_evaluations: int = 100
     maximum_multistart_attempts: int = 6
+    # 2026-09-29 fix: maximum_function_evaluations/maxiter bounds the OUTER
+    # solver's iteration count, but each single iteration's own function/
+    # gradient call runs the full nonlinear (contact-aware) beam forward
+    # solve -- at an ill-conditioned/near-rank-deficient state (e.g. a tight
+    # vessel bend) that ONE inner solve can itself take minutes, which no
+    # iteration-count cap can see or bound. node_timeout_s (0.0 = disabled,
+    # matching all prior behaviour) wraps EACH per-guess attempt in a real
+    # wall-clock deadline; a timed-out attempt is treated exactly like any
+    # other failed numerical attempt (see _solve_one_node's existing
+    # `except Exception` handling) -- it does not skip the node's other
+    # multistart guesses, and if every guess fails/times out the node falls
+    # through to Layer 2's recovery optimizer exactly as an unrelated solver
+    # failure already would.
+    node_timeout_s: float = 0.0
     maximum_joint_step_rad: tuple[float, ...] = (
         0.25,
         0.25,
@@ -1578,19 +1626,20 @@ def _solve_one_node(
     for attempt_index, guess in enumerate(guesses, start=1):
         try:
             if exclusion_constraint is None:
-                solved = least_squares(
-                    objective.residual,
-                    guess,
-                    jac=objective.jacobian,
-                    bounds=(local_lower, local_upper),
-                    method="trf",
-                    x_scale="jac",
-                    ftol=float(config.ftol),
-                    xtol=float(config.xtol),
-                    gtol=float(config.gtol),
-                    max_nfev=int(config.maximum_function_evaluations),
-                    verbose=0,
-                )
+                with _node_solve_deadline(config.node_timeout_s):
+                    solved = least_squares(
+                        objective.residual,
+                        guess,
+                        jac=objective.jacobian,
+                        bounds=(local_lower, local_upper),
+                        method="trf",
+                        x_scale="jac",
+                        ftol=float(config.ftol),
+                        xtol=float(config.xtol),
+                        gtol=float(config.gtol),
+                        max_nfev=int(config.maximum_function_evaluations),
+                        verbose=0,
+                    )
                 state = np.asarray(solved.x, dtype=float).reshape(7)
                 reason = f"scipy_status_{solved.status}: {solved.message}"
                 solver_objective = float(2.0 * solved.cost)
@@ -1603,31 +1652,32 @@ def _solve_one_node(
                 objective_scale = max(
                     1.0, float(objective.scalar_objective(guess))
                 )
-                solved = minimize(
-                    lambda state_value: (
-                        objective.scalar_objective(state_value)
-                        / objective_scale
-                    ),
-                    guess,
-                    jac=lambda state_value: (
-                        objective.scalar_objective_gradient(state_value)
-                        / objective_scale
-                    ),
-                    bounds=Bounds(local_lower, local_upper),
-                    constraints=(
-                        {
-                            "type": "ineq",
-                            "fun": exclusion_constraint.value,
-                            "jac": exclusion_constraint.jacobian,
+                with _node_solve_deadline(config.node_timeout_s):
+                    solved = minimize(
+                        lambda state_value: (
+                            objective.scalar_objective(state_value)
+                            / objective_scale
+                        ),
+                        guess,
+                        jac=lambda state_value: (
+                            objective.scalar_objective_gradient(state_value)
+                            / objective_scale
+                        ),
+                        bounds=Bounds(local_lower, local_upper),
+                        constraints=(
+                            {
+                                "type": "ineq",
+                                "fun": exclusion_constraint.value,
+                                "jac": exclusion_constraint.jacobian,
+                            },
+                        ),
+                        method="SLSQP",
+                        options={
+                            "maxiter": int(config.maximum_function_evaluations),
+                            "ftol": float(config.ftol),
+                            "disp": False,
                         },
-                    ),
-                    method="SLSQP",
-                    options={
-                        "maxiter": int(config.maximum_function_evaluations),
-                        "ftol": float(config.ftol),
-                        "disp": False,
-                    },
-                )
+                    )
                 state = np.asarray(solved.x, dtype=float).reshape(7)
                 reason = (
                     f"scipy_slsqp_status_{solved.status}: {solved.message}; "

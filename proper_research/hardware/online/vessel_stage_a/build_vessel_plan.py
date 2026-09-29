@@ -41,12 +41,18 @@ import numpy as np
 
 from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
 
-zraise_patch.apply(30.0)
-
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
 
-BEAM_BASE_PIVOT = np.array([0.525575, -0.670028, 0.013433, 3.14159265, 0.0, 0.0])
+# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace pivot
+# (z=0.013433) and unconditionally call zraise_patch.apply(30.0) at import
+# time, regardless of which lumen file was passed in -- silently building a
+# plan against a raised pivot even for an UNRAISED lumen file, a 30mm
+# frame mismatch. Now parameterized via --z-raise-mm (default 0.0,
+# unraised); pass 30 explicitly to reproduce the old raised-workspace
+# behaviour used by e.g. plans/vessel_live_trimmed6mm_2026-09-28.
+BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
+BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 L_CMD = 0.025
 DT_INIT = 0.01
 
@@ -73,7 +79,38 @@ def main() -> None:
                          "and sailed through node 0-49/54 in ~6.5 min in another. A tight budget "
                          "(15/2) keeps worst-case per-node time bounded to roughly a minute "
                          "regardless; Layer 2 repairs anything Layer 1 still can't reach.")
-    p.add_argument("--maximum-multistart-attempts", type=int, default=2)
+    p.add_argument("--maximum-multistart-attempts", type=int, default=2,
+                    help="candidate initial guesses per node (Jacobian-predicted, "
+                         "extrapolated, previous-node, then random perturbations of "
+                         "previous-node up to this many total). At the default (2), "
+                         "the first 2-3 deterministic candidates (Jacobian-predicted/"
+                         "extrapolated/previous) typically already fill this budget, "
+                         "so a random perturbation is rarely or never tried -- raise "
+                         "this (e.g. 6-8) to give the solver real alternate starting "
+                         "points for a node the deterministic guesses can't reach, "
+                         "e.g. a sharp local bend where linear extrapolation from a "
+                         "smoother neighbouring node is a poor seed.")
+    p.add_argument("--multistart-joint-perturbation-rad", type=float, default=None,
+                    help="override InverseConfigurationPlannerConfig's default "
+                         "multistart random-perturbation scale (0.05 rad, ~2.9deg) "
+                         "applied around the previous node's state when generating "
+                         "extra multistart guesses -- widen this to let multistart "
+                         "actually jump far enough to escape a bad local seed near a "
+                         "sharp bend, rather than only ever searching a ~3deg "
+                         "neighbourhood of it.")
+    p.add_argument("--node-timeout-s", type=float, default=0.0,
+                    help="wall-clock deadline (seconds) for EACH per-guess node solve "
+                         "attempt (0 = disabled, previous behaviour). Unlike "
+                         "--maximum-function-evaluations (which bounds the outer "
+                         "solver's iteration count), this bounds real time -- added "
+                         "2026-09-29 after a node's SINGLE inner nonlinear beam-solve "
+                         "call (not the iteration count) turned out to be the actual "
+                         "bottleneck at an ill-conditioned/near-rank-deficient state, "
+                         "something no iteration cap can see. A timed-out attempt is "
+                         "treated exactly like any other failed numerical attempt -- "
+                         "the node moves to its next multistart guess, or falls "
+                         "through to Layer 2's recovery pass if all guesses fail. Try "
+                         "60-120s.")
     p.add_argument("--finite-difference-joint-step-rad", type=float, default=1.5e-2,
                     help="see this script's docstring -- the library default (1e-6) is far "
                          "smaller than the contact solver's own precision and produces a "
@@ -82,7 +119,23 @@ def main() -> None:
     p.add_argument("--maximum-chain-rule-relative-error", type=float, default=0.15)
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--output-root", type=Path, required=True)
+    p.add_argument("--z-raise-mm", type=float, default=0.0,
+                    help="rigid z-shift applied to the beam-base pivot (and, via "
+                         "zraise_patch, the live vision reconstruction plane) -- 0.0 "
+                         "(default) for an unraised/original-height workspace, 30.0 "
+                         "to reproduce the 2026-09-27/28 raised-workspace plans. MUST "
+                         "match whether --lumen-file was itself digitized against a "
+                         "raised or unraised calibration -- a mismatch here silently "
+                         "produces a plan whose beam-base pivot disagrees with the "
+                         "vessel geometry by the z-raise amount.")
     args = p.parse_args()
+
+    zraise_patch.apply(args.z_raise_mm)
+    BEAM_BASE_PIVOT = np.array([
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
+        BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[2], BEAM_BASE_PIVOT_XY_ROT[3], BEAM_BASE_PIVOT_XY_ROT[4],
+    ])
 
     with open(args.start_position_json) as f:
         start_ref = json.load(f)
@@ -96,6 +149,7 @@ def main() -> None:
     initial_conditions_mod.make_initial_poses = _make_initial_poses
     planning_context_mod.make_initial_poses = _make_initial_poses
 
+    print(f"[build] z_raise_mm = {args.z_raise_mm}")
     print(f"[build] pivot_point (beam base) = {BEAM_BASE_PIVOT.tolist()}")
     print(f"[build] start_point (source magnet) = {start_point.tolist()}  "
           f"(from {args.start_position_json})")
@@ -153,10 +207,16 @@ def main() -> None:
     shared["finite_difference_joint_step_rad"] = args.finite_difference_joint_step_rad
     shared["finite_difference_insertion_step_m"] = args.finite_difference_insertion_step_m
     shared["maximum_chain_rule_relative_error"] = args.maximum_chain_rule_relative_error
+    shared["node_timeout_s"] = args.node_timeout_s
+    if args.multistart_joint_perturbation_rad is not None:
+        shared["multistart_joint_perturbation_rad"] = args.multistart_joint_perturbation_rad
 
     planner_config = InverseConfigurationPlannerConfig(**shared)
     print(f"[layer1] tangent tolerance = {args.tangent_tolerance_deg:.0f}deg, "
           f"position tolerance = {1e3 * planner_config.position_tolerance_m:.2f}mm")
+    print(f"[layer1] node_timeout_s = {planner_config.node_timeout_s} "
+          f"(0 = disabled), maximum_multistart_attempts = {planner_config.maximum_multistart_attempts}, "
+          f"multistart_joint_perturbation_rad = {planner_config.multistart_joint_perturbation_rad}")
 
     inverse_dir = vessel_dir / "offline_inverse_configuration"
     print(f"\n[layer1] inverse planning -> {inverse_dir}", flush=True)

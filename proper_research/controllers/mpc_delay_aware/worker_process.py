@@ -114,6 +114,7 @@ def _worker_main(
     exact_qn_zero_config_kwargs: Optional[dict] = None,
     magnet_exclusion_kwargs: Optional[dict] = None,
     magnet_workspace_kwargs: Optional[dict] = None,
+    magnet_exclusion_clearance_kwargs: Optional[dict] = None,
 ) -> None:
     """Entry point for Process B. Constructs its OWN MPC instances (old +
     new, so one worker can answer requests for either condition -- the
@@ -249,6 +250,7 @@ def _worker_main(
             reference_position_jacobians=schedule, delay_samples=delay_samples, beta_d=beta_d,
             magnet_exclusion=magnet_exclusion_kwargs,
             magnet_workspace=magnet_workspace_kwargs,
+            magnet_exclusion_clearance=magnet_exclusion_clearance_kwargs,
         )
         print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
               f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
@@ -261,6 +263,11 @@ def _worker_main(
             print(f"[worker] magnet z-workspace constraint wired INTO the QP "
                   f"(z in [{magnet_workspace_kwargs['z_min_m']*1e3:.1f}, "
                   f"{magnet_workspace_kwargs['z_max_m']*1e3:.1f}]mm)")
+        if magnet_exclusion_clearance_kwargs is not None:
+            print(f"[worker] magnet-exclusion CLEARANCE COST wired INTO the QP "
+                  f"(gain={magnet_exclusion_clearance_kwargs['gain']:.3g}, "
+                  f"soft_radius={magnet_exclusion_clearance_kwargs['soft_radius_m']*1e3:.1f}mm, "
+                  f"active only below soft_radius, separate from the hard exclusion radius above)")
 
     def _apply_frame_transform(controller, R_fit: np.ndarray, t_fit: np.ndarray) -> None:
         """Planner(P)->live-robot(R) frame-mismatch fix (2026-09-21): p_des
@@ -498,6 +505,7 @@ class MPCWorkerHandle:
         exact_qn_zero_config_kwargs: Optional[dict] = None,
         magnet_exclusion_kwargs: Optional[dict] = None,
         magnet_workspace_kwargs: Optional[dict] = None,
+        magnet_exclusion_clearance_kwargs: Optional[dict] = None,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -515,6 +523,7 @@ class MPCWorkerHandle:
                 exact_qn_zero_config_kwargs=exact_qn_zero_config_kwargs,
                 magnet_exclusion_kwargs=magnet_exclusion_kwargs,
                 magnet_workspace_kwargs=magnet_workspace_kwargs,
+                magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
             ),
         )
         self._proc.start()

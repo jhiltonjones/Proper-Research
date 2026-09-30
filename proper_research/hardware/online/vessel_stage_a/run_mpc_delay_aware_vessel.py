@@ -321,7 +321,9 @@ def spawn_and_warm_worker(
     position_tracking_weight: float, insertion_max_m: float,
     magnet_exclusion_kwargs: dict | None = None,
     magnet_workspace_kwargs: dict | None = None,
+    magnet_exclusion_clearance_kwargs: dict | None = None,
     solver_time_limit_s: float = 0.0,
+    zero_input_reference_in_r: bool = False,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -357,6 +359,26 @@ def spawn_and_warm_worker(
         # directly to solver_time_limit_s being on, since there's no
         # reason to set one without the other for this script.
         accept_time_limit_solution=float(solver_time_limit_s) > 0.0,
+        # 2026-09-30: 2026-09-16's "null-space-motion diagnostic Experiment 3"
+        # flag (simulate_time_parameterized_configuration_mpc.py's
+        # _linear_cost docstring), wired through to live vessel hardware for
+        # the first time. With Q_N=0 (this script's whole point) there is no
+        # state-tracking-to-nominal cost, but the R-term still pulls the
+        # commanded input toward the OFFLINE plan's own recorded velocity
+        # (reference.input, i.e. v_ref) every tick -- v^T R v vs (v-v_ref)^T
+        # R (v-v_ref). Since velocities integrate to positions, that pull
+        # reproduces the offline plan's own redundant-DOF resolution (built
+        # against whatever exclusion floor Layer 1 used) even though nothing
+        # explicitly anchors q to q_nom. Root-caused live 2026-09-30: the
+        # closed loop kept hitting the magnet-exclusion boundary at the SAME
+        # tick regardless of the RUNTIME floor (210/213/225mm all tripped at
+        # the same point, gap scaling exactly with floor) -- proving the
+        # offline plan's own v_ref, not linearization error, was driving the
+        # close approach. True = v_ref zeroed in the R-term only (Q's state-
+        # tracking and Rd's previous-input smoothing are untouched), letting
+        # the optimizer resolve the redundant DOF purely from tracking +
+        # constraints instead of reproducing the offline plan's choice.
+        diagnostic_zero_input_reference_in_R=bool(zero_input_reference_in_r),
     )
     s = float(position_error_scale_mm) * 1.0e-3
     beam_config_kwargs = dict(
@@ -372,6 +394,7 @@ def spawn_and_warm_worker(
         enable_exact_qn_zero=True, exact_qn_zero_config_kwargs=exact_qn0_config_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
+        magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -616,6 +639,18 @@ def main() -> None:
                          "spike to ~28ms, so 0.05+0.028=0.078s exceeded the 70ms "
                          "deadline even with the cap active; 0.03s leaves real margin "
                          "against that overhead, not just against --deadline-ms.")
+    p.add_argument("--zero-input-reference-in-r", action="store_true",
+                    help="2026-09-30: zero the offline plan's v_ref out of the R "
+                         "(input-tracking) cost term, so the stage cost becomes "
+                         "v^T R v instead of (v-v_ref)^T R (v-v_ref). Q_N=0 already "
+                         "removes the state-tracking-to-nominal cost, but R still "
+                         "pulls the redundant DOF toward the offline plan's own "
+                         "recorded velocity trajectory every tick -- root-caused "
+                         "live this session as why the closed loop kept hitting the "
+                         "magnet-exclusion boundary at the SAME tick regardless of "
+                         "the runtime floor (210/213/225mm all tripped at the same "
+                         "point). See spawn_and_warm_worker's "
+                         "diagnostic_zero_input_reference_in_R comment.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
     p.add_argument("--magnet-rise-limit-mm", type=float, default=_MAGNET_RISE_LIMIT_M * 1e3,
@@ -635,6 +670,39 @@ def main() -> None:
                          "~1.5mm inside the raw computed radius (solver/FK discretization, not "
                          "a real violation), while the two actual incidents were 25-37mm "
                          "violations -- comfortable margin for a small tolerance here")
+    p.add_argument("--magnet-exclusion-robust-margin-mm", type=float, default=0.0,
+                    help="2026-09-30: tightens ONLY the QP's own hard magnet-exclusion radius "
+                         "by this amount above the post-hoc monitor's floor -- the post-hoc "
+                         "monitor (--magnet-exclusion-tolerance-mm) is UNCHANGED by this. Root "
+                         "cause this exists for: live instrumentation showed the QP's hard "
+                         "constraint on d(q_cmd) was never wrong (linearization error stayed "
+                         "sub-mm throughout, verified across 5 ticks), but q_cmd diverges from "
+                         "the physically MEASURED state by a real, precisely-projectable amount "
+                         "(e_d_pred = grad_d.(q_meas-q_cmd) matched the actual measured-vs-"
+                         "commanded clearance gap almost exactly tick-by-tick on a live run, "
+                         "peaking near -0.9mm right at a trip). This margin gives the QP's OWN "
+                         "constraint that much extra headroom against q_cmd != q_meas. Start "
+                         "with 2.0mm as an experimental value, not a final safety argument -- "
+                         "the real number should come from the negative tail of "
+                         "max(0, d_cmd-d_meas) over repeated runs, not one trajectory.")
+    p.add_argument("--magnet-exclusion-clearance-gain", type=float, default=0.0,
+                    help="2026-09-30: weight for a SEPARATE, soft per-horizon-stage clearance "
+                         "cost -- gain*(soft_radius - d_j)^2, active only where this tick's own "
+                         "linearized d_j (same (Ec,Sc)-anchored quantity the hard constraint "
+                         "uses) falls below --magnet-exclusion-soft-radius-mm. Does NOT touch "
+                         "the hard constraint's own radius at all. Exists because live "
+                         "instrumentation showed a genuine tip-preserving redundant escape "
+                         "direction (||N @ grad_d|| ~= 25-33mm/rad, N = tip-Jacobian null-space "
+                         "projector) that the controller had no cost-side incentive to use -- "
+                         "it rode the hard boundary for 15+ consecutive ticks because nothing "
+                         "distinguished d=0.01mm from d=10mm as long as the hard constraint was "
+                         "satisfied. 0.0 (default) = disabled. Requires the in-QP magnet "
+                         "exclusion to be enabled (not --disable-magnet-exclusion-in-qp).")
+    p.add_argument("--magnet-exclusion-soft-radius-mm", type=float, default=225.0,
+                    help="see --magnet-exclusion-clearance-gain. Must exceed the QP's own hard "
+                         "radius (post-hoc floor + --magnet-exclusion-robust-margin-mm), or the "
+                         "controller will refuse to build with a ValueError (empty/inverted "
+                         "avoidance band).")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
                     help="disable BOTH linearized magnet safety constraints wired directly into "
@@ -672,9 +740,32 @@ def main() -> None:
         reference_joints_path=args.magnet_exclusion_reference_joints,
     )
     _MAGNET_EXCLUSION_RADIUS_M = exclusion_radius_true_m - args.magnet_exclusion_tolerance_mm * 1e-3
-    print(f"[vessel-mpc] magnet exclusion live abort threshold: {_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm "
+    print(f"[vessel-mpc] magnet exclusion live abort threshold (post-hoc monitor, measured "
+          f"joints): {_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm "
           f"(true radius {exclusion_radius_true_m*1e3:.1f}mm - "
           f"{args.magnet_exclusion_tolerance_mm:.1f}mm tolerance)")
+    # 2026-09-30: SEPARATE from the post-hoc monitor's radius above on
+    # purpose. Root cause (live instrumentation this session): the QP's
+    # hard exclusion constraint is built from (Ec, Sc), the EXACT-COMMANDED
+    # state stack -- it correctly guarantees d(q_cmd) >= radius, and never
+    # once failed to do so (verified: the linearized belief tracked the
+    # true nonlinear distance to sub-mm accuracy throughout). But the
+    # measured/physical state diverges from q_cmd by a real, projectable
+    # amount (confirmed: e_d_pred = grad_d.(q_meas-q_cmd) matched the
+    # actual d(q_meas)-d(q_cmd) discrepancy almost exactly, tick by tick).
+    # The hard constraint was never wrong about q_cmd; it just had no
+    # margin held in reserve for q_cmd != q_meas. This value tightens ONLY
+    # the QP's own radius by that measured margin -- the post-hoc monitor
+    # above keeps watching the TRUE measured-joint distance against the
+    # ORIGINAL (untightened) floor, so it remains the independent ground-
+    # truth check, not something this margin could accidentally weaken.
+    _MAGNET_EXCLUSION_ROBUST_MARGIN_M = args.magnet_exclusion_robust_margin_mm * 1e-3
+    _MAGNET_EXCLUSION_RADIUS_QP_M = _MAGNET_EXCLUSION_RADIUS_M + _MAGNET_EXCLUSION_ROBUST_MARGIN_M
+    print(f"[vessel-mpc] magnet exclusion QP hard-constraint radius: "
+          f"{_MAGNET_EXCLUSION_RADIUS_QP_M*1e3:.1f}mm "
+          f"({_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm post-hoc floor + "
+          f"{args.magnet_exclusion_robust_margin_mm:.1f}mm robust margin) -- "
+          f"the post-hoc monitor above is UNCHANGED by this margin")
 
     # Loaded early (cheap, no motion -- same file `preflight()` itself reads
     # first) so the magnet-z bounds are known BEFORE any reset motion runs,
@@ -716,11 +807,13 @@ def main() -> None:
         mag_jacobians, mag_positions = build_magnet_exclusion_schedule(_reference_for_schedule)
         magnet_exclusion_kwargs = dict(
             position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
-            lumen_C_m=_MAGNET_EXCLUSION_LUMEN_C_M, radius_m=_MAGNET_EXCLUSION_RADIUS_M,
+            lumen_C_m=_MAGNET_EXCLUSION_LUMEN_C_M, radius_m=_MAGNET_EXCLUSION_RADIUS_QP_M,
         )
         print(f"[vessel-mpc] magnet-exclusion constraint will be wired INTO the QP "
-              f"(radius={_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm, same radius as the post-hoc "
-              f"monitor) -- pass --disable-magnet-exclusion-in-qp to turn this off")
+              f"(radius={_MAGNET_EXCLUSION_RADIUS_QP_M*1e3:.1f}mm = post-hoc floor "
+              f"{_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm + robust margin "
+              f"{args.magnet_exclusion_robust_margin_mm:.1f}mm) -- pass "
+              f"--disable-magnet-exclusion-in-qp to turn this off")
         magnet_workspace_kwargs = dict(
             position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
             z_min_m=_MAGNET_Z_BOUNDS_M[0], z_max_m=_MAGNET_Z_BOUNDS_M[1],
@@ -733,6 +826,17 @@ def main() -> None:
         print("[vessel-mpc] --disable-magnet-exclusion-in-qp set: magnet exclusion and "
               "z-workspace bounds stay ONLY post-hoc monitors, not visible to the optimizer")
 
+    magnet_exclusion_clearance_kwargs = None
+    if magnet_exclusion_kwargs is not None and args.magnet_exclusion_clearance_gain > 0.0:
+        soft_radius_m = args.magnet_exclusion_soft_radius_mm * 1e-3
+        magnet_exclusion_clearance_kwargs = dict(
+            gain=args.magnet_exclusion_clearance_gain, soft_radius_m=soft_radius_m,
+        )
+        print(f"[vessel-mpc] magnet-exclusion CLEARANCE COST wired INTO the QP "
+              f"(gain={args.magnet_exclusion_clearance_gain:.3g}, soft_radius="
+              f"{args.magnet_exclusion_soft_radius_mm:.1f}mm) -- separate from, and does not "
+              f"weaken, the hard constraint above; active only below soft_radius")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -743,8 +847,12 @@ def main() -> None:
         insertion_max_m=args.insertion_max_mm * 1.0e-3,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
+        magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         solver_time_limit_s=args.solver_time_limit_s,
+        zero_input_reference_in_r=args.zero_input_reference_in_r,
     )
+    print(f"[vessel-mpc] R-term v_ref: "
+          f"{'ZEROED (v^T R v)' if args.zero_input_reference_in_r else 'offline plan (v-v_ref)^T R (v-v_ref)'}")
 
     if args.skip_preflight:
         pass  # q0, l0 already loaded above
@@ -770,6 +878,19 @@ def main() -> None:
     cfg.reference_source = "plan_dir"
     cfg.mpc_prediction_horizon = args.horizon
     cfg.mpc_use_dare_terminal_cost = False
+    # 2026-09-30 fix: this script never overrode close_loop_path_follow's
+    # generic tcp_out_of_workspace box, so it silently used the DEFAULT
+    # bounds tuned for the unrelated rectangle_stage_a task -- caught live
+    # when the magnet-exclusion-clearance-cost ablation run B genuinely
+    # used more of the flange's redundant range of motion (as intended:
+    # trading flange position for magnet clearance) and tripped the
+    # rectangle-tuned y_max=-0.483 by 1mm. Replaced with a box derived from
+    # this vessel plan's own three completed/near-completed runs' actual
+    # flange trajectories (Baseline/ablation-A/ablation-B, 2026-09-30),
+    # +/-30mm margin -- same principle as run_inverse_jacobian_vessel.py's
+    # own 2026-09-29 fix for the identical class of bug.
+    cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
+    cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)
 
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True

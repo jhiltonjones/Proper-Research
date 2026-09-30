@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from pathlib import Path
 
 import numpy as np
 
@@ -36,6 +37,29 @@ from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
 
 _RealStateStreamConfig = state_stream_mod.StateStreamConfig
+
+# 2026-09-30 fix: same bug run_mpc_delay_aware_vessel.py's module docstring
+# documents as "fix 5" (found live 2026-09-23) -- close_loop_path_follow.py's
+# `_load_plan_reference` calls `_find_shape_npz(plan_dir)`, which searches
+# plan_dir's ancestry for ANY file named shape_centreline.npz (a mechanism
+# built for plan_shape_path.py's free-space shapes, which genuinely need a
+# live rigid-registration fit). Vessel plans never produce their own such
+# file, so the search silently picks up an UNRELATED stale file from
+# plans/circle_15mm_2026-09-12/ (alphabetically first of 17 matches under
+# plans/) and uses ITS un-raised tip0.z to compute a spurious z-registration
+# offset on top of the vessel reference's already-correct desired_position_m
+# -- invisible-small (<=5mm) for earlier near-zero-raise plans, but exactly
+# equal to the z-raise amount (42mm, confirmed live 2026-09-30) once a real
+# raise is in play. The vessel reference is already in robot frame (built
+# via real FK throughout build_vessel_planning_context), so no registration
+# is needed here -- bypass with an exact identity transform, same as the
+# MPC script.
+def _identity_fit_planner_to_robot(npz_path, start_tip_R, T_R_B):
+    return np.eye(3), np.zeros(3)
+
+
+pf._fit_planner_to_robot = _identity_fit_planner_to_robot
+pf._find_shape_npz = lambda plan_dir: Path(__file__)
 
 
 def _patch_state_stream_config(z_raise_mm: float) -> None:

@@ -106,6 +106,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         beta_d: float = 1.0,
         magnet_exclusion: dict | None = None,
         magnet_workspace: dict | None = None,
+        magnet_exclusion_clearance: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -135,6 +136,19 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_ws_z_max: float | None = None
         if magnet_workspace is not None:
             self._configure_magnet_workspace(**magnet_workspace)
+
+        # 2026-09-30: soft clearance-cost term, added SEPARATELY from (and
+        # never replacing) the hard magnet_exclusion constraint above -- see
+        # this class's README/session notes for why. The hard constraint
+        # answers "is the commanded state feasible"; this answers "does the
+        # optimizer have any REASON to prefer more margin before the hard
+        # constraint binds." Requires magnet_exclusion to already be
+        # configured (reuses its (d_nom, normal, jacobians) schedule
+        # unchanged -- this term never re-derives its own geometry).
+        self._magnet_clear_gain: float | None = None
+        self._magnet_clear_soft_radius: float | None = None
+        if magnet_exclusion_clearance is not None:
+            self._configure_magnet_exclusion_clearance(**magnet_exclusion_clearance)
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -344,6 +358,76 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         return lower, upper
 
     # ------------------------------------------------------------------
+    # soft clearance-cost term (2026-09-30): a SEPARATE mechanism from the
+    # hard magnet_exclusion constraint above. Root cause this closes: live
+    # instrumentation (2026-09-30 session) showed the hard constraint
+    # correctly guarantees d(q_cmd) >= radius_m -- it was NEVER violated in
+    # its own linearized sense, and the linearization error against the
+    # true nonlinear distance was consistently sub-millimetre -- yet the
+    # controller still rode the boundary for 15+ consecutive ticks with
+    # zero margin, because nothing in the cost function distinguishes
+    # d=0.01mm from d=10mm as long as the hard constraint is satisfied.
+    # Meanwhile a genuine redundant escape direction was measured
+    # (||N @ grad_d|| ~= 25-33mm/rad, N = tip-Jacobian nullspace projector)
+    # that the controller had no incentive to use. This term supplies that
+    # incentive: a per-horizon-stage quadratic penalty, active ONLY when
+    # this tick's own linearized clearance prediction falls inside
+    # [radius_m, soft_radius_m) -- gated fresh every solve against the
+    # SAME (Ec, Sc)-anchored d_hat the hard constraint itself uses, never
+    # against a stale/offline value. Does not touch the hard constraint's
+    # own radius_m or its rows in self.A at all.
+    def _configure_magnet_exclusion_clearance(
+        self, *, gain: float, soft_radius_m: float,
+    ) -> None:
+        if self._magnet_excl_radius is None:
+            raise ValueError(
+                "magnet_exclusion_clearance requires magnet_exclusion to be "
+                "configured too (this term reuses its (d_nom, normal, "
+                "jacobians) schedule unchanged; it never derives its own "
+                "geometry)."
+            )
+        gain = float(gain)
+        soft_radius = float(soft_radius_m)
+        if gain < 0.0 or not np.isfinite(gain):
+            raise ValueError("magnet_exclusion_clearance['gain'] must be finite and >= 0.")
+        if soft_radius <= self._magnet_excl_radius:
+            raise ValueError(
+                f"magnet_exclusion_clearance['soft_radius_m']={soft_radius} must exceed "
+                f"the hard magnet_exclusion radius_m={self._magnet_excl_radius} -- "
+                "otherwise the avoidance band is empty or inverted."
+            )
+        self._magnet_clear_gain = gain
+        self._magnet_clear_soft_radius = soft_radius
+
+    def _magnet_exclusion_clearance_qp_terms(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        zero = (np.zeros((self.nu, self.nu), dtype=float), np.zeros(self.nu, dtype=float))
+        if not self._magnet_clear_gain:
+            return zero
+        indices = self._reference_indices(control_index, future=True)
+        J = self._magnet_excl_jacobians[indices]                       # (N,3,6)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+        d_nom = self._magnet_excl_d_nom[indices]                        # (N,)
+        normal = self._magnet_excl_normal[indices]                      # (N,3)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+        c = np.einsum("nj,njk->nk", normal, J)                          # (N,6)
+
+        hessian = np.zeros((self.nu, self.nu), dtype=float)
+        linear = np.zeros(self.nu, dtype=float)
+        for j in range(self.N):
+            d_hat = d_nom[j] + c[j] @ (free_cmd[j] - q_nom[j])
+            if d_hat >= self._magnet_clear_soft_radius:
+                continue  # this stage's own commanded trajectory is already clear -- no penalty
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            a = c[j] @ self.Sc[stage_rows, :]                            # (nu,): d(d_j)/du
+            b = self._magnet_clear_soft_radius - d_hat                  # > 0 here, by the check above
+            # cost_j = gain * (soft_radius - d_j)^2 = gain * (b - a@u)^2
+            hessian += 2.0 * self._magnet_clear_gain * np.outer(a, a)
+            linear += -2.0 * self._magnet_clear_gain * b * a
+        return hessian, linear
+
+    # ------------------------------------------------------------------
     # magnet z-workspace bounds, wired directly into the QP (2026-09-28,
     # same day as the point-exclusion constraint above, closing the
     # identical blind spot for general magnet-workspace excursions rather
@@ -525,6 +609,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         )
         hessian = self._base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
         linear = base_linear + 2.0 * (G.T @ self.Qpbar @ constant_error)
+        if self._magnet_clear_gain:
+            clear_hessian, clear_linear = self._magnet_exclusion_clearance_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + clear_hessian
+            linear = linear + clear_linear
         hessian = 0.5 * (hessian + hessian.T)
         return hessian, linear, {
             "G": G, "constant_error": constant_error,

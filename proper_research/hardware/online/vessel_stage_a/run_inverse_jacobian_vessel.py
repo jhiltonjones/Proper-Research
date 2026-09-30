@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+from pathlib import Path
 
 import numpy as np
 
@@ -49,6 +50,28 @@ from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
 
 _RealStateStreamConfig = state_stream_mod.StateStreamConfig
+
+# 2026-09-30 fix: same bug documented in run_mpc_delay_aware_vessel.py's
+# module docstring ("fix 5", found live 2026-09-23) and in run_open_loop_
+# vessel.py (ported 2026-09-30) -- close_loop_path_follow.py's generic
+# planner<->robot frame-registration step silently picks up an UNRELATED
+# stale shape_centreline.npz (alphabetically first of 17 matches under
+# plans/, from plans/circle_15mm_2026-09-12/) and uses its un-raised tip0.z
+# to inject a spurious z-offset on top of the vessel reference's already-
+# correct desired_position_m. The two 2026-09-29 inverse-Jacobian runs this
+# script produced (vessel_v3_right0p5mm_invjac_nocontact[_v2]) predate this
+# fix -- their reported tracking error/workspace-box trips may carry a small
+# (<=5mm at that plan's near-zero z-raise) contribution from this bug on
+# top of the posture-drift finding. The vessel reference is already in
+# robot frame (built via real FK throughout build_vessel_planning_context),
+# so no registration is needed here -- bypass with an exact identity
+# transform, same as the MPC script.
+def _identity_fit_planner_to_robot(npz_path, start_tip_R, T_R_B):
+    return np.eye(3), np.zeros(3)
+
+
+pf._fit_planner_to_robot = _identity_fit_planner_to_robot
+pf._find_shape_npz = lambda plan_dir: Path(__file__)
 
 # 2026-09-29: derived from vessel_lumen_2026-09-29_v3_right0p5mm_mpc_
 # nocontact_floor220_20260929T195312Z's own q_meas_rad trajectory (639

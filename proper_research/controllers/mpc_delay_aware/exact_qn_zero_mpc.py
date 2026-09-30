@@ -63,6 +63,20 @@ class ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC)
         )
         hessian = base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
         linear = base_linear + 2.0 * (G.T @ self.Qpbar @ constant_error)
+        # 2026-09-30: this override rebuilds hessian/linear from scratch and
+        # does NOT call super()._dynamic_qp_terms_exec -- the parent class's
+        # magnet_exclusion_clearance hook (see delay_aware_mpc.py) would be
+        # silently skipped for this class (the one the live vessel
+        # controller actually uses) without this duplicate wiring. The hard
+        # magnet_exclusion/workspace constraints are unaffected by this --
+        # those live in _constraint_bounds_exec, which this class does not
+        # override.
+        if getattr(self, "_magnet_clear_gain", None):
+            clear_hessian, clear_linear = self._magnet_exclusion_clearance_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + clear_hessian
+            linear = linear + clear_linear
         hessian = 0.5 * (hessian + hessian.T)
         hessian = hessian + float(self.config.hessian_regularization) * np.eye(self.nu)
         zeros_proj = np.zeros((self.N, n, n), dtype=float)

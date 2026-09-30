@@ -1,0 +1,31 @@
+{
+  "manual_boundary_path": "/home/jack/Proper-Research/manual_vessel_boundaries.json",
+  "calibration_points_path": "/home/jack/Proper-Research/calibration_points.json",
+  "metres_per_pixel": 0.000370868128638602,
+  "known_calibration_distance_mm": 80.62257748298549,
+  "saved_axis_convention": "image_cartesian",
+  "positive_axis_signs": [
+    -1.0,
+    1.0
+  ],
+  "beam_axial_axis_R": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "beam_plane_normal_axis_R": [
+    0.0,
+    0.0,
+    -1.0
+  ],
+  "T_robot_beam_pose6": [
+    0.525575,
+    -0.670028,
+    0.02547700875064158,
+    0.0,
+    -1.5707963,
+    0.0
+  ],
+  "z_shift_applied_m": 0.04204400875064158,
+  "z_shift_note": "2026-09-29: rigid +42.0440mm z-shift applied to the ORIGINAL vessel_lumen_robot_frame.json centreline to match the beam-base/magnet-start z now taken from live joints (source: vessel_magnet_initial_position_live_2026-09-29_zraise.json). Radii and xy unchanged -- treats this as a rigid whole-rig raise, not a re-digitization."
+}

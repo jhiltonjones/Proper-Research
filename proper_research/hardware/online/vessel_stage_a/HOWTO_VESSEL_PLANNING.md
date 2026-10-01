@@ -6,10 +6,18 @@ position, trimming the centreline if needed, building the offline plan, and
 running the open-loop sanity check on hardware. All scripts referenced here
 live in `proper_research/hardware/online/vessel_stage_a/`.
 
-Everything below assumes `cd /home/jack/Proper-Research`, a live robot +
-camera connection, and the workspace physically raised +30mm (the
-`zraise_patch.apply(30.0)` convention every script here already applies
-internally — you don't need to do anything extra for that).
+Everything below assumes `cd /home/jack/Proper-Research` and a live robot +
+camera connection.
+
+**On the z-raise:** the +30mm hardcoded raise used to be applied
+internally by every script here. As of 2026-09-29/30 it's a parameter,
+`--z-raise-mm`, with **default 0.0 (unraised)** — pass whatever value
+matches your actual physical rig (`30.0` to reproduce the old raised
+workspace, `42.044008750641574` for the v4 raised setup, `0.0` for an
+unraised one). Get this wrong and every downstream script will silently
+misread real camera detections by the z-raise amount — see
+`HOWTO_CLOSED_LOOP_MPC.md` section 6 for the frame-registration symptom to
+watch for.
 
 ## 0. Background: what each file represents
 
@@ -53,6 +61,65 @@ used.
 **If the vision ROI/marker-detection coordinates need correcting** (e.g.
 `custom_area.json`, the red-marker search polygon), edit that file directly
 — it's independent of the lumen digitization above.
+
+## 1b. (If the physical vessel got bumped) Re-align it against the existing lumen file
+
+If the vessel phantom moved but you still trust the existing lumen file's
+*shape* (just not its position), you don't need to re-digitize from
+scratch — use the live overlay tool to physically move the vessel back
+into place instead:
+
+```bash
+python3 -m proper_research.hardware.online.vessel_stage_a.live_vessel_alignment_overlay \
+    --lumen-file vessel_lumen_robot_frame.json \
+    --z-raise-mm 0.0
+```
+
+This opens a live camera window with the lumen's centreline/walls
+(cyan/green/red) drawn on top, projected through the **same** calibration
+the live vision pipeline actually uses (`NewFrameTipMapper`'s `T_R_B` +
+`PlanarPixelCalibration` — not an approximation). Move the vessel until the
+drawn lines match its real walls, press `q`. `--z-raise-mm` must match
+whatever this lumen file was built against.
+
+If the vessel's shape itself changed (not just position) — or you don't
+trust the old digitization — just re-run step 1 instead and overwrite the
+lumen file, which is exactly what happened 2026-10-01: a fresh
+`vessel_lumen_robot_frame.json` was captured, which is a **different file**
+from any `_zraise42`/`_raised3cm`/etc. variant already sitting in the repo
+— check the file's own mtime and `provenance` block before reusing one you
+didn't just capture yourself, to make sure you're building against the
+vessel's *current* position, not a stale one.
+
+## 1c. (Optional) Shift the lumen centreline toward one wall (offline configuration change)
+
+This is the heavyweight way to bias the plan toward one wall -- it
+changes what Layer 1's optimizer is actually solved against (and what
+the contact-aware model treats as "the wall"), not just what the live
+controller tracks. If you only want to nudge a single closed-loop run's
+tracking target without rebuilding anything, use
+`run_mpc_delay_aware_vessel.py --right-shift-mm` instead -- see
+HOWTO_CLOSED_LOOP_MPC.md section 2b, which contrasts both options
+directly.
+
+```bash
+python -m proper_research.hardware.online.vessel_stage_a.shift_lumen_centerline \
+    --lumen-file vessel_lumen_robot_frame.json \
+    --shift-mm 1.0 --direction right \
+    --z-raise-mm 0.0 \
+    --out vessel_lumen_robot_frame_right1mm.json
+```
+
+Same tangent/normal "right" convention as the live overlay tool in
+section 1b (right = centreline shifted opposite the +90°-rotated local
+tangent); radii are left unchanged, only the centreline moves. `--z-raise-mm`
+must match the value this lumen file's own frame was built against, same
+rule as everywhere else in this doc. After shifting, treat the output file
+as a brand-new lumen file: rebuild the plan from it (step 4 below) and
+rebuild both Jacobian schedules from the new plan before running closed-loop
+MPC (HOWTO_CLOSED_LOOP_MPC.md section 2b, "Forcing a schedule rebuild") --
+the schedule cache does not know the lumen changed and will silently keep
+serving the old, now-wrong schedule if you reuse an old cache path.
 
 ## 2. (Optional) Trim the lumen if the plan shouldn't reach the true end
 
@@ -108,6 +175,7 @@ python -m proper_research.hardware.online.vessel_stage_a.build_vessel_plan \
     --lumen-file vessel_lumen_robot_frame_trimmed6mm.json \
     --start-position-json vessel_magnet_initial_position_live.json \
     --insertion-max-mm 65 \
+    --z-raise-mm 0.0 \
     --output-root plans/my_vessel_plan
 ```
 
@@ -115,7 +183,12 @@ This is slow (Layer 1 does one real nonlinear beam solve per centreline
 node) — run it in the background (`nohup timeout 7200 python3 ... &`) and
 watch the log. `all_nodes_feasible=True` at the end of Layer 1 means it's
 done; `False` means it fell through to Layer 2's recovery optimizer
-automatically (no action needed, just slower).
+automatically (no action needed, just slower). Budget real time for this:
+a 726-sample/80mm-insertion-max plan (2026-10-01) took **~1h48m** for Layer
+1 alone (6490s, logged as `[layer1] done in Ns`) before Layer 3's much
+faster time-parameterization pass — don't assume the ~90-150s figure
+quoted for *schedule* builds elsewhere in this doc set applies to the
+offline *plan* build; they're different stages with very different costs.
 
 Two things baked into this script that you generally shouldn't need to
 touch, but are worth knowing about:
@@ -178,6 +251,30 @@ preflight, will refuse to proceed anyway if the measured and expected
 insertion differ by more than `--insertion-tol-mm`, so this catches drift
 even if you forget — but retracting first avoids the failure.)
 
+**If the robot is currently far from the NEW plan's start pose** (e.g. you
+just finished a different plan, or the robot was jogged manually), the
+straight-line reset path preflight checks can refuse outright with
+`RuntimeError: refusing reset: ... would violate a magnet safety
+constraint`. This is routine, not a sign anything is wrong — the preflight
+would rather refuse than risk cutting through the exclusion zone
+mid-motion. `run_open_loop_vessel.py` already retries through a retreat
+waypoint automatically; `run_mpc_delay_aware_vessel.py` does **not** (see
+`HOWTO_CLOSED_LOOP_MPC.md` section 6 for the manual fix).
+
+**Reading the result**: don't just check `stop_reason`, look at the
+tracking-error plot/CSV. A plan that completes open-loop with a small,
+genuinely random-looking error is healthy; a plan whose error grows
+**steadily in one direction** (e.g. one axis alone drifting several mm
+while the others stay flat) over the course of the path is worth plotting
+properly before trusting it — top-down (x,y) path vs. desired, and each
+error component vs. insertion depth, are usually enough to tell a real
+frame/registration offset (near-constant or path-shape-mismatched error
+from the start) apart from ordinary open-loop feedforward model error
+(error that tracks the path shape well but accumulates gradually with
+insertion depth — exactly what closed-loop MPC exists to correct). A
+~3-4mm final error on an ~70-80mm-insertion open-loop run is not unusual
+for this beam and is not on its own a reason to suspect a calibration bug.
+
 ## 6. Run the closed-loop MPC
 
 Once the open-loop check passes, see `HOWTO_CLOSED_LOOP_MPC.md` in this
@@ -200,8 +297,10 @@ and want to check the model still tracks reality before trusting it.
 
 | Script | Purpose |
 |---|---|
+| `live_vessel_alignment_overlay.py` | Live camera overlay of an existing lumen file, for physically re-aligning a moved vessel |
 | `capture_live_start_position.py` | Record the robot's current pose as a plan start position |
 | `trim_vessel_lumen.py` | Trim a fixed length off one end of a lumen file |
+| `shift_lumen_centerline.py` | Rigidly shift a lumen file's centreline toward one wall (offline configuration change; see section 1c) |
 | `build_vessel_plan.py` | Run the full offline planner (Layer 1→2→3) |
 | `run_open_loop_vessel.py` | Live open-loop feedforward sanity check |
 | `checkpoint_beam_shape_campaign.py` | Static-checkpoint predicted-vs-measured beam-shape data collection |

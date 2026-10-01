@@ -113,6 +113,9 @@ def _worker_main(
     enable_exact_qn_zero: bool = False,
     exact_qn_zero_config_kwargs: Optional[dict] = None,
     magnet_exclusion_kwargs: Optional[dict] = None,
+    magnet_workspace_kwargs: Optional[dict] = None,
+    magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+    right_shift_m: float = 0.0,
 ) -> None:
     """Entry point for Process B. Constructs its OWN MPC instances (old +
     new, so one worker can answer requests for either condition -- the
@@ -247,6 +250,8 @@ def _worker_main(
             gamma=0.0, reference=reference, config=exact_qn0_mpc_config, beam_config=beam_config,
             reference_position_jacobians=schedule, delay_samples=delay_samples, beta_d=beta_d,
             magnet_exclusion=magnet_exclusion_kwargs,
+            magnet_workspace=magnet_workspace_kwargs,
+            magnet_exclusion_clearance=magnet_exclusion_clearance_kwargs,
         )
         print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
               f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
@@ -255,6 +260,15 @@ def _worker_main(
             print(f"[worker] magnet-exclusion constraint wired INTO the QP "
                   f"(radius={magnet_exclusion_kwargs['radius_m']*1e3:.1f}mm, "
                   f"min nominal margin over reference={margin_mm:.1f}mm)")
+        if magnet_workspace_kwargs is not None:
+            print(f"[worker] magnet z-workspace constraint wired INTO the QP "
+                  f"(z in [{magnet_workspace_kwargs['z_min_m']*1e3:.1f}, "
+                  f"{magnet_workspace_kwargs['z_max_m']*1e3:.1f}]mm)")
+        if magnet_exclusion_clearance_kwargs is not None:
+            print(f"[worker] magnet-exclusion CLEARANCE COST wired INTO the QP "
+                  f"(gain={magnet_exclusion_clearance_kwargs['gain']:.3g}, "
+                  f"soft_radius={magnet_exclusion_clearance_kwargs['soft_radius_m']*1e3:.1f}mm, "
+                  f"active only below soft_radius, separate from the hard exclusion radius above)")
 
     def _apply_frame_transform(controller, R_fit: np.ndarray, t_fit: np.ndarray) -> None:
         """Planner(P)->live-robot(R) frame-mismatch fix (2026-09-21): p_des
@@ -289,6 +303,39 @@ def _worker_main(
             replace_kwargs["desired_tangent"] = tan_R
         controller.reference = dc_replace(controller.reference, **replace_kwargs)
         controller.nominal_reference_positions_m = des_R.copy()
+
+    def _apply_right_shift(controller, shift_m: float) -> None:
+        """2026-10-01: shifts ONLY the live tracking target
+        (controller.reference.desired_position_m), a fixed `shift_m` toward
+        the "right" wall, leaving the offline plan (q_nom/timing/schedule),
+        the vessel/wall model the contact Jacobian and magnet-exclusion
+        constraint use, and nominal_reference_positions_m untouched -- for
+        the exact_qn0 controller this is the whole effect, since Q_N=0
+        already means nominal_reference_positions_m feeds nothing (P_N=P_R=0
+        at every stage). Must run AFTER _apply_frame_transform (operates on
+        the already robot-frame-registered desired_position_m). "Right" use
+        the SAME convention as live_vessel_alignment_overlay.py / this
+        project's draw_centerline_radius_overlay (left=green/right=red):
+        normal = +90deg rotation of the local in-plane (robot xy) tangent,
+        right = centerline - shift_m * normal. Computed directly in robot
+        frame (the vessel is planar in robot z here, consistent with every
+        other robot-frame lumen/contact computation this session)."""
+        if shift_m == 0.0:
+            return
+        from dataclasses import replace as dc_replace
+
+        des = np.asarray(controller.reference.desired_position_m, dtype=float)
+        tangent = np.gradient(des[:, :2], axis=0)
+        tnorm = np.linalg.norm(tangent, axis=1, keepdims=True)
+        tangent = tangent / np.clip(tnorm, 1e-9, None)
+        normal = np.column_stack([-tangent[:, 1], tangent[:, 0]])
+        des_shifted = des.copy()
+        des_shifted[:, :2] = des[:, :2] - shift_m * normal
+        controller.reference = dc_replace(controller.reference, desired_position_m=des_shifted)
+        print(f"[worker] right-shift applied to the LIVE TRACKING TARGET only: "
+              f"{shift_m*1e3:.2f}mm toward the right wall (plan/schedule/wall-model untouched); "
+              f"max displacement from original target = "
+              f"{np.linalg.norm(des_shifted - des, axis=1).max()*1e3:.3f}mm")
 
     # warm-up: one real solve of each kind, at the reference's own start
     # state, result discarded -- purely to force one-time lazy costs
@@ -363,6 +410,7 @@ def _worker_main(
                 _apply_frame_transform(null_controller, R_fit, t_fit)
             if exact_qn0_controller is not None:
                 _apply_frame_transform(exact_qn0_controller, R_fit, t_fit)
+                _apply_right_shift(exact_qn0_controller, right_shift_m)
             frame_ready = True
             print(f"[worker] frame transform applied: |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm "
                   f"det(R_fit)={det:+.6f} -- p_des/p_nominal now frame-consistent, frame_ready=True")
@@ -431,16 +479,40 @@ def _worker_main(
                     previous_input=np.asarray(req["previous_input"], dtype=float),
                 )
             t_solve_ms = (time.monotonic() - t0) * 1e3
+            # Extra diagnostic-only fields (2026-09-28 instrumentation pass):
+            # all read from values `step` already computed -- nothing here
+            # feeds back into the solve, so a missing/odd value can never
+            # change what gets commanded. `jacobian_used` only exists on
+            # `DelayAwareBeamOutputMPCStep` (not the legacy "old" controller's
+            # step type), hence the getattr default.
+            jacobian_used = getattr(step, "jacobian_used", None)
             conn.send({
                 "seq": seq, "status": "ok" if step.success else "infeasible",
                 "command": np.asarray(step.command, dtype=float),
                 "predicted_beam_positions": np.asarray(step.predicted_beam_positions, dtype=float),
                 "t_solve_ms": t_solve_ms, "error": None,
+                "predicted_states": np.asarray(step.predicted_states, dtype=float),
+                "qp_objective": float(step.objective),
+                "qp_status": str(step.status),
+                "qp_success": bool(step.success),
+                "qp_iterations": int(step.iterations),
+                "qp_solve_time_s": float(step.solve_time_s),
+                "qp_primal_residual": float(step.primal_residual),
+                "qp_dual_residual": float(step.dual_residual),
+                "jacobian_used": None if jacobian_used is None else np.asarray(jacobian_used, dtype=float),
+                "dual_y": (
+                    None if getattr(step, "dual_y", None) is None
+                    else np.asarray(step.dual_y, dtype=float)
+                ),
             })
         except Exception as exc:  # noqa: BLE001 -- must never crash silently, always reply
             conn.send({
                 "seq": seq, "status": "error", "command": None,
                 "predicted_beam_positions": None, "t_solve_ms": float("nan"), "error": repr(exc),
+                "predicted_states": None, "qp_objective": float("nan"), "qp_status": "error",
+                "qp_success": False, "qp_iterations": 0, "qp_solve_time_s": float("nan"),
+                "qp_primal_residual": float("nan"), "qp_dual_residual": float("nan"),
+                "jacobian_used": None, "dual_y": None,
             })
 
 
@@ -467,6 +539,9 @@ class MPCWorkerHandle:
         enable_exact_qn_zero: bool = False,
         exact_qn_zero_config_kwargs: Optional[dict] = None,
         magnet_exclusion_kwargs: Optional[dict] = None,
+        magnet_workspace_kwargs: Optional[dict] = None,
+        magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+        right_shift_m: float = 0.0,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -483,6 +558,9 @@ class MPCWorkerHandle:
                 enable_exact_qn_zero=enable_exact_qn_zero,
                 exact_qn_zero_config_kwargs=exact_qn_zero_config_kwargs,
                 magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+                magnet_workspace_kwargs=magnet_workspace_kwargs,
+                magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+                right_shift_m=right_shift_m,
             ),
         )
         self._proc.start()

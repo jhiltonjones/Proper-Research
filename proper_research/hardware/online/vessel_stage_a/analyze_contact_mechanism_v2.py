@@ -120,14 +120,28 @@ def beam_contact_profile(adapter, lumen_query, q6: np.ndarray, L_m: float):
     arc = np.concatenate([[0.0], np.cumsum(seg_len)])
     total_len = arc[-1] if arc[-1] > 1e-9 else 1.0
 
+    M = centreline.shape[0]
     delta, Rloc, _, grad_delta, _ = lumen_query.closest_many_with_gradients(centreline, window=None)
     c = Rloc - delta - R_BEAM_M  # (M,), same sign convention as v1's d_w
-    i_min = int(np.argmin(c))
+    # 2026-09-30 fix (first real end-to-end run against live data, per this
+    # module's own "not yet exercised" caveat): node 0 of `centreline` is
+    # the beam's RIGID ANCHOR (== the fixed beam-base pivot the whole
+    # session's magnet-exclusion geometry is built from) -- it does not
+    # move with q/insertion at all, so its clearance to the nearest lumen
+    # sample is a CONSTANT, tick-independent artifact of the anchor's own
+    # fixed position, not a measurement of beam-wall contact. Found via a
+    # real replay where every single tick of a run reported an identical
+    # c_min with s_frac==0.0 -- the anchor was trivially winning every
+    # search. Excluded from the closest-approach search; genuine contact
+    # is only meaningful over the deflectable part of the beam.
+    if M > 1:
+        i_min = int(np.argmin(c[1:])) + 1
+    else:
+        i_min = int(np.argmin(c))
     c_min = float(c[i_min])
     s_frac = float(arc[i_min] / total_len)
     normal_c = grad_delta[i_min]
 
-    M = centreline.shape[0]
     if i_min == 0:
         tangent_c = centreline[1] - centreline[0]
     elif i_min == M - 1:

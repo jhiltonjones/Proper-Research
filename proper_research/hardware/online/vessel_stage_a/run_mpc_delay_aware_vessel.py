@@ -324,6 +324,7 @@ def spawn_and_warm_worker(
     magnet_exclusion_clearance_kwargs: dict | None = None,
     solver_time_limit_s: float = 0.0,
     zero_input_reference_in_r: bool = False,
+    right_shift_m: float = 0.0,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -395,6 +396,7 @@ def spawn_and_warm_worker(
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+        right_shift_m=right_shift_m,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -403,6 +405,10 @@ def spawn_and_warm_worker(
           f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm, "
           f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}, "
           f"magnet-workspace-in-qp={'ON' if magnet_workspace_kwargs is not None else 'OFF'}")
+    if right_shift_m:
+        print(f"[vessel-mpc] LIVE TRACKING TARGET right-shift: {right_shift_m*1e3:.2f}mm "
+              f"(plan/schedule/wall-model NOT rebuilt -- only the controller's own "
+              f"desired_position_m target moves; applied once set_frame_transform() lands)")
     worker.require_frame_transform()
     print("[vessel-mpc] worker will refuse solves until set_frame_transform() is called "
           "(happens once preflight computes the live registration)")
@@ -651,6 +657,17 @@ def main() -> None:
                          "the runtime floor (210/213/225mm all tripped at the same "
                          "point). See spawn_and_warm_worker's "
                          "diagnostic_zero_input_reference_in_R comment.")
+    p.add_argument("--right-shift-mm", type=float, default=0.0,
+                    help="2026-10-01: shifts ONLY the live controller's tracking target "
+                         "(reference.desired_position_m) this many mm toward the 'right' "
+                         "wall (same left=green/right=red convention as "
+                         "live_vessel_alignment_overlay.py: right = centerline - "
+                         "shift*normal, normal = +90deg rotation of the local in-plane "
+                         "tangent). Does NOT rebuild the offline plan, the Jacobian "
+                         "schedule, or the vessel/wall model the contact Jacobian and "
+                         "magnet-exclusion constraint see -- only what the optimizer is "
+                         "trying to track moves. 0.0 (default) = no shift, bit-identical "
+                         "to not passing this flag at all.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
     p.add_argument("--magnet-rise-limit-mm", type=float, default=_MAGNET_RISE_LIMIT_M * 1e3,
@@ -850,6 +867,7 @@ def main() -> None:
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         solver_time_limit_s=args.solver_time_limit_s,
         zero_input_reference_in_r=args.zero_input_reference_in_r,
+        right_shift_m=args.right_shift_mm * 1.0e-3,
     )
     print(f"[vessel-mpc] R-term v_ref: "
           f"{'ZEROED (v^T R v)' if args.zero_input_reference_in_r else 'offline plan (v-v_ref)^T R (v-v_ref)'}")
@@ -889,8 +907,21 @@ def main() -> None:
     # flange trajectories (Baseline/ablation-A/ablation-B, 2026-09-30),
     # +/-30mm margin -- same principle as run_inverse_jacobian_vessel.py's
     # own 2026-09-29 fix for the identical class of bug.
-    cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
-    cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)
+    # 2026-10-01: made conditional on z_raise_mm -- the box above was tuned
+    # for the raised (z_raise=42mm) v4 plan's own flange excursion and is
+    # WRONG for an unraised plan (a fresh unraised open-loop check measured
+    # flange z down to 0.272m, already below this box's old z_min=0.3067m,
+    # i.e. it would have tripped immediately on normal motion). Derived
+    # from that same unraised open-loop run's flange x/y/z range
+    # (0.445-0.596 / -0.768..-0.608 / 0.272-0.331), +/-40mm margin (wider
+    # than the v4 box's +/-30mm since this has no closed-loop data yet to
+    # confirm the margin is enough).
+    if args.z_raise_mm < 10.0:
+        cfg.workspace_xyz_min_m = (0.405, -0.808, 0.232)
+        cfg.workspace_xyz_max_m = (0.636, -0.568, 0.371)
+    else:
+        cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
+        cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)
 
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True

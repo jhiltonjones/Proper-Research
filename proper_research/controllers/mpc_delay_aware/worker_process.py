@@ -115,6 +115,7 @@ def _worker_main(
     magnet_exclusion_kwargs: Optional[dict] = None,
     magnet_workspace_kwargs: Optional[dict] = None,
     magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+    right_shift_m: float = 0.0,
 ) -> None:
     """Entry point for Process B. Constructs its OWN MPC instances (old +
     new, so one worker can answer requests for either condition -- the
@@ -303,6 +304,39 @@ def _worker_main(
         controller.reference = dc_replace(controller.reference, **replace_kwargs)
         controller.nominal_reference_positions_m = des_R.copy()
 
+    def _apply_right_shift(controller, shift_m: float) -> None:
+        """2026-10-01: shifts ONLY the live tracking target
+        (controller.reference.desired_position_m), a fixed `shift_m` toward
+        the "right" wall, leaving the offline plan (q_nom/timing/schedule),
+        the vessel/wall model the contact Jacobian and magnet-exclusion
+        constraint use, and nominal_reference_positions_m untouched -- for
+        the exact_qn0 controller this is the whole effect, since Q_N=0
+        already means nominal_reference_positions_m feeds nothing (P_N=P_R=0
+        at every stage). Must run AFTER _apply_frame_transform (operates on
+        the already robot-frame-registered desired_position_m). "Right" use
+        the SAME convention as live_vessel_alignment_overlay.py / this
+        project's draw_centerline_radius_overlay (left=green/right=red):
+        normal = +90deg rotation of the local in-plane (robot xy) tangent,
+        right = centerline - shift_m * normal. Computed directly in robot
+        frame (the vessel is planar in robot z here, consistent with every
+        other robot-frame lumen/contact computation this session)."""
+        if shift_m == 0.0:
+            return
+        from dataclasses import replace as dc_replace
+
+        des = np.asarray(controller.reference.desired_position_m, dtype=float)
+        tangent = np.gradient(des[:, :2], axis=0)
+        tnorm = np.linalg.norm(tangent, axis=1, keepdims=True)
+        tangent = tangent / np.clip(tnorm, 1e-9, None)
+        normal = np.column_stack([-tangent[:, 1], tangent[:, 0]])
+        des_shifted = des.copy()
+        des_shifted[:, :2] = des[:, :2] - shift_m * normal
+        controller.reference = dc_replace(controller.reference, desired_position_m=des_shifted)
+        print(f"[worker] right-shift applied to the LIVE TRACKING TARGET only: "
+              f"{shift_m*1e3:.2f}mm toward the right wall (plan/schedule/wall-model untouched); "
+              f"max displacement from original target = "
+              f"{np.linalg.norm(des_shifted - des, axis=1).max()*1e3:.3f}mm")
+
     # warm-up: one real solve of each kind, at the reference's own start
     # state, result discarded -- purely to force one-time lazy costs
     # (OSQP setup, BLAS thread-pool spin-up, etc.) to happen now.
@@ -376,6 +410,7 @@ def _worker_main(
                 _apply_frame_transform(null_controller, R_fit, t_fit)
             if exact_qn0_controller is not None:
                 _apply_frame_transform(exact_qn0_controller, R_fit, t_fit)
+                _apply_right_shift(exact_qn0_controller, right_shift_m)
             frame_ready = True
             print(f"[worker] frame transform applied: |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm "
                   f"det(R_fit)={det:+.6f} -- p_des/p_nominal now frame-consistent, frame_ready=True")
@@ -506,6 +541,7 @@ class MPCWorkerHandle:
         magnet_exclusion_kwargs: Optional[dict] = None,
         magnet_workspace_kwargs: Optional[dict] = None,
         magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+        right_shift_m: float = 0.0,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -524,6 +560,7 @@ class MPCWorkerHandle:
                 magnet_exclusion_kwargs=magnet_exclusion_kwargs,
                 magnet_workspace_kwargs=magnet_workspace_kwargs,
                 magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+                right_shift_m=right_shift_m,
             ),
         )
         self._proc.start()

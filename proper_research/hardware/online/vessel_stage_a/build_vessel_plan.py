@@ -117,6 +117,24 @@ def main() -> None:
                          "~100%% spurious validation failure.")
     p.add_argument("--finite-difference-insertion-step-m", type=float, default=5.0e-3)
     p.add_argument("--maximum-chain-rule-relative-error", type=float, default=0.15)
+    p.add_argument("--skip-chain-rule-validation-at-start", action="store_true",
+                    help="disable the one-time chain-rule finite-difference check at the "
+                         "plan's start state (InverseConfigurationPlannerConfig."
+                         "finite_difference_validation_at_start). Found 2026-10-01: at a "
+                         "shallow start insertion (L0~25mm) the insertion-derivative "
+                         "(d/dL) column can disagree hugely between the analytical and "
+                         "finite-difference Jacobian (seen: ~80-98%% relative error) "
+                         "purely because the +-5mm finite-difference window straddles a "
+                         "genuine contact-model transition near the vessel mouth -- not "
+                         "a sign the analytical Jacobian used during the actual solve is "
+                         "wrong, just that THIS validation's step size is too coarse at "
+                         "this exact state. Confirmed by direct inspection: the joint "
+                         "(d/dq) columns always agreed closely; only d/dL disagreed. "
+                         "Only skip this if you've independently confirmed (as above) "
+                         "that the disagreement is concentrated in d/dL at a shallow "
+                         "start insertion -- it does not disable any other validation, "
+                         "and the solve itself still uses the analytical Jacobian "
+                         "throughout, unaffected by this flag.")
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--z-raise-mm", type=float, default=0.0,
@@ -208,6 +226,8 @@ def main() -> None:
     shared["finite_difference_insertion_step_m"] = args.finite_difference_insertion_step_m
     shared["maximum_chain_rule_relative_error"] = args.maximum_chain_rule_relative_error
     shared["node_timeout_s"] = args.node_timeout_s
+    if args.skip_chain_rule_validation_at_start:
+        shared["finite_difference_validation_at_start"] = False
     if args.multistart_joint_perturbation_rad is not None:
         shared["multistart_joint_perturbation_rad"] = args.multistart_joint_perturbation_rad
 

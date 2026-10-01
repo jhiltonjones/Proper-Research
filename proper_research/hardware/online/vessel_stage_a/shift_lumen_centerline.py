@@ -43,12 +43,9 @@ import numpy as np
 
 def shift_lumen(C_R: np.ndarray, shift_m: float, direction: str, z_raise_mm: float):
     from proper_research.hardware.online.vessel_stage_a import common
-    from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import (
-        _patch_state_stream_config,
-    )
     from proper_research.hardware.online.state_stream import NewFrameTipMapper
 
-    _patch_state_stream_config(z_raise_mm)
+    common.Z_RAISE_M = z_raise_mm / 1000.0
     scfg = common._raised_stream_stream_config()
     mapper = NewFrameTipMapper(scfg)
     T_R_B = mapper.T_R_B

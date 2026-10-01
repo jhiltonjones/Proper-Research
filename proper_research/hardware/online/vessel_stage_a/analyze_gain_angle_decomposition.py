@@ -144,6 +144,106 @@ def decompose_run(run: dict) -> dict:
     )
 
 
+def longest_true_streak(bad: np.ndarray) -> int:
+    """Longest run of consecutive True values in `bad` (raw tick-index order).
+    A sub-threshold (invalid, ||m||<MIN_MOTION_M) tick is treated as `False`
+    here (i.e. it breaks a streak) -- we have no directional information for
+    it, so it cannot be counted as "bad", but silently skipping it instead of
+    breaking the streak would understate how CONSECUTIVE the real controller
+    ticks actually were. This is a deliberate, conservative convention."""
+    best = cur = 0
+    for b in bad:
+        cur = cur + 1 if b else 0
+        best = max(best, cur)
+    return best
+
+
+def tail_metrics(theta_deg: np.ndarray, valid: np.ndarray, window_mask: np.ndarray | None = None) -> dict:
+    """p50/p90/p95/p99/max, %>60, %>90, longest >90-streak for one
+    (run, model, insertion-window) cell. `window_mask` further restricts
+    which raw ticks are eligible (insertion-depth subsetting); streaks are
+    computed over the RAW tick order within that window (not compressed),
+    so a window boundary can break a streak that straddles it -- intentional,
+    since a streak split across e.g. the 48mm boundary isn't really evidence
+    about what happens inside the 56-65mm window specifically."""
+    mask = valid if window_mask is None else (valid & window_mask)
+    theta_in_window = np.where(window_mask, theta_deg, np.nan) if window_mask is not None else theta_deg
+    bad90 = mask & (theta_deg > 90.0)
+    bad90_windowed = bad90 if window_mask is None else (bad90 & window_mask)
+    v = theta_in_window[mask] if window_mask is not None else theta_deg[mask]
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return dict(n=0, p50=np.nan, p90=np.nan, p95=np.nan, p99=np.nan, max=np.nan,
+                    pct_gt60=np.nan, pct_gt90=np.nan, longest_streak_gt90=0)
+    return dict(
+        n=int(v.size),
+        p50=float(np.percentile(v, 50)), p90=float(np.percentile(v, 90)),
+        p95=float(np.percentile(v, 95)), p99=float(np.percentile(v, 99)),
+        max=float(np.max(v)),
+        pct_gt60=float(100.0 * np.mean(v > 60.0)),
+        pct_gt90=float(100.0 * np.mean(v > 90.0)),
+        longest_streak_gt90=longest_true_streak(bad90_windowed if window_mask is not None else bad90),
+    )
+
+
+def s_wrong_scores(theta_deg: np.ndarray, m_norm_mm: np.ndarray, valid: np.ndarray,
+                    window_mask: np.ndarray | None = None) -> tuple[float, float]:
+    """S_wrong = sum(max(0,-cos theta)), S_wrong_w = sum(||m|| * max(0,-cos theta)).
+    cos(theta) derived from the already-computed theta_deg (round-trips
+    through arccos/cos to ~1e-10, negligible for this diagnostic) rather than
+    recomputing the dot products from scratch."""
+    mask = valid if window_mask is None else (valid & window_mask)
+    th = theta_deg[mask]
+    finite = np.isfinite(th)
+    th = th[finite]
+    if th.size == 0:
+        return 0.0, 0.0
+    cos_t = np.cos(np.radians(th))
+    wrong = np.maximum(0.0, -cos_t)
+    m = m_norm_mm[mask][finite]
+    return float(np.sum(wrong)), float(np.sum(m * wrong))
+
+
+def insertion_mm_for_run(run: dict) -> np.ndarray:
+    """Insertion depth (mm) at the START of each per-tick diff interval --
+    z_meas[:,6] is insertion in metres (state7's last component); the diffs
+    p/m/theta are indexed like z_meas[:-1] (see decompose_run)."""
+    return np.asarray(run["z_meas"], dtype=float)[:-1, 6] * 1e3
+
+
+def run_outcome(stop_reason: str) -> str:
+    return "success" if stop_reason == "path_complete" else "fail"
+
+
+def print_tail_table(title: str, keys: list, decomposed: dict, replay: dict,
+                      window: tuple[float, float] | None = None, rep_label_prefix: str = "") -> None:
+    print(f"\n  -- {title} --")
+    if window is not None:
+        print(f"     insertion window: {window[0]:.0f}-{window[1]:.0f}mm")
+    header = (f"{'rep':<14}{'outcome':<9}{'model':<5}{'n':>5}  {'p50':>6} {'p90':>6} {'p95':>6} "
+              f"{'p99':>6} {'max':>7}  {'%>60':>6} {'%>90':>6}  {'streak':>7}  {'S_wrong':>9} {'S_wrong_w(mm)':>14}")
+    print("     " + header)
+    for key in keys:
+        cond, rep = key
+        d = decomposed[key]
+        outcome = run_outcome(d["stop_reason"])
+        run = replay[key]
+        ins_mm = insertion_mm_for_run(run)
+        wmask = None
+        if window is not None:
+            wmask = (ins_mm >= window[0]) & (ins_mm <= window[1])
+        for model_name in ("C", "NC"):
+            theta = d[model_name]["theta_deg"]
+            valid = d["valid"]
+            tm = tail_metrics(theta, valid, wmask)
+            sw, sww = s_wrong_scores(theta, d["m_norm_mm"], valid, wmask)
+            label = f"{rep_label_prefix}{rep}"
+            print(f"     {label:<14}{outcome:<9}{model_name:<5}{tm['n']:>5}  "
+                  f"{tm['p50']:>6.1f} {tm['p90']:>6.1f} {tm['p95']:>6.1f} {tm['p99']:>6.1f} "
+                  f"{tm['max']:>7.1f}  {tm['pct_gt60']:>6.1f} {tm['pct_gt90']:>6.1f}  "
+                  f"{tm['longest_streak_gt90']:>7d}  {sw:>9.2f} {sww:>14.3f}")
+
+
 def summarize(values: np.ndarray) -> str:
     v = values[np.isfinite(values)]
     if v.size == 0:
@@ -265,6 +365,58 @@ def main() -> None:
     excess_C = pf["C"]["g_n"][v] - pf["g_n_real"][v]
     print(f"  excess (g_n_NC - g_n_real): {summarize(excess_NC)}")
     print(f"  excess (g_n_C  - g_n_real): {summarize(excess_C)}")
+
+    # ---- tail / persistence analysis (2026-10-01 user follow-up) ----
+    # Question: is NC failure caused by a generally worse Jacobian (higher
+    # median/typical error), or by a small number of catastrophic predictions
+    # -- and specifically, does PERSISTENCE (consecutive >90 deg ticks) rather
+    # than peak severity (raw max) distinguish failed from successful runs?
+    print("\n" + "=" * 100)
+    print("TAIL + PERSISTENCE ANALYSIS (p90/p95/p99, max, %>60, %>90, longest >90deg streak, S_wrong)")
+    print("=" * 100)
+
+    nc_keys_ordered = [("nocontact", r) for r in range(1, 6)]
+    contact_keys_ordered = [("contact", r) for r in range(1, 6)]
+
+    print_tail_table("Whole-run, all 5 no-contact reps (real outcomes, not assumed)",
+                      nc_keys_ordered, decomposed, replay, window=None, rep_label_prefix="NC")
+    print_tail_table("Whole-run, all 5 contact reps (for comparison)",
+                      contact_keys_ordered, decomposed, replay, window=None, rep_label_prefix="C")
+    print_tail_table("Insertion window 48-65mm, no-contact reps",
+                      nc_keys_ordered, decomposed, replay, window=(48.0, 65.0), rep_label_prefix="NC")
+    print_tail_table("Insertion window 56-65mm (critical sub-window), no-contact reps",
+                      nc_keys_ordered, decomposed, replay, window=(56.0, 65.0), rep_label_prefix="NC")
+
+    # persist tail metrics alongside the existing per-tick decomposition
+    for key in decomposed:
+        run = replay[key]
+        ins_mm = insertion_mm_for_run(run)
+        d = decomposed[key]
+        d["tail"] = {}
+        for win_name, win in (("whole_run", None), ("ins_48_65mm", (48.0, 65.0)), ("ins_56_65mm", (56.0, 65.0))):
+            wmask = None if win is None else ((ins_mm >= win[0]) & (ins_mm <= win[1]))
+            d["tail"][win_name] = {}
+            for model_name in ("C", "NC"):
+                theta = d[model_name]["theta_deg"]
+                tm = tail_metrics(theta, d["valid"], wmask)
+                sw, sww = s_wrong_scores(theta, d["m_norm_mm"], d["valid"], wmask)
+                tm["S_wrong"] = sw
+                tm["S_wrong_w_mm"] = sww
+                d["tail"][win_name][model_name] = tm
+    with open(OUT_PKL, "wb") as f:
+        pickle.dump(decomposed, f)
+    print(f"\n(re-wrote {OUT_PKL} with tail metrics added under decomposed[key]['tail'])")
+
+    # explicit persistence-vs-extremity verdict for NC, whole run
+    print("\n" + "-" * 100)
+    print("PERSISTENCE-VS-EXTREMITY VERDICT (no-contact model, whole run)")
+    print("-" * 100)
+    for key in nc_keys_ordered:
+        d = decomposed[key]
+        t = d["tail"]["whole_run"]["NC"]
+        outcome = run_outcome(d["stop_reason"])
+        print(f"  NC{key[1]} ({outcome:7s}): p95={t['p95']:6.1f}  p99={t['p99']:6.1f}  "
+              f"max={t['max']:6.1f}  longest>90streak={t['longest_streak_gt90']:3d}")
 
 
 if __name__ == "__main__":

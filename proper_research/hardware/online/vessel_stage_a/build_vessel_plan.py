@@ -145,6 +145,12 @@ def main() -> None:
                          "checkpoint_beam_shape_campaign.measure_current_insertion_mm) "
                          "when starting a plan from wherever the robot/beam actually is "
                          "right now, rather than assuming the old default.")
+    p.add_argument("--lock-magnet-z", action="store_true",
+                    help="pin the source magnet's world-Z to exactly its start value for "
+                         "the whole plan (floor AND ceiling, not just the default "
+                         "no-decrease floor) -- InverseConfigurationPlannerConfig."
+                         "enforce_magnet_z_fixed. Use when the physical setup requires the "
+                         "magnet to stay on a single Z plane throughout.")
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--z-raise-mm", type=float, default=0.0,
                     help="rigid z-shift applied to the beam-base pivot (and, via "
@@ -240,6 +246,8 @@ def main() -> None:
     shared["node_timeout_s"] = args.node_timeout_s
     if args.skip_chain_rule_validation_at_start:
         shared["finite_difference_validation_at_start"] = False
+    if args.lock_magnet_z:
+        shared["enforce_magnet_z_fixed"] = True
     if args.multistart_joint_perturbation_rad is not None:
         shared["multistart_joint_perturbation_rad"] = args.multistart_joint_perturbation_rad
 

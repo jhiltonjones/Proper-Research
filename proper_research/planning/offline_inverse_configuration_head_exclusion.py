@@ -250,6 +250,11 @@ class InverseConfigurationPlannerConfig:
     # alongside the lumen exclusion via _CompositeExclusionConstraint (see
     # below) -- enabled by default so a caller has to opt OUT, not in.
     enforce_magnet_z_no_decrease: bool = True
+    # 2026-10-02: stronger than the above -- pins magnet world-Z to EXACTLY
+    # its start value for the whole plan (both floor AND ceiling at z0),
+    # not just "never decrease". Requested so the offline configuration's
+    # own redundant-DOF resolution cannot drift the magnet in Z at all.
+    enforce_magnet_z_fixed: bool = False
     # Magnet world-Z may never drop below its value at the plan's initial
     # state (state0) -- "may only rise in Z, never lower" per the documented
     # physical rule. Not a user-set target; computed from state0 at build time.
@@ -996,6 +1001,42 @@ class _MagnetZFloorConstraint:
         return z, margin, bool(margin >= -1.0e-6)
 
 
+class _MagnetZCeilingConstraint:
+    """Hard SLSQP inequality: magnet world-Z must never rise above z_ceiling_m.
+
+    2026-10-02: the mirror image of ``_MagnetZFloorConstraint`` above --
+    composing BOTH with the same z0 value pins the magnet's Z exactly at
+    its start value throughout the plan (requested so the offline
+    configuration cannot drift in Z at all, not just "never decrease").
+
+        g(state) = (z_ceiling_m - position(state)[2]) / z_scale_m   >= 0
+    """
+
+    def __init__(self, *, provider: _MagnetPositionProvider, z_ceiling_m: float,
+                 z_scale_m: float = 0.05):
+        self.provider = provider
+        self.z_ceiling_m = float(z_ceiling_m)
+        self.z_scale_m = float(z_scale_m)
+        if self.z_scale_m <= 0.0 or not math.isfinite(self.z_scale_m):
+            raise ValueError("z_scale_m must be finite and positive.")
+
+    def value(self, state: Any) -> float:
+        z = self.provider.position(state)[2]
+        return float((self.z_ceiling_m - z) / self.z_scale_m)
+
+    def jacobian(self, state: Any) -> Array:
+        J = self.provider.position_jacobian(state)
+        gradient = -np.asarray(J[2, :], dtype=float) / self.z_scale_m
+        if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
+            raise FloatingPointError("Magnet Z-ceiling constraint Jacobian is invalid.")
+        return gradient
+
+    def physical_metrics(self, state: Any) -> tuple[float, float, bool]:
+        z = float(self.provider.position(state)[2])
+        margin = self.z_ceiling_m - z
+        return z, margin, bool(margin >= -1.0e-6)
+
+
 class _MagnetBaseExclusionConstraint:
     """Hard SLSQP inequality: magnet must stay >= radius_m from the beam base.
 
@@ -1054,9 +1095,10 @@ class _CompositeExclusionConstraint:
 
     def __init__(self, *, lumen: _MagnetLumenExclusionConstraint | None = None,
                  z_floor: _MagnetZFloorConstraint | None = None,
+                 z_ceiling: _MagnetZCeilingConstraint | None = None,
                  base: _MagnetBaseExclusionConstraint | None = None):
         self._lumen = lumen
-        self._subs = [c for c in (lumen, z_floor, base) if c is not None]
+        self._subs = [c for c in (lumen, z_floor, z_ceiling, base) if c is not None]
         if not self._subs:
             raise ValueError("_CompositeExclusionConstraint built with no active sub-constraints.")
 
@@ -2017,15 +2059,21 @@ def solve_offline_inverse_configuration(
     # call site that threads a single `exclusion_constraint` keeps working
     # unchanged.
     z_floor_constraint = None
+    z_ceiling_constraint = None
     base_exclusion_constraint = None
-    if config.enforce_magnet_z_no_decrease or config.magnet_beam_base_exclusion_radius_m is not None:
+    if (config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed
+            or config.magnet_beam_base_exclusion_radius_m is not None):
         position_provider = _MagnetPositionProvider(
             adapter=adapter, state_min=lower, state_max=upper, config=config,
         )
-        if config.enforce_magnet_z_no_decrease:
-            z_floor_m = float(position_provider.position(state0)[2])
+        if config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed:
+            z0_m = float(position_provider.position(state0)[2])
             z_floor_constraint = _MagnetZFloorConstraint(
-                provider=position_provider, z_floor_m=z_floor_m,
+                provider=position_provider, z_floor_m=z0_m,
+            )
+        if config.enforce_magnet_z_fixed:
+            z_ceiling_constraint = _MagnetZCeilingConstraint(
+                provider=position_provider, z_ceiling_m=z0_m,
             )
         if config.magnet_beam_base_exclusion_radius_m is not None:
             from proper_research.simulation.simulations.initial_conditions import (
@@ -2040,10 +2088,12 @@ def solve_offline_inverse_configuration(
             )
 
     exclusion_constraint = None
-    if lumen_constraint is not None or z_floor_constraint is not None or base_exclusion_constraint is not None:
+    if (lumen_constraint is not None or z_floor_constraint is not None
+            or z_ceiling_constraint is not None or base_exclusion_constraint is not None):
         exclusion_constraint = _CompositeExclusionConstraint(
             lumen=lumen_constraint,
             z_floor=z_floor_constraint,
+            z_ceiling=z_ceiling_constraint,
             base=base_exclusion_constraint,
         )
     alternative_states = [

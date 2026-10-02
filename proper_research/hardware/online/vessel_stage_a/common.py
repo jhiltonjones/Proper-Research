@@ -5,20 +5,20 @@ Identical to `rectangle_stage_a/common.py` (same three-step preflight
 sequence, same execution-C defaults, same safety checks -- see that
 module's docstring for the full rationale) with ONE change: the beam
 base's z-height used for vision reconstruction and insertion-length
-verification is raised +30mm to match the physically raised rig used
-for the vessel study (`Z_RAISE_M`). The DEFAULT `StateStreamConfig`/
-`PIVOT_XYZ` values elsewhere in this codebase are the pre-raise values
-and are deliberately NOT changed globally -- every other shape's
-hardware runner (rectangle/triangle/U-shape/S-curve) still depends on
-them being un-raised. Found live 2026-09-23: the vision pipeline
-reconstructs 3D tip position by projecting the 2D camera image onto a
-plane at `T_robot_beam_pose6`'s z -- without this raise, the reported
-tip z stays pinned at the OLD height regardless of the real rig height,
+verification is set to the recalibrated height (`build_vessel_plan.
+BEAM_BASE_PIVOT_Z`, see `_raised_stream_stream_config`'s own docstring for
+the 2026-10-02 fix), not the DEFAULT `StateStreamConfig`/`PIVOT_XYZ` values
+elsewhere in this codebase -- those are deliberately NOT changed globally,
+since every other shape's hardware runner (rectangle/triangle/U-shape/
+S-curve) still depends on them being unraised. Found live 2026-09-23: the
+vision pipeline reconstructs 3D tip position by projecting the 2D camera
+image onto a plane at `T_robot_beam_pose6`'s z -- without matching this to
+the real rig height, the reported tip z stays pinned at the WRONG height,
 which is harmless for `run_open_loop_c.py`'s own error metric (it
 explicitly projects out the z-component before reporting error_mm --
 see `close_loop_path_follow.py:1593`) but would feed an uncorrected
-~30mm phantom z-residual into the closed-loop MPC's disturbance
-estimator (`process_isolated_adapter.py` sends the RAW 3-vector
+phantom z-residual into the closed-loop MPC's disturbance estimator
+(`process_isolated_adapter.py` sends the RAW 3-vector
 `measured_beam_position`, no z-projection) and into `Qpbar`'s equally-
 weighted xyz cost -- silently corrupting every closed-loop tick.
 """
@@ -43,7 +43,7 @@ JOINT_VELOCITY_LIMIT_RAD_S = 0.10
 MAX_JOINT_STEP_RAD = 0.010
 JOINT_ACCELERATION_LIMIT_RAD_S2 = 0.40
 
-Z_RAISE_M = 0.03
+Z_RAISE_M = 0.03  # STALE -- do not use for the recalibrated setup, see _raised_stream_stream_config
 
 
 def load_plan_initial_state(plan_dir: str) -> tuple[np.ndarray, float]:
@@ -222,14 +222,25 @@ def check_robot_safe(robot_ip: str = ROBOT_IP) -> None:
 
 
 def _raised_stream_stream_config():
-    """A StateStreamConfig instance with T_robot_beam_pose6's z raised by
-    Z_RAISE_M -- everything else (calibration, axis conventions, ROI
-    paths) taken from the real, validated default."""
+    """A StateStreamConfig instance with T_robot_beam_pose6's z set to the
+    recalibrated beam-base height -- everything else (calibration, axis
+    conventions, ROI paths) taken from the real, validated default.
+
+    2026-10-02 fix: this used to add the module-level Z_RAISE_M (stale at
+    its old +30mm default now that nothing in the fixed closed-loop runners
+    sets it anymore, see Z_RAISE_M's own comment) -- `check_camera_healthy`'s
+    insertion-length verification was therefore checking against a pivot
+    53mm off from the one the actual run uses (run_mpc_delay_aware_vessel.py/
+    run_open_loop_vessel.py's own StateStreamConfig patches, fixed to the
+    same BEAM_BASE_PIVOT_Z separately). Imports that same constant directly
+    instead, so preflight's camera check and the real run can never disagree
+    about the beam-base height again."""
     from proper_research.hardware.online.state_stream import StateStreamConfig
+    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
 
     base = StateStreamConfig(exposure=29.0, marker_min_count=2)
     pose6 = list(base.T_robot_beam_pose6)
-    pose6[2] += Z_RAISE_M
+    pose6[2] = BEAM_BASE_PIVOT_Z
     return dataclasses.replace(base, T_robot_beam_pose6=tuple(pose6))
 
 
@@ -241,10 +252,10 @@ def check_camera_healthy(
 
     Identical to rectangle_stage_a's version except the pivot pose (both
     for vision reconstruction and for the insertion-length chord
-    measurement) is raised +30mm in z to match the physically raised rig
-    -- see this module's docstring. Without this, the insertion-length
-    chord ||tip - pivot|| would pick up a spurious ~30mm vertical
-    component (tip.z correctly raised, pivot.z stale), inflating the
+    measurement) is set to the recalibrated beam-base height to match the
+    real rig -- see this module's docstring. Without this, the insertion-
+    length chord ||tip - pivot|| would pick up a spurious vertical
+    component (tip.z correctly matched, pivot.z stale), inflating the
     measured length by roughly 10-15mm and spuriously failing this check
     even when the advancer is correctly positioned.
     """

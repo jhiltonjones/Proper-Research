@@ -298,6 +298,24 @@ class ConfigurationMPCConfig:
     # memory for the diagnosis.
     solver_time_limit_s: float = 0.0
     solver_verbose: bool = False
+    # 2026-09-29 fix: solver_time_limit_s's own docstring above says the
+    # intent is for OSQP to "return its best solution so far rather than
+    # overrun" -- but OSQP reports status="run time limit reached" on a
+    # time-limited early exit, which the OSQP branch's `success = status in
+    # {"solved", "solved inaccurate"}` check does NOT include, even though
+    # `result.x` is still a real, usable ADMM iterate. Without this,
+    # solver_time_limit_s silently defeats its own purpose: the caller
+    # bounded solve TIME to avoid missing a deadline, but every time-
+    # limited solve gets treated as an outright failure anyway (the
+    # controller falls back to holding the last command), which is
+    # observably worse than just letting it run long in the first place --
+    # confirmed live 2026-09-29 (vessel MPC hit 5 consecutive "failures",
+    # every one status="run time limit reached", tripping the same
+    # persistent-failure abort solver_time_limit_s was meant to prevent).
+    # Opt-in (default False = unchanged prior behaviour) rather than a
+    # global default change, since this shared MPC base class has other
+    # callers who may rely on the strict definition.
+    accept_time_limit_solution: bool = False
 
     def validate(self) -> None:
         if not np.isfinite(self.sample_period_s) or self.sample_period_s <= 0.0:

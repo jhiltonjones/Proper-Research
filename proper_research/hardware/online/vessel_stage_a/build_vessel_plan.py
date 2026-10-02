@@ -22,10 +22,10 @@ insertion~5e-3m before rising again from real curvature at larger steps.
 Usage
 -----
     python -m proper_research.hardware.online.vessel_stage_a.build_vessel_plan \\
-        --lumen-file vessel_lumen_robot_frame_raised3cm_trimmed6mm_2026-09-28.json \\
-        --start-position-json vessel_magnet_initial_position_live_2026-09-28.json \\
+        --lumen-file <your lumen file> \\
+        --start-position-json vessel_magnet_initial_position_2026-10-02_recalibrated.json \\
         --insertion-max-mm 65 \\
-        --output-root plans/vessel_live_trimmed6mm_2026-09-28
+        --output-root plans/vessel_recalibrated_2026-10-02
 """
 from __future__ import annotations
 
@@ -39,20 +39,24 @@ from pathlib import Path
 
 import numpy as np
 
-from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
-
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
 
-# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace pivot
-# (z=0.013433) and unconditionally call zraise_patch.apply(30.0) at import
-# time, regardless of which lumen file was passed in -- silently building a
-# plan against a raised pivot even for an UNRAISED lumen file, a 30mm
-# frame mismatch. Now parameterized via --z-raise-mm (default 0.0,
-# unraised); pass 30 explicitly to reproduce the old raised-workspace
-# behaviour used by e.g. plans/vessel_live_trimmed6mm_2026-09-28.
+# 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
+# That mechanism required every script building or running a plan to pass a
+# MATCHING offset by hand (build_vessel_plan.py / run_mpc_delay_aware_vessel.py
+# / capture_live_start_position.py each had their own --z-raise-mm default,
+# and a mismatch silently produced a plan whose beam-base pivot disagreed
+# with the live vision/magnet frame by the z-raise amount -- see this
+# script's own prior 2026-09-29 fix note for one such incident). The rig has
+# since been recalibrated via real forward kinematics (see
+# vessel_magnet_initial_position_2026-10-02_recalibrated.json,
+# `capture_live_start_position.py`) to a single fixed beam-base height --
+# BEAM_BASE_PIVOT_Z below -- so there is no longer a "raised vs unraised"
+# choice to make here at all.
 BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
-BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
+BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
+                                # vessel_magnet_initial_position_2026-10-02_recalibrated.json
 L_CMD = 0.03044
 DT_INIT = 0.01
 
@@ -173,21 +177,10 @@ def main() -> None:
                          "enforce_magnet_z_fixed. Use when the physical setup requires the "
                          "magnet to stay on a single Z plane throughout.")
     p.add_argument("--output-root", type=Path, required=True)
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                    help="rigid z-shift applied to the beam-base pivot (and, via "
-                         "zraise_patch, the live vision reconstruction plane) -- 0.0 "
-                         "(default) for an unraised/original-height workspace, 30.0 "
-                         "to reproduce the 2026-09-27/28 raised-workspace plans. MUST "
-                         "match whether --lumen-file was itself digitized against a "
-                         "raised or unraised calibration -- a mismatch here silently "
-                         "produces a plan whose beam-base pivot disagrees with the "
-                         "vessel geometry by the z-raise amount.")
     args = p.parse_args()
 
-    zraise_patch.apply(args.z_raise_mm)
     BEAM_BASE_PIVOT = np.array([
-        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
-        BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
         BEAM_BASE_PIVOT_XY_ROT[2], BEAM_BASE_PIVOT_XY_ROT[3], BEAM_BASE_PIVOT_XY_ROT[4],
     ])
 
@@ -205,7 +198,6 @@ def main() -> None:
     initial_conditions_mod.make_initial_poses = _make_initial_poses
     planning_context_mod.make_initial_poses = _make_initial_poses
 
-    print(f"[build] z_raise_mm = {args.z_raise_mm}")
     print(f"[build] pivot_point (beam base) = {BEAM_BASE_PIVOT.tolist()}")
     print(f"[build] start_point (source magnet) = {start_point.tolist()}  "
           f"(from {args.start_position_json})")

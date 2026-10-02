@@ -48,7 +48,25 @@ LIVE_JOINTS_RAD = (
 
 # TCP(flange) -> magnet-centre translation, in the flange frame at the
 # reference-pose orientation.
-TCP_TO_MAGNET_POSE6 = (-0.16542, -0.0022782, 0.3469254, 0.0, 0.0, 0.0)
+#
+# 2026-10-02 RECALIBRATION: the physical tool/magnet mount changed (user
+# re-aligned the setup) and the old value above no longer matches reality --
+# confirmed two independent ways: (1) the user physically measured the
+# magnet sitting ~43cm straight below the TCP in world Z with the tool
+# "z-axis aligned" (same world x/y as TCP); (2) computed the implied
+# flange-local offset from that measurement via R_F.T @ [0,0,-0.43] using
+# the robot's own calibrated DH/FK at the live joints
+# [-0.6261633078204554, -1.7615310154356898, -1.8847131729125977,
+#  -1.0656407636455079, 1.5728745460510254, -1.0911524931537073] (TCP pose
+# [0.4957078706700621, -0.5727193984076662, 0.3903778484269186, ...]) --
+# result was [-0.126mm, 0.227mm, 429.9999mm], i.e. essentially pure flange-
+# local +Z at exactly 430mm, with the tiny x/y residual consistent with FK/
+# measurement noise, not a real off-axis offset. Rounded to a clean value
+# below for that reason. This invalidates every offline plan and Jacobian
+# schedule built before this date against the OLD value -- any of those
+# must be rebuilt from scratch before further closed-loop testing; don't
+# mix plans/schedules built under different TCP_TO_MAGNET_POSE6 values.
+TCP_TO_MAGNET_POSE6 = (0.0, 0.0, 0.43, 0.0, 0.0, 0.0)
 
 # Source-magnet dipole direction in the magnet body frame, giving a world -R.x
 # (beam axial: the beam grows along world -X) dipole at the reference pose.

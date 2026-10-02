@@ -102,19 +102,34 @@ def _magnet_transform_fn(q6):
 
 def _safe_reset_with_retreat(
     plan_dir: str, insertion_tol_mm: float, exclusion_floor_m: float,
-    beam_base_pivot_xyz: np.ndarray,
+    beam_base_pivot_xyz: np.ndarray, path_check_noise_tol_m: float = 0.0005,
 ):
     """common.preflight, but if the direct straight-line reset path is
     unsafe, retry via a retreat waypoint (further from the beam base)
     before giving up -- the tight floor makes a direct-path refusal
-    routine, not exceptional."""
+    routine, not exceptional.
+
+    2026-10-02 fix: a start position whose exclusion_floor_m is set EXACTLY
+    equal to its own plan-initial magnet-to-beam-base distance (as the
+    2026-10-02 recalibrated position deliberately is -- "no closer than
+    where it started") puts the plan's initial joints precisely ON the
+    path-safety check's boundary. Retreating first does not help in this
+    case: the final leg of the retry still resets INTO that same
+    exactly-on-the-boundary target, so the identical gap<floor check trips
+    again on pure FK/float noise (confirmed live: "101.8mm < 101.8mm"),
+    propagating out of the `except` block uncaught. `path_check_noise_tol_m`
+    subtracts a small noise tolerance from the radius used for ALL path
+    checks in this function -- NOT a real safety margin, just enough to
+    absorb recomputation noise at an intentionally-zero-slack target; the
+    actual exclusion_floor_m passed in is otherwise untouched."""
+    path_check_radius_m = exclusion_floor_m - path_check_noise_tol_m
     q0, l0 = common.load_plan_initial_state(plan_dir)
     try:
         return common.preflight(
             plan_dir, insertion_tol_mm=insertion_tol_mm,
             magnet_transform_fn=_magnet_transform_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_radius_m=path_check_radius_m,
         )
     except RuntimeError as exc:
         print(f"[reset] direct path unsafe ({exc}); routing via a retreat waypoint")
@@ -141,13 +156,13 @@ def _safe_reset_with_retreat(
             raise RuntimeError("retreat-waypoint IK did not converge") from exc
         common.reset_to_plan_initial_safe(
             ik.q_rad, magnet_transform_fn=_magnet_transform_fn,
-            magnet_exclusion_lumen_C_m=beam_base_pivot_xyz, magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_lumen_C_m=beam_base_pivot_xyz, magnet_exclusion_radius_m=path_check_radius_m,
         )
         return common.preflight(
             plan_dir, insertion_tol_mm=insertion_tol_mm,
             magnet_transform_fn=_magnet_transform_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_radius_m=path_check_radius_m,
         )
 
 
@@ -164,6 +179,13 @@ def main() -> None:
                          "start-position JSON the plan you're running was actually built from.")
     p.add_argument("--max-control-steps", type=int, default=1000)
     p.add_argument("--skip-preflight", action="store_true")
+    p.add_argument("--path-check-noise-tol-mm", type=float, default=0.5,
+                    help="see _safe_reset_with_retreat's docstring -- a start position whose "
+                         "exclusion floor equals its own plan-initial distance (as the "
+                         "2026-10-02 recalibrated position is) sits exactly on the path-safety "
+                         "check's boundary, tripping on pure FK/float noise. Subtracts this "
+                         "from the radius used for the path check ONLY -- not a real safety "
+                         "margin.")
     args = p.parse_args()
 
     _patch_state_stream_config()
@@ -179,6 +201,7 @@ def main() -> None:
     else:
         q0, l0 = _safe_reset_with_retreat(
             args.plan_dir, args.insertion_tol_mm, exclusion_floor_m, beam_base_pivot_xyz,
+            path_check_noise_tol_m=args.path_check_noise_tol_mm * 1e-3,
         )
 
     cfg = pf.CONFIG

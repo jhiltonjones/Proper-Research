@@ -926,9 +926,17 @@ def main() -> None:
     # unraised plan whose own open-loop flange range falls outside this
     # widened box; this is a generic secondary sanity net, not the real
     # safety constraint (that's the magnet-exclusion/z-workspace QP terms).
+    # 2026-10-02 (second pass): the real closed-loop run tripped at
+    # y=-0.812m, sitting exactly on the margin above -- closed-loop MPC
+    # correction pushes slightly beyond what the pure open-loop
+    # feedforward measured, so a box derived only from open-loop data and
+    # a fixed margin can still land right back on its own boundary.
+    # Added another +/-20mm on top of the already-widened union box
+    # instead of re-deriving to the exact new edge, so this has real
+    # headroom rather than being an immediate repeat of the same trip.
     if args.z_raise_mm < 10.0:
-        cfg.workspace_xyz_min_m = (0.297, -0.812, 0.190)
-        cfg.workspace_xyz_max_m = (0.636, -0.554, 0.373)
+        cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
+        cfg.workspace_xyz_max_m = (0.656, -0.534, 0.393)
     else:
         cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
         cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)

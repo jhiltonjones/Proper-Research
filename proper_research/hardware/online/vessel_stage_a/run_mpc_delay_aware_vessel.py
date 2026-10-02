@@ -911,14 +911,24 @@ def main() -> None:
     # for the raised (z_raise=42mm) v4 plan's own flange excursion and is
     # WRONG for an unraised plan (a fresh unraised open-loop check measured
     # flange z down to 0.272m, already below this box's old z_min=0.3067m,
-    # i.e. it would have tripped immediately on normal motion). Derived
-    # from that same unraised open-loop run's flange x/y/z range
-    # (0.445-0.596 / -0.768..-0.608 / 0.272-0.331), +/-40mm margin (wider
-    # than the v4 box's +/-30mm since this has no closed-loop data yet to
-    # confirm the margin is enough).
+    # i.e. it would have tripped immediately on normal motion).
+    #
+    # 2026-10-02: a SINGLE hardcoded unraised box is itself fragile across
+    # different unraised plans -- the right0p5mm-shifted plan's own
+    # open-loop flange range (x 0.337-0.584) sits measurably left of the
+    # box derived from the earlier realigned plan alone (x 0.445-0.596),
+    # tripping tcp_out_of_workspace at tick 0 before any motion. Widened to
+    # the UNION of both measured unraised open-loop ranges (realigned:
+    # x 0.445-0.596 / y -0.768..-0.608 / z 0.272-0.331; right0p5mm:
+    # x 0.337-0.584 / y -0.772..-0.594 / z 0.230-0.333), still +/-40mm
+    # margin on top of the union. This is still fundamentally per-plan --
+    # re-derive (see HOWTO_CLOSED_LOOP_MPC.md section 0) for any future
+    # unraised plan whose own open-loop flange range falls outside this
+    # widened box; this is a generic secondary sanity net, not the real
+    # safety constraint (that's the magnet-exclusion/z-workspace QP terms).
     if args.z_raise_mm < 10.0:
-        cfg.workspace_xyz_min_m = (0.405, -0.808, 0.232)
-        cfg.workspace_xyz_max_m = (0.636, -0.568, 0.371)
+        cfg.workspace_xyz_min_m = (0.297, -0.812, 0.190)
+        cfg.workspace_xyz_max_m = (0.636, -0.554, 0.373)
     else:
         cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
         cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)

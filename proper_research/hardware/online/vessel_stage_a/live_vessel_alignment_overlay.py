@@ -15,14 +15,14 @@ the alignment again.
 Usage
 -----
     python -m proper_research.hardware.online.vessel_stage_a.live_vessel_alignment_overlay \\
-        --lumen-file vessel_lumen_robot_frame_zraise42_2026-09-29.json \\
-        --z-raise-mm 42.044008750641574
+        --lumen-file vessel_lumen_robot_frame_left1p5mm.json
 
---z-raise-mm must match whatever value the live closed-loop runs for this
-setup use (the same number you pass to run_mpc_delay_aware_vessel.py's own
---z-raise-mm) -- it feeds the same T_robot_beam_pose6 pivot the live vision
-pipeline uses, so a mismatch here would silently misplace the overlay even
-if everything else lines up.
+2026-10-02 fix: removed --z-raise-mm -- it fed common.Z_RAISE_M, which
+_raised_stream_stream_config() no longer reads (see common.py's own
+2026-10-02 fix: it now uses the fixed, recalibrated BEAM_BASE_PIVOT_Z
+directly), so this flag had silently become a no-op. The overlay now
+always uses the same recalibrated pivot the live closed-loop runs use,
+with nothing to keep in sync.
 """
 from __future__ import annotations
 
@@ -32,11 +32,10 @@ import cv2
 import numpy as np
 
 
-def build_calibration(z_raise_mm: float):
+def build_calibration():
     from proper_research.hardware.online.vessel_stage_a import common
     from proper_research.hardware.online.state_stream import NewFrameTipMapper
 
-    common.Z_RAISE_M = z_raise_mm / 1000.0
     scfg = common._raised_stream_stream_config()
     mapper = NewFrameTipMapper(scfg)
     return mapper.T_R_B, mapper.calibration, scfg
@@ -99,14 +98,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--lumen-file", required=True,
                     help="the vessel_lumen_robot_frame_*.json this plan/controller was built against")
-    p.add_argument("--z-raise-mm", type=float, required=True,
-                    help="must match the live controller's --z-raise-mm for this setup")
     p.add_argument("--camera-index", type=int, default=0)
     p.add_argument("--exposure", type=float, default=29.0)
     args = p.parse_args()
 
-    print(f"[align] building calibration (z_raise={args.z_raise_mm}mm)...")
-    T_R_B, calibration, _scfg = build_calibration(args.z_raise_mm)
+    print("[align] building calibration (recalibrated, fixed beam-base height)...")
+    T_R_B, calibration, _scfg = build_calibration()
 
     print(f"[align] projecting lumen '{args.lumen_file}' into pixel space...")
     center_px, left_px, right_px, provenance = project_lumen_to_pixels(

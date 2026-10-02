@@ -21,36 +21,26 @@ import json
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
-
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.hardware.ur_rtde_robot import URRTDERobot
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
+from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
+    BEAM_BASE_PIVOT_XY_ROT, BEAM_BASE_PIVOT_Z,
+)
 
-# 2026-10-02 fix: this used to call zraise_patch.apply(30.0) unconditionally
-# at import time, regardless of whether the CURRENT physical setup is
-# raised or unraised -- the same class of bug already fixed in
-# build_vessel_plan.py/run_open_loop_vessel.py/run_mpc_delay_aware_vessel.py.
-# For this project's 2026-09-29-onward unraised setup (the default), that
-# silently captured a magnet_pose6_R 30mm too high in Z. Now parameterized
-# via --z-raise-mm (default 0.0, unraised); pass 30 explicitly to reproduce
-# the 2026-09-27/28 raised-workspace captures.
-BEAM_BASE_XYZ_RAISED30MM = np.array([0.525575, -0.670028, 0.013433])
-BEAM_BASE_XY_ROT = np.array([0.525575, -0.670028])
-BEAM_BASE_Z_UNRAISED = -0.016567
+# 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection
+# entirely (same change as build_vessel_plan.py/run_mpc_delay_aware_
+# vessel.py/run_open_loop_vessel.py's own 2026-10-02 fixes) -- the rig has
+# been recalibrated via real forward kinematics to a single fixed
+# beam-base height, so there is no longer a "raised vs unraised" choice to
+# make here, and no flag to keep in sync across scripts.
 ROBOT_IP = "192.168.56.101"
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--out", required=True, help="output JSON path")
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                   help="rigid z-shift applied to the beam-base pivot AND the live vision "
-                        "reconstruction plane -- 0.0 (default) for an unraised/original-height "
-                        "workspace, 30.0 to reproduce the 2026-09-27/28 raised-workspace "
-                        "captures. MUST match the physical setup this capture is actually "
-                        "being taken against.")
     p.add_argument("--exclusion-floor-mm", type=float, default=None,
                    help="magnet-to-beam-base safety floor to record alongside this position. "
                         "If omitted, uses this position's own measured distance to the beam base "
@@ -60,10 +50,8 @@ def main() -> None:
     p.add_argument("--robot-ip", default=ROBOT_IP)
     args = p.parse_args()
 
-    zraise_patch.apply(args.z_raise_mm)
     beam_base_xyz = np.array([
-        BEAM_BASE_XY_ROT[0], BEAM_BASE_XY_ROT[1],
-        BEAM_BASE_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
     ])
 
     robot = URRTDERobot(args.robot_ip, frequency=125.0)
@@ -98,12 +86,11 @@ def main() -> None:
               f"the recorded exclusion floor ({exclusion_floor_mm:.2f}mm) -- double check this is intended.")
 
     record = {
-        "description": f"Live-captured robot start position (z_raise_mm={args.z_raise_mm}).",
+        "description": "Live-captured robot start position (recalibrated, fixed beam-base height).",
         "joints_rad": q_live.tolist(),
         "magnet_pose6_R": magnet_pose6.tolist(),
         "tcp_pose6_R": tcp_pose6.tolist(),
         "beam_base_pivot_xyz_R": beam_base_xyz.tolist(),
-        "z_raise_mm": args.z_raise_mm,
         "distance_magnet_to_beam_base_mm": distance_to_base_mm,
         "exclusion_floor_mm": exclusion_floor_mm,
         "safety_mode_at_read": safety_mode,

@@ -19,7 +19,6 @@ Usage
     python -m proper_research.hardware.online.vessel_stage_a.shift_lumen_centerline \\
         --lumen-file vessel_lumen_robot_frame.json \\
         --shift-mm 1.0 --direction right \\
-        --z-raise-mm 0.0 \\
         --out vessel_lumen_robot_frame_right1mm.json
 
 This changes the OFFLINE plan's own target path (and, since the same
@@ -32,6 +31,11 @@ tracking target shifted, for a single run, without touching the offline
 plan at all, use `run_mpc_delay_aware_vessel.py --right-shift-mm` instead
 -- see HOWTO_CLOSED_LOOP_MPC.md section 2b for that much cheaper option and
 when each is the right tool.
+
+2026-10-02 fix: removed --z-raise-mm -- it fed common.Z_RAISE_M, which
+_raised_stream_stream_config() no longer reads (see common.py's own
+2026-10-02 fix: it now uses the fixed, recalibrated BEAM_BASE_PIVOT_Z
+directly), so this flag had silently become a no-op.
 """
 from __future__ import annotations
 
@@ -41,11 +45,10 @@ import json
 import numpy as np
 
 
-def shift_lumen(C_R: np.ndarray, shift_m: float, direction: str, z_raise_mm: float):
+def shift_lumen(C_R: np.ndarray, shift_m: float, direction: str):
     from proper_research.hardware.online.vessel_stage_a import common
     from proper_research.hardware.online.state_stream import NewFrameTipMapper
 
-    common.Z_RAISE_M = z_raise_mm / 1000.0
     scfg = common._raised_stream_stream_config()
     mapper = NewFrameTipMapper(scfg)
     T_R_B = mapper.T_R_B
@@ -68,9 +71,6 @@ def main() -> None:
     p.add_argument("--lumen-file", required=True)
     p.add_argument("--shift-mm", type=float, required=True)
     p.add_argument("--direction", choices=["left", "right"], default="right")
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                    help="must match the z-raise this lumen file's own pivot/frame was built "
-                         "against -- see HOWTO_VESSEL_PLANNING.md's note on --z-raise-mm")
     p.add_argument("--out", required=True)
     args = p.parse_args()
 
@@ -81,13 +81,13 @@ def main() -> None:
 
     C = np.asarray(d["lumen_C_m"], dtype=float)
     R = np.asarray(d["lumen_R_m"], dtype=float)
-    C_shifted = shift_lumen(C, args.shift_mm / 1000.0, args.direction, args.z_raise_mm)
+    C_shifted = shift_lumen(C, args.shift_mm / 1000.0, args.direction)
     max_disp_mm = float(np.linalg.norm(C_shifted - C, axis=1).max()) * 1000.0
 
     d["lumen_C_m"] = C_shifted.tolist()
     d.setdefault("provenance", {})["centreline_shift_note"] = (
         f"{args.shift_mm}mm toward the {args.direction} wall, derived from "
-        f"{args.lumen_file} (radii unchanged, z_raise_mm={args.z_raise_mm})"
+        f"{args.lumen_file} (radii unchanged, recalibrated fixed beam-base height)"
     )
 
     with open(args.out, "w") as f:

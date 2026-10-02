@@ -73,6 +73,16 @@ __all__ = ["DelayAwareBeamOutputMPCStep", "DelayAwareBeamOutputTrackingMPC"]
 @dataclass
 class DelayAwareBeamOutputMPCStep(beam_module.BeamOutputMPCStep):
     predicted_commands: Array = None  # (N, 7) -- q_cmd_stack, NOT the physical prediction
+    # (2026-09-28 instrumentation pass) the exact (3, n) tip-Jacobian this
+    # tick's QP was actually built with -- jacobians[0] from
+    # `_beam_prediction_terms_exec`, read back out of `beam_terms["Jbar"]`'s
+    # top-left block rather than threading a new value through every
+    # `_dynamic_qp_terms_exec` override (see `solve_delay_aware`). Purely a
+    # read of an already-computed matrix; does not affect the solve.
+    jacobian_used: Array = None
+    # (2026-09-28) raw OSQP dual vector for this solve, or None off the osqp
+    # backend / on solver failure -- see `solve_delay_aware`'s osqp branch.
+    dual_y: Array = None
 
 
 class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
@@ -95,6 +105,8 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         delay_samples: int = 2,
         beta_d: float = 1.0,
         magnet_exclusion: dict | None = None,
+        magnet_workspace: dict | None = None,
+        magnet_exclusion_clearance: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -119,6 +131,24 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_excl_radius: float | None = None
         if magnet_exclusion is not None:
             self._configure_magnet_exclusion(**magnet_exclusion)
+
+        self._magnet_ws_z_min: float | None = None
+        self._magnet_ws_z_max: float | None = None
+        if magnet_workspace is not None:
+            self._configure_magnet_workspace(**magnet_workspace)
+
+        # 2026-09-30: soft clearance-cost term, added SEPARATELY from (and
+        # never replacing) the hard magnet_exclusion constraint above -- see
+        # this class's README/session notes for why. The hard constraint
+        # answers "is the commanded state feasible"; this answers "does the
+        # optimizer have any REASON to prefer more margin before the hard
+        # constraint binds." Requires magnet_exclusion to already be
+        # configured (reuses its (d_nom, normal, jacobians) schedule
+        # unchanged -- this term never re-derives its own geometry).
+        self._magnet_clear_gain: float | None = None
+        self._magnet_clear_soft_radius: float | None = None
+        if magnet_exclusion_clearance is not None:
+            self._configure_magnet_exclusion_clearance(**magnet_exclusion_clearance)
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -145,25 +175,33 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             # `_setup_osqp()` (sparsity from H alone) is wrong here and
             # `_setup_variable_hessian_osqp()` (includes the dense runtime
             # G.T@Qpbar@G term) is required.
-            if self._magnet_excl_radius is not None:
+            if self._magnet_excl_radius is not None or self._magnet_ws_z_min is not None:
                 self._setup_osqp_with_magnet_exclusion()
             else:
                 self._setup_variable_hessian_osqp()
 
     # ------------------------------------------------------------------
-    # magnet-to-vessel-wall exclusion, wired directly into the QP (2026-09-28)
+    # magnet-to-point exclusion, wired directly into the QP (2026-09-28;
+    # repurposed 2026-09-28 from a vessel-centreline point set to a single
+    # fixed beam-base point -- the method itself is unchanged, generic over
+    # any (K,3) point set, K=1 included; only the caller-supplied
+    # `lumen_C_m`/`radius_m` changed, in `run_mpc_delay_aware_vessel.py`)
     # ------------------------------------------------------------------
     def _configure_magnet_exclusion(
         self, *, position_jacobians: Any, nominal_positions_m: Any,
         lumen_C_m: Any, radius_m: float,
     ) -> None:
-        """Add a linearized "magnet stays >= radius_m from the vessel
-        centreline" inequality to every horizon stage of the QP, so the
+        """Add a linearized "magnet stays >= radius_m from the nearest point
+        in lumen_C_m" inequality to every horizon stage of the QP, so the
         optimizer itself can see this limit -- previously it was enforced
         ONLY as a post-hoc monitor in `process_isolated_adapter.py`,
         computed from the MEASURED joints after the command had already
         been applied. That monitor stays on unchanged as a second line of
         defense; this is a first line of defense inside the optimization.
+        `lumen_C_m` is generic: a many-point vessel centreline (the
+        original 2026-09-28 use) or a single fixed point such as the beam
+        base (K=1) both work unchanged -- `closest = np.argmin(dists,
+        axis=1)` is trivial but correct for K=1.
 
         Root cause this closes: the frozen-Jacobian run
         (close_loop_logs/myrun/vessel_live_trimmed6mm_mpc_frozen_
@@ -234,10 +272,19 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
     def _setup_osqp_with_magnet_exclusion(self) -> None:
         """Same as the base class's `_setup_variable_hessian_osqp`, except
         it does NOT reuse that method's own dummy-bounds call (which is
-        hard-sized to the base 3-block `self.A` and would mismatch the
-        extra magnet-exclusion rows) -- it builds correctly-sized dummy
-        bounds itself and caches `self._a_pattern` so later solves can push
-        real row values in via `update(Ax=...)`."""
+        hard-sized to the base 3-block `self.A` and would mismatch any
+        extra magnet-exclusion/workspace rows) -- it builds correctly-sized
+        dummy bounds itself and caches `self._a_pattern` so later solves
+        can push real row values in via `update(Ax=...)`.
+
+        Dummy-row count is derived from `self.A.shape[0] - base row count`
+        rather than assumed -- `self.A` may carry ZERO, ONE (exclusion
+        only, workspace only) or TWO (both) extra N-row blocks by this
+        point, appended in `_configure_magnet_exclusion`/`_configure_
+        magnet_workspace` (called, if at all, before this setup runs --
+        see `__init__`), so hardcoding one block's worth of dummy rows
+        here would silently under/over-size `l`/`u` whenever both (or
+        neither, in a future refactor) are active at once."""
         import osqp as _osqp
 
         self._p_pattern = sp.triu(
@@ -252,10 +299,17 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         base_lower, base_upper = self._constraint_bounds(
             state=np.zeros(7), previous_input=np.zeros(7), validate_state=False,
         )
-        magnet_lower = np.full(self.N, -1.0e6, dtype=float)
-        magnet_upper = np.full(self.N, 1.0e6, dtype=float)
-        lower = np.concatenate([base_lower, magnet_lower])
-        upper = np.concatenate([base_upper, magnet_upper])
+        n_extra_rows = self.A.shape[0] - base_lower.shape[0]
+        assert n_extra_rows >= 0 and n_extra_rows % self.N == 0, (
+            f"unexpected extra row count {n_extra_rows} (self.A has "
+            f"{self.A.shape[0]} rows, base constraint set has "
+            f"{base_lower.shape[0]}) -- expected a whole multiple of N={self.N} "
+            "from the magnet-exclusion/workspace constraint blocks"
+        )
+        dummy_lower = np.full(n_extra_rows, -1.0e6, dtype=float)
+        dummy_upper = np.full(n_extra_rows, 1.0e6, dtype=float)
+        lower = np.concatenate([base_lower, dummy_lower])
+        upper = np.concatenate([base_upper, dummy_upper])
         self._a_pattern = sp.csc_matrix(self.A)
         self._solver = _osqp.OSQP()
         setup_kwargs = dict(
@@ -304,6 +358,167 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         return lower, upper
 
     # ------------------------------------------------------------------
+    # soft clearance-cost term (2026-09-30): a SEPARATE mechanism from the
+    # hard magnet_exclusion constraint above. Root cause this closes: live
+    # instrumentation (2026-09-30 session) showed the hard constraint
+    # correctly guarantees d(q_cmd) >= radius_m -- it was NEVER violated in
+    # its own linearized sense, and the linearization error against the
+    # true nonlinear distance was consistently sub-millimetre -- yet the
+    # controller still rode the boundary for 15+ consecutive ticks with
+    # zero margin, because nothing in the cost function distinguishes
+    # d=0.01mm from d=10mm as long as the hard constraint is satisfied.
+    # Meanwhile a genuine redundant escape direction was measured
+    # (||N @ grad_d|| ~= 25-33mm/rad, N = tip-Jacobian nullspace projector)
+    # that the controller had no incentive to use. This term supplies that
+    # incentive: a per-horizon-stage quadratic penalty, active ONLY when
+    # this tick's own linearized clearance prediction falls inside
+    # [radius_m, soft_radius_m) -- gated fresh every solve against the
+    # SAME (Ec, Sc)-anchored d_hat the hard constraint itself uses, never
+    # against a stale/offline value. Does not touch the hard constraint's
+    # own radius_m or its rows in self.A at all.
+    def _configure_magnet_exclusion_clearance(
+        self, *, gain: float, soft_radius_m: float,
+    ) -> None:
+        if self._magnet_excl_radius is None:
+            raise ValueError(
+                "magnet_exclusion_clearance requires magnet_exclusion to be "
+                "configured too (this term reuses its (d_nom, normal, "
+                "jacobians) schedule unchanged; it never derives its own "
+                "geometry)."
+            )
+        gain = float(gain)
+        soft_radius = float(soft_radius_m)
+        if gain < 0.0 or not np.isfinite(gain):
+            raise ValueError("magnet_exclusion_clearance['gain'] must be finite and >= 0.")
+        if soft_radius <= self._magnet_excl_radius:
+            raise ValueError(
+                f"magnet_exclusion_clearance['soft_radius_m']={soft_radius} must exceed "
+                f"the hard magnet_exclusion radius_m={self._magnet_excl_radius} -- "
+                "otherwise the avoidance band is empty or inverted."
+            )
+        self._magnet_clear_gain = gain
+        self._magnet_clear_soft_radius = soft_radius
+
+    def _magnet_exclusion_clearance_qp_terms(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        zero = (np.zeros((self.nu, self.nu), dtype=float), np.zeros(self.nu, dtype=float))
+        if not self._magnet_clear_gain:
+            return zero
+        indices = self._reference_indices(control_index, future=True)
+        J = self._magnet_excl_jacobians[indices]                       # (N,3,6)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+        d_nom = self._magnet_excl_d_nom[indices]                        # (N,)
+        normal = self._magnet_excl_normal[indices]                      # (N,3)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+        c = np.einsum("nj,njk->nk", normal, J)                          # (N,6)
+
+        hessian = np.zeros((self.nu, self.nu), dtype=float)
+        linear = np.zeros(self.nu, dtype=float)
+        for j in range(self.N):
+            d_hat = d_nom[j] + c[j] @ (free_cmd[j] - q_nom[j])
+            if d_hat >= self._magnet_clear_soft_radius:
+                continue  # this stage's own commanded trajectory is already clear -- no penalty
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            a = c[j] @ self.Sc[stage_rows, :]                            # (nu,): d(d_j)/du
+            b = self._magnet_clear_soft_radius - d_hat                  # > 0 here, by the check above
+            # cost_j = gain * (soft_radius - d_j)^2 = gain * (b - a@u)^2
+            hessian += 2.0 * self._magnet_clear_gain * np.outer(a, a)
+            linear += -2.0 * self._magnet_clear_gain * b * a
+        return hessian, linear
+
+    # ------------------------------------------------------------------
+    # magnet z-workspace bounds, wired directly into the QP (2026-09-28,
+    # same day as the point-exclusion constraint above, closing the
+    # identical blind spot for general magnet-workspace excursions rather
+    # than only wall-approach)
+    # ------------------------------------------------------------------
+    def _configure_magnet_workspace(
+        self, *, position_jacobians: Any, nominal_positions_m: Any,
+        z_min_m: float, z_max_m: float,
+    ) -> None:
+        """Add a linearized "magnet z stays within [z_min_m, z_max_m]"
+        two-sided inequality to every horizon stage of the QP -- the
+        proactive, in-optimizer counterpart to
+        `run_mpc_delay_aware_vessel.py`'s post-hoc `_MAGNET_Z_BOUNDS_M`
+        monitor (pass the SAME bounds here; that monitor stays on
+        unchanged as a second line of defense, computed from MEASURED
+        joints after a command has already been applied).
+
+        Root cause this closes: a live frozen-Jacobian run this session
+        (no relinearization, Q_N=0 removing all posture anchoring) let
+        the redundant joint DOF drift the arm's flange to z=0.262m --
+        ~25cm above normal operating height -- while EVERY logged QP
+        solve that whole run reported status='ok'/success=True. None of
+        the QP's existing constraints (per-joint position box, per-joint
+        velocity/rate limits, the point-exclusion constraint above) cover
+        a general Cartesian/TCP-workspace bound, so this kind of
+        excursion was invisible to the optimizer by construction, only
+        ever catchable after the fact by the external `tcp_out_of_
+        workspace` monitor -- exactly what happened.
+
+        Same linearization recipe as `_configure_magnet_exclusion`: for
+        each reference sample, the magnet's nominal z and the z-row of
+        its position Jacobian w.r.t. q (`position_jacobians[:, 2, :]`)
+        give a first-order estimate of achieved z as a function of the
+        commanded joints, re-anchored every solve via (Ec, Sc) exactly
+        like the exclusion constraint. Unlike the exclusion (one-sided,
+        distance >= radius), this is TWO-sided on the SAME linear row
+        (z_min <= z <= z_max), so it costs only N extra rows, not 2N.
+        """
+        jacobians = np.asarray(position_jacobians, dtype=float)
+        positions = np.asarray(nominal_positions_m, dtype=float)
+        n_joints = self.n - 1
+        expected_j = (self.reference.sample_count, 3, n_joints)
+        expected_p = (self.reference.sample_count, 3)
+        if jacobians.shape != expected_j or not np.all(np.isfinite(jacobians)):
+            raise ValueError(
+                "magnet_workspace['position_jacobians'] must have shape "
+                f"{expected_j}; received {jacobians.shape}."
+            )
+        if positions.shape != expected_p or not np.all(np.isfinite(positions)):
+            raise ValueError(
+                "magnet_workspace['nominal_positions_m'] must have shape "
+                f"{expected_p}; received {positions.shape}."
+            )
+        z_min = float(z_min_m)
+        z_max = float(z_max_m)
+        if not (z_min < z_max):
+            raise ValueError("magnet_workspace['z_min_m'] must be < z_max_m.")
+
+        self._magnet_ws_jacobians = jacobians[:, 2, :].copy()  # (S,6) -- z-row only
+        self._magnet_ws_nominal_z = positions[:, 2].copy()      # (S,)
+        self._magnet_ws_z_min = z_min
+        self._magnet_ws_z_max = z_max
+
+        placeholder = np.full((self.N, self.nu), 1.0e-30, dtype=float)
+        self._magnet_ws_row_start = self.A.shape[0]
+        self.A = np.vstack((self.A, placeholder))
+
+    def _magnet_workspace_bounds(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        if self._magnet_ws_z_min is None:
+            return np.empty(0, dtype=float), np.empty(0, dtype=float)
+        indices = self._reference_indices(control_index, future=True)
+        c = self._magnet_ws_jacobians[indices]                          # (N,6)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+        z_nom = self._magnet_ws_nominal_z[indices]                       # (N,)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+
+        rows = np.zeros((self.N, self.nu), dtype=float)
+        lower = np.empty(self.N, dtype=float)
+        upper = np.empty(self.N, dtype=float)
+        for j in range(self.N):
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            rows[j, :] = c[j] @ self.Sc[stage_rows, :]
+            offset = z_nom[j] - c[j] @ q_nom[j] + c[j] @ free_cmd[j]
+            lower[j] = self._magnet_ws_z_min - offset
+            upper[j] = self._magnet_ws_z_max - offset
+        self.A[self._magnet_ws_row_start:self._magnet_ws_row_start + self.N, :] = rows
+        return lower, upper
+
+    # ------------------------------------------------------------------
     # overridden prediction-dependent pieces
     # ------------------------------------------------------------------
     def _constraint_bounds_exec(
@@ -314,9 +529,11 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         prediction. Velocity/rate terms are untouched (still act on the
         decision v and previous_input exactly as before). Appends the
         magnet-exclusion rows (see `_magnet_exclusion_bounds`) when
-        `magnet_exclusion` was configured at construction; a no-op
-        (0-length concatenation) otherwise, so every existing caller that
-        never passes `magnet_exclusion` is completely unaffected."""
+        `magnet_exclusion` was configured at construction, and magnet
+        z-workspace rows (see `_magnet_workspace_bounds`) when
+        `magnet_workspace` was configured; both are no-ops (0-length
+        concatenation) otherwise, so every existing caller that never
+        passes either is completely unaffected."""
         previous_input = _finite_vector(previous_input, self.m, "previous_input")
         input_lower = np.tile(-self.velocity_limit, self.N)
         input_upper = np.tile(self.velocity_limit, self.N)
@@ -331,9 +548,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         magnet_lower, magnet_upper = self._magnet_exclusion_bounds(
             x_exec=x_exec, control_index=control_index,
         )
+        ws_lower, ws_upper = self._magnet_workspace_bounds(
+            x_exec=x_exec, control_index=control_index,
+        )
         return (
-            np.concatenate((input_lower, state_lower, increment_lower, magnet_lower)),
-            np.concatenate((input_upper, state_upper, increment_upper, magnet_upper)),
+            np.concatenate((input_lower, state_lower, increment_lower, magnet_lower, ws_lower)),
+            np.concatenate((input_upper, state_upper, increment_upper, magnet_upper, ws_upper)),
         )
 
     def _linear_cost_exec(
@@ -389,6 +609,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         )
         hessian = self._base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
         linear = base_linear + 2.0 * (G.T @ self.Qpbar @ constant_error)
+        if self._magnet_clear_gain:
+            clear_hessian, clear_linear = self._magnet_exclusion_clearance_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + clear_hessian
+            linear = linear + clear_linear
         hessian = 0.5 * (hessian + hessian.T)
         return hessian, linear, {
             "G": G, "constant_error": constant_error,
@@ -440,19 +666,39 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         if self.backend == "osqp":
             assert self._solver is not None
             update_kwargs = dict(Px=self._upper_values(hessian), q=linear_cost, l=lower, u=upper)
-            if self._magnet_excl_radius is not None:
+            if self._magnet_excl_radius is not None or self._magnet_ws_z_min is not None:
                 update_kwargs["Ax"] = self._a_values(self.A)
             self._solver.update(**update_kwargs)
             self._solver.warm_start(x=warm_start)
             result = self._solver.solve()
             status = str(result.info.status).lower()
             success = status in {"solved", "solved inaccurate"}
+            # See ConfigurationMPCConfig.accept_time_limit_solution's
+            # docstring (2026-09-29 fix) -- this class has its own,
+            # separate OSQP call from simulate_time_parameterized_beam_
+            # output_mpc.py's base-class one (same fix applied there too),
+            # so needs the same opt-in acceptance of a solver_time_limit_s
+            # early exit repeated here.
+            if (
+                not success and status == "run time limit reached"
+                and result.x is not None
+                and bool(getattr(self.config, "accept_time_limit_solution", False))
+            ):
+                success = True
             solution = None if result.x is None else np.asarray(result.x, dtype=float).reshape(self.nu)
             diagnostic = {
                 "status": status, "success": success,
                 "iterations": int(result.info.iter), "solve_time_s": float(result.info.run_time),
                 "primal_residual": float(getattr(result.info, "prim_res", getattr(result.info, "pri_res", np.nan))),
                 "dual_residual": float(getattr(result.info, "dual_res", getattr(result.info, "dua_res", np.nan))),
+                # (2026-09-28 instrumentation pass) raw OSQP dual variables --
+                # already computed by `.solve()`, just read out here. Row
+                # ordering matches `self.A` (input-rate, state-box,
+                # increment, then magnet-exclusion rows if configured -- see
+                # `_constraint_bounds_exec`); mapping row index to semantic
+                # constraint name is NOT done here, left for post-hoc
+                # analysis against that same row layout.
+                "dual_y": None if result.y is None else np.asarray(result.y, dtype=float).copy(),
             }
         else:
             solution, diagnostic = self._solve_scipy_dynamic(
@@ -485,12 +731,18 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         predicted_beam = predicted_beam_vector.reshape(self.N, 3)
         predicted_error = predicted_beam - beam_terms["desired_position"]
         first_error = float(np.linalg.norm(predicted_error[0]))
+        # Current-tick (3, n) Jacobian: block_diag's first block is exactly
+        # jacobians[0] from `_beam_prediction_terms_exec` -- a read of the
+        # already-built Jbar, not a new computation.
+        jacobian_used = np.asarray(beam_terms["Jbar"][:3, : self.n], dtype=float).copy()
 
         return DelayAwareBeamOutputMPCStep(
             command=command,
             planned_input=np.asarray(input_reference[0], dtype=float).copy(),
             predicted_states=predicted_states,
             predicted_commands=predicted_commands,
+            jacobian_used=jacobian_used,
+            dual_y=diagnostic.get("dual_y"),
             predicted_inputs=predicted_inputs,
             objective=objective,
             status=str(diagnostic["status"]), success=bool(diagnostic["success"]),

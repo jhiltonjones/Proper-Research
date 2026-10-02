@@ -314,6 +314,20 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
         # transforming this measurement -- see this class's __init__ note.
         measured_beam_position = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
 
+        # (2026-09-28 instrumentation pass) computed here, BEFORE try_solve,
+        # purely so the logging block below can use it too -- moved up from
+        # its original spot near the z-bounds/exclusion checks further down.
+        # Pure function of z_meas[:6] (already computed above) and instance
+        # attributes untouched by anything in between, so moving it earlier
+        # cannot change any existing behaviour -- the z-bounds/exclusion
+        # block further down now reuses this value instead of recomputing it.
+        magnet_xyz = None
+        if self._magnet_transform_fn is not None and (
+            self._magnet_z_bounds_m is not None or self._magnet_exclusion_radius_m is not None
+            or self._log_fh is not None
+        ):
+            magnet_xyz = np.asarray(self._magnet_transform_fn(z_meas[:6]), dtype=float).reshape(3)
+
         if self._q_cmd is None:
             self._q_cmd = z_meas[:6].copy()
             self._q_cmd_prev = self._q_cmd.copy()
@@ -343,6 +357,10 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                       f"{resp['status']!r} error={resp.get('error')!r} -- holding q_cmd")
 
         if self._log_fh is not None:
+            # (2026-09-28 instrumentation pass) purely additional fields,
+            # read straight off `resp` (already received from the worker
+            # above) or `magnet_xyz` (already computed above) -- nothing
+            # here feeds back into the control loop.
             row = {
                 "step": self._counter, "ref_index": reference_index,
                 "z_meas": z_meas.tolist(), "q_cmd_k": self._q_cmd.tolist(),
@@ -356,6 +374,25 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 "success": success,
                 "deadline_miss": resp is None,
                 "t_solve_ms": resp["t_solve_ms"] if resp else None,
+                "predicted_states": (
+                    None if resp is None or resp.get("predicted_states") is None
+                    else np.asarray(resp["predicted_states"], dtype=float).tolist()
+                ),
+                "jacobian_used": (
+                    None if resp is None or resp.get("jacobian_used") is None
+                    else np.asarray(resp["jacobian_used"], dtype=float).tolist()
+                ),
+                "qp_objective": None if resp is None else resp.get("qp_objective"),
+                "qp_status": None if resp is None else resp.get("qp_status"),
+                "qp_iterations": None if resp is None else resp.get("qp_iterations"),
+                "qp_solve_time_s": None if resp is None else resp.get("qp_solve_time_s"),
+                "qp_primal_residual": None if resp is None else resp.get("qp_primal_residual"),
+                "qp_dual_residual": None if resp is None else resp.get("qp_dual_residual"),
+                "magnet_xyz_m": None if magnet_xyz is None else magnet_xyz.tolist(),
+                "dual_y": (
+                    None if resp is None or resp.get("dual_y") is None
+                    else np.asarray(resp["dual_y"], dtype=float).tolist()
+                ),
             }
             self._log_fh.write(json.dumps(row) + "\n")
             self._log_fh.flush()
@@ -379,17 +416,13 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
                       f"{adapter_abort_reason}")
 
-        # Computed from the MEASURED joints (z_meas, this tick's actual
-        # robot state, not the commanded/predicted one) -- an independent
-        # monitor must watch where the magnet actually is, not where the
-        # controller intends it to go. Shared between the z-bounds and
-        # exclusion-radius checks below (one FK call, not two).
-        magnet_xyz = None
-        if self._magnet_transform_fn is not None and (
-            self._magnet_z_bounds_m is not None or self._magnet_exclusion_radius_m is not None
-        ):
-            magnet_xyz = np.asarray(self._magnet_transform_fn(z_meas[:6]), dtype=float).reshape(3)
-
+        # magnet_xyz: computed from the MEASURED joints (z_meas, this tick's
+        # actual robot state, not the commanded/predicted one) -- an
+        # independent monitor must watch where the magnet actually is, not
+        # where the controller intends it to go. Now computed once, earlier
+        # in this method (see the instrumentation-pass comment above), and
+        # reused here unchanged -- same value, same FK call, just not
+        # recomputed.
         if adapter_abort_reason is None and self._magnet_z_bounds_m is not None:
             z_min, z_max = self._magnet_z_bounds_m
             if magnet_xyz[2] < z_min or magnet_xyz[2] > z_max:
@@ -429,5 +462,27 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             ),
             "measured_joint_state": z_meas,
             "abort_reason": adapter_abort_reason,
+            # (2026-09-28 instrumentation pass) fills in slots the caller's
+            # own JSONL writer (`close_loop_path_follow.py`) already reads
+            # via `info.get(...)` but which were never populated for this
+            # controller path -- all values already computed above/in resp,
+            # nothing new here changes `command`/`success`/control flow.
+            "iterations": None if resp is None else resp.get("qp_iterations"),
+            "objective": None if resp is None else resp.get("qp_objective"),
+            "primal_residual": None if resp is None else resp.get("qp_primal_residual"),
+            "dual_residual": None if resp is None else resp.get("qp_dual_residual"),
+            "predicted_input_0": None if resp is None else np.asarray(resp["command"], dtype=float).tolist(),
+            "predicted_state_0": (
+                None if resp is None or resp.get("predicted_states") is None
+                else np.asarray(resp["predicted_states"], dtype=float)[0].tolist()
+            ),
+            "predicted_beam_position_0_m": (
+                None if resp is None or resp.get("predicted_beam_positions") is None
+                else np.asarray(resp["predicted_beam_positions"], dtype=float)[0].tolist()
+            ),
+            "horizon_len": (
+                None if resp is None or resp.get("predicted_states") is None
+                else int(np.asarray(resp["predicted_states"]).shape[0])
+            ),
         }
         return SolveResult(u0=command, infeasible=not success, info=info)

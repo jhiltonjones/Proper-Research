@@ -53,7 +53,7 @@ import proper_research.planning.planning_context as planning_context_mod
 # behaviour used by e.g. plans/vessel_live_trimmed6mm_2026-09-28.
 BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
 BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
-L_CMD = 0.025
+L_CMD = 0.03044
 DT_INIT = 0.01
 
 

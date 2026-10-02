@@ -306,8 +306,24 @@ def build_controller(
     run_cfg,
     design_cfg=None,
     robot_cfg: JointSpaceRobotConfig | None = None,
+    jacobian_mode: str = "fast",
 ):
-    """Build plant and Jacobian adapters around a joint-space controller."""
+    """Build plant and Jacobian adapters around a joint-space controller.
+
+    `jacobian_mode`: passed straight through to `_make_beam_jacobian_callback`
+    for both the plant and Jxy_fn beam-Jacobian callbacks -- default "fast"
+    preserves every existing caller's behavior unchanged. "fast" has a
+    documented single-tick numerical-estimator artifact (a spurious spike
+    while the true tip output changes smoothly -- see
+    run_mpc_delay_aware_vessel.py's build_or_load_schedule docstring, which
+    already switches to "accurate" for the live MPC's own schedule) that can
+    make a gradient-based solver (e.g. Layer 1's inverse-configuration SLSQP)
+    chase a bad gradient at certain states -- confirmed 2026-10-02 for a
+    recalibrated-geometry vessel plan at L0~30mm (178% relative error vs
+    finite-difference, disagreement spread across every row/column). Pass
+    "accurate" when building a controller_pack for Layer 1 offline solving;
+    it's slower per-evaluation, so the default stays "fast" for the live MPC
+    inner loop and every other existing caller."""
     run_cfg.validate()
     design_cfg = design_cfg or legacy.ControllerDesignConfig()
     design_cfg.validate()
@@ -380,12 +396,12 @@ def build_controller(
     plant_beam_jacobian = _make_beam_jacobian_callback(
         owned_plant_model,
         forward_adapter=plant_forward_adapter,
-        jacobian_mode="fast",
+        jacobian_mode=jacobian_mode,
     )
     jacobian_beam_jacobian = _make_beam_jacobian_callback(
         owned_jacobian_model,
         forward_adapter=jacobian_forward_adapter,
-        jacobian_mode="fast",
+        jacobian_mode=jacobian_mode,
     )
 
     # The MPC may deliberately use only tip position (n_out=3), while the

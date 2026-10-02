@@ -44,11 +44,21 @@ def build_vessel_planning_context(
     lumen_file: str | Path,
     run_root: Path | None = None,
     insertion_max_m: float | None = None,
+    jacobian_mode: str = "fast",
 ):
     """Like ``planning_context.build_planning_context()``, but the
     contact-aware model's lumen is the REAL digitized vessel geometry from
     ``lumen_file`` (a ``vessel_lumen_robot_frame.json``-format file, robot
     frame R), not the permissive placeholder.
+
+    `jacobian_mode`: passed through to the real ``build_controller`` call
+    below (the one whose controller_pack is actually returned/used -- the
+    one at module import inside ``build_planning_context()`` is rebuilt
+    immediately after, see the 2026-09-27 bugfix comment below). Default
+    "fast" preserves existing behavior; pass "accurate" for Layer 1 offline
+    solving where "fast" mode's numerical-estimator artifact can make the
+    optimizer chase a bad gradient -- see `build_controller`'s own
+    docstring.
 
     Returns
     -------
@@ -136,13 +146,16 @@ def build_vessel_planning_context(
         run_cfg=exp_cfg.controller,
         design_cfg=make_design_config(),
         robot_cfg=wide_robot_cfg,
+        jacobian_mode=jacobian_mode,
     )
     if insertion_max_m is not None:
         print(f"[vessel-context] insertion_max_m overridden to {1e3*insertion_max_m:.1f} mm "
-              f"(library default 50.0 mm) -- controller_pack rebuilt with the real lumen wired in.")
+              f"(library default 50.0 mm) -- controller_pack rebuilt with the real lumen wired in "
+              f"(jacobian_mode={jacobian_mode!r}).")
     else:
         print(f"[vessel-context] controller_pack rebuilt with the real lumen wired in "
-              f"(insertion_max_m left at the library default {1e3*effective_insertion_max_m:.1f} mm).")
+              f"(insertion_max_m left at the library default {1e3*effective_insertion_max_m:.1f} mm, "
+              f"jacobian_mode={jacobian_mode!r}).")
 
     no_contact_model = bundle.models.get("no_contact")
     if no_contact_model is not None and getattr(no_contact_model, "lumen_query", None) is not None:

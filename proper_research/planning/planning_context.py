@@ -245,11 +245,16 @@ def make_experiment_config(
 def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
+    jacobian_mode: str = "fast",
 ):
     """Build the model and controller objects needed by both offline stages.
 
     This function intentionally does not call ``solve_from_controller_pack``,
     ``optimize_from_saved_inverse_result``, or ``run_simulation``.
+
+    `jacobian_mode`: passed through to ``build_controller`` -- see its own
+    docstring. Default "fast" preserves existing behavior for every caller
+    that doesn't pass this explicitly.
 
     Returns
     -------
@@ -350,6 +355,7 @@ def build_planning_context(
         run_cfg=exp_cfg.controller,
         design_cfg=make_design_config(),
         robot_cfg=make_robot_config(),
+        jacobian_mode=jacobian_mode,
     )
 
     return exp_cfg, bundle, controller_pack, out_root

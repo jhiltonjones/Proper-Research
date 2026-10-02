@@ -140,26 +140,40 @@ def main() -> None:
                          "and the solve itself still uses the analytical Jacobian "
                          "throughout, unaffected by this flag. "
                          "SECOND, DIFFERENT known cause (2026-10-02): the "
-                         "plant_diagnostic_joint_adapter's analytical beam Jacobian is "
-                         "built with jacobian_mode='fast' (hardcoded in "
-                         "controller_factory_joint_space.build_controller, never "
+                         "plant_diagnostic_joint_adapter's analytical beam Jacobian used "
+                         "to be built with jacobian_mode='fast' unconditionally (hardcoded "
+                         "in controller_factory_joint_space.build_controller, never "
                          "threaded through to here) -- the SAME 'fast' mode already "
                          "documented elsewhere (build_or_load_schedule's own comment) to "
                          "have a single-tick numerical-estimator artifact, a spurious "
                          "spike while the true tip output changes smoothly. When this "
                          "fires, the mismatch is NOT confined to d/dL -- most/all "
                          "entries disagree by a large, roughly consistent factor "
-                         "(analytical >> finite-difference). Confirmed by direct "
-                         "inspection for a recalibrated-geometry/locked-Z plan at "
-                         "L0~30mm: relative error 178%% with the disagreement spread "
-                         "across every row/column, not just column 6. Properly fixing "
-                         "this means threading jacobian_mode='accurate' through "
-                         "build_controller -> planning_context -> vessel_context -> "
-                         "here, which would also slow down every OTHER Jacobian "
-                         "evaluation inside Layer 1's inner loop, not just this one "
-                         "validation call -- not done here for that reason. Same "
-                         "caveat applies: the real solve's own analytical Jacobian is "
-                         "unaffected by skipping just this one-time check.")
+                         "(analytical >> finite-difference), and confirmed live "
+                         "2026-10-02 to make Layer 1's own SLSQP solve chase a bad "
+                         "gradient: every node hit the iteration limit, jacobian_"
+                         "condition swung from 1e5 to 1e8 between neighbouring nodes, "
+                         "and the magnet position jumped tens of mm from joint steps of "
+                         "only ~0.03-0.13 rad -- a recalibrated-geometry/locked-Z plan at "
+                         "L0~30mm, relative error 178%% vs finite-difference. NOW FIXED: "
+                         "jacobian_mode is threaded through build_controller -> "
+                         "planning_context -> vessel_context -> here (see --jacobian-mode "
+                         "below), defaulting to 'accurate' for this script specifically "
+                         "(every other caller of those three functions still defaults to "
+                         "'fast', unaffected). This flag's own role is unchanged by that "
+                         "fix -- it only skips the validation CHECK, not the Jacobian "
+                         "mode the real solve uses.")
+    p.add_argument("--jacobian-mode", choices=("fast", "accurate"), default="accurate",
+                    help="mode for the analytical beam Jacobian Layer 1's SLSQP solve "
+                         "uses (threaded through to controller_factory_joint_space."
+                         "build_controller -- see its docstring). Defaults to 'accurate' "
+                         "HERE (unlike every other caller, which defaults to 'fast') "
+                         "because 'fast' mode's numerical-estimator artifact was "
+                         "confirmed 2026-10-02 to make Layer 1 chase a bad gradient at "
+                         "every node for a recalibrated-geometry/L0~30mm plan -- see "
+                         "--skip-chain-rule-validation-at-start's help above for the "
+                         "full story. 'accurate' is slower per-evaluation; pass 'fast' "
+                         "to restore the old (buggy-for-this-case) behaviour if needed.")
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--insertion-start-mm", type=float, default=L_CMD * 1000.0,
                     help="initial inserted length the offline planner starts from AND the "
@@ -222,8 +236,12 @@ def main() -> None:
         time_parameterize_saved_inverse_path,
     )
 
+    print(f"[build] jacobian_mode = {args.jacobian_mode!r}")
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = (
-        build_vessel_planning_context(lumen_file=args.lumen_file, insertion_max_m=insertion_max_m)
+        build_vessel_planning_context(
+            lumen_file=args.lumen_file, insertion_max_m=insertion_max_m,
+            jacobian_mode=args.jacobian_mode,
+        )
     )
     out_root = args.output_root
     out_root.mkdir(parents=True, exist_ok=True)

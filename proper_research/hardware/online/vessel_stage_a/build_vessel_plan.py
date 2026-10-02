@@ -136,6 +136,15 @@ def main() -> None:
                          "and the solve itself still uses the analytical Jacobian "
                          "throughout, unaffected by this flag.")
     p.add_argument("--dt", type=float, default=0.1)
+    p.add_argument("--insertion-start-mm", type=float, default=L_CMD * 1000.0,
+                    help="initial inserted length the offline planner starts from AND the "
+                         "length the live beam must be set to before running this plan -- "
+                         f"defaults to the historical {L_CMD * 1000.0:.1f}mm constant. Pass "
+                         "the live-measured insertion (see "
+                         "proper_research.vision.insertion_check or "
+                         "checkpoint_beam_shape_campaign.measure_current_insertion_mm) "
+                         "when starting a plan from wherever the robot/beam actually is "
+                         "right now, rather than assuming the old default.")
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--z-raise-mm", type=float, default=0.0,
                     help="rigid z-shift applied to the beam-base pivot (and, via "
@@ -161,8 +170,10 @@ def main() -> None:
     exclusion_floor_m = float(start_ref["exclusion_floor_mm"]) / 1000.0
     insertion_max_m = args.insertion_max_mm / 1000.0
 
+    insertion_start_m = args.insertion_start_mm / 1000.0
+
     def _make_initial_poses():
-        return BEAM_BASE_PIVOT.copy(), start_point.copy(), L_CMD, DT_INIT
+        return BEAM_BASE_PIVOT.copy(), start_point.copy(), insertion_start_m, DT_INIT
 
     initial_conditions_mod.make_initial_poses = _make_initial_poses
     planning_context_mod.make_initial_poses = _make_initial_poses
@@ -174,6 +185,7 @@ def main() -> None:
     print(f"[build] magnet_beam_base_exclusion_radius_m (fixed floor) = {exclusion_floor_m:.6f} "
           f"({exclusion_floor_m * 1e3:.2f}mm)")
     print(f"[build] insertion_max_m = {insertion_max_m:.4f} ({args.insertion_max_mm:.1f}mm)")
+    print(f"[build] insertion_start_m = {insertion_start_m:.4f} ({args.insertion_start_mm:.2f}mm)")
 
     from proper_research.planning.vessel_context import build_vessel_planning_context
     from proper_research.planning.planning_context import make_inverse_config

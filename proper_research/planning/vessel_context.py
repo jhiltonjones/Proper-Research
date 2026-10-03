@@ -81,6 +81,33 @@ def build_vessel_planning_context(
     if lumen_C.shape[0] < 2:
         raise ValueError(f"{lumen_file} contains fewer than 2 lumen samples.")
 
+    # 2026-10-03 safety check: found live that a lumen file digitized
+    # before the 2026-10-02 BEAM_BASE_PIVOT_Z recalibration still has its
+    # original (now stale) Z height baked into lumen_C -- the contact
+    # model then pulls the beam toward the WRONG wall height, and its
+    # huge penalty stiffness (k=1e8, k_hard=1e10) completely dominates
+    # the weak magnetic forces, making the beam shape converge to that
+    # wrong-height contact point almost independent of magnet pose. See
+    # probe_beam_configuration.py / the 2026-10-03 commit for the full
+    # diagnosis. Refuse early with a clear message rather than silently
+    # building a corrupted contact model -- recreate the lumen file via
+    # shift_lumen_centerline.py (any shift amount, even 0) or add the
+    # offset directly to lumen_C_m's z column.
+    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
+        BEAM_BASE_PIVOT_Z,
+    )
+    _lumen_z_offset_mm = float(np.abs(lumen_C[:, 2] - BEAM_BASE_PIVOT_Z).max()) * 1e3
+    if _lumen_z_offset_mm > 2.0:
+        raise ValueError(
+            f"{lumen_file}: lumen_C z values differ from the current "
+            f"BEAM_BASE_PIVOT_Z ({BEAM_BASE_PIVOT_Z*1e3:.3f}mm) by up to "
+            f"{_lumen_z_offset_mm:.2f}mm -- this lumen file was digitized "
+            f"against a different (likely stale, pre-recalibration) beam-base "
+            f"height and would silently corrupt the contact model (see the "
+            f"2026-10-03 stale-lumen-Z bug). Z-correct it first -- see any "
+            f"vessel_lumen_robot_frame_*_zcorrected.json for the pattern."
+        )
+
     kwargs: dict[str, Any] = {}
     if run_root is not None:
         kwargs["run_root"] = run_root

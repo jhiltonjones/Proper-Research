@@ -240,26 +240,174 @@ def solve_pose(model, magnet_xyz: np.ndarray, magnet_rotvec: np.ndarray, inserti
     }
 
 
-def ik_dry_run(magnet_xyz: np.ndarray, magnet_rotvec: np.ndarray, seed_q: np.ndarray):
-    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+def _magnet_tcp6(magnet_xyz: np.ndarray, magnet_rotvec: np.ndarray) -> np.ndarray:
     from proper_research.simulation.simulations.initial_conditions import TCP_TO_MAGNET_POSE6
-
     tcp_off = np.array(TCP_TO_MAGNET_POSE6[:3])
     Rm = Rot.from_rotvec(magnet_rotvec).as_matrix()
     tcp_xyz = magnet_xyz - Rm @ tcp_off
-    tcp6 = np.concatenate([tcp_xyz, magnet_rotvec])
+    return np.concatenate([tcp_xyz, magnet_rotvec])
 
-    DH = urik.corrected_dh_from_config(urik.CONFIG)
-    r = urik.inverse_kinematics_dls(
-        T_R_target=urik.pose6_to_T(tcp6), q_seed_rad=tuple(seed_q), dh=DH,
-        T_F_target=None, cfg=urik.CONFIG,
+
+def structured_seed_deltas() -> list[np.ndarray]:
+    """Branch-like perturbations (no closed-form multi-branch UR IK exists in
+    this codebase -- inverse_kinematics_dls is local/DLS-based and only ever
+    explores the basin around its seed). +-pi flips on single joints are a
+    cheap way to probe qualitatively different wrist/elbow/shoulder
+    configurations; most will fail to converge and are simply discarded."""
+    out = []
+    for j in range(6):
+        for sign in (1.0, -1.0):
+            d = np.zeros(6)
+            d[j] = sign * np.pi
+            out.append(d)
+    d = np.zeros(6); d[1] = np.pi / 2
+    out.append(d.copy()); out.append(-d)
+    return out
+
+
+def build_seed_pool(reference_seed: np.ndarray, n_random: int = 16, seed_rng: int = 0) -> list[np.ndarray]:
+    rng = np.random.default_rng(seed_rng)
+    pool = [reference_seed.copy()]
+    for d in structured_seed_deltas():
+        pool.append(reference_seed + d)
+    for _ in range(n_random):
+        spread = rng.uniform(0.3, 2.2)
+        pool.append(reference_seed + rng.uniform(-spread, spread, size=6))
+    return pool
+
+
+def robust_ik_for_pose(
+    magnet_xyz: np.ndarray, magnet_rotvec: np.ndarray, seed_pool: list[np.ndarray], DH, ik_cfg,
+    *, pos_tol_m: float = 0.002,
+) -> list[np.ndarray]:
+    """Try IK from every seed in the pool independently (no chaining -- a
+    failure at one seed never contaminates another). Returns every distinct
+    converged solution found (deduplicated to ~1deg/joint), not just the
+    first."""
+    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+
+    tcp6 = _magnet_tcp6(magnet_xyz, magnet_rotvec)
+    target_T = urik.pose6_to_T(tcp6)
+    solutions: list[np.ndarray] = []
+    for seed in seed_pool:
+        r = urik.inverse_kinematics_dls(
+            T_R_target=target_T, q_seed_rad=tuple(seed), dh=DH, T_F_target=None, cfg=ik_cfg,
+        )
+        if not (r.converged and r.final_position_error_m < pos_tol_m):
+            continue
+        q = np.asarray(r.q_rad)
+        dup = False
+        for s in solutions:
+            diff = urik.wrapped_joint_difference(q, s)
+            if np.max(np.abs(diff)) < np.deg2rad(1.0):
+                dup = True
+                break
+        if not dup:
+            solutions.append(q)
+    return solutions
+
+
+def find_safe_path(
+    from_q: np.ndarray, from_xyz: np.ndarray, from_rotvec: np.ndarray,
+    to_q: np.ndarray, to_xyz: np.ndarray, to_rotvec: np.ndarray,
+    *, DH, ik_cfg, T_F_M, lumen_C_m: np.ndarray, exclusion_radius_m: float,
+    z_bounds_m: tuple[float, float], beam_base_xyz: np.ndarray, n_substeps: int = 20,
+) -> tuple[list[np.ndarray], bool, str]:
+    """Direct joint-space path first; if unsafe, fall back to a multi-
+    waypoint path interpolated ALONG THE ARC (constant radius r=R_ARC_M,
+    constant z=beam_base z, phi interpolated linearly) rather than a
+    straight Cartesian line. A straight xyz lerp between two points on a
+    circle cuts INSIDE the circle -- confirmed live: at t=1/12 toward a
+    153deg-separated target, the straight-line waypoint was already only
+    85.9mm from the base, inside the 97mm exclusion floor, independent of
+    IK/joint-space effects entirely. Since every pose in this sweep (and
+    the reference pose, to within 0.3mm) lies on the same r=101.5mm circle
+    by construction, interpolating phi at fixed r/z keeps every waypoint
+    on that circle, clearing the exclusion radius by the same ~4.5mm
+    margin the experiment itself operates at. Orientation is interpolated
+    with slerp as before (independent of phi in this script's pose-list
+    convention -- psi is a z-rotation applied on top of a phi-independent
+    reference orientation)."""
+    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+    from scipy.spatial.transform import Slerp
+
+    safe, msg = path_safety_check(
+        from_q, to_q, DH=DH, T_F_M=T_F_M, lumen_C_m=lumen_C_m,
+        exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
     )
-    q = np.asarray(r.q_rad)
-    return {
-        "tcp6": tcp6.tolist(), "q_rad": q.tolist(), "converged": bool(r.converged),
-        "final_position_error_mm": float(r.final_position_error_m * 1000.0),
-        "max_joint_step_from_seed_deg": float(np.degrees(np.max(np.abs(q - seed_q)))),
-    }, q
+    if safe:
+        return [to_q], True, "direct"
+
+    def _arc_phi_of(xyz: np.ndarray) -> float:
+        d = xyz - beam_base_xyz
+        return float(np.arctan2(d[1], -d[0]))
+
+    phi_from = _arc_phi_of(from_xyz)
+    phi_to = _arc_phi_of(to_xyz)
+    dphi = float(np.angle(np.exp(1j * (phi_to - phi_from))))  # shortest angular path, wrapped to [-pi,pi]
+    r_arc = 0.5 * (float(np.linalg.norm(from_xyz - beam_base_xyz)) + float(np.linalg.norm(to_xyz - beam_base_xyz)))
+
+    key_rots = Rot.from_rotvec(np.stack([from_rotvec, to_rotvec]))
+    slerp = Slerp([0.0, 1.0], key_rots)
+    q_prev = from_q.copy()
+    waypoints: list[np.ndarray] = []
+    for i in range(1, n_substeps + 1):
+        t = i / n_substeps
+        phi_t = phi_from + t * dphi
+        xyz_t = beam_base_xyz + r_arc * np.array([-np.cos(phi_t), np.sin(phi_t), 0.0])
+        rotvec_t = slerp([t])[0].as_rotvec()
+        tcp6_t = _magnet_tcp6(xyz_t, rotvec_t)
+        target_T = urik.pose6_to_T(tcp6_t)
+        candidate_seeds = [q_prev] + [q_prev + d for d in structured_seed_deltas()]
+        q_t = None
+        for cand_seed in candidate_seeds:
+            r = urik.inverse_kinematics_dls(
+                T_R_target=target_T, q_seed_rad=tuple(cand_seed), dh=DH,
+                T_F_target=None, cfg=ik_cfg,
+            )
+            if r.converged and r.final_position_error_m < 0.002:
+                q_t = np.asarray(r.q_rad)
+                break
+        if q_t is None:
+            return [to_q], False, f"sub-waypoint {i}/{n_substeps} IK failed to converge (tried {len(candidate_seeds)} seeds)"
+        safe_leg, msg_leg = path_safety_check(
+            q_prev, q_t, DH=DH, T_F_M=T_F_M, lumen_C_m=lumen_C_m,
+            exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m, n_samples=30,
+        )
+        if not safe_leg:
+            return [to_q], False, f"sub-waypoint {i}/{n_substeps} leg unsafe: {msg_leg[:200]}"
+        waypoints.append(q_t)
+        q_prev = q_t
+    return waypoints, True, f"task-space {n_substeps}-waypoint path"
+
+
+def path_safety_check(
+    from_q: np.ndarray, to_q: np.ndarray, *, DH, T_F_M, lumen_C_m: np.ndarray,
+    exclusion_radius_m: float, z_bounds_m: tuple[float, float], n_samples: int = 150,
+) -> tuple[bool, str]:
+    """Straight-line joint-space interpolation safety check, reusing
+    vessel_stage_a/common.py's own `_validate_reset_path_safe` logic (same
+    magnet-exclusion-radius + magnet-z-bounds checks used before any real
+    move_j in this codebase) rather than reimplementing it."""
+    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+    from proper_research.hardware.online.vessel_stage_a import common as vsa_common
+
+    def magnet_transform_fn(q: np.ndarray) -> np.ndarray:
+        fk = urik.forward_kinematics(np.asarray(q, dtype=float), DH, T_F_M)
+        return np.asarray(fk.T_R_target)[:3, 3]
+
+    try:
+        vsa_common._validate_reset_path_safe(
+            np.asarray(from_q), np.asarray(to_q),
+            magnet_transform_fn=magnet_transform_fn,
+            magnet_exclusion_lumen_C_m=lumen_C_m,
+            magnet_exclusion_radius_m=exclusion_radius_m,
+            magnet_z_bounds_m=z_bounds_m,
+            n_samples=n_samples,
+        )
+        return True, "ok"
+    except RuntimeError as e:
+        return False, str(e)
 
 
 def main() -> None:
@@ -322,7 +470,7 @@ def main() -> None:
     model = bundle.models["no_contact"]
 
     results = []
-    seed = seed_q.copy()
+    recs_by_label = {}
     for pose in poses:
         magnet_xyz = np.asarray(pose["magnet_xyz"])
         magnet_rotvec = np.asarray(pose["magnet_rotvec"])
@@ -332,18 +480,100 @@ def main() -> None:
 
         model_out = solve_pose(model, magnet_xyz, magnet_rotvec, insertion_m)
         rec["model"] = model_out
-
-        if args.mode in ("dry-run-ik", "hardware"):
-            ik_out, q_sol = ik_dry_run(magnet_xyz, magnet_rotvec, seed)
-            rec["ik"] = ik_out
-            if ik_out["converged"] and ik_out["final_position_error_mm"] < 2.0:
-                seed = q_sol
+        results.append(rec)
+        recs_by_label[pose["label"]] = rec
 
         print(f"  {pose['label']:16s} tip={np.round(model_out['tip'],4).tolist()} "
               f"max_bend={model_out['max_bend_deg']:.1f}deg "
               f"alpha3={model_out['alpha3_field_vs_beammoment_deg']:.1f}deg "
-              f"|B|={model_out['B_norm_T']*1000:.2f}mT |tau|={model_out['tau_norm']*1e6:.2f}uN*m "
-              + (f"IK conv={rec['ik']['converged']} dq={rec['ik']['max_joint_step_from_seed_deg']:.1f}deg" if "ik" in rec else ""))
+              f"|B|={model_out['B_norm_T']*1000:.2f}mT |tau|={model_out['tau_norm']*1e6:.2f}uN*m")
+
+    if args.mode in ("dry-run-ik", "hardware"):
+        from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+        from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import _robot_kin
+
+        DH = _robot_kin.dh
+        ik_cfg = _robot_kin.ik_cfg
+        # Exclusion target is the beam-base point itself (single point), NOT
+        # the full digitized vessel-lumen centerline -- this is a free-space
+        # (no-contact) experiment, so the physical hazard the exclusion
+        # radius protects against is the magnet swinging into the beam-base/
+        # insertion-assembly mount, not the vessel tube (which isn't even
+        # physically relevant here). Passing the full lumen array here was a
+        # bug: it made some OTHER point along the digitized tube the nearest
+        # "obstacle" instead of the base, reporting a 66.5mm gap at the
+        # reference pose that is actually 101.8mm from the base itself.
+        lumen_C = beam_base_xyz.reshape(1, 3)
+        exclusion_radius_m = 0.097
+        z_bounds_m = (beam_base_xyz[2] - 0.010, beam_base_xyz[2] + 0.010)
+
+        print(f"\n[ik] robust multi-seed IK search (pos_tol=2mm, exclusion={exclusion_radius_m*1e3:.0f}mm, "
+              f"z_bounds=[{z_bounds_m[0]*1e3:.1f},{z_bounds_m[1]*1e3:.1f}]mm)")
+        pool = build_seed_pool(seed_q)
+        pending = list(poses)
+        for pass_i in range(3):
+            still_pending = []
+            n_found_this_pass = 0
+            for pose in pending:
+                lab = pose["label"]
+                magnet_xyz = np.asarray(pose["magnet_xyz"])
+                magnet_rotvec = np.asarray(pose["magnet_rotvec"])
+                sols = robust_ik_for_pose(magnet_xyz, magnet_rotvec, pool, DH, ik_cfg)
+                if not sols:
+                    still_pending.append(pose)
+                    continue
+                n_found_this_pass += 1
+                # Prefer the path-safe solution closest (smallest joint step) to
+                # the reference seed; fall back to the closest unsafe one (still
+                # reported, but flagged) if none are path-safe.
+                scored = sorted(sols, key=lambda q: float(np.max(np.abs(urik.wrapped_joint_difference(q, seed_q)))))
+                best = None
+                best_path = None
+                for q in scored:
+                    waypoints, safe, msg = find_safe_path(
+                        seed_q, placeholder_magnet_pose6[:3], placeholder_magnet_pose6[3:6],
+                        q, magnet_xyz, magnet_rotvec,
+                        DH=DH, ik_cfg=ik_cfg, T_F_M=_robot_kin.T_F_M, lumen_C_m=lumen_C,
+                        exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+                        beam_base_xyz=beam_base_xyz,
+                    )
+                    if safe:
+                        best, best_path = q, (waypoints, True, msg)
+                        break
+                if best is None:
+                    q = scored[0]
+                    waypoints, safe, msg = find_safe_path(
+                        seed_q, placeholder_magnet_pose6[:3], placeholder_magnet_pose6[3:6],
+                        q, magnet_xyz, magnet_rotvec,
+                        DH=DH, ik_cfg=ik_cfg, T_F_M=_robot_kin.T_F_M, lumen_C_m=lumen_C,
+                        exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+                        beam_base_xyz=beam_base_xyz,
+                    )
+                    best, best_path = q, (waypoints, safe, msg)
+                recs_by_label[lab]["ik"] = {
+                    "n_solutions_found": len(sols),
+                    "best_q_rad": best.tolist(),
+                    "max_joint_step_from_ref_deg": float(np.degrees(np.max(np.abs(urik.wrapped_joint_difference(best, seed_q))))),
+                    "path_safe_from_ref": bool(best_path[1]),
+                    "path_n_waypoints": len(best_path[0]),
+                    "path_safety_detail": best_path[2],
+                }
+                # Grow the pool with every newly found solution so later poses
+                # (and the next pass, for poses still pending) benefit.
+                for q in sols:
+                    pool.append(q)
+            print(f"  pass {pass_i+1}: {n_found_this_pass} newly solved, {len(still_pending)} still pending "
+                  f"(pool size now {len(pool)})")
+            pending = still_pending
+            if not pending:
+                break
+        for pose in pending:
+            recs_by_label[pose["label"]]["ik"] = {"n_solutions_found": 0}
+
+        n_ok = sum(1 for r in results if r.get("ik", {}).get("n_solutions_found", 0) > 0)
+        n_path_safe = sum(1 for r in results if r.get("ik", {}).get("path_safe_from_ref"))
+        print(f"[ik] {n_ok}/{len(results)} poses reachable (>=1 IK solution); "
+              f"{n_path_safe}/{len(results)} have a path-safe solution from the reference seed")
 
         results.append(rec)
 

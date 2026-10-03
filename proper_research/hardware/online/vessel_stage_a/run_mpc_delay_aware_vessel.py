@@ -620,7 +620,7 @@ def main() -> None:
                          "fixed beam-base point/210.43mm radius, not derived from this file. "
                          "Still accepted (no longer required) purely so existing invocations "
                          "don't break; a note is printed if passed. See module docstring's fix 6.")
-    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=210.43,
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=97.0,  # 2026-10-03: recalibrated (was 210.43) -- the recalibrated start config sits ~101.80mm from the beam base, so the old floor would have refused that start position outright. 97.0mm leaves a ~4.8mm margin below it.
                     help="the TRUE magnet-to-beam-base exclusion floor (before "
                          "--magnet-exclusion-tolerance-mm is subtracted to get the live "
                          "abort/QP threshold). Default 210.43mm matches the project's "

@@ -115,17 +115,31 @@ def _minimal_rotation_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return Rot.from_rotvec(axis * angle).as_matrix()
 
 
-def reference_orientation_matrix() -> np.ndarray:
-    """R_REF: world orientation with the source dipole along world -X,
-    the minimal (no extra roll) rotation from SOURCE_DIPOLE_BODY_AXIS."""
-    return _minimal_rotation_matrix(SOURCE_DIPOLE_BODY_AXIS, np.array([-1.0, 0.0, 0.0]))
+def reference_orientation_matrix(magnet_xyz: np.ndarray, beam_base_xyz: np.ndarray) -> np.ndarray:
+    """R_REF(phi): world orientation with the source dipole pointing
+    DIRECTLY AT THE BEAM BASE from this magnet position -- the minimal (no
+    extra roll) rotation from SOURCE_DIPOLE_BODY_AXIS to the unit vector
+    (beam_base_xyz - magnet_xyz). This is a function of the magnet's
+    position (hence of phi along the arc), not a single fixed world
+    orientation -- confirmed against a live ground-truth pose (user
+    manually jogged the magnet in line with the base, dipole visibly
+    pointing at it): this formula reproduces that pose's dipole WORLD
+    DIRECTION exactly (to machine precision); the full orientation differs
+    only by an arbitrary roll about that direction (this formula's
+    "zero-roll" convention vs whatever roll the live pose happened to be
+    at), which is expected and irrelevant since every roll is swept by
+    the psi sequence anyway."""
+    direction_to_base = beam_base_xyz - magnet_xyz
+    direction_to_base = direction_to_base / np.linalg.norm(direction_to_base)
+    return _minimal_rotation_matrix(SOURCE_DIPOLE_BODY_AXIS, direction_to_base)
 
 
 def build_pose_list(beam_base_xyz: np.ndarray) -> list[dict]:
     """40 (phi, psi) poses: magnet position on the arc (world x-y plane,
     constant radius/z around the beam base), orientation = psi rotation of
-    the fixed reference orientation ABOUT THE MAGNET'S OWN LOCAL Z AXIS
-    (right-multiply: R_pose = R_REF @ Rz(psi)), not a world-frame rotation.
+    the PHI-DEPENDENT base-pointing reference orientation ABOUT THE
+    MAGNET'S OWN LOCAL Z AXIS (right-multiply: R_pose = R_REF(phi) @
+    Rz(psi)), not a world-frame rotation.
 
     This matters mechanically, not just mathematically: TCP_TO_MAGNET_POSE6
     is a pure flange-local +Z offset (zero relative rotation), so the
@@ -139,12 +153,12 @@ def build_pose_list(beam_base_xyz: np.ndarray) -> list[dict]:
     requires a generic coupled position+orientation IK re-solve for every
     psi value, which is what caused the branch-jumping/path-safety
     failures this session fought before the mechanism was pointed out."""
-    R_REF = reference_orientation_matrix()
     poses = []
     for phi_deg in PHI_ARC_DEG:
         phi = np.deg2rad(phi_deg)
         direction = np.array([-np.cos(phi), np.sin(phi), 0.0])
         magnet_xyz = beam_base_xyz + R_ARC_M * direction
+        R_REF = reference_orientation_matrix(magnet_xyz, beam_base_xyz)
         for psi_deg in PSI_DIPOLE_DEG:
             psi = np.deg2rad(psi_deg)
             R_psi = Rot.from_rotvec([0.0, 0.0, psi]).as_matrix()
@@ -488,7 +502,7 @@ def solve_arc_sequence(
         phi = np.deg2rad(phi_deg)
         direction = np.array([-np.cos(phi), np.sin(phi), 0.0])
         magnet_xyz = beam_base_xyz + R_ARC_M * direction
-        R_REF = reference_orientation_matrix()
+        R_REF = reference_orientation_matrix(magnet_xyz, beam_base_xyz)
         magnet_rotvec = Rot.from_matrix(R_REF).as_rotvec()
         sols = robust_ik_for_pose(magnet_xyz, magnet_rotvec, pool, DH, ik_cfg)
         if not sols:
@@ -504,7 +518,7 @@ def solve_arc_sequence(
             return True
         phi_deg = phi_order_deg[i]
         magnet_xyz = xyz_by_phi[phi_deg]
-        R_REF = reference_orientation_matrix()
+        R_REF = reference_orientation_matrix(magnet_xyz, beam_base_xyz)
         magnet_rotvec = Rot.from_matrix(R_REF).as_rotvec()
         candidates = sorted(
             sols_by_phi[phi_deg],
@@ -624,14 +638,14 @@ def run_hardware(
             raise RuntimeError(f"camera unhealthy ({found}/10 valid frames) -- refusing to start.")
 
         hw_results = []
-        R_REF = reference_orientation_matrix()
-        ref_rotvec_psi0 = Rot.from_matrix(R_REF).as_rotvec()
         prev_q, prev_xyz, prev_rotvec = q_now.copy(), seed_xyz.copy(), seed_rotvec.copy()
         for phi_deg in phi_order_deg:
             q_psi0 = phi_solutions[phi_deg]
             phi = np.deg2rad(phi_deg)
             direction = np.array([-np.cos(phi), np.sin(phi), 0.0])
             magnet_xyz = beam_base_xyz + R_ARC_M * direction
+            R_REF = reference_orientation_matrix(magnet_xyz, beam_base_xyz)
+            ref_rotvec_psi0 = Rot.from_matrix(R_REF).as_rotvec()
 
             wps, safe, msg = find_safe_path(
                 prev_q, prev_xyz, prev_rotvec, q_psi0, magnet_xyz, ref_rotvec_psi0,

@@ -120,8 +120,21 @@ def _minimal_rotation_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 # dipole visibly pointing at the base) and read off the live joints/TCP.
 # This is the ACTUAL measured orientation at (very close to) phi=0, used
 # below as the canonical "roll" reference for the whole arc.
-_CALIBRATION_MAGNET_XYZ = np.array([0.31525503, -0.71972685, -0.03968372])
-_CALIBRATION_ROTVEC = np.array([-2.6740649395181184, 1.6483563099965164, -0.0008255535458713929])
+# 2026-10-03 bugfix: this previously held [-2.6740649395181184,
+# 1.6483563099965164, -0.0008255535458713929] -- the OLD vessel-insertion
+# reference pose's rotvec (from vessel_magnet_initial_position_2026-10-02
+# _recalibrated.json), copy-pasted by mistake instead of the user's actual
+# "magnet in-line with beam base" calibration rotvec. Confirmed live: that
+# wrong value put the dipole 38.85deg off the beam-base direction even AT
+# the calibration position itself (where it should be ~0 by construction,
+# since SOURCE_DIPOLE_BODY_AXIS was derived from this exact pose) -- found
+# immediately after the first live phi=20deg move executed. The value
+# below is freshly re-verified via FK from the user's real calibration
+# joints [-0.9355629126178187, -1.80503573040151, -1.8300602436065674,
+# -1.0767775636962433, 1.57289457321167, -2.0786169211017054]: dipole
+# direction now matches the beam-base direction to 0.015deg.
+_CALIBRATION_MAGNET_XYZ = np.array([0.31525502766325836, -0.7197268475527117, -0.03968371934704795])
+_CALIBRATION_ROTVEC = np.array([-3.0701542362881575, 0.6653071309625725, -0.0005595096173803434])
 
 
 def reference_orientation_matrix(magnet_xyz: np.ndarray, beam_base_xyz: np.ndarray) -> np.ndarray:

@@ -293,27 +293,40 @@ def _magnet_tcp6(magnet_xyz: np.ndarray, magnet_rotvec: np.ndarray) -> np.ndarra
 def structured_seed_deltas() -> list[np.ndarray]:
     """Branch-like perturbations (no closed-form multi-branch UR IK exists in
     this codebase -- inverse_kinematics_dls is local/DLS-based and only ever
-    explores the basin around its seed). +-pi flips on single joints are a
-    cheap way to probe qualitatively different wrist/elbow/shoulder
-    configurations; most will fail to converge and are simply discarded."""
+    explores the basin around its seed). Single-joint wraps at multiples of
+    pi/2 up to a full +-2pi are a cheap way to probe qualitatively different
+    wrist/elbow/shoulder configurations (and different winding numbers on
+    the same joint -- UR joints have ~+-2pi of range); most candidates will
+    fail to converge and are simply discarded.
+
+    2026-10-03 fix: this used to stop at +-pi, which is why the branch
+    search missed a 70.5deg-apart solution pair for a real target pose
+    whose better branch needed joint1 ~202deg from the reference (between
+    pi and 2pi) -- the search instead reported the best AVAILABLE pair as
+    146.8-180deg apart and concluded (wrongly) that the workspace itself
+    required a huge reconfiguration there. It didn't; the search was just
+    too narrow to find the better branch."""
     out = []
+    magnitudes = (np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi)
     for j in range(6):
-        for sign in (1.0, -1.0):
-            d = np.zeros(6)
-            d[j] = sign * np.pi
-            out.append(d)
-    d = np.zeros(6); d[1] = np.pi / 2
-    out.append(d.copy()); out.append(-d)
+        for mag in magnitudes:
+            for sign in (1.0, -1.0):
+                d = np.zeros(6)
+                d[j] = sign * mag
+                out.append(d)
     return out
 
 
-def build_seed_pool(reference_seed: np.ndarray, n_random: int = 16, seed_rng: int = 0) -> list[np.ndarray]:
+def build_seed_pool(reference_seed: np.ndarray, n_random: int = 32, seed_rng: int = 0) -> list[np.ndarray]:
     rng = np.random.default_rng(seed_rng)
     pool = [reference_seed.copy()]
     for d in structured_seed_deltas():
         pool.append(reference_seed + d)
     for _ in range(n_random):
-        spread = rng.uniform(0.3, 2.2)
+        # Full +-2pi spread (was capped at 2.2 rad =~126deg) -- UR joints
+        # have close to +-2pi of usable range, and the better branch found
+        # live needed ~3.5rad (~202deg) on one joint alone.
+        spread = rng.uniform(0.3, 2.0 * np.pi)
         pool.append(reference_seed + rng.uniform(-spread, spread, size=6))
     return pool
 

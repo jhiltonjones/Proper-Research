@@ -68,9 +68,30 @@ LIVE_JOINTS_RAD = (
 # mix plans/schedules built under different TCP_TO_MAGNET_POSE6 values.
 TCP_TO_MAGNET_POSE6 = (0.0, 0.0, 0.43, 0.0, 0.0, 0.0)
 
+# 2026-10-03 RECALIBRATION: the old value below predates the 2026-10-02
+# TCP_TO_MAGNET_POSE6 remount and was never re-verified afterward. Found
+# live to be ~176deg off (essentially the negated polarity) from a fresh
+# ground-truth measurement: the user manually jogged the magnet to a
+# position physically in line with the beam base along world X (same Y/Z,
+# 210mm separation) with the dipole visibly pointing straight at the base,
+# and read off the live joints/TCP at that pose --
+#   joints = [-0.9355629126178187, -1.80503573040151, -1.8300602436065674,
+#             -1.0767775636962433, 1.57289457321167, -2.0786169211017054]
+#   TCP pose6 = [0.3150097798725594, -0.7199134455939546, 0.39035840819409234,
+#               -3.0702563895693964, 0.665670523991651, 4.511819286522139e-05]
+# FK from those joints (magnet xyz via the current TCP_TO_MAGNET_POSE6)
+# matches the given TCP pose to <0.15mm. At that pose the magnet sits at
+# lower world-X than the beam base, so "dipole points directly at the
+# base" means world dipole direction = +X; back-solving
+# R_magnet.T @ [1,0,0] through the measured magnet orientation gives the
+# value below. Old value was (-0.932073, 0.361306, 0.026427) -- note both
+# are nearly pure in-plane (near-zero body-Z component), consistent with
+# a diametrically-poled magnet whose physical pole axis is perpendicular
+# to the flange/J6 rotation axis (so a psi sweep via joint 6 alone
+# meaningfully rotates the dipole -- see sweep_free_space_arc_dipole.py).
 # Source-magnet dipole direction in the magnet body frame, giving a world -R.x
 # (beam axial: the beam grows along world -X) dipole at the reference pose.
-SOURCE_DIPOLE_BODY_AXIS = (-0.932073, 0.361306, 0.026427)
+SOURCE_DIPOLE_BODY_AXIS = (0.910293410, -0.413963475, 0.000386004)
 
 SOURCE_MAGNET_DIAMETER_M = 0.10
 SOURCE_MAGNET_LENGTH_M = 0.10

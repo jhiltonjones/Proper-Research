@@ -67,7 +67,13 @@ from scipy.spatial.transform import Rotation as Rot
 MU0 = 4.0 * np.pi * 1e-7
 
 # Source-magnet dipole direction in the magnet body frame (unit vector).
-SOURCE_DIPOLE_BODY_AXIS = np.array([-0.932073, 0.361306, 0.026427])
+# 2026-10-03 recalibration: re-derived from a fresh ground-truth pose (magnet
+# manually jogged in line with the beam base along world X, dipole visibly
+# pointing at the base) -- see initial_conditions.SOURCE_DIPOLE_BODY_AXIS's
+# own docstring for the full derivation. Old value (-0.932073, 0.361306,
+# 0.026427) predated the 2026-10-02 TCP_TO_MAGNET_POSE6 remount and was
+# ~176deg off (effectively negated polarity).
+SOURCE_DIPOLE_BODY_AXIS = np.array([0.910293410, -0.413963475, 0.000386004])
 # Source magnet moment magnitude -- confirmed 2026-10-03 from the model's
 # own m_body (NOT the beam's own ~0.017 A*m^2 moment -- that earlier mixup
 # was a 52,325x error, see the dipole-rotation investigation writeup).

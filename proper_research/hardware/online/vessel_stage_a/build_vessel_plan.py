@@ -54,7 +54,18 @@ import proper_research.planning.planning_context as planning_context_mod
 # `capture_live_start_position.py`) to a single fixed beam-base height --
 # BEAM_BASE_PIVOT_Z below -- so there is no longer a "raised vs unraised"
 # choice to make here at all.
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
+# 2026-10-03 recalibration: the old Y value (-0.670028) was introduced
+# 2026-09-28 (commit 9380019e), 4 days before the 2026-10-02
+# TCP_TO_MAGNET_POSE6 mount recalibration, and was never re-verified
+# afterward -- same root cause as the SOURCE_DIPOLE_BODY_AXIS staleness
+# found the same day. Found live: with the source magnet manually jogged
+# "in line" with the beam base (dipole visibly pointing straight at it,
+# zero Y offset by construction of that alignment), the magnet's measured
+# Y was -0.719727, not -0.670028 (a ~50mm gap) -- X (0.525575) and Z
+# (-0.039627) both still matched to <1mm, consistent with only the Y
+# component having drifted/been wrong. User confirmed: "the beam base
+# should be on the same y plane as the magnet" at that in-line pose.
+BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.719727, 3.14159265, 0.0, 0.0])
 BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
                                 # vessel_magnet_initial_position_2026-10-02_recalibrated.json
 L_CMD = 0.03044

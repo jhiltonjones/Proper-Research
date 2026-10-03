@@ -873,8 +873,21 @@ def main() -> None:
         # "obstacle" instead of the base, reporting a 66.5mm gap at the
         # reference pose that is actually 101.8mm from the base itself.
         lumen_C = beam_base_xyz.reshape(1, 3)
-        exclusion_radius_m = 0.097
-        z_bounds_m = (beam_base_xyz[2] - 0.010, beam_base_xyz[2] + 0.010)
+        # 2026-10-03: the user clarified the only safety restriction is a
+        # pure 3D spherical keep-out around the beam base (80mm) -- no
+        # separate z-bounds window. The z_bounds_m constraint (a tight
+        # +-10mm band) was over-restrictive: many "unsafe path" rejections
+        # this session were z-bound violations, not exclusion-radius
+        # violations, and likely forced the IK/path search into contorted,
+        # far-branch solutions trying to avoid a constraint that was never
+        # actually required -- plausibly also explaining the kinematic
+        # branch-isolation found at the current live pose (a smooth local
+        # continuation may dip slightly in z without ever coming close to
+        # the beam base in 3D distance, which is all that actually
+        # matters). _validate_reset_path_safe skips the z check entirely
+        # when magnet_z_bounds_m is None.
+        exclusion_radius_m = 0.080
+        z_bounds_m = None
 
     if args.mode == "dry-run-ik":
         print(f"\n[ik] robust multi-seed IK search (pos_tol=2mm, exclusion={exclusion_radius_m*1e3:.0f}mm, "

@@ -345,40 +345,65 @@ def find_safe_path(
     phi_from = _arc_phi_of(from_xyz)
     phi_to = _arc_phi_of(to_xyz)
     dphi = float(np.angle(np.exp(1j * (phi_to - phi_from))))  # shortest angular path, wrapped to [-pi,pi]
-    r_arc = 0.5 * (float(np.linalg.norm(from_xyz - beam_base_xyz)) + float(np.linalg.norm(to_xyz - beam_base_xyz)))
+    r_base = 0.5 * (float(np.linalg.norm(from_xyz - beam_base_xyz)) + float(np.linalg.norm(to_xyz - beam_base_xyz)))
 
     key_rots = Rot.from_rotvec(np.stack([from_rotvec, to_rotvec]))
     slerp = Slerp([0.0, 1.0], key_rots)
-    q_prev = from_q.copy()
-    waypoints: list[np.ndarray] = []
-    for i in range(1, n_substeps + 1):
-        t = i / n_substeps
-        phi_t = phi_from + t * dphi
-        xyz_t = beam_base_xyz + r_arc * np.array([-np.cos(phi_t), np.sin(phi_t), 0.0])
-        rotvec_t = slerp([t])[0].as_rotvec()
-        tcp6_t = _magnet_tcp6(xyz_t, rotvec_t)
-        target_T = urik.pose6_to_T(tcp6_t)
-        candidate_seeds = [q_prev] + [q_prev + d for d in structured_seed_deltas()]
-        q_t = None
-        for cand_seed in candidate_seeds:
-            r = urik.inverse_kinematics_dls(
-                T_R_target=target_T, q_seed_rad=tuple(cand_seed), dh=DH,
-                T_F_target=None, cfg=ik_cfg,
-            )
-            if r.converged and r.final_position_error_m < 0.002:
-                q_t = np.asarray(r.q_rad)
+
+    # Try the plain constant-radius arc first; if some leg still fails (a
+    # large reconfiguration can still force an unsafe joint-space detour
+    # even along the arc -- confirmed live for one psi=180 phi=0->-80
+    # transition), retry with the radius bulged outward mid-transition
+    # (more clearance during the big reconfiguration), increasing bulge
+    # until one works or we give up.
+    for bulge_m in (0.0, 0.03, 0.06, 0.10, 0.15):
+        q_prev = from_q.copy()
+        waypoints: list[np.ndarray] = []
+        fail_reason = None
+        for i in range(1, n_substeps + 1):
+            t = i / n_substeps
+            phi_t = phi_from + t * dphi
+            r_t = r_base + bulge_m * np.sin(np.pi * t)
+            xyz_t = beam_base_xyz + r_t * np.array([-np.cos(phi_t), np.sin(phi_t), 0.0])
+            rotvec_t = slerp([t])[0].as_rotvec()
+            tcp6_t = _magnet_tcp6(xyz_t, rotvec_t)
+            target_T = urik.pose6_to_T(tcp6_t)
+            candidate_seeds = [q_prev] + [q_prev + d for d in structured_seed_deltas()]
+            # Collect every converging candidate and keep the one CLOSEST to
+            # q_prev in joint space -- taking the first match (as an earlier
+            # version did) could land on a far-away branch via the
+            # structured-perturbation fallback, confirmed live: a 455mm
+            # magnet-z excursion between consecutive waypoints from exactly
+            # this failure mode (joint-space branch jump, not a real
+            # physical constraint).
+            q_t = None
+            best_step = None
+            for cand_seed in candidate_seeds:
+                r = urik.inverse_kinematics_dls(
+                    T_R_target=target_T, q_seed_rad=tuple(cand_seed), dh=DH,
+                    T_F_target=None, cfg=ik_cfg,
+                )
+                if r.converged and r.final_position_error_m < 0.002:
+                    cand_q = np.asarray(r.q_rad)
+                    step = float(np.max(np.abs(urik.wrapped_joint_difference(cand_q, q_prev))))
+                    if best_step is None or step < best_step:
+                        best_step = step
+                        q_t = cand_q
+            if q_t is None:
+                fail_reason = f"sub-waypoint {i}/{n_substeps} IK failed to converge (tried {len(candidate_seeds)} seeds)"
                 break
-        if q_t is None:
-            return [to_q], False, f"sub-waypoint {i}/{n_substeps} IK failed to converge (tried {len(candidate_seeds)} seeds)"
-        safe_leg, msg_leg = path_safety_check(
-            q_prev, q_t, DH=DH, T_F_M=T_F_M, lumen_C_m=lumen_C_m,
-            exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m, n_samples=30,
-        )
-        if not safe_leg:
-            return [to_q], False, f"sub-waypoint {i}/{n_substeps} leg unsafe: {msg_leg[:200]}"
-        waypoints.append(q_t)
-        q_prev = q_t
-    return waypoints, True, f"task-space {n_substeps}-waypoint path"
+            safe_leg, msg_leg = path_safety_check(
+                q_prev, q_t, DH=DH, T_F_M=T_F_M, lumen_C_m=lumen_C_m,
+                exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m, n_samples=30,
+            )
+            if not safe_leg:
+                fail_reason = f"sub-waypoint {i}/{n_substeps} leg unsafe: {msg_leg[:200]}"
+                break
+            waypoints.append(q_t)
+            q_prev = q_t
+        if fail_reason is None:
+            return waypoints, True, f"task-space {n_substeps}-waypoint path (bulge={bulge_m*1e3:.0f}mm)"
+    return [to_q], False, f"no safe path at any bulge radius (last failure: {fail_reason})"
 
 
 def path_safety_check(
@@ -410,6 +435,191 @@ def path_safety_check(
         return False, str(e)
 
 
+def run_hardware(
+    order: list[str], recs_by_label: dict, beam_base_xyz: np.ndarray,
+    placeholder_magnet_pose6: np.ndarray, seed_q: np.ndarray, *, DH, ik_cfg, T_F_M,
+    lumen_C: np.ndarray, exclusion_radius_m: float, z_bounds_m: tuple[float, float],
+    insertion_m: float, out_path: Path,
+) -> None:
+    """Execute a pre-chosen, caller-verified pose sequence on the real
+    robot, recording camera-measured tip position/tangent at each pose and
+    comparing against the model prediction already computed in
+    recs_by_label[label]['model']. Never invents its own path -- recomputes
+    IK/path-safety the same way dry-run-ik did (so it catches any drift
+    between this run's computed waypoints and what was verified earlier)
+    but refuses to move through any hop it cannot itself verify safe."""
+    import time
+
+    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+    from proper_research.hardware.online.vessel_stage_a import common as vsa_common
+    from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
+    from proper_research.hardware.online.state_stream import NewFrameTipMapper
+    from proper_research.hardware.ur_rtde_robot import URRTDERobot
+
+    robot = URRTDERobot(vsa_common.ROBOT_IP, frequency=125.0)
+    robot.connect()
+    camera = None
+    try:
+        q_now = np.array(robot.get_joints())
+        dq0_deg = float(np.degrees(np.max(np.abs(urik.wrapped_joint_difference(q_now, seed_q)))))
+        print(f"[hardware] current joints: {np.round(q_now, 4).tolist()} (max offset from "
+              f"reference: {dq0_deg:.2f}deg)")
+        if dq0_deg > 2.0:
+            raise RuntimeError(
+                f"robot is not at the reference position (max joint offset {dq0_deg:.2f}deg "
+                f"> 2.0deg tolerance) -- refusing to start. Move to the reference joints "
+                f"{seed_q.tolist()} first (e.g. a plain robot.move_j under direct supervision)."
+            )
+        safety_mode = robot.get_safety_mode()
+        prot_stopped = robot.is_protective_stopped()
+        if prot_stopped or safety_mode not in (1, 2):
+            raise RuntimeError(
+                f"robot not in a safe/normal state (safety_mode={safety_mode}, "
+                f"protective_stopped={prot_stopped}) -- refusing to start."
+            )
+        print(f"[hardware] robot verified at reference position, safety_mode={safety_mode}, "
+              f"not protective-stopped -- proceeding")
+
+        scfg = vsa_common._raised_stream_stream_config()
+        mapper = NewFrameTipMapper(scfg)
+        camera = CameraSource(
+            CameraConfig(
+                cam_index=0, exposure=29.0,
+                image_filename="/dev/shm/sweep_free_space_arc_dipole.png",
+                roi_polygon_path=scfg.roi_polygon_path, manual_boundary_path=scfg.manual_boundary_path,
+                pivot_hint=tuple(scfg.pivot_hint_px),
+            ),
+            pivot_point_pose6=np.asarray(scfg.T_robot_beam_pose6),
+            robot_joints_getter=lambda: None, robot_pose_getter=lambda: None,
+            insertion_length_getter=lambda: insertion_m, frame_processor=mapper,
+        )
+        camera.start()
+        time.sleep(1.5)
+        found = 0
+        for _ in range(10):
+            est, _age = camera.latest(0.5)
+            if est is not None:
+                found += 1
+            time.sleep(0.1)
+        print(f"[hardware] camera health check: {found}/10 frames had a valid tip estimate")
+        if found < 7:
+            raise RuntimeError(f"camera unhealthy ({found}/10 valid frames) -- refusing to start.")
+
+        hw_results = []
+        prev_q = q_now.copy()
+        prev_xyz = placeholder_magnet_pose6[:3].copy()
+        prev_rotvec = placeholder_magnet_pose6[3:6].copy()
+        pool = build_seed_pool(seed_q)
+        for label in order:
+            rec = recs_by_label[label]
+            magnet_xyz = np.asarray(rec["magnet_xyz"])
+            magnet_rotvec = np.asarray(rec["magnet_rotvec"])
+            sols = robust_ik_for_pose(magnet_xyz, magnet_rotvec, pool, DH, ik_cfg)
+            if not sols:
+                raise RuntimeError(f"{label}: no IK solution found at execution time -- aborting.")
+            pool.extend(sols)
+            scored = sorted(sols, key=lambda q: float(np.max(np.abs(urik.wrapped_joint_difference(q, prev_q)))))
+            waypoints = None
+            for q in scored:
+                wps, safe, msg = find_safe_path(
+                    prev_q, prev_xyz, prev_rotvec, q, magnet_xyz, magnet_rotvec,
+                    DH=DH, ik_cfg=ik_cfg, T_F_M=T_F_M, lumen_C_m=lumen_C,
+                    exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+                    beam_base_xyz=beam_base_xyz,
+                )
+                if safe:
+                    waypoints = wps
+                    break
+            if waypoints is None:
+                raise RuntimeError(
+                    f"{label}: no path-safe route found at execution time (last attempt: {msg}) "
+                    f"-- aborting rather than moving through an unverified path."
+                )
+
+            print(f"[hardware] -> {label}: executing {len(waypoints)}-waypoint path")
+            for wp_i, q_wp in enumerate(waypoints):
+                if robot.is_protective_stopped():
+                    raise RuntimeError(f"{label}: protective stop detected mid-sequence -- aborting.")
+                robot.move_j(list(q_wp), speed=0.25, acceleration=0.25)
+                time.sleep(0.05)
+            time.sleep(0.6)
+
+            q_actual = np.array(robot.get_joints())
+            reach_err_deg = float(np.degrees(np.max(np.abs(urik.wrapped_joint_difference(q_actual, waypoints[-1])))))
+            if reach_err_deg > 1.5:
+                print(f"[hardware] WARNING: {label} did not reach commanded joints "
+                      f"(offset {reach_err_deg:.2f}deg)")
+
+            tips, tangents = [], []
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 6.0 and len(tips) < 25:
+                est, _age = camera.latest(0.5)
+                if est is not None:
+                    tip = np.asarray(est.tip_position_m, dtype=float)
+                    tan = np.asarray(est.tip_tangent, dtype=float)
+                    if np.all(np.isfinite(tip)) and np.all(np.isfinite(tan)):
+                        tips.append(tip)
+                        tangents.append(tan)
+                time.sleep(0.1)
+
+            model_tip = np.array(rec["model"]["tip"])
+            model_tangent = np.array(rec["model"]["beam_tangent_at_tip"])
+            if tips:
+                cam_tip = np.mean(np.vstack(tips), axis=0)
+                cam_tangent = np.mean(np.vstack(tangents), axis=0)
+                cam_tangent = cam_tangent / np.linalg.norm(cam_tangent)
+                e_tip_mm = float(np.linalg.norm(model_tip - cam_tip) * 1000.0)
+                tangent_err_deg = float(np.degrees(np.arccos(np.clip(np.dot(model_tangent, cam_tangent), -1, 1))))
+            else:
+                cam_tip, cam_tangent, e_tip_mm, tangent_err_deg = None, None, None, None
+
+            print(f"[hardware] {label}: model_tip={np.round(model_tip, 4).tolist()} "
+                  f"cam_tip={None if cam_tip is None else np.round(cam_tip, 4).tolist()} "
+                  f"e_tip={('n/a' if e_tip_mm is None else f'{e_tip_mm:.2f}mm')} "
+                  f"tangent_err={('n/a' if tangent_err_deg is None else f'{tangent_err_deg:.1f}deg')} "
+                  f"({len(tips)} valid frames)")
+
+            hw_results.append({
+                "label": label, "q_commanded": waypoints[-1].tolist(), "q_actual": q_actual.tolist(),
+                "reach_err_deg": reach_err_deg, "n_camera_frames": len(tips),
+                "model_tip": model_tip.tolist(), "model_tangent": model_tangent.tolist(),
+                "cam_tip": None if cam_tip is None else cam_tip.tolist(),
+                "cam_tangent": None if cam_tangent is None else cam_tangent.tolist(),
+                "e_tip_mm": e_tip_mm, "tangent_err_deg": tangent_err_deg,
+            })
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w") as f:
+                json.dump({"order": order, "hardware_results": hw_results}, f, indent=1)
+
+            prev_q, prev_xyz, prev_rotvec = q_actual, magnet_xyz, magnet_rotvec
+
+        print("[hardware] sequence complete -- returning to reference position")
+        ref_safe, ref_msg = path_safety_check(
+            prev_q, seed_q, DH=DH, T_F_M=T_F_M, lumen_C_m=lumen_C,
+            exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+        )
+        if ref_safe:
+            robot.move_j(list(seed_q), speed=0.25, acceleration=0.25)
+        else:
+            wps, safe, msg = find_safe_path(
+                prev_q, prev_xyz, prev_rotvec, seed_q, placeholder_magnet_pose6[:3],
+                placeholder_magnet_pose6[3:6], DH=DH, ik_cfg=ik_cfg, T_F_M=T_F_M,
+                lumen_C_m=lumen_C, exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+                beam_base_xyz=beam_base_xyz,
+            )
+            if safe:
+                for q_wp in wps:
+                    robot.move_j(list(q_wp), speed=0.25, acceleration=0.25)
+            else:
+                print(f"[hardware] WARNING: could not verify a safe return path ({msg}) -- "
+                      f"leaving the robot at its last pose for manual recovery.")
+        print(f"[hardware] done -- results saved to {out_path}")
+    finally:
+        if camera is not None:
+            camera.stop()
+        robot.close()
+
+
 def main() -> None:
     global INSERTION_MM_DEFAULT
 
@@ -422,6 +632,11 @@ def main() -> None:
                          "Default: the recalibrated start-config joints.")
     p.add_argument("--i-confirm-hardware-motion", action="store_true",
                     help="required in addition to --mode hardware -- extra explicit guard.")
+    p.add_argument("--hardware-order", type=str, default=None,
+                    help="comma-separated pose labels (e.g. phi+80_psi045,phi+80_psi180,...) "
+                         "giving the exact execution sequence for --mode hardware. Required for "
+                         "that mode -- must be a sequence already verified path-safe hop by hop "
+                         "(see --mode dry-run-ik's output).")
     p.add_argument("--out", type=Path, default=Path("debug_outputs/sweep_free_space_arc_dipole.json"))
     args = p.parse_args()
 
@@ -575,12 +790,24 @@ def main() -> None:
         print(f"[ik] {n_ok}/{len(results)} poses reachable (>=1 IK solution); "
               f"{n_path_safe}/{len(results)} have a path-safe solution from the reference seed")
 
-        results.append(rec)
-
     if args.mode == "hardware":
-        print("[sweep] hardware mode: execution not yet run from this entry point in this "
-              "session -- model-only/dry-run-ik results above are what's being reported back "
-              "to the user before any real robot motion is authorized per-pose.")
+        if args.hardware_order is None:
+            raise SystemExit(
+                "--mode hardware requires --hardware-order <label1,label2,...> -- an explicit, "
+                "pre-verified execution sequence (see this run's own [ik] path-safety output "
+                "above, or build_pose_list()'s labels). Refusing to invent an order at motion "
+                "time."
+            )
+        order = args.hardware_order.split(",")
+        missing = [lab for lab in order if lab not in recs_by_label]
+        if missing:
+            raise SystemExit(f"--hardware-order has unknown pose labels: {missing}")
+        run_hardware(
+            order, recs_by_label, beam_base_xyz, placeholder_magnet_pose6,
+            seed_q, DH=_robot_kin.dh, ik_cfg=_robot_kin.ik_cfg, T_F_M=_robot_kin.T_F_M,
+            lumen_C=lumen_C, exclusion_radius_m=exclusion_radius_m, z_bounds_m=z_bounds_m,
+            insertion_m=insertion_m, out_path=args.out,
+        )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w") as f:

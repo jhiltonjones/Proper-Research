@@ -722,6 +722,7 @@ def main() -> None:
         exclusion_radius_m = 0.097
         z_bounds_m = (beam_base_xyz[2] - 0.010, beam_base_xyz[2] + 0.010)
 
+    if args.mode == "dry-run-ik":
         print(f"\n[ik] robust multi-seed IK search (pos_tol=2mm, exclusion={exclusion_radius_m*1e3:.0f}mm, "
               f"z_bounds=[{z_bounds_m[0]*1e3:.1f},{z_bounds_m[1]*1e3:.1f}]mm)")
         pool = build_seed_pool(seed_q)

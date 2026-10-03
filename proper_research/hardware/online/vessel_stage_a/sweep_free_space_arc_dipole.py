@@ -115,23 +115,52 @@ def _minimal_rotation_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return Rot.from_rotvec(axis * angle).as_matrix()
 
 
+# Ground-truth calibration reference (2026-10-03): the user manually jogged
+# the source magnet in line with the beam base (same Y/Z, ~210mm radius,
+# dipole visibly pointing at the base) and read off the live joints/TCP.
+# This is the ACTUAL measured orientation at (very close to) phi=0, used
+# below as the canonical "roll" reference for the whole arc.
+_CALIBRATION_MAGNET_XYZ = np.array([0.31525503, -0.71972685, -0.03968372])
+_CALIBRATION_ROTVEC = np.array([-2.6740649395181184, 1.6483563099965164, -0.0008255535458713929])
+
+
 def reference_orientation_matrix(magnet_xyz: np.ndarray, beam_base_xyz: np.ndarray) -> np.ndarray:
     """R_REF(phi): world orientation with the source dipole pointing
-    DIRECTLY AT THE BEAM BASE from this magnet position -- the minimal (no
-    extra roll) rotation from SOURCE_DIPOLE_BODY_AXIS to the unit vector
-    (beam_base_xyz - magnet_xyz). This is a function of the magnet's
-    position (hence of phi along the arc), not a single fixed world
-    orientation -- confirmed against a live ground-truth pose (user
-    manually jogged the magnet in line with the base, dipole visibly
-    pointing at it): this formula reproduces that pose's dipole WORLD
-    DIRECTION exactly (to machine precision); the full orientation differs
-    only by an arbitrary roll about that direction (this formula's
-    "zero-roll" convention vs whatever roll the live pose happened to be
-    at), which is expected and irrelevant since every roll is swept by
-    the psi sequence anyway."""
+    DIRECTLY AT THE BEAM BASE from this magnet position, constructed by
+    CONTINUOUSLY DRAGGING the real calibration orientation along the arc
+    rather than recomputing a fresh "minimal rotation" from scratch at
+    each phi.
+
+    2026-10-03 fix: "dipole points at the base" only constrains ONE axis
+    of the orientation -- there is a free 1-parameter family of valid
+    rotations (any roll about that axis). The previous version picked an
+    arbitrary member of that family (the minimal/no-extra-roll rotation
+    from SOURCE_DIPOLE_BODY_AXIS), with NO relationship to the real
+    calibration pose's own roll. Confirmed live: at the SAME position
+    (phi~0, the actual calibration point), the old formula's orientation
+    was 180deg away from the real, physically-set-up calibration
+    orientation -- despite both technically satisfying the dipole-
+    alignment constraint. That arbitrary ~180deg roll mismatch, not any
+    real workspace reachability limit, is what forced every arc-position
+    IK solve this session into a 140-180deg reconfiguration, regardless
+    of how small the requested phi change was.
+
+    Fix: rotate the dipole-to-base DIRECTION from its calibration value to
+    its value at the requested phi (a small rotation for a small phi
+    change), and apply that SAME small rotation to the real calibration
+    ORIENTATION (right... left-multiply by the direction-alignment
+    rotation) instead of re-deriving the roll from nothing. Verified live:
+    this reproduces the calibration orientation exactly at phi=0 (0.02deg
+    residual, noise) and gives an orientation change that scales linearly
+    with phi (20deg phi -> 20deg orientation change, 40deg -> 40deg),
+    not an arbitrary jump."""
+    R_cal = Rot.from_rotvec(_CALIBRATION_ROTVEC).as_matrix()
+    dir_cal = beam_base_xyz - _CALIBRATION_MAGNET_XYZ
+    dir_cal = dir_cal / np.linalg.norm(dir_cal)
     direction_to_base = beam_base_xyz - magnet_xyz
     direction_to_base = direction_to_base / np.linalg.norm(direction_to_base)
-    return _minimal_rotation_matrix(SOURCE_DIPOLE_BODY_AXIS, direction_to_base)
+    R_align = _minimal_rotation_matrix(dir_cal, direction_to_base)
+    return R_align @ R_cal
 
 
 def build_pose_list(beam_base_xyz: np.ndarray) -> list[dict]:

@@ -68,7 +68,7 @@ def main() -> None:
     p.add_argument("--start-position-json", required=True,
                     help="from capture_live_start_position.py -- replaces the default start_point")
     p.add_argument("--insertion-max-mm", type=float, default=65.0)
-    p.add_argument("--position-tolerance-mm", type=float, default=1.0)
+    p.add_argument("--position-tolerance-mm", type=float, default=3.5)
     p.add_argument("--tangent-tolerance-deg", type=float, default=179.9)
     p.add_argument("--maximum-function-evaluations", type=int, default=15,
                     help="per-node solver budget; the library default (300) let a hard node "

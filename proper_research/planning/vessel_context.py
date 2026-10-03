@@ -44,11 +44,21 @@ def build_vessel_planning_context(
     lumen_file: str | Path,
     run_root: Path | None = None,
     insertion_max_m: float | None = None,
+    jacobian_mode: str = "fast",
 ):
     """Like ``planning_context.build_planning_context()``, but the
     contact-aware model's lumen is the REAL digitized vessel geometry from
     ``lumen_file`` (a ``vessel_lumen_robot_frame.json``-format file, robot
     frame R), not the permissive placeholder.
+
+    `jacobian_mode`: passed through to the real ``build_controller`` call
+    below (the one whose controller_pack is actually returned/used -- the
+    one at module import inside ``build_planning_context()`` is rebuilt
+    immediately after, see the 2026-09-27 bugfix comment below). Default
+    "fast" preserves existing behavior; pass "accurate" for Layer 1 offline
+    solving where "fast" mode's numerical-estimator artifact can make the
+    optimizer chase a bad gradient -- see `build_controller`'s own
+    docstring.
 
     Returns
     -------
@@ -70,6 +80,33 @@ def build_vessel_planning_context(
     lumen_C, lumen_R, provenance = load_vessel_lumen_robot_frame(lumen_file)
     if lumen_C.shape[0] < 2:
         raise ValueError(f"{lumen_file} contains fewer than 2 lumen samples.")
+
+    # 2026-10-03 safety check: found live that a lumen file digitized
+    # before the 2026-10-02 BEAM_BASE_PIVOT_Z recalibration still has its
+    # original (now stale) Z height baked into lumen_C -- the contact
+    # model then pulls the beam toward the WRONG wall height, and its
+    # huge penalty stiffness (k=1e8, k_hard=1e10) completely dominates
+    # the weak magnetic forces, making the beam shape converge to that
+    # wrong-height contact point almost independent of magnet pose. See
+    # probe_beam_configuration.py / the 2026-10-03 commit for the full
+    # diagnosis. Refuse early with a clear message rather than silently
+    # building a corrupted contact model -- recreate the lumen file via
+    # shift_lumen_centerline.py (any shift amount, even 0) or add the
+    # offset directly to lumen_C_m's z column.
+    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
+        BEAM_BASE_PIVOT_Z,
+    )
+    _lumen_z_offset_mm = float(np.abs(lumen_C[:, 2] - BEAM_BASE_PIVOT_Z).max()) * 1e3
+    if _lumen_z_offset_mm > 2.0:
+        raise ValueError(
+            f"{lumen_file}: lumen_C z values differ from the current "
+            f"BEAM_BASE_PIVOT_Z ({BEAM_BASE_PIVOT_Z*1e3:.3f}mm) by up to "
+            f"{_lumen_z_offset_mm:.2f}mm -- this lumen file was digitized "
+            f"against a different (likely stale, pre-recalibration) beam-base "
+            f"height and would silently corrupt the contact model (see the "
+            f"2026-10-03 stale-lumen-Z bug). Z-correct it first -- see any "
+            f"vessel_lumen_robot_frame_*_zcorrected.json for the pattern."
+        )
 
     kwargs: dict[str, Any] = {}
     if run_root is not None:
@@ -136,13 +173,16 @@ def build_vessel_planning_context(
         run_cfg=exp_cfg.controller,
         design_cfg=make_design_config(),
         robot_cfg=wide_robot_cfg,
+        jacobian_mode=jacobian_mode,
     )
     if insertion_max_m is not None:
         print(f"[vessel-context] insertion_max_m overridden to {1e3*insertion_max_m:.1f} mm "
-              f"(library default 50.0 mm) -- controller_pack rebuilt with the real lumen wired in.")
+              f"(library default 50.0 mm) -- controller_pack rebuilt with the real lumen wired in "
+              f"(jacobian_mode={jacobian_mode!r}).")
     else:
         print(f"[vessel-context] controller_pack rebuilt with the real lumen wired in "
-              f"(insertion_max_m left at the library default {1e3*effective_insertion_max_m:.1f} mm).")
+              f"(insertion_max_m left at the library default {1e3*effective_insertion_max_m:.1f} mm, "
+              f"jacobian_mode={jacobian_mode!r}).")
 
     no_contact_model = bundle.models.get("no_contact")
     if no_contact_model is not None and getattr(no_contact_model, "lumen_query", None) is not None:

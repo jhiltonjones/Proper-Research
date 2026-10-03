@@ -21,19 +21,21 @@ with three vessel-specific additions:
    selects `from_model_bundle(..., contact=True/False)` built from
    `build_vessel_planning_context` (the real digitized lumen), not the
    generic free-space `build_planning_context()` the rectangle runner
-   uses. Also raises the beam base/magnet z by 3cm to match the
-   physically raised rig, mirroring the offline study's own
-   Z_RAISE_M monkeypatch of `make_initial_poses`.
+   uses. The beam base/magnet z is fixed to the recalibrated height
+   (`_BEAM_BASE_PIVOT_Z`, see this script's 2026-10-02 z-raise-removal
+   fix) to match the physically recalibrated rig -- no longer a runtime
+   raise/offset, since `build_vessel_plan.py` now bakes the same fixed
+   height into the plan it builds.
 
-3. Raised vision reference pose: `pf.StateStreamConfig` is monkeypatched
+3. Matching vision reference pose: `pf.StateStreamConfig` is monkeypatched
    (same established pattern this package already uses for
    `pf.build_offline_solver`/`pf._make_output_dir`) so the LIVE camera's
-   3D reconstruction plane matches the raised rig too -- found live
-   2026-09-23 that without this, tip z stays pinned at the old
-   (un-raised) height, which is harmless for the open-loop harness's own
-   error metric (z is explicitly projected out there) but would corrupt
-   the closed-loop MPC's disturbance estimator and Qpbar cost, which see
-   the RAW, unprojected 3-vector.
+   3D reconstruction plane matches the recalibrated rig too -- found live
+   2026-09-23 that without this, tip z stays pinned at the wrong height,
+   which is harmless for the open-loop harness's own error metric (z is
+   explicitly projected out there) but would corrupt the closed-loop
+   MPC's disturbance estimator and Qpbar cost, which see the RAW,
+   unprojected 3-vector.
 
 4. Independent magnet-z safety monitor (added 2026-09-23 after a live
    Q_N=0 run drove three joints to their velocity limit simultaneously
@@ -160,9 +162,19 @@ _RealStateStreamConfig = state_stream_mod.StateStreamConfig
 
 
 def _RaisedStateStreamConfig(**kwargs):
-    """Drop-in for StateStreamConfig with T_robot_beam_pose6's z raised by
-    common.Z_RAISE_M -- called exactly like the real dataclass (positional
-    defaults preserved), only the pose default changes.
+    """Drop-in for StateStreamConfig with T_robot_beam_pose6's z set to the
+    recalibrated beam-base height (_BEAM_BASE_PIVOT_Z) -- called exactly
+    like the real dataclass (positional defaults preserved), only the pose
+    default changes.
+
+    2026-10-02 fix: this used to ADD common.Z_RAISE_M (driven by a
+    --z-raise-mm CLI flag) on top of the library default -- that
+    offset-from-a-moving-target scheme required this script, build_vessel_
+    plan.py, and capture_live_start_position.py to all be passed the SAME
+    z-raise value by hand, and a mismatch silently misread real camera
+    detections (see this module's docstring fix 3). Now sets the pose
+    directly to the fixed, recalibrated absolute height -- no flag, no
+    offset arithmetic, nothing to keep in sync.
 
     2026-09-29: also defaults marker_min_count/marker_max_count to 2 -- the
     physical rig's middle (tangent_start) marker was permanently removed,
@@ -181,7 +193,7 @@ def _RaisedStateStreamConfig(**kwargs):
     cfg = _RealStateStreamConfig(**kwargs)
     if "T_robot_beam_pose6" not in kwargs:
         pose6 = list(cfg.T_robot_beam_pose6)
-        pose6[2] += common.Z_RAISE_M
+        pose6[2] = _BEAM_BASE_PIVOT_Z
         cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
     return cfg
 
@@ -265,22 +277,20 @@ _MAGNET_EXCLUSION_LUMEN_C_M = None  # set in main(); single beam-base point for 
 _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 
 # --- fix 6 (reworked 2026-09-28): magnet-to-beam-base exclusion, fixed
-# 210.43mm floor -- same point/radius `run_open_loop_vessel.py`'s
-# BEAM_BASE_PIVOT_XYZ / capture_live_start_position.py's
-# BEAM_BASE_XYZ_RAISED30MM already use elsewhere in this package (raised
-# +30mm frame, matching this script's own zraise_patch.apply(30.0)
-# convention). See module docstring's fix 6 for why this replaced the
+# floor -- same point `run_open_loop_vessel.py`'s BEAM_BASE_PIVOT_XYZ /
+# capture_live_start_position.py's BEAM_BASE_XYZ already use elsewhere in
+# this package. See module docstring's fix 6 for why this replaced the
 # vessel-centreline version.
-# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace beam-
-# base point (z=0.013433), regardless of --z-raise-mm (which didn't exist
-# yet) -- silently checking the magnet-exclusion/z-workspace QP constraints
-# against a raised point even for an unraised plan, a 30mm safety-margin
-# error. Now recomputed in main() from common.Z_RAISE_M after --z-raise-mm
-# is applied (see build_vessel_plan.py / run_open_loop_vessel.py's own
-# 2026-09-29 fixes for the same bug elsewhere in this package).
+# 2026-10-02 fix: removed the --z-raise-mm/common.Z_RAISE_M indirection
+# entirely (same change as build_vessel_plan.py's 2026-10-02 fix) -- the
+# rig has been recalibrated via real forward kinematics to a single fixed
+# beam-base height, so there is no longer a "raised vs unraised" choice to
+# make here, and no flag to keep in sync with the plan this script runs.
 _BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
-_BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
-_BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])  # overwritten in main()
+_BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches build_vessel_plan.py
+_BEAM_BASE_PIVOT_XYZ_R = np.array([[
+    _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1], _BEAM_BASE_PIVOT_Z,
+]])
 _BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043  # overwritten in main() from --beam-base-exclusion-floor-mm
 _MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
 
@@ -449,7 +459,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "terminal_cost": False,
             "insertion_rate_limit_m_s": _INSERTION_RATE_LIMIT_M_S,
             "plan_dir": str(cfg.plan_dir),
-            "z_raise_m": common.Z_RAISE_M,
+            "beam_base_pivot_z_m": _BEAM_BASE_PIVOT_Z,
             "magnet_z_bounds_m": list(_MAGNET_Z_BOUNDS_M) if _MAGNET_Z_BOUNDS_M else None,
             "magnet_exclusion_point_R": _MAGNET_EXCLUSION_LUMEN_C_M[0].tolist()
                 if _MAGNET_EXCLUSION_LUMEN_C_M is not None else None,
@@ -513,12 +523,23 @@ import proper_research.planning.planning_context as _planning_context_mod
 _ORIG_MAKE_INITIAL_POSES = _initial_conditions_mod.make_initial_poses
 
 
-def _raised_make_initial_poses():
+def _recalibrated_make_initial_poses():
+    """Overrides the library-default pivot/start-point z with the fixed
+    recalibrated beam-base height (_BEAM_BASE_PIVOT_Z) -- same convention
+    as build_vessel_plan.py's own _make_initial_poses override. Sets BOTH
+    p (beam-base pivot) and s (source-magnet start point) to this height,
+    matching the recalibrated setup: the recalibration JSON's own
+    magnet_pose6_R z and beam_base_pivot_xyz_R z agree to ~0.03mm, so this
+    is not an approximation on top of unrelated library defaults the way
+    the old +common.Z_RAISE_M offset was.
+
+    Only used on an actual schedule REBUILD (cache miss) -- the common
+    cached-schedule path never calls this."""
     p, s, L, dt = _ORIG_MAKE_INITIAL_POSES()
     p = np.array(p, dtype=float).copy()
     s = np.array(s, dtype=float).copy()
-    p[2] += common.Z_RAISE_M
-    s[2] += common.Z_RAISE_M
+    p[2] = _BEAM_BASE_PIVOT_Z
+    s[2] = _BEAM_BASE_PIVOT_Z
     return p, s, L, dt
 
 
@@ -557,8 +578,8 @@ def build_or_load_schedule(
     print(f"[vessel-mpc] building genuine from_model_bundle Jacobian schedule "
           f"(contact={contact}, ~90-150s)...")
 
-    _initial_conditions_mod.make_initial_poses = _raised_make_initial_poses
-    _planning_context_mod.make_initial_poses = _raised_make_initial_poses
+    _initial_conditions_mod.make_initial_poses = _recalibrated_make_initial_poses
+    _planning_context_mod.make_initial_poses = _recalibrated_make_initial_poses
 
     reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
     _, bundle, controller_pack, _, _, _, _ = build_vessel_planning_context(
@@ -588,16 +609,6 @@ def main() -> None:
     global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
     global _BEAM_BASE_PIVOT_XYZ_R, _BEAM_BASE_EXCLUSION_RADIUS_M
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                    help="rigid z-shift applied to the beam-base pivot, the offline-"
-                         "planner pivot/start-point, AND the live vision reconstruction "
-                         "plane -- 0.0 (default) for an unraised/original-height "
-                         "workspace, 30.0 to reproduce the 2026-09-27/28 raised-"
-                         "workspace runs. MUST match whether --lumen-file (and the plan "
-                         "it built) was itself built raised or unraised -- a mismatch "
-                         "here silently misreads real camera detections AND checks the "
-                         "magnet-exclusion/z-workspace QP safety constraints against the "
-                         "wrong beam-base point, by the z-raise amount.")
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-name", default="mpc_delay_aware_vessel_accumC")
@@ -609,7 +620,7 @@ def main() -> None:
                          "fixed beam-base point/210.43mm radius, not derived from this file. "
                          "Still accepted (no longer required) purely so existing invocations "
                          "don't break; a note is printed if passed. See module docstring's fix 6.")
-    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=210.43,
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=97.0,  # 2026-10-03: recalibrated (was 210.43) -- the recalibrated start config sits ~101.80mm from the beam base, so the old floor would have refused that start position outright. 97.0mm leaves a ~4.8mm margin below it.
                     help="the TRUE magnet-to-beam-base exclusion floor (before "
                          "--magnet-exclusion-tolerance-mm is subtracted to get the live "
                          "abort/QP threshold). Default 210.43mm matches the project's "
@@ -732,13 +743,7 @@ def main() -> None:
     args = p.parse_args()
 
     _BEAM_BASE_EXCLUSION_RADIUS_M = args.beam_base_exclusion_floor_mm / 1000.0
-    common.Z_RAISE_M = args.z_raise_mm / 1000.0
-    _BEAM_BASE_PIVOT_XYZ_R = np.array([[
-        _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1],
-        _BEAM_BASE_PIVOT_Z_UNRAISED + common.Z_RAISE_M,
-    ]])
-    print(f"[vessel-mpc] z_raise_mm = {args.z_raise_mm} "
-          f"beam_base_pivot_xyz = {_BEAM_BASE_PIVOT_XYZ_R[0].tolist()}")
+    print(f"[vessel-mpc] beam_base_pivot_xyz = {_BEAM_BASE_PIVOT_XYZ_R[0].tolist()} (recalibrated, fixed)")
 
     _DEADLINE_MS = args.deadline_ms
     _INSERTION_OFFSET_ABORT_M = args.insertion_offset_abort_mm * 1e-3
@@ -934,12 +939,19 @@ def main() -> None:
     # Added another +/-20mm on top of the already-widened union box
     # instead of re-deriving to the exact new edge, so this has real
     # headroom rather than being an immediate repeat of the same trip.
-    if args.z_raise_mm < 10.0:
-        cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
-        cfg.workspace_xyz_max_m = (0.656, -0.534, 0.393)
-    else:
-        cfg.workspace_xyz_min_m = (0.4266, -0.7854, 0.3067)
-        cfg.workspace_xyz_max_m = (0.7115, -0.4201, 0.4043)
+    # 2026-10-02 (third pass): the raised-workspace box above (the `else`
+    # branch, tuned for the old z_raise=42mm v4 plan) is now dead code --
+    # there is no more raised configuration post-recalibration, see this
+    # script's 2026-10-02 z-raise-removal fix. Always using the unraised
+    # union box below. IMPORTANT: this box was derived from OTHER unraised
+    # plans' measured flange ranges, not this recalibrated
+    # (beam_base_pivot_z=-0.039627) configuration specifically -- it has
+    # NOT been validated for this exact setup. Recommend a fresh open-loop
+    # dry run first and checking the actual flange range against this box
+    # before trusting it live (see HOWTO_CLOSED_LOOP_MPC.md section 0);
+    # tighten/widen as needed the same way the comment history above did.
+    cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
+    cfg.workspace_xyz_max_m = (0.656, -0.534, 0.393)
 
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True
@@ -964,7 +976,7 @@ def main() -> None:
         f"[vessel-mpc] horizon={cfg.mpc_prediction_horizon} d=2 beta_d=1.0 V_f=0 "
         f"servo_stream_hz={cfg.servo_stream_hz}\n"
         f"[vessel-mpc] CONTROLLER = exact Q_N=0, R700, contact={_CONTACT}, "
-        f"z_raise={common.Z_RAISE_M*1e3:.0f}mm, "
+        f"beam_base_pivot_z={_BEAM_BASE_PIVOT_Z*1e3:.1f}mm, "
         f"safety abort |L-Lref|>{args.insertion_offset_abort_mm:.1f}mm"
     )
     try:

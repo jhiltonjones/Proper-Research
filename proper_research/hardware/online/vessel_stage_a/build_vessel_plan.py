@@ -22,10 +22,10 @@ insertion~5e-3m before rising again from real curvature at larger steps.
 Usage
 -----
     python -m proper_research.hardware.online.vessel_stage_a.build_vessel_plan \\
-        --lumen-file vessel_lumen_robot_frame_raised3cm_trimmed6mm_2026-09-28.json \\
-        --start-position-json vessel_magnet_initial_position_live_2026-09-28.json \\
+        --lumen-file <your lumen file> \\
+        --start-position-json vessel_magnet_initial_position_2026-10-02_recalibrated.json \\
         --insertion-max-mm 65 \\
-        --output-root plans/vessel_live_trimmed6mm_2026-09-28
+        --output-root plans/vessel_recalibrated_2026-10-02
 """
 from __future__ import annotations
 
@@ -39,21 +39,25 @@ from pathlib import Path
 
 import numpy as np
 
-from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
-
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
 
-# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace pivot
-# (z=0.013433) and unconditionally call zraise_patch.apply(30.0) at import
-# time, regardless of which lumen file was passed in -- silently building a
-# plan against a raised pivot even for an UNRAISED lumen file, a 30mm
-# frame mismatch. Now parameterized via --z-raise-mm (default 0.0,
-# unraised); pass 30 explicitly to reproduce the old raised-workspace
-# behaviour used by e.g. plans/vessel_live_trimmed6mm_2026-09-28.
+# 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
+# That mechanism required every script building or running a plan to pass a
+# MATCHING offset by hand (build_vessel_plan.py / run_mpc_delay_aware_vessel.py
+# / capture_live_start_position.py each had their own --z-raise-mm default,
+# and a mismatch silently produced a plan whose beam-base pivot disagreed
+# with the live vision/magnet frame by the z-raise amount -- see this
+# script's own prior 2026-09-29 fix note for one such incident). The rig has
+# since been recalibrated via real forward kinematics (see
+# vessel_magnet_initial_position_2026-10-02_recalibrated.json,
+# `capture_live_start_position.py`) to a single fixed beam-base height --
+# BEAM_BASE_PIVOT_Z below -- so there is no longer a "raised vs unraised"
+# choice to make here at all.
 BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
-BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
-L_CMD = 0.025
+BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
+                                # vessel_magnet_initial_position_2026-10-02_recalibrated.json
+L_CMD = 0.03044
 DT_INIT = 0.01
 
 
@@ -64,7 +68,7 @@ def main() -> None:
     p.add_argument("--start-position-json", required=True,
                     help="from capture_live_start_position.py -- replaces the default start_point")
     p.add_argument("--insertion-max-mm", type=float, default=65.0)
-    p.add_argument("--position-tolerance-mm", type=float, default=1.0)
+    p.add_argument("--position-tolerance-mm", type=float, default=3.5)
     p.add_argument("--tangent-tolerance-deg", type=float, default=179.9)
     p.add_argument("--maximum-function-evaluations", type=int, default=15,
                     help="per-node solver budget; the library default (300) let a hard node "
@@ -136,26 +140,40 @@ def main() -> None:
                          "and the solve itself still uses the analytical Jacobian "
                          "throughout, unaffected by this flag. "
                          "SECOND, DIFFERENT known cause (2026-10-02): the "
-                         "plant_diagnostic_joint_adapter's analytical beam Jacobian is "
-                         "built with jacobian_mode='fast' (hardcoded in "
-                         "controller_factory_joint_space.build_controller, never "
+                         "plant_diagnostic_joint_adapter's analytical beam Jacobian used "
+                         "to be built with jacobian_mode='fast' unconditionally (hardcoded "
+                         "in controller_factory_joint_space.build_controller, never "
                          "threaded through to here) -- the SAME 'fast' mode already "
                          "documented elsewhere (build_or_load_schedule's own comment) to "
                          "have a single-tick numerical-estimator artifact, a spurious "
                          "spike while the true tip output changes smoothly. When this "
                          "fires, the mismatch is NOT confined to d/dL -- most/all "
                          "entries disagree by a large, roughly consistent factor "
-                         "(analytical >> finite-difference). Confirmed by direct "
-                         "inspection for a recalibrated-geometry/locked-Z plan at "
-                         "L0~30mm: relative error 178%% with the disagreement spread "
-                         "across every row/column, not just column 6. Properly fixing "
-                         "this means threading jacobian_mode='accurate' through "
-                         "build_controller -> planning_context -> vessel_context -> "
-                         "here, which would also slow down every OTHER Jacobian "
-                         "evaluation inside Layer 1's inner loop, not just this one "
-                         "validation call -- not done here for that reason. Same "
-                         "caveat applies: the real solve's own analytical Jacobian is "
-                         "unaffected by skipping just this one-time check.")
+                         "(analytical >> finite-difference), and confirmed live "
+                         "2026-10-02 to make Layer 1's own SLSQP solve chase a bad "
+                         "gradient: every node hit the iteration limit, jacobian_"
+                         "condition swung from 1e5 to 1e8 between neighbouring nodes, "
+                         "and the magnet position jumped tens of mm from joint steps of "
+                         "only ~0.03-0.13 rad -- a recalibrated-geometry/locked-Z plan at "
+                         "L0~30mm, relative error 178%% vs finite-difference. NOW FIXED: "
+                         "jacobian_mode is threaded through build_controller -> "
+                         "planning_context -> vessel_context -> here (see --jacobian-mode "
+                         "below), defaulting to 'accurate' for this script specifically "
+                         "(every other caller of those three functions still defaults to "
+                         "'fast', unaffected). This flag's own role is unchanged by that "
+                         "fix -- it only skips the validation CHECK, not the Jacobian "
+                         "mode the real solve uses.")
+    p.add_argument("--jacobian-mode", choices=("fast", "accurate"), default="accurate",
+                    help="mode for the analytical beam Jacobian Layer 1's SLSQP solve "
+                         "uses (threaded through to controller_factory_joint_space."
+                         "build_controller -- see its docstring). Defaults to 'accurate' "
+                         "HERE (unlike every other caller, which defaults to 'fast') "
+                         "because 'fast' mode's numerical-estimator artifact was "
+                         "confirmed 2026-10-02 to make Layer 1 chase a bad gradient at "
+                         "every node for a recalibrated-geometry/L0~30mm plan -- see "
+                         "--skip-chain-rule-validation-at-start's help above for the "
+                         "full story. 'accurate' is slower per-evaluation; pass 'fast' "
+                         "to restore the old (buggy-for-this-case) behaviour if needed.")
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--insertion-start-mm", type=float, default=L_CMD * 1000.0,
                     help="initial inserted length the offline planner starts from AND the "
@@ -173,21 +191,10 @@ def main() -> None:
                          "enforce_magnet_z_fixed. Use when the physical setup requires the "
                          "magnet to stay on a single Z plane throughout.")
     p.add_argument("--output-root", type=Path, required=True)
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                    help="rigid z-shift applied to the beam-base pivot (and, via "
-                         "zraise_patch, the live vision reconstruction plane) -- 0.0 "
-                         "(default) for an unraised/original-height workspace, 30.0 "
-                         "to reproduce the 2026-09-27/28 raised-workspace plans. MUST "
-                         "match whether --lumen-file was itself digitized against a "
-                         "raised or unraised calibration -- a mismatch here silently "
-                         "produces a plan whose beam-base pivot disagrees with the "
-                         "vessel geometry by the z-raise amount.")
     args = p.parse_args()
 
-    zraise_patch.apply(args.z_raise_mm)
     BEAM_BASE_PIVOT = np.array([
-        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
-        BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
         BEAM_BASE_PIVOT_XY_ROT[2], BEAM_BASE_PIVOT_XY_ROT[3], BEAM_BASE_PIVOT_XY_ROT[4],
     ])
 
@@ -205,7 +212,6 @@ def main() -> None:
     initial_conditions_mod.make_initial_poses = _make_initial_poses
     planning_context_mod.make_initial_poses = _make_initial_poses
 
-    print(f"[build] z_raise_mm = {args.z_raise_mm}")
     print(f"[build] pivot_point (beam base) = {BEAM_BASE_PIVOT.tolist()}")
     print(f"[build] start_point (source magnet) = {start_point.tolist()}  "
           f"(from {args.start_position_json})")
@@ -230,8 +236,12 @@ def main() -> None:
         time_parameterize_saved_inverse_path,
     )
 
+    print(f"[build] jacobian_mode = {args.jacobian_mode!r}")
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = (
-        build_vessel_planning_context(lumen_file=args.lumen_file, insertion_max_m=insertion_max_m)
+        build_vessel_planning_context(
+            lumen_file=args.lumen_file, insertion_max_m=insertion_max_m,
+            jacobian_mode=args.jacobian_mode,
+        )
     )
     out_root = args.output_root
     out_root.mkdir(parents=True, exist_ok=True)

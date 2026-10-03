@@ -17,9 +17,8 @@ rectangle_stage_a.common -- so the reset:
 Usage
 -----
     python -m proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel \\
-        --plan-dir plans/vessel_live_trimmed6mm_2026-09-28/time_parameterized_configuration_path \\
-        --out-dir close_loop_logs/myrun --run-name vessel_live_trimmed6mm_openloop \\
-        --exclusion-floor-mm 210.43
+        --plan-dir plans/vessel_lumen_2026-10-02_left1p5mm_insmax80/time_parameterized_configuration_path \\
+        --out-dir close_loop_logs/myrun --run-name vessel_lumen_2026-10-02_left1p5mm_openloop
 """
 from __future__ import annotations
 
@@ -32,6 +31,9 @@ import numpy as np
 import proper_research.hardware.online.close_loop_path_follow as pf
 import proper_research.hardware.online.state_stream as state_stream_mod
 from proper_research.hardware.online.vessel_stage_a import common
+from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
+    BEAM_BASE_PIVOT_XY_ROT, BEAM_BASE_PIVOT_Z,
+)
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
@@ -62,42 +64,33 @@ pf._fit_planner_to_robot = _identity_fit_planner_to_robot
 pf._find_shape_npz = lambda plan_dir: Path(__file__)
 
 
-def _patch_state_stream_config(z_raise_mm: float) -> None:
-    """Patch pf.StateStreamConfig with (a) T_robot_beam_pose6's z raised by
-    z_raise_mm (this script no longer routes through zshift_grid_toolkit.
-    zraise_patch -- that helper no-ops entirely at z_raise_mm=0.0, which
-    would have silently skipped part (b) below on every one of today's
-    unraised runs) and (b) marker_min_count/marker_max_count defaulted to
-    2 -- see run_mpc_delay_aware_vessel.py's identical 2026-09-29 fix for
-    why (the physical rig's middle marker was permanently removed; tip
-    position tracking is unaffected, only the now-unused chord tangent
-    is). Only the DEFAULT changes; explicit kwargs still win."""
-    z_raise_m = float(z_raise_mm) / 1000.0
+def _patch_state_stream_config() -> None:
+    """Patch pf.StateStreamConfig with (a) T_robot_beam_pose6's z set to the
+    recalibrated beam-base height (BEAM_BASE_PIVOT_Z, imported from
+    build_vessel_plan.py -- same fixed constant the plan was built against)
+    and (b) marker_min_count/marker_max_count defaulted to 2 -- see
+    run_mpc_delay_aware_vessel.py's identical 2026-09-29 fix for why (the
+    physical rig's middle marker was permanently removed; tip position
+    tracking is unaffected, only the now-unused chord tangent is). Only the
+    DEFAULT changes; explicit kwargs still win.
+
+    2026-10-02 fix: removed the --z-raise-mm offset-from-a-moving-target
+    scheme entirely (same change as build_vessel_plan.py's and
+    run_mpc_delay_aware_vessel.py's own 2026-10-02 fixes) -- sets the pose
+    directly to the fixed, recalibrated absolute height instead."""
 
     def _patched_state_stream_config(**kwargs):
         kwargs.setdefault("marker_min_count", 2)
         kwargs.setdefault("marker_max_count", 2)
         cfg = _RealStateStreamConfig(**kwargs)
-        if z_raise_m != 0.0 and "T_robot_beam_pose6" not in kwargs:
+        if "T_robot_beam_pose6" not in kwargs:
             pose6 = list(cfg.T_robot_beam_pose6)
-            pose6[2] += z_raise_m
+            pose6[2] = BEAM_BASE_PIVOT_Z
             cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
         return cfg
 
     pf.StateStreamConfig = _patched_state_stream_config
 
-# 2026-09-29 fix: this used to hardcode the +30mm raised-workspace pivot
-# (z=0.013433) and unconditionally call zraise_patch.apply(30.0) at import
-# time, regardless of which plan was passed in -- silently checking the
-# reset path (and, more seriously, interpreting live camera detections)
-# against a raised pivot/vision-plane even for an UNRAISED plan, a 30mm
-# frame mismatch. Now parameterized via --z-raise-mm (default 0.0,
-# matching build_vessel_plan.py's own default and this project's own
-# zraise_patch docstring: "0.0 / omit for an unraised (original-height)
-# plan"); pass 30 explicitly to reproduce the old raised-workspace
-# behaviour used by e.g. plans/vessel_live_trimmed6mm_2026-09-28.
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
-BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 
 _robot_kin = _resolve_robot_kinematics(make_robot_config())
 
@@ -109,19 +102,34 @@ def _magnet_transform_fn(q6):
 
 def _safe_reset_with_retreat(
     plan_dir: str, insertion_tol_mm: float, exclusion_floor_m: float,
-    beam_base_pivot_xyz: np.ndarray,
+    beam_base_pivot_xyz: np.ndarray, path_check_noise_tol_m: float = 0.0005,
 ):
     """common.preflight, but if the direct straight-line reset path is
     unsafe, retry via a retreat waypoint (further from the beam base)
     before giving up -- the tight floor makes a direct-path refusal
-    routine, not exceptional."""
+    routine, not exceptional.
+
+    2026-10-02 fix: a start position whose exclusion_floor_m is set EXACTLY
+    equal to its own plan-initial magnet-to-beam-base distance (as the
+    2026-10-02 recalibrated position deliberately is -- "no closer than
+    where it started") puts the plan's initial joints precisely ON the
+    path-safety check's boundary. Retreating first does not help in this
+    case: the final leg of the retry still resets INTO that same
+    exactly-on-the-boundary target, so the identical gap<floor check trips
+    again on pure FK/float noise (confirmed live: "101.8mm < 101.8mm"),
+    propagating out of the `except` block uncaught. `path_check_noise_tol_m`
+    subtracts a small noise tolerance from the radius used for ALL path
+    checks in this function -- NOT a real safety margin, just enough to
+    absorb recomputation noise at an intentionally-zero-slack target; the
+    actual exclusion_floor_m passed in is otherwise untouched."""
+    path_check_radius_m = exclusion_floor_m - path_check_noise_tol_m
     q0, l0 = common.load_plan_initial_state(plan_dir)
     try:
         return common.preflight(
             plan_dir, insertion_tol_mm=insertion_tol_mm,
             magnet_transform_fn=_magnet_transform_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_radius_m=path_check_radius_m,
         )
     except RuntimeError as exc:
         print(f"[reset] direct path unsafe ({exc}); routing via a retreat waypoint")
@@ -148,13 +156,13 @@ def _safe_reset_with_retreat(
             raise RuntimeError("retreat-waypoint IK did not converge") from exc
         common.reset_to_plan_initial_safe(
             ik.q_rad, magnet_transform_fn=_magnet_transform_fn,
-            magnet_exclusion_lumen_C_m=beam_base_pivot_xyz, magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_lumen_C_m=beam_base_pivot_xyz, magnet_exclusion_radius_m=path_check_radius_m,
         )
         return common.preflight(
             plan_dir, insertion_tol_mm=insertion_tol_mm,
             magnet_transform_fn=_magnet_transform_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_floor_m,
+            magnet_exclusion_radius_m=path_check_radius_m,
         )
 
 
@@ -164,27 +172,27 @@ def main() -> None:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--run-name", default="vessel_openloop")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
-    p.add_argument("--exclusion-floor-mm", type=float, default=210.43,
-                    help="magnet-to-beam-base safety floor to check the reset path against")
+    p.add_argument("--exclusion-floor-mm", type=float, default=101.80230875991425,
+                    help="magnet-to-beam-base safety floor to check the reset path against -- "
+                         "default matches vessel_magnet_initial_position_2026-10-02_"
+                         "recalibrated.json's exclusion_floor_mm; override to match whatever "
+                         "start-position JSON the plan you're running was actually built from.")
     p.add_argument("--max-control-steps", type=int, default=1000)
     p.add_argument("--skip-preflight", action="store_true")
-    p.add_argument("--z-raise-mm", type=float, default=0.0,
-                    help="rigid z-shift applied to the beam-base pivot AND the live "
-                         "vision reconstruction plane -- 0.0 (default) for an "
-                         "unraised/original-height workspace, 30.0 to reproduce the "
-                         "2026-09-27/28 raised-workspace runs. MUST match whether the "
-                         "plan (and the lumen it was built from) was itself built "
-                         "raised or unraised -- a mismatch here silently misreads "
-                         "real camera detections by the z-raise amount.")
+    p.add_argument("--path-check-noise-tol-mm", type=float, default=0.5,
+                    help="see _safe_reset_with_retreat's docstring -- a start position whose "
+                         "exclusion floor equals its own plan-initial distance (as the "
+                         "2026-10-02 recalibrated position is) sits exactly on the path-safety "
+                         "check's boundary, tripping on pure FK/float noise. Subtracts this "
+                         "from the radius used for the path check ONLY -- not a real safety "
+                         "margin.")
     args = p.parse_args()
 
-    _patch_state_stream_config(args.z_raise_mm)
+    _patch_state_stream_config()
     beam_base_pivot_xyz = np.array([[
-        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
-        BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
     ]])
-    print(f"[open-loop] z_raise_mm = {args.z_raise_mm}")
-    print(f"[open-loop] beam_base_pivot_xyz = {beam_base_pivot_xyz[0].tolist()}")
+    print(f"[open-loop] beam_base_pivot_xyz = {beam_base_pivot_xyz[0].tolist()} (recalibrated, fixed)")
 
     exclusion_floor_m = args.exclusion_floor_mm / 1000.0
 
@@ -193,6 +201,7 @@ def main() -> None:
     else:
         q0, l0 = _safe_reset_with_retreat(
             args.plan_dir, args.insertion_tol_mm, exclusion_floor_m, beam_base_pivot_xyz,
+            path_check_noise_tol_m=args.path_check_noise_tol_mm * 1e-3,
         )
 
     cfg = pf.CONFIG

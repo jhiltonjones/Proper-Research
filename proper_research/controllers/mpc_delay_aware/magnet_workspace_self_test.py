@@ -54,12 +54,15 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
 from proper_research.planning.planning_context import make_robot_config
 
 from .delay_aware_mpc import DelayAwareBeamOutputTrackingMPC
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 PLAN_DIR = "plans/vessel_live_trimmed6mm_2026-09-28/time_parameterized_configuration_path"
 SCHEDULE_CACHE = "/tmp/vessel_live_trimmed6mm_schedule_frozen.npy"
 # Same fixed beam-base point/radius run_mpc_delay_aware_vessel.py now uses
 # (see that module's _BEAM_BASE_PIVOT_XYZ_R / _BEAM_BASE_EXCLUSION_RADIUS_M).
-BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])
+# X/Y from the single canonical rig_calibration.BEAM_BASE_XYZ_M; this
+# file's own Z (0.013433, a raised-rig variant) is unchanged.
+BEAM_BASE_PIVOT_XYZ_R = np.array([[BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], 0.013433]])
 BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043
 
 

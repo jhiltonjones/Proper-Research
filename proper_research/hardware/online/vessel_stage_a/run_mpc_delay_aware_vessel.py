@@ -149,6 +149,7 @@ from proper_research.simulation.simulations.simulate_time_parameterized_configur
 )
 
 from . import common
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 _real_build_offline_solver = controller_adapters.build_offline_solver
 _real_make_output_dir = pf._make_output_dir
@@ -286,7 +287,7 @@ _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 # rig has been recalibrated via real forward kinematics to a single fixed
 # beam-base height, so there is no longer a "raised vs unraised" choice to
 # make here, and no flag to keep in sync with the plan this script runs.
-_BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
+_BEAM_BASE_PIVOT_XY_ROT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1]])
 _BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches build_vessel_plan.py
 _BEAM_BASE_PIVOT_XYZ_R = np.array([[
     _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1], _BEAM_BASE_PIVOT_Z,

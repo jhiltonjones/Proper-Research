@@ -1,6 +1,11 @@
 import numpy as np
 
 from proper_research.robot.transformations import get_point
+from proper_research.rig_calibration import (
+    BEAM_BASE_XYZ_M,
+    SOURCE_DIPOLE_BODY_AXIS,
+    TCP_TO_MAGNET_POSE6,
+)
 from scipy.spatial.transform import Rotation as R
 
 
@@ -46,31 +51,10 @@ LIVE_JOINTS_RAD = (
     -2.05640871,
 )
 
-# TCP(flange) -> magnet-centre translation, in the flange frame at the
-# reference-pose orientation.
-#
-# 2026-10-02 RECALIBRATION: the physical tool/magnet mount changed (user
-# re-aligned the setup) and the old value above no longer matches reality --
-# confirmed two independent ways: (1) the user physically measured the
-# magnet sitting ~43cm straight below the TCP in world Z with the tool
-# "z-axis aligned" (same world x/y as TCP); (2) computed the implied
-# flange-local offset from that measurement via R_F.T @ [0,0,-0.43] using
-# the robot's own calibrated DH/FK at the live joints
-# [-0.6261633078204554, -1.7615310154356898, -1.8847131729125977,
-#  -1.0656407636455079, 1.5728745460510254, -1.0911524931537073] (TCP pose
-# [0.4957078706700621, -0.5727193984076662, 0.3903778484269186, ...]) --
-# result was [-0.126mm, 0.227mm, 429.9999mm], i.e. essentially pure flange-
-# local +Z at exactly 430mm, with the tiny x/y residual consistent with FK/
-# measurement noise, not a real off-axis offset. Rounded to a clean value
-# below for that reason. This invalidates every offline plan and Jacobian
-# schedule built before this date against the OLD value -- any of those
-# must be rebuilt from scratch before further closed-loop testing; don't
-# mix plans/schedules built under different TCP_TO_MAGNET_POSE6 values.
-TCP_TO_MAGNET_POSE6 = (0.0, 0.0, 0.43, 0.0, 0.0, 0.0)
-
-# Source-magnet dipole direction in the magnet body frame, giving a world -R.x
-# (beam axial: the beam grows along world -X) dipole at the reference pose.
-SOURCE_DIPOLE_BODY_AXIS = (-0.932073, 0.361306, 0.026427)
+# TCP_TO_MAGNET_POSE6 and SOURCE_DIPOLE_BODY_AXIS now live in
+# rig_calibration.py (imported above) -- that module's docstring has the
+# full recalibration history (2026-10-02 remount, 2026-10-03 dipole-axis
+# fix, 2026-10-04 beam-base-distance fix) that used to be duplicated here.
 
 SOURCE_MAGNET_DIAMETER_M = 0.10
 SOURCE_MAGNET_LENGTH_M = 0.10
@@ -108,16 +92,19 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     L_cmd = 0.025
     dt = 0.01
 
+    # X/Y from the single canonical rig_calibration.BEAM_BASE_XYZ_M; this
+    # function's own Z (-0.016567) predates and differs from that module's
+    # unraised-rig default.
     pivot_point = np.array(
-        [0.525575, -0.670028, -0.016567,
+        [BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567,
          3.14159265, 0.0, 0.0],
         dtype=float,
     )
 
     start_point = np.array(
         [
-            0.245575,
-            -0.670028,
+            BEAM_BASE_XYZ_M[0] - 0.28,
+            BEAM_BASE_XYZ_M[1],
             -0.016567,
             -3.07793295,
             0.57537270,

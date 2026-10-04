@@ -34,6 +34,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
 import proper_research.hardware.beam_hardware_experiment_v2 as experiment_v2
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
+_DEFAULT_T_ROBOT_BEAM_POSE6 = (
+    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), -0.016567, 0.0, -1.5707963, 0.0,
+)
 
 
 # =============================================================================
@@ -91,14 +96,7 @@ class FrameValidationConfig:
     # moves with the robot.  With derive_beam_frame_from_axes the rotation here
     # is informational; the translation is used when
     # pivot_behind_magnet_along_axial_mm is None.
-    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
-        0.525575,
-        -0.670028,
-        -0.016567,
-        0.0,
-        -1.5707963,
-        0.0,
-    )
+    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = _DEFAULT_T_ROBOT_BEAM_POSE6
 
     # T_TCP_M: pose of source-magnet frame M in the UR TCP frame.
     # This must describe the magnet centre AND magnet body-axis orientation.

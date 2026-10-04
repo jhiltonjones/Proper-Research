@@ -58,14 +58,17 @@ zraise_patch.apply(30.0)
 
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 # ---------------------------------------------------------------------------
 # This vessel campaign's fixed geometry (2026-09-27/28) -- update these if
-# you build a new vessel plan with a different start/floor/insertion.
+# you build a new vessel plan with a different start/floor/insertion. X/Y
+# now share the single canonical rig_calibration.BEAM_BASE_XYZ_M; this
+# campaign's own Z (0.013433, a raised-rig variant) is unchanged.
 # ---------------------------------------------------------------------------
-PIVOT = np.array([0.525575, -0.670028, 0.013433, 3.14159265, 0.0, 0.0])
+PIVOT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], 0.013433, 3.14159265, 0.0, 0.0])
 START_PT = [0.31133949, -0.65191377, 0.01328917, -3.07774931, 0.57528249, 0.04521943]
-BEAM_BASE = np.array([[0.525575, -0.670028, 0.013433]])
+BEAM_BASE = np.array([[BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], 0.013433]])
 EXCLUSION_RADIUS_M = 0.210430
 INSERTION_MAX_M = 0.065
 LUMEN_FILE = "vessel_lumen_robot_frame_raised3cm_2026-09-27.json"

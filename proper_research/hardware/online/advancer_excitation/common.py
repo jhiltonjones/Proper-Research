@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
 # Mirrors close_loop_path_follow.PathFollowConfig.insertion_rate_limit_m_s --
 # the real experiment's advancer rate bound (2mm/s). Kept as a distinct
 # constant (not imported) because this package intentionally never imports
@@ -66,7 +68,9 @@ def length_plan_from_plan_dir(plan_dir: str) -> LengthPlan:
     return LengthPlan(L_min_m=float(L.min()), L_max_m=float(L.max()), representative_rate_m_s=rate)
 
 
-PIVOT_XYZ = np.array([0.525575, -0.670028, -0.016567])   # StateStreamConfig.T_robot_beam_pose6[:3]
+# X/Y from the single canonical rig_calibration.py source; this file's own
+# Z (-0.016567) predates and differs from the unraised-rig default there.
+PIVOT_XYZ = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567])   # StateStreamConfig.T_robot_beam_pose6[:3]
 AXIAL_DIR_R = np.array([-1.0, 0.0, 0.0])                 # StateStreamConfig.beam_axial_axis_R
 
 

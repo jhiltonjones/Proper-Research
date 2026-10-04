@@ -51,7 +51,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-SOURCE_DIPOLE_BODY_AXIS = np.array([-0.932073, 0.361306, 0.026427])
+from proper_research.rig_calibration import SOURCE_DIPOLE_BODY_AXIS as _SOURCE_DIPOLE_BODY_AXIS_TUPLE
+
+# Single canonical source: rig_calibration.SOURCE_DIPOLE_BODY_AXIS (see
+# that module's docstring for the full recalibration history).
+SOURCE_DIPOLE_BODY_AXIS = np.asarray(_SOURCE_DIPOLE_BODY_AXIS_TUPLE, dtype=float)
 
 
 def _dipole_world_direction(magnet_rotvec: np.ndarray) -> np.ndarray:

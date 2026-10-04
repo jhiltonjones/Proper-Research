@@ -50,6 +50,8 @@ from pathlib import Path
 
 import numpy as np
 
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_PLAN = "plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path"
 REF_JOINTS = np.array(
@@ -423,7 +425,7 @@ def analyse(out_dir: Path):
         import matplotlib.pyplot as plt
     except Exception:
         return
-    bp = np.array([0.525575, -0.670028, -0.016567])
+    bp = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567])
     u = np.array([-1.0, 0.0, 0.0]); v = np.array([0.0, 1.0, 0.0])
     col = {"inv": "tab:blue", "lti": "tab:orange", "ltv": "tab:red", "tf": "tab:green",
            "inv_ltv": "tab:purple"}

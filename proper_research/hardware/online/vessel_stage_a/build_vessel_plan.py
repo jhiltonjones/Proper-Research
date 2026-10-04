@@ -41,6 +41,7 @@ import numpy as np
 
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M, BEAM_BASE_ROTVEC
 
 # 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
 # That mechanism required every script building or running a plan to pass a
@@ -52,11 +53,19 @@ import proper_research.planning.planning_context as planning_context_mod
 # since been recalibrated via real forward kinematics (see
 # vessel_magnet_initial_position_2026-10-02_recalibrated.json,
 # `capture_live_start_position.py`) to a single fixed beam-base height --
-# BEAM_BASE_PIVOT_Z below -- so there is no longer a "raised vs unraised"
-# choice to make here at all.
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028, 3.14159265, 0.0, 0.0])
-BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
-                                # vessel_magnet_initial_position_2026-10-02_recalibrated.json
+# so there is no longer a "raised vs unraised" choice to make here at all.
+#
+# 2026-10-04: this used to hardcode its own copy of the beam-base X/Y/Z --
+# that duplication (across more than a dozen files) is exactly how the
+# 2026-10-03 Y staleness and 2026-10-04 X staleness incidents happened and
+# went unnoticed for days/weeks each. Now imports the single canonical
+# value from rig_calibration.py; see that module's docstring for the full
+# recalibration history and forensics.
+BEAM_BASE_PIVOT_XY_ROT = np.array([
+    BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1],
+    BEAM_BASE_ROTVEC[0], BEAM_BASE_ROTVEC[1], BEAM_BASE_ROTVEC[2],
+])
+BEAM_BASE_PIVOT_Z = float(BEAM_BASE_XYZ_M[2])
 L_CMD = 0.03044
 DT_INIT = 0.01
 

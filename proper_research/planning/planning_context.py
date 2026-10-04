@@ -245,16 +245,11 @@ def make_experiment_config(
 def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
-    jacobian_mode: str = "fast",
 ):
     """Build the model and controller objects needed by both offline stages.
 
     This function intentionally does not call ``solve_from_controller_pack``,
     ``optimize_from_saved_inverse_result``, or ``run_simulation``.
-
-    `jacobian_mode`: passed through to ``build_controller`` -- see its own
-    docstring. Default "fast" preserves existing behavior for every caller
-    that doesn't pass this explicitly.
 
     Returns
     -------
@@ -336,7 +331,16 @@ def build_planning_context(
         effective_youngs_modulus=1.60e6,
         use_bimaterial_beam=True,
         wire_youngs_modulus_pa=75.0e9,
-        source_dipole_yaw_deg=-6.0,
+        # 2026-10-04: zeroed during the model-vs-camera physics debugging
+        # (was -6.0, a 2026-09-10 small-deflection pre-curl fudge, predating
+        # the Oct-2 remount and this session's SOURCE_DIPOLE_BODY_AXIS
+        # recalibration -- quantified to shift the problematic phi=60deg
+        # case by only ~0.6mm/1.5deg, not the cause of the larger
+        # model-vs-camera gap, but an undocumented second definition of the
+        # source dipole axis on top of the live one). Do not refit until the
+        # bigger discrepancy is resolved and the camera rotational extrinsic
+        # has been audited.
+        source_dipole_yaw_deg=0.0,
     )
 
     plant_model = bundle.models["plant"]
@@ -355,7 +359,6 @@ def build_planning_context(
         run_cfg=exp_cfg.controller,
         design_cfg=make_design_config(),
         robot_cfg=make_robot_config(),
-        jacobian_mode=jacobian_mode,
     )
 
     return exp_cfg, bundle, controller_pack, out_root

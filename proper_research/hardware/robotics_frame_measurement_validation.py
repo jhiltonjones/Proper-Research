@@ -93,7 +93,7 @@ class FrameValidationConfig:
     # pivot_behind_magnet_along_axial_mm is None.
     T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
         0.525575,
-        -0.670028,
+        -0.719727,
         -0.016567,
         0.0,
         -1.5707963,

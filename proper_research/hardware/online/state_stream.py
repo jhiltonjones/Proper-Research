@@ -110,8 +110,11 @@ class StateStreamConfig:
     saved_axis_convention: str = "image_cartesian"
     beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
     beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    # 2026-10-03 recalibration: Y was -0.670028, a ~50mm stale value from
+    # before the Oct-2 TCP_TO_MAGNET_POSE6 remount -- see
+    # build_vessel_plan.py's BEAM_BASE_PIVOT_XY_ROT for the matching fix.
     T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
-        0.525575, -0.670028, -0.016567, 0.0, -1.5707963, 0.0,
+        0.525575, -0.719727, -0.016567, 0.0, -1.5707963, 0.0,
     )
     anchor_beam_origin_to_detected_base: bool = True
 

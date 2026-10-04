@@ -66,7 +66,7 @@ def length_plan_from_plan_dir(plan_dir: str) -> LengthPlan:
     return LengthPlan(L_min_m=float(L.min()), L_max_m=float(L.max()), representative_rate_m_s=rate)
 
 
-PIVOT_XYZ = np.array([0.525575, -0.670028, -0.016567])   # StateStreamConfig.T_robot_beam_pose6[:3]
+PIVOT_XYZ = np.array([0.525575, -0.719727, -0.016567])   # StateStreamConfig.T_robot_beam_pose6[:3]
 AXIAL_DIR_R = np.array([-1.0, 0.0, 0.0])                 # StateStreamConfig.beam_axial_axis_R
 
 

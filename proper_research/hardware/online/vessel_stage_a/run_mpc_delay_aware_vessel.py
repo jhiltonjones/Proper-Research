@@ -286,7 +286,7 @@ _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 # rig has been recalibrated via real forward kinematics to a single fixed
 # beam-base height, so there is no longer a "raised vs unraised" choice to
 # make here, and no flag to keep in sync with the plan this script runs.
-_BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.670028])
+_BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.719727])  # Y recalibrated 2026-10-03, matches build_vessel_plan.py
 _BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches build_vessel_plan.py
 _BEAM_BASE_PIVOT_XYZ_R = np.array([[
     _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1], _BEAM_BASE_PIVOT_Z,

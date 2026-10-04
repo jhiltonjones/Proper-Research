@@ -33,7 +33,7 @@ from proper_research.hardware.online.camera_source import CameraConfig, CameraSo
 from proper_research.hardware.online.messages import now_monotonic
 from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
 
-PIVOT_XYZ = np.array([0.525575, -0.670028, -0.016567])  # StateStreamConfig.T_robot_beam_pose6[:3]
+PIVOT_XYZ = np.array([0.525575, -0.719727, -0.016567])  # StateStreamConfig.T_robot_beam_pose6[:3]
 
 
 def build_measurement_camera() -> tuple[CameraSource, NewFrameTipMapper]:

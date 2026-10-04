@@ -59,7 +59,7 @@ PLAN_DIR = "plans/vessel_live_trimmed6mm_2026-09-28/time_parameterized_configura
 SCHEDULE_CACHE = "/tmp/vessel_live_trimmed6mm_schedule_frozen.npy"
 # Same fixed beam-base point/radius run_mpc_delay_aware_vessel.py now uses
 # (see that module's _BEAM_BASE_PIVOT_XYZ_R / _BEAM_BASE_EXCLUSION_RADIUS_M).
-BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.670028, 0.013433]])
+BEAM_BASE_PIVOT_XYZ_R = np.array([[0.525575, -0.719727, 0.013433]])
 BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043
 
 

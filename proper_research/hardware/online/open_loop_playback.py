@@ -250,7 +250,7 @@ def analyse(out_dir: Path, compare_dir: Path | None):
     if not rows:
         print("no usable results")
         return
-    bp = np.array([0.525575, -0.670028, -0.016567])
+    bp = np.array([0.525575, -0.719727, -0.016567])
     u = np.array([-1.0, 0.0, 0.0]); v = np.array([0.0, 1.0, 0.0])
 
     print(f"\n{'run':22s} {'rms':>7s} {'mean':>7s} {'max':>7s} {'p95':>7s} {'hold':>7s} {'final':>7s}   [mm]")

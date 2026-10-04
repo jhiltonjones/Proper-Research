@@ -40,40 +40,40 @@
   },
   "summary": {
     "time_parameterized": true,
-    "globally_feasible": false,
-    "source_global_feasible": false,
-    "source_dense_validation_feasible": false,
+    "globally_feasible": true,
+    "source_global_feasible": true,
+    "source_dense_validation_feasible": true,
     "beam_validation_performed": true,
-    "beam_validation_feasible": false,
-    "duration_s": 66.5,
-    "raw_duration_s": 38.67624557845824,
-    "number_mpc_samples": 666,
-    "number_timing_grid_points": 797,
-    "number_spatial_beam_validation_samples": 797,
-    "maximum_velocity_limit_ratio": 0.6279380698976293,
-    "maximum_acceleration_limit_ratio": 0.7617104818894618,
+    "beam_validation_feasible": true,
+    "duration_s": 11.700000000000001,
+    "raw_duration_s": 9.799297596814162,
+    "number_mpc_samples": 118,
+    "number_timing_grid_points": 61,
+    "number_spatial_beam_validation_samples": 61,
+    "maximum_velocity_limit_ratio": 0.8917392547369637,
+    "maximum_acceleration_limit_ratio": 0.9182145274671588,
     "maximum_state_rate": [
-      0.04935664573704268,
-      0.03940907176766884,
-      0.046385689935626306,
-      0.05023504559181036,
-      0.0478755265168906,
-      0.04853092420691442,
-      0.0009567311235818467
+      0.07112940264288233,
+      0.07061642540752924,
+      0.06753329273549184,
+      0.07133914037895711,
+      0.06860940578941939,
+      0.039697557414984236,
+      0.001368497361175469
     ],
     "maximum_state_acceleration": [
-      0.2221473267996762,
-      0.26454119054850966,
-      0.1769564126917146,
-      0.2722950619404243,
-      0.30468419275578473,
-      0.18665333357375175,
-      0.005737768822055367
+      0.31602548940682734,
+      0.3672858109868635,
+      0.29783953493974774,
+      0.3394917768004666,
+      0.24128879299532827,
+      0.1689289734516296,
+      0.00548182349090982
     ],
-    "maximum_path_speed_m_s": 0.0015085649328750368,
-    "maximum_absolute_path_acceleration_m_s2": 0.006765117178111643,
-    "maximum_beam_position_error_m": 0.0025940186533918346,
-    "maximum_beam_tangent_error_rad": 0.8915857623738491,
+    "maximum_path_speed_m_s": 0.0006227787442628843,
+    "maximum_absolute_path_acceleration_m_s2": 0.0017829217844712844,
+    "maximum_beam_position_error_m": 0.004373490965076036,
+    "maximum_beam_tangent_error_rad": 1.508547506777316,
     "endpoint_state_rate_norms": [
       0.0,
       0.0
@@ -87,7 +87,7 @@
     "input_layout": "qd1_qd2_qd3_qd4_qd5_qd6_insertion_rate",
     "controllable_interval_at_start": [
       0.0,
-      2.1199259765014147e-06
+      4.706425900441955e-08
     ]
   },
   "output_files": {

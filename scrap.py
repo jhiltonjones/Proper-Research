@@ -6,13 +6,21 @@ start_point = np.array([
 ], float)
 pivot_point = start_point.copy()
 pivot_point[0] +=0.17
-
+tcp_pos = [0.3149930273459505, -0.7199239834356613, 0.3903562217858709, -3.0702151519205936, 0.665727583892539, 5.022306444258972e-05]
+tcp_pos2 = [0.364314, -0.584458, 0.390373, -1.949126, 2.463654, -0.000492]
 ROBOT_IP = "192.168.56.101"
-TCP_TARGET =  [0.42801887872839117, -0.7373104561642874, 0.35782223424787696, -3.078136979153704, 0.5757200626927219, 0.04565482188889512]
-joints = [-0.8294642607318323, -1.9672757587828578, -1.730027437210083, -1.04366888225589, 1.5631502866744995, -2.029626194630758]
+TCP_TARGET =  [0.32985741784198486, -0.603852381621729, 0.37707877387966343, -2.6412838195695794, 1.589562361413843, 0.07744879771517037]
 REF_JOINTS = np.array(
-    [-0.85634357, -1.94584002, -1.76176286, -1.03319450, 1.56234264, -2.05640871]
+    [-0.6536853949176233, -1.8291098080077113, -1.782264232635498, -1.1741101902774354, 1.6159265041351318, -1.1000617186175745]
 )
+ref_joints2 = [
+    -0.6261470953570765,
+    -1.7615391216673792,
+    -1.8847217559814453,
+    -1.0656255048564454,
+    1.5728814601898193,
+    -1.091161076222555
+  ]
 start_point = np.array(
     [
         0.245575,
@@ -34,14 +42,17 @@ if __name__ == "__main__":
         curr_ppose_add = robo.get_pose()
         print(curr_ppose_add)
         # curr_ppose_add[0] -= 0.5
-        # robo.moveL(curr_ppose_add)
+        robo.go_home_joint()
+        robo.moveL(tcp_pos)
+
         # TCP_TARGET[0]-=.1
-        robo.moveL(TCP_TARGET)
+        # robo.moveL(TCP_TARGET)
     
-        # robo.go_home_joint()
-        # joints = robo.get_joints()
+
         # joints[5] +=np.deg2rad(180)
-        # robo.moveJ(joints)
+        # robo.moveJ(ref_joints2)
+        joints = robo.get_joints()
+
         print(f"Joints are {joints}")
         # print(f"New pose is {start_point}")
         # new_pos = get_point(0,0, start_point=TCP_TARGET, pivot_point=pivot_point)

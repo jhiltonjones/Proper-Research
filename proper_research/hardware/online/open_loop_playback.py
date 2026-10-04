@@ -39,6 +39,8 @@ from pathlib import Path
 
 import numpy as np
 
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
 REPO = Path(__file__).resolve().parents[3]
 DEFAULT_PLAN = "plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path"
 REF_JOINTS = np.array(
@@ -250,7 +252,7 @@ def analyse(out_dir: Path, compare_dir: Path | None):
     if not rows:
         print("no usable results")
         return
-    bp = np.array([0.670575, -0.719727, -0.016567])
+    bp = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567])
     u = np.array([-1.0, 0.0, 0.0]); v = np.array([0.0, 1.0, 0.0])
 
     print(f"\n{'run':22s} {'rms':>7s} {'mean':>7s} {'max':>7s} {'p95':>7s} {'hold':>7s} {'final':>7s}   [mm]")

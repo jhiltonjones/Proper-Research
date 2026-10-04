@@ -27,6 +27,7 @@ from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.hardware.ur_rtde_robot import URRTDERobot
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 # 2026-10-02 fix: this used to call zraise_patch.apply(30.0) unconditionally
 # at import time, regardless of whether the CURRENT physical setup is
@@ -36,8 +37,8 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
 # silently captured a magnet_pose6_R 30mm too high in Z. Now parameterized
 # via --z-raise-mm (default 0.0, unraised); pass 30 explicitly to reproduce
 # the 2026-09-27/28 raised-workspace captures.
-BEAM_BASE_XYZ_RAISED30MM = np.array([0.670575, -0.719727, 0.013433])
-BEAM_BASE_XY_ROT = np.array([0.670575, -0.719727])
+BEAM_BASE_XYZ_RAISED30MM = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], 0.013433])
+BEAM_BASE_XY_ROT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1]])
 BEAM_BASE_Z_UNRAISED = -0.016567
 ROBOT_IP = "192.168.56.101"
 

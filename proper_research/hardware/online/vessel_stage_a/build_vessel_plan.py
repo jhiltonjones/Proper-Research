@@ -41,6 +41,7 @@ import numpy as np
 
 import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
 import proper_research.planning.planning_context as planning_context_mod
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M, BEAM_BASE_ROTVEC
 
 # 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
 # That mechanism required every script building or running a plan to pass a
@@ -52,36 +53,19 @@ import proper_research.planning.planning_context as planning_context_mod
 # since been recalibrated via real forward kinematics (see
 # vessel_magnet_initial_position_2026-10-02_recalibrated.json,
 # `capture_live_start_position.py`) to a single fixed beam-base height --
-# BEAM_BASE_PIVOT_Z below -- so there is no longer a "raised vs unraised"
-# choice to make here at all.
-# 2026-10-03 recalibration: the old Y value (-0.670028) was introduced
-# 2026-09-28 (commit 9380019e), 4 days before the 2026-10-02
-# TCP_TO_MAGNET_POSE6 mount recalibration, and was never re-verified
-# afterward -- same root cause as the SOURCE_DIPOLE_BODY_AXIS staleness
-# found the same day. Found live: with the source magnet manually jogged
-# "in line" with the beam base (dipole visibly pointing straight at it,
-# zero Y offset by construction of that alignment), the magnet's measured
-# Y was -0.719727, not -0.670028 (a ~50mm gap) -- X (0.525575) and Z
-# (-0.039627) both still matched to <1mm, consistent with only the Y
-# component having drifted/been wrong. User confirmed: "the beam base
-# should be on the same y plane as the magnet" at that in-line pose.
+# so there is no longer a "raised vs unraised" choice to make here at all.
 #
-# 2026-10-04 recalibration: X was ALSO wrong. The assumed 110mm base-to-
-# magnet distance (used to position the magnet at beam_base_xyz + 0.110m
-# along -X) was itself based on a stale/incorrect measurement -- the
-# off-axis arc eyeball checks this session (phi=20/60/90deg, all showing a
-# consistent dipole-aiming error even after SOURCE_DIPOLE_BODY_AXIS was
-# re-verified) made sense only if the ASSUMED beam-base distance itself
-# was wrong, since an error in the assumed base RADIUS still cancels out
-# in bearing at phi=0 (collinear) but grows into a real angular error
-# off-axis -- exactly the phi-dependent pattern observed (phi=0: clean;
-# phi=20/60/90: increasingly off). User physically remeasured with the
-# magnet held at the phi=0, r=110mm pose: true distance is 255mm, not
-# 110mm -- a +145mm correction to X (magnet position unchanged, so the
-# base must be 145mm further away along +X than previously assumed).
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.670575, -0.719727, 3.14159265, 0.0, 0.0])
-BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
-                                # vessel_magnet_initial_position_2026-10-02_recalibrated.json
+# 2026-10-04: this used to hardcode its own copy of the beam-base X/Y/Z --
+# that duplication (across more than a dozen files) is exactly how the
+# 2026-10-03 Y staleness and 2026-10-04 X staleness incidents happened and
+# went unnoticed for days/weeks each. Now imports the single canonical
+# value from rig_calibration.py; see that module's docstring for the full
+# recalibration history and forensics.
+BEAM_BASE_PIVOT_XY_ROT = np.array([
+    BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1],
+    BEAM_BASE_ROTVEC[0], BEAM_BASE_ROTVEC[1], BEAM_BASE_ROTVEC[2],
+])
+BEAM_BASE_PIVOT_Z = float(BEAM_BASE_XYZ_M[2])
 L_CMD = 0.03044
 DT_INIT = 0.01
 

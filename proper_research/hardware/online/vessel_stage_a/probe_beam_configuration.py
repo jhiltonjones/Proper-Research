@@ -51,10 +51,11 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-# 2026-10-03 recalibration -- see initial_conditions.SOURCE_DIPOLE_BODY_AXIS's
-# docstring for the full ground-truth derivation (old value was ~176deg off,
-# effectively negated polarity, predating the 2026-10-02 mount recalibration).
-SOURCE_DIPOLE_BODY_AXIS = np.array([0.910293410, -0.413963475, 0.000386004])
+from proper_research.rig_calibration import SOURCE_DIPOLE_BODY_AXIS as _SOURCE_DIPOLE_BODY_AXIS_TUPLE
+
+# Single canonical source: rig_calibration.SOURCE_DIPOLE_BODY_AXIS (see
+# that module's docstring for the full recalibration history).
+SOURCE_DIPOLE_BODY_AXIS = np.asarray(_SOURCE_DIPOLE_BODY_AXIS_TUPLE, dtype=float)
 
 
 def _dipole_world_direction(magnet_rotvec: np.ndarray) -> np.ndarray:

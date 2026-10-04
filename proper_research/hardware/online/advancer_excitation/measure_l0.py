@@ -32,8 +32,11 @@ import numpy as np
 from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
 from proper_research.hardware.online.messages import now_monotonic
 from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
-PIVOT_XYZ = np.array([0.670575, -0.719727, -0.016567])  # StateStreamConfig.T_robot_beam_pose6[:3]
+# X/Y from the single canonical rig_calibration.py source; this file's own
+# Z (-0.016567) predates and differs from the unraised-rig default there.
+PIVOT_XYZ = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567])  # StateStreamConfig.T_robot_beam_pose6[:3]
 
 
 def build_measurement_camera() -> tuple[CameraSource, NewFrameTipMapper]:

@@ -48,6 +48,7 @@ from proper_research.hardware.online.vessel_stage_a import common
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 _RealStateStreamConfig = state_stream_mod.StateStreamConfig
 
@@ -107,7 +108,7 @@ def _patch_state_stream_config(z_raise_mm: float) -> None:
     pf.StateStreamConfig = _patched_state_stream_config
 
 
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.670575, -0.719727])
+BEAM_BASE_PIVOT_XY_ROT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1]])
 BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 
 _robot_kin = _resolve_robot_kinematics(make_robot_config())

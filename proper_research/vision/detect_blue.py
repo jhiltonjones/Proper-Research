@@ -3,6 +3,8 @@ import cv2
 import os
 import json
 
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
 MANUAL_VESSEL_BOUNDARY_FILE = "manual_vessel_boundaries.json"
 
 # manual_vessel_boundaries.json is NOT vessel-specific data -- it is the BEAM's
@@ -28,7 +30,9 @@ _DEFAULT_SAVED_AXIS_CONVENTION = "image_cartesian"
 _DEFAULT_POSITIVE_AXIS_SIGNS = (-1.0, 1.0)
 _DEFAULT_BEAM_AXIAL_AXIS_R = (-1.0, 0.0, 0.0)
 _DEFAULT_BEAM_PLANE_NORMAL_AXIS_R = (0.0, 0.0, -1.0)
-_DEFAULT_T_ROBOT_BEAM_POSE6 = (0.670575, -0.719727, -0.016567, 0.0, -1.5707963, 0.0)
+_DEFAULT_T_ROBOT_BEAM_POSE6 = (
+    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), -0.016567, 0.0, -1.5707963, 0.0,
+)
 def resample_polyline_by_arclength(points, n_samples=200):
     pts = np.asarray(points, dtype=float)
 

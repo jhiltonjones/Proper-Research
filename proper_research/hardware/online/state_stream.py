@@ -41,6 +41,17 @@ from proper_research.hardware.online.messages import (
     LatestSlot,
     now_monotonic,
 )
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
+# This file's own Z convention (-0.016567) predates and differs from
+# rig_calibration.BEAM_BASE_XYZ_M's Z (-0.039627, the unraised-rig value
+# recalibrated 2026-10-02) -- kept as this file's own value since that
+# difference hasn't been investigated, but X/Y now share the single
+# canonical source (see rig_calibration.py's docstring for why this
+# duplication was a problem).
+_DEFAULT_T_ROBOT_BEAM_POSE6 = (
+    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), -0.016567, 0.0, -1.5707963, 0.0,
+)
 
 
 # =============================================================================
@@ -110,15 +121,7 @@ class StateStreamConfig:
     saved_axis_convention: str = "image_cartesian"
     beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
     beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
-    # 2026-10-03 recalibration: Y was -0.670028, a ~50mm stale value from
-    # before the Oct-2 TCP_TO_MAGNET_POSE6 remount -- see
-    # build_vessel_plan.py's BEAM_BASE_PIVOT_XY_ROT for the matching fix.
-    # 2026-10-04: X was also wrong (assumed 110mm base-to-magnet distance;
-    # remeasured true value 255mm, a +145mm correction) -- see that same
-    # file's BEAM_BASE_PIVOT_XY_ROT docstring for the full story.
-    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
-        0.670575, -0.719727, -0.016567, 0.0, -1.5707963, 0.0,
-    )
+    T_robot_beam_pose6: tuple[float, float, float, float, float, float] = _DEFAULT_T_ROBOT_BEAM_POSE6
     anchor_beam_origin_to_detected_base: bool = True
 
     # --- output ------------------------------------------------------

@@ -331,7 +331,16 @@ def build_planning_context(
         effective_youngs_modulus=1.60e6,
         use_bimaterial_beam=True,
         wire_youngs_modulus_pa=75.0e9,
-        source_dipole_yaw_deg=-6.0,
+        # 2026-10-04: zeroed during the model-vs-camera physics debugging
+        # (was -6.0, a 2026-09-10 small-deflection pre-curl fudge, predating
+        # the Oct-2 remount and this session's SOURCE_DIPOLE_BODY_AXIS
+        # recalibration -- quantified to shift the problematic phi=60deg
+        # case by only ~0.6mm/1.5deg, not the cause of the larger
+        # model-vs-camera gap, but an undocumented second definition of the
+        # source dipole axis on top of the live one). Do not refit until the
+        # bigger discrepancy is resolved and the camera rotational extrinsic
+        # has been audited.
+        source_dipole_yaw_deg=0.0,
     )
 
     plant_model = bundle.models["plant"]

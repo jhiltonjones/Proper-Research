@@ -742,7 +742,24 @@ def build_model_bundle(
                         "moment_per_length"
                     ]
                 ),
-                local_axis=(-1.0, 0.0, 0.0),
+                # 2026-10-04: flipped from (-1.0, 0.0, 0.0). Model-vs-camera
+                # physics debugging (phi=60deg/210mm and phi=-40deg/150mm,
+                # free-space, registration-corrected camera) found the old
+                # sign put the model on the OPPOSITE side of the zero-load
+                # straight-beam baseline from the real beam at every tested
+                # pose (alpha error 64-89deg), while every upstream check
+                # (mechanics, dipole formulas, generalized-force gradient,
+                # equilibrium uniqueness/stability, source-pose-into-solver,
+                # camera registration translation+rotation) passed clean --
+                # i.e. a magnitude/EI/moment-scale fit could not have
+                # explained it (lambda_m sweep stayed on the wrong side for
+                # the entire physical range). This flip puts the model back
+                # on the correct side at both poses (residual ~27deg, down
+                # from 64-89deg) -- a real remaining gap, now legitimate
+                # territory for EI/moment-magnitude identification, but not
+                # yet re-validated end-to-end against the vessel-contact
+                # campaigns this factory also feeds.
+                local_axis=(1.0, 0.0, 0.0),
                 overlap_length=tip_overlap_length_m,
             )
         )

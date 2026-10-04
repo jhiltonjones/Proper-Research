@@ -130,14 +130,14 @@ def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
     dt = 0.01
 
     pivot_point = np.array(
-        [0.525575, -0.719727, -0.016567,
+        [0.670575, -0.719727, -0.016567,
          3.14159265, 0.0, 0.0],
         dtype=float,
     )
 
     start_point = np.array(
         [
-            0.245575,
+            0.390575,
             -0.719727,
             -0.016567,
             -3.07793295,

@@ -107,7 +107,7 @@ def _patch_state_stream_config(z_raise_mm: float) -> None:
     pf.StateStreamConfig = _patched_state_stream_config
 
 
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.719727])
+BEAM_BASE_PIVOT_XY_ROT = np.array([0.670575, -0.719727])
 BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 
 _robot_kin = _resolve_robot_kinematics(make_robot_config())

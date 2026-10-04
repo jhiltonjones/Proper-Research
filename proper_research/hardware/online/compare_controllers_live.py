@@ -423,7 +423,7 @@ def analyse(out_dir: Path):
         import matplotlib.pyplot as plt
     except Exception:
         return
-    bp = np.array([0.525575, -0.719727, -0.016567])
+    bp = np.array([0.670575, -0.719727, -0.016567])
     u = np.array([-1.0, 0.0, 0.0]); v = np.array([0.0, 1.0, 0.0])
     col = {"inv": "tab:blue", "lti": "tab:orange", "ltv": "tab:red", "tf": "tab:green",
            "inv_ltv": "tab:purple"}

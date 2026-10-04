@@ -92,7 +92,7 @@ class FrameValidationConfig:
     # is informational; the translation is used when
     # pivot_behind_magnet_along_axial_mm is None.
     T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
-        0.525575,
+        0.670575,
         -0.719727,
         -0.016567,
         0.0,

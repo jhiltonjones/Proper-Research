@@ -36,8 +36,8 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
 # silently captured a magnet_pose6_R 30mm too high in Z. Now parameterized
 # via --z-raise-mm (default 0.0, unraised); pass 30 explicitly to reproduce
 # the 2026-09-27/28 raised-workspace captures.
-BEAM_BASE_XYZ_RAISED30MM = np.array([0.525575, -0.719727, 0.013433])
-BEAM_BASE_XY_ROT = np.array([0.525575, -0.719727])
+BEAM_BASE_XYZ_RAISED30MM = np.array([0.670575, -0.719727, 0.013433])
+BEAM_BASE_XY_ROT = np.array([0.670575, -0.719727])
 BEAM_BASE_Z_UNRAISED = -0.016567
 ROBOT_IP = "192.168.56.101"
 

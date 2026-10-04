@@ -65,7 +65,21 @@ import proper_research.planning.planning_context as planning_context_mod
 # (-0.039627) both still matched to <1mm, consistent with only the Y
 # component having drifted/been wrong. User confirmed: "the beam base
 # should be on the same y plane as the magnet" at that in-line pose.
-BEAM_BASE_PIVOT_XY_ROT = np.array([0.525575, -0.719727, 3.14159265, 0.0, 0.0])
+#
+# 2026-10-04 recalibration: X was ALSO wrong. The assumed 110mm base-to-
+# magnet distance (used to position the magnet at beam_base_xyz + 0.110m
+# along -X) was itself based on a stale/incorrect measurement -- the
+# off-axis arc eyeball checks this session (phi=20/60/90deg, all showing a
+# consistent dipole-aiming error even after SOURCE_DIPOLE_BODY_AXIS was
+# re-verified) made sense only if the ASSUMED beam-base distance itself
+# was wrong, since an error in the assumed base RADIUS still cancels out
+# in bearing at phi=0 (collinear) but grows into a real angular error
+# off-axis -- exactly the phi-dependent pattern observed (phi=0: clean;
+# phi=20/60/90: increasingly off). User physically remeasured with the
+# magnet held at the phi=0, r=110mm pose: true distance is 255mm, not
+# 110mm -- a +145mm correction to X (magnet position unchanged, so the
+# base must be 145mm further away along +X than previously assumed).
+BEAM_BASE_PIVOT_XY_ROT = np.array([0.670575, -0.719727, 3.14159265, 0.0, 0.0])
 BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches beam_base_pivot_xyz_R in
                                 # vessel_magnet_initial_position_2026-10-02_recalibrated.json
 L_CMD = 0.03044

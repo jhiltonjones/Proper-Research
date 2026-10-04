@@ -113,8 +113,11 @@ class StateStreamConfig:
     # 2026-10-03 recalibration: Y was -0.670028, a ~50mm stale value from
     # before the Oct-2 TCP_TO_MAGNET_POSE6 remount -- see
     # build_vessel_plan.py's BEAM_BASE_PIVOT_XY_ROT for the matching fix.
+    # 2026-10-04: X was also wrong (assumed 110mm base-to-magnet distance;
+    # remeasured true value 255mm, a +145mm correction) -- see that same
+    # file's BEAM_BASE_PIVOT_XY_ROT docstring for the full story.
     T_robot_beam_pose6: tuple[float, float, float, float, float, float] = (
-        0.525575, -0.719727, -0.016567, 0.0, -1.5707963, 0.0,
+        0.670575, -0.719727, -0.016567, 0.0, -1.5707963, 0.0,
     )
     anchor_beam_origin_to_detected_base: bool = True
 

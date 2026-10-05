@@ -72,7 +72,6 @@ from . import common
 # lumen geometry must match the physically raised rig, or predictions get
 # a spurious ~30mm offset unrelated to real model accuracy.
 import proper_research.simulation.simulations.initial_conditions as _initial_conditions_mod
-import proper_research.planning.planning_context as _planning_context_mod
 
 _ORIG_MAKE_INITIAL_POSES = _initial_conditions_mod.make_initial_poses
 
@@ -218,9 +217,6 @@ def main() -> None:
                     help="print the full planned move sequence + safety checks, touch no hardware")
     args = p.parse_args()
 
-    _initial_conditions_mod.make_initial_poses = _raised_make_initial_poses
-    _planning_context_mod.make_initial_poses = _raised_make_initial_poses
-
     npz_path = glob.glob(args.plan_dir + "/*.npz")[0]
     plan = np.load(npz_path)
     state_reference = plan["state_reference"]
@@ -228,6 +224,7 @@ def main() -> None:
 
     exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = build_vessel_planning_context(
         lumen_file=args.lumen_file, insertion_max_m=args.insertion_max_mm * 1e-3,
+        initial_poses=_raised_make_initial_poses(),
     )
     adapters = {
         True: build_diagnostic_adapter(beam_model=bundle.models["contact"], controller_pack=controller_pack, jacobian_mode="accurate"),

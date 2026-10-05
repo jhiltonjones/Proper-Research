@@ -151,7 +151,6 @@ def wall_geometry(lumen_query, points_m: np.ndarray):
 # ===========================================================================
 def build_adapters():
     import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-    import proper_research.planning.planning_context as planning_context_mod
     from proper_research.planning.vessel_context import build_vessel_planning_context
     from proper_research.controllers.beam_jacobian_providers import build_diagnostic_adapter
 
@@ -165,11 +164,9 @@ def build_adapters():
         s[2] += Z_RAISE_M
         return p, s, L, dt
 
-    initial_conditions_mod.make_initial_poses = _raised_make_initial_poses
-    planning_context_mod.make_initial_poses = _raised_make_initial_poses
-
     exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = build_vessel_planning_context(
         lumen_file=LUMEN_FILE, insertion_max_m=INSERTION_MAX_M,
+        initial_poses=_raised_make_initial_poses(),
     )
     adapter_contact = build_diagnostic_adapter(
         beam_model=bundle.models["contact"], controller_pack=controller_pack, jacobian_mode="accurate",

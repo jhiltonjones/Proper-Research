@@ -39,8 +39,6 @@ from pathlib import Path
 
 import numpy as np
 
-import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-import proper_research.planning.planning_context as planning_context_mod
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M, BEAM_BASE_ROTVEC
 
 # 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
@@ -215,11 +213,7 @@ def main() -> None:
 
     insertion_start_m = args.insertion_start_mm / 1000.0
 
-    def _make_initial_poses():
-        return BEAM_BASE_PIVOT.copy(), start_point.copy(), insertion_start_m, DT_INIT
-
-    initial_conditions_mod.make_initial_poses = _make_initial_poses
-    planning_context_mod.make_initial_poses = _make_initial_poses
+    initial_poses = (BEAM_BASE_PIVOT.copy(), start_point.copy(), insertion_start_m, DT_INIT)
 
     print(f"[build] pivot_point (beam base) = {BEAM_BASE_PIVOT.tolist()}")
     print(f"[build] start_point (source magnet) = {start_point.tolist()}  "
@@ -249,7 +243,7 @@ def main() -> None:
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = (
         build_vessel_planning_context(
             lumen_file=args.lumen_file, insertion_max_m=insertion_max_m,
-            jacobian_mode=args.jacobian_mode,
+            jacobian_mode=args.jacobian_mode, initial_poses=initial_poses,
         )
     )
     out_root = args.output_root

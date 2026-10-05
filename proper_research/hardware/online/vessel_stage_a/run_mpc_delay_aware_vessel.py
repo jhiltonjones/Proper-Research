@@ -524,7 +524,6 @@ pf.build_offline_solver = _wrapped_build_offline_solver
 # confirmed live 2026-09-23, same pitfall as this project's earlier offline
 # vessel-planning monkeypatches -- see vessel-planning-raised-base memory).
 import proper_research.simulation.simulations.initial_conditions as _initial_conditions_mod
-import proper_research.planning.planning_context as _planning_context_mod
 
 _ORIG_MAKE_INITIAL_POSES = _initial_conditions_mod.make_initial_poses
 
@@ -584,12 +583,10 @@ def build_or_load_schedule(
     print(f"[vessel-mpc] building genuine from_model_bundle Jacobian schedule "
           f"(contact={contact}, ~90-150s)...")
 
-    _initial_conditions_mod.make_initial_poses = _recalibrated_make_initial_poses
-    _planning_context_mod.make_initial_poses = _recalibrated_make_initial_poses
-
     reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
     _, bundle, controller_pack, _, _, _, _ = build_vessel_planning_context(
         lumen_file=lumen_file, insertion_max_m=insertion_max_mm * 1.0e-3,
+        initial_poses=_recalibrated_make_initial_poses(),
     )
     # jacobian_mode="accurate", NOT the default "fast": "fast" mode was
     # found (2026-09-23, this same vessel plan) to have a single-tick

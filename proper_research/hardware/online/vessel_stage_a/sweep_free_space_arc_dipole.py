@@ -283,18 +283,13 @@ def _centerline_of(result) -> np.ndarray:
 
 
 def build_model_bundle(lumen_file: str, beam_base_xyz6: np.ndarray, placeholder_magnet_pose6: np.ndarray, insertion_m: float):
-    import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-    import proper_research.planning.planning_context as planning_context_mod
-
-    def _make_initial_poses():
-        return beam_base_xyz6.copy(), placeholder_magnet_pose6.copy(), insertion_m, 0.01
-
-    initial_conditions_mod.make_initial_poses = _make_initial_poses
-    planning_context_mod.make_initial_poses = _make_initial_poses
-
     from proper_research.planning.vessel_context import build_vessel_planning_context
+
+    initial_poses = (beam_base_xyz6.copy(), placeholder_magnet_pose6.copy(), insertion_m, 0.01)
     exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = (
-        build_vessel_planning_context(lumen_file=lumen_file, insertion_max_m=0.12)
+        build_vessel_planning_context(
+            lumen_file=lumen_file, insertion_max_m=0.12, initial_poses=initial_poses,
+        )
     )
     return bundle
 

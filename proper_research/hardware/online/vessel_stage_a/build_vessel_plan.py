@@ -181,6 +181,15 @@ def main() -> None:
                          "--skip-chain-rule-validation-at-start's help above for the "
                          "full story. 'accurate' is slower per-evaluation; pass 'fast' "
                          "to restore the old (buggy-for-this-case) behaviour if needed.")
+    p.add_argument("--no-contact-plant", action="store_true",
+                    help="solve against the structurally contact-blind model instead of "
+                         "the contact-aware one -- plant AND Jacobian model both "
+                         "'no_contact' (not a mix). Use this to run the SAME "
+                         "--start-position-json/--target-path-json/--lumen-file plan a "
+                         "second time for a contact-vs-no-contact comparison: the "
+                         "no-contact solve never sees the wall at all, so any solution "
+                         "difference is attributable to the contact physics, not a "
+                         "different target/geometry.")
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--insertion-start-mm", type=float, default=L_CMD * 1000.0,
                     help="initial inserted length the offline planner starts from AND the "
@@ -248,10 +257,13 @@ def main() -> None:
     )
 
     print(f"[build] jacobian_mode = {args.jacobian_mode!r}")
+    print(f"[build] plant_contact = {not args.no_contact_plant} "
+          f"({'contact-aware' if not args.no_contact_plant else 'structurally contact-BLIND'} plant+Jacobian model)")
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = (
         build_vessel_planning_context(
             lumen_file=args.lumen_file, insertion_max_m=insertion_max_m,
             jacobian_mode=args.jacobian_mode, initial_poses=initial_poses,
+            plant_contact=not args.no_contact_plant,
         )
     )
     out_root = args.output_root

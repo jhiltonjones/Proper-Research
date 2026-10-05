@@ -46,6 +46,7 @@ def build_vessel_planning_context(
     insertion_max_m: float | None = None,
     jacobian_mode: str = "fast",
     initial_poses: tuple | None = None,
+    plant_contact: bool = True,
 ):
     """Like ``planning_context.build_planning_context()``, but the
     contact-aware model's lumen is the REAL digitized vessel geometry from
@@ -117,7 +118,7 @@ def build_vessel_planning_context(
             f"vessel_lumen_robot_frame_*_zcorrected.json for the pattern."
         )
 
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"plant_contact": plant_contact}
     if run_root is not None:
         kwargs["run_root"] = run_root
     if initial_poses is not None:

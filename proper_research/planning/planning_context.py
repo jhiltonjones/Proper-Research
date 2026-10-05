@@ -204,8 +204,16 @@ def make_inverse_config() -> InverseConfigurationPlannerConfig:
 def make_experiment_config(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
+    plant_contact: bool = True,
 ):
-    """Recreate the single ExperimentConfig used by the working script."""
+    """Recreate the single ExperimentConfig used by the working script.
+
+    `plant_contact`: True (default) builds the contact-aware experiment
+    (plant AND Jacobian model both "contact" -- the plant actually sees the
+    wall). False builds the structurally contact-blind counterpart (plant
+    AND Jacobian model both "no_contact") -- for the "same plan, no-contact
+    model" comparison run, not a mix of one contact-aware and one blind.
+    """
     # Radius-axis contact study (2026-09): centre point is the +30/-50 geometry,
     # which already has a complete L1->L2->L3 reference under full_control_stack.
     lumen_config = make_double_bend_lumen_config(
@@ -213,10 +221,11 @@ def make_experiment_config(
         second_angle_deg=-70.0,
     )
 
+    jacobian_variant = "contact" if plant_contact else "no_contact"
     experiments = make_curvature_jacobian_grid(
         run_root=Path(run_root),
         lumen_configs=(lumen_config,),
-        jacobian_variants=("contact",),
+        jacobian_variants=(jacobian_variant,),
         controller_kinds=("mpc",),
         solver_modes=("sqp_full",),
         inverse_sequence_modes=("rollout_ltv",),
@@ -227,7 +236,7 @@ def make_experiment_config(
         Np=15,
         N_sqp=50,
         max_steps=25,
-        plant_contact=True,
+        plant_contact=plant_contact,
         adaptive_rollout_enabled=False,
     )
 
@@ -246,6 +255,7 @@ def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
     initial_poses: tuple | None = None,
+    plant_contact: bool = True,
 ):
     """Build the model and controller objects needed by both offline stages.
 
@@ -264,13 +274,18 @@ def build_planning_context(
         and is unsafe if two callers do it in sequence or concurrently.
         Default ``None`` calls ``make_initial_poses()`` exactly as before,
         so every existing non-patching caller is unaffected.
+    plant_contact
+        Passed straight through to ``make_experiment_config`` -- True
+        (default, unchanged behavior) builds the contact-aware experiment,
+        False builds the structurally contact-blind one (plant AND
+        Jacobian model both "no_contact").
 
     Returns
     -------
     tuple
         ``(exp_cfg, bundle, controller_pack, out_root)``.
     """
-    exp_cfg = make_experiment_config(run_root=Path(run_root))
+    exp_cfg = make_experiment_config(run_root=Path(run_root), plant_contact=plant_contact)
     out_root = Path(exp_cfg.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 

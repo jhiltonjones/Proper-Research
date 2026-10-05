@@ -63,6 +63,8 @@ from typing import Any, Callable, Iterable
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
+from proper_research.rig_calibration import TCP_TO_MAGNET_POSE6 as _RIG_TCP_TO_MAGNET_POSE6
+
 
 # =============================================================================
 # USER CONFIGURATION -- edit here; there are no terminal arguments
@@ -135,13 +137,13 @@ class ValidationConfig:
     # ground, so +0.044 m produces a negative robot-base z displacement.  Do
     # not enter -0.044 merely because "down" is robot-base -z: this translation
     # is expressed in the rotating TCP frame, not the robot-base frame.
+    # Was hardcoded (0,0,0.47,0,0,0) -- stale relative to
+    # rig_calibration.TCP_TO_MAGNET_POSE6 (0.43m), which make_robot_config()
+    # has been overriding this with anyway. Sourcing it from there directly
+    # means a caller who builds T_F_M straight from this CONFIG (bypassing
+    # make_robot_config()) no longer silently gets the wrong offset.
     T_tcp_magnet_pose6: tuple[float, float, float, float, float, float] | None = (
-        0.0,
-        0.0,
-        0.47,
-        0.0,
-        0.0,
-        0.0,
+        _RIG_TCP_TO_MAGNET_POSE6
     )
     assume_tcp_is_magnet_frame: bool = False
 

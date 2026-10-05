@@ -45,7 +45,9 @@ from scipy.spatial.transform import Rotation as Rot
 
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import _robot_kin as rk
-from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+from proper_research.rig_calibration import (
+    BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, REFERENCE_MAGNET_POSE6, beam_base_pose6,
+)
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import (
     build_model_bundle, reference_orientation_matrix, solve_pose, build_seed_pool, robust_ik_for_pose,
 )
@@ -55,15 +57,12 @@ PHI_DEG = 35.0
 RADIUS_MM = 225.0
 L_MM = 40.0
 L_M = L_MM / 1000.0
-LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_zcorrected.json"
+LUMEN_FILE = CURRENT_LUMEN_FILE
 CONTACT_BAND_M = 0.5e-3  # matches this project's own --mpc-wall-avoidance-margin-mm default
 
 beam_base_xyz = BEAM_BASE_XYZ_M.copy()
-beam_base_xyz6 = np.concatenate([beam_base_xyz, [3.14159265, 0.0, 0.0]])
-placeholder_magnet_pose6 = np.array(
-    [0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
-     -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929]
-)
+beam_base_xyz6 = beam_base_pose6()
+placeholder_magnet_pose6 = REFERENCE_MAGNET_POSE6
 controller_pack = {"robot_dh": rk.dh, "T_F_M": rk.T_F_M}
 
 EPS = {"x": 0.015, "y": {30.0: 0.0169, -30.0: 0.020}.get, "rz": {30.0: np.radians(8.54), -30.0: np.radians(10.53)}.get}

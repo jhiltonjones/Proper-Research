@@ -3,18 +3,17 @@ import sys
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
-from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+from proper_research.rig_calibration import (
+    BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, REFERENCE_MAGNET_POSE6, beam_base_pose6,
+)
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import (
     build_model_bundle, reference_orientation_matrix, solve_pose,
 )
 
 beam_base_xyz = BEAM_BASE_XYZ_M.copy()
-beam_base_xyz6 = np.concatenate([beam_base_xyz, [3.14159265, 0.0, 0.0]])
-LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_left1p5mm_zcorrected.json"
-placeholder_magnet_pose6 = np.array(
-    [0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
-     -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929]
-)
+beam_base_xyz6 = beam_base_pose6()
+LUMEN_FILE = CURRENT_LUMEN_FILE
+placeholder_magnet_pose6 = REFERENCE_MAGNET_POSE6
 
 PHI_DEG = 35.0
 RADIUS_MM = 225.0

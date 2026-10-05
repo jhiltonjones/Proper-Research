@@ -23,7 +23,10 @@ from scipy.spatial.transform import Rotation as Rot
 
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import _robot_kin as rk
-from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+from proper_research.rig_calibration import (
+    ADVANCER_PORT, BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, MAGNET_EXCLUSION_RADIUS_BASE_M,
+    REFERENCE_MAGNET_POSE6, ROBOT_IP, beam_base_pose6,
+)
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import (
     build_model_bundle, reference_orientation_matrix, solve_pose, find_safe_path, build_seed_pool, robust_ik_for_pose,
 )
@@ -31,20 +34,15 @@ from proper_research.hardware.online.vessel_stage_a import common as vsa_common
 from proper_research.hardware.online.vessel_stage_a.insertion_control import chord_mm, closed_loop_insertion
 from proper_research.advancer_unit.advancer_unit_cmd import AdvancerUnit
 
-ROBOT_IP = "192.168.56.101"
-ADVANCER_PORT = "/dev/ttyACM0"
-EXCLUSION_RADIUS_M = 0.080
+EXCLUSION_RADIUS_M = MAGNET_EXCLUSION_RADIUS_BASE_M
 PHI_DEG = 35.0
 RADIUS_MM = 225.0
-LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_zcorrected.json"
+LUMEN_FILE = CURRENT_LUMEN_FILE
 CONTACT_BAND_M = 0.5e-3
 
 beam_base_xyz = BEAM_BASE_XYZ_M.copy()
-beam_base_xyz6 = np.concatenate([beam_base_xyz, [3.14159265, 0.0, 0.0]])
-placeholder_magnet_pose6 = np.array(
-    [0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
-     -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929]
-)
+beam_base_xyz6 = beam_base_pose6()
+placeholder_magnet_pose6 = REFERENCE_MAGNET_POSE6
 
 PSI_DEG = float(sys.argv[1])
 L_MM = float(sys.argv[2]) if len(sys.argv) > 2 else 40.0

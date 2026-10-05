@@ -90,3 +90,45 @@ TCP_TO_MAGNET_POSE6 = (0.0, 0.0, 0.43, 0.0, 0.0, 0.0)
 # what was wrong in the Oct-4 off-axis eyeball checks; the beam-base
 # distance was (see BEAM_BASE_XYZ_M above).
 SOURCE_DIPOLE_BODY_AXIS = (0.910293410, -0.413963475, 0.000386004)
+
+# A known-good, reachable magnet pose used ONLY as an IK seed / model-bundle
+# placeholder when a script needs *some* valid starting pose before it
+# immediately overwrites it with the real target via model.solve(p7) or a
+# fresh IK call. It is not a target itself -- do not read physical meaning
+# into it beyond "reachable." Found byte-identical, independently
+# copy-pasted into 9 vessel_stage_a scripts on 2026-10-05; centralized here
+# so the next script that needs a seed pose imports it instead of adding a
+# 10th copy.
+REFERENCE_MAGNET_POSE6 = np.array([
+    0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
+    -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929,
+])
+
+# ---------------------------------------------------------------------------
+# Rig networking / hardware addresses
+# ---------------------------------------------------------------------------
+ROBOT_IP = "192.168.56.101"
+ADVANCER_PORT = "/dev/ttyACM0"
+
+# ---------------------------------------------------------------------------
+# Vessel geometry
+# ---------------------------------------------------------------------------
+# The current, correctly Z-calibrated digitized vessel lumen file (frame R,
+# matches today's BEAM_BASE_XYZ_M -- see build_vessel_plan.py's
+# BEAM_BASE_PIVOT_Z safety check, which refuses any lumen file whose Z
+# differs from this by >2mm). When the vessel is re-digitized, update ONLY
+# this one path; every script that imports CURRENT_LUMEN_FILE picks up the
+# change automatically instead of needing its own hardcoded filename edited.
+CURRENT_LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_zcorrected.json"
+
+# ---------------------------------------------------------------------------
+# Safety margins
+# ---------------------------------------------------------------------------
+# The base/default magnet-exclusion safety radius (how close the source
+# magnet is allowed to get to the beam base during transit) most campaigns
+# use. Some campaigns deliberately raise this for their own reasons (see
+# that script's own comment for why) -- those are legitimate per-campaign
+# margins layered ON TOP of this base value, not independent
+# re-measurements of the same physical quantity. Don't reuse this name for
+# a script-specific margin; import it and add to it instead.
+MAGNET_EXCLUSION_RADIUS_BASE_M = 0.080

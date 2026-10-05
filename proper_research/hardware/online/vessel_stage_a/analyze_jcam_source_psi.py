@@ -1,8 +1,10 @@
 """Stage-1 final symmetry-breaking test: compare model vs camera in-plane
-source-pose Jacobians (x, y, rz columns only) at phi=35deg, L=30mm, for
-psi=+30deg and psi=-30deg, and -- the key claim -- check that both model
-and camera show the SAME qualitative rotation of the dominant mobility
-direction when psi flips sign.
+source-pose Jacobians (x, y, rz columns only) at phi=35deg, for a chosen
+insertion length L (mm), for psi=+30deg and psi=-30deg, and -- the key
+claim -- check that both model and camera show the SAME qualitative
+rotation of the dominant mobility direction when psi flips sign.
+
+Usage: python analyze_jcam_source_psi.py [L_mm]  (default 30)
 """
 import json
 import subprocess
@@ -15,12 +17,13 @@ HERE = Path(__file__).resolve()
 REPO_ROOT = HERE.parents[4]
 RESULTS_DIR = REPO_ROOT / "calibration_2026-10-05"
 LABELS = ["x", "y", "rz"]
+L_MM = float(sys.argv[1]) if len(sys.argv) > 1 else 30.0
 
 
 def model_J_source(psi_deg):
     script = HERE.parent / "jnc_source_jacobian_psi.py"
     out = subprocess.run(
-        [sys.executable, str(script), str(psi_deg)],
+        [sys.executable, str(script), str(psi_deg), str(L_MM)],
         cwd=REPO_ROOT, capture_output=True, text=True, check=True,
     ).stdout
     lines = [l for l in out.splitlines() if l.startswith("axis ")]
@@ -33,7 +36,7 @@ def model_J_source(psi_deg):
 
 
 def camera_J_source(psi_deg):
-    path = RESULTS_DIR / f"jcam_source_phi35_L30_psi{psi_deg:+.0f}.json"
+    path = RESULTS_DIR / f"jcam_source_phi35_L{L_MM:.0f}_psi{psi_deg:+.0f}.json"
     with open(path) as f:
         r = json.load(f)
     cols = {c["axis"]: np.array(c["J_col"])[:2] for c in r["columns"]}
@@ -72,6 +75,8 @@ def main():
         print(np.round(J_cam, 6))
         print()
         per_axis_compare(J_model, J_cam)
+
+        print(f"\nconverged_L_mm (actual physical insertion, vision-verified): {raw.get('converged_L_mm')}")
 
         print("\n--- repeatability ---")
         for ret in raw["returns"]:

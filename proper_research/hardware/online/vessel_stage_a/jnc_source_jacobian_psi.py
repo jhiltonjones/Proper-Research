@@ -18,8 +18,8 @@ placeholder_magnet_pose6 = np.array(
 
 PHI_DEG = 35.0
 RADIUS_MM = 225.0
-L_M = 0.030
 PSI_DEG = float(sys.argv[1]) if len(sys.argv) > 1 else 30.0
+L_M = (float(sys.argv[2]) if len(sys.argv) > 2 else 30.0) / 1000.0
 
 phi = np.radians(PHI_DEG)
 xyz0 = beam_base_xyz + (RADIUS_MM / 1000.0) * np.array([-np.cos(phi), np.sin(phi), 0.0])

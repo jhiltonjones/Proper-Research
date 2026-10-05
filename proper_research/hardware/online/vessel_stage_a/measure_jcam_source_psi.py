@@ -1,9 +1,15 @@
 """Stage-1 final test: in-plane source-pose Jacobian (x, y, rz columns
 only -- z, rx, ry excluded per explicit decision, since the actuator
 geometry preserves planar symmetry and the camera has weak sensitivity
-there) at phi=35deg, r=225mm, L=30mm, for psi=+30deg and psi=-30deg.
+there) at phi=35deg, r=225mm, for psi=+30deg/-30deg, at a chosen
+insertion length L.
 
-Usage: python measure_jcam_source_psi.py <psi_deg>
+Actually drives the physical advancer to L via insertion_control's
+closed_loop_insertion before measuring -- see insertion_control.py's
+module docstring for why this matters (the advancer has no encoder, so
+L_mm here is a real commanded target, not just a software label).
+
+Usage: python measure_jcam_source_psi.py <psi_deg> <L_mm>
 """
 import json
 import sys
@@ -20,16 +26,20 @@ from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole 
     reference_orientation_matrix, find_safe_path, build_seed_pool, robust_ik_for_pose,
 )
 from proper_research.hardware.online.vessel_stage_a import common as vsa_common
+from proper_research.hardware.online.vessel_stage_a.insertion_control import chord_mm, closed_loop_insertion
+from proper_research.advancer_unit.advancer_unit_cmd import AdvancerUnit
 
 ROBOT_IP = "192.168.56.101"
+ADVANCER_PORT = "/dev/ttyACM0"
 EXCLUSION_RADIUS_M = 0.080
 PHI_DEG = 35.0
 RADIUS_MM = 225.0
-L_M = 0.030
 
 beam_base_xyz = BEAM_BASE_XYZ_M.copy()
 
 PSI_DEG = float(sys.argv[1])
+L_MM = float(sys.argv[2]) if len(sys.argv) > 2 else 30.0
+L_M = L_MM / 1000.0
 
 phi = np.radians(PHI_DEG)
 xyz0 = beam_base_xyz + (RADIUS_MM / 1000.0) * np.array([-np.cos(phi), np.sin(phi), 0.0])
@@ -152,7 +162,7 @@ def measure_tip_mean(camera, n=25, timeout_s=10.0):
 
 
 def main():
-    print(f"PHI_DEG={PHI_DEG} L_M={L_M} PSI_DEG={PSI_DEG}")
+    print(f"PHI_DEG={PHI_DEG} L_MM={L_MM} PSI_DEG={PSI_DEG}")
     print(f"nominal xyz0: {xyz0}  rotvec0: {rotvec0}")
     q_now = get_live_joints()
     q0 = ik_for_target(xyz0, rotvec0, q_now)
@@ -160,7 +170,8 @@ def main():
 
     camera = build_camera()
     camera.start()
-    results = {"phi_deg": PHI_DEG, "L_m": L_M, "psi_deg": PSI_DEG,
+    advancer = AdvancerUnit(port=ADVANCER_PORT)
+    results = {"phi_deg": PHI_DEG, "L_mm_target": L_MM, "psi_deg": PSI_DEG,
                "xyz0": xyz0.tolist(), "rotvec0": rotvec0.tolist(),
                "eps": {k: (v if k != "rz" else float(v)) for k, v in EPS.items()},
                "columns": [], "returns": []}
@@ -169,6 +180,14 @@ def main():
         print("\nMoving to nominal q0...")
         q_cur, err = safe_move_j(q0)
         print(f"  reached, err={err:.4f}deg")
+
+        print(f"\nConverging insertion length to L={L_MM:.2f}mm (real advancer command)...")
+        conv_L, _ratio = closed_loop_insertion(camera, advancer, L_MM, beam_base_xyz)
+        print(f"  converged_L={conv_L}")
+        results["converged_L_mm"] = conv_L
+        if conv_L is None or abs(conv_L - L_MM) > 2.0:
+            raise RuntimeError(f"insertion convergence FAILED: got {conv_L}mm, wanted {L_MM}mm")
+
         tip0, std0 = measure_tip_mean(camera)
         print(f"  tip0={tip0}  std_mm={std0*1000 if std0 is not None else None}")
         results["tip0"] = tip0.tolist() if tip0 is not None else None
@@ -208,11 +227,12 @@ def main():
                 "J_col": J_col.tolist() if J_col is not None else None,
             })
             results["returns"].append({"axis": axis, "drift1_mm": drift1, "drift2_mm": drift2})
-            out_path = Path(__file__).resolve().parents[4] / "calibration_2026-10-05" / f"jcam_source_phi35_L30_psi{PSI_DEG:+.0f}.json"
+            out_path = Path(__file__).resolve().parents[4] / "calibration_2026-10-05" / f"jcam_source_phi35_L{L_MM:.0f}_psi{PSI_DEG:+.0f}.json"
             out_path.parent.mkdir(exist_ok=True)
             with open(out_path, "w") as f:
                 json.dump(results, f, indent=2, default=float)
     finally:
+        advancer.shutdown()
         camera.stop()
 
     print(f"\n\nsaved {out_path}")

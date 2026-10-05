@@ -18,11 +18,19 @@ HERE = Path(__file__).resolve()
 REPO_ROOT = HERE.parents[4]
 RESULTS_DIR = REPO_ROOT / "calibration_2026-10-05"
 LABELS = ["x", "y", "rz"]
-L_MM = 40.0
+L_MM = float(sys.argv[1]) if len(sys.argv) > 1 else 40.0
 
-# recorded by verify_contact_jacobian_implementation.py (Check 2) at this L/phi:
-WALL_NORMAL = {30.0: np.array([0.2138, 0.9769]), -30.0: np.array([0.5900, 0.8074])}
-WALL_TANGENT = {30.0: np.array([-0.9716, 0.2366]), -30.0: np.array([-0.9143, 0.4051])}
+# recorded by verify_contact_jacobian_implementation.py (Check 2) and a
+# matching one-off recompute, at this L/phi -- the closest-approach node
+# (and hence the local wall normal/tangent) shifts slightly with L.
+WALL_NORMAL = {
+    40.0: {30.0: np.array([0.2138, 0.9769]), -30.0: np.array([0.5900, 0.8074])},
+    50.0: {30.0: np.array([0.4398, 0.8981]), -30.0: np.array([0.4398, 0.8981])},
+}[L_MM]
+WALL_TANGENT = {
+    40.0: {30.0: np.array([-0.9716, 0.2366]), -30.0: np.array([-0.9143, 0.4051])},
+    50.0: {30.0: np.array([-0.9570, 0.2901]), -30.0: np.array([-0.9128, 0.4085])},
+}[L_MM]
 
 
 def model_J_sources(psi_deg):

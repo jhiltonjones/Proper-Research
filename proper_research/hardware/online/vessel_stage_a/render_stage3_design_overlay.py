@@ -1,4 +1,4 @@
-"""Render a SINGLE camera frame showing the Stage-3 design
+"""Render a SINGLE camera frame showing a Stage-3 design
 (design_stage3_tracked_path.py's output) overlaid on the real vessel,
 for review before committing to the offline-configuration run.
 
@@ -12,11 +12,16 @@ Draws:
   - cyan = full real vessel centreline, green = left wall, red = right
     wall, magenta = radius ticks (live_vessel_alignment_overlay.py's own
     convention)
-  - orange = the designed tracked path (tip0 -> 20mm short of the far
-    end, shifted 2mm toward the left/green wall)
+  - orange = the designed tracked path (tip0 -> N mm short of the far
+    end, shifted by the design's own left_shift_mm toward the left/green
+    wall)
   - a filled yellow circle at the model-predicted initial tip position
+
+Usage: python render_stage3_design_overlay.py [design_json_path]
+  (defaults to the most recently generated phi40_L30 design)
 """
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -27,8 +32,15 @@ from proper_research.hardware.online.vessel_stage_a.live_vessel_alignment_overla
 )
 from proper_research.rig_calibration import CURRENT_LUMEN_FILE
 
-DESIGN_PATH = Path(__file__).resolve().parents[4] / "plans" / "stage3_design" / "phi40_L30_left2mm_design.json"
-OUT_PNG = Path(__file__).resolve().parents[4] / "plans" / "stage3_design" / "phi40_L30_left2mm_overlay.png"
+DESIGN_DIR = Path(__file__).resolve().parents[4] / "plans" / "stage3_design"
+if len(sys.argv) > 1:
+    DESIGN_PATH = Path(sys.argv[1])
+else:
+    candidates = sorted(DESIGN_DIR.glob("*_design.json"), key=lambda p: p.stat().st_mtime)
+    if not candidates:
+        raise SystemExit(f"no *_design.json found in {DESIGN_DIR}; run design_stage3_tracked_path.py first")
+    DESIGN_PATH = candidates[-1]
+OUT_PNG = DESIGN_PATH.with_name(DESIGN_PATH.stem.replace("_design", "_overlay") + ".png")
 
 
 def points_to_pixels(points_R, T_R_B, calibration):

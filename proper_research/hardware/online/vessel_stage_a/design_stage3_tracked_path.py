@@ -35,7 +35,7 @@ from proper_research.vision.detect_blue import load_vessel_lumen_robot_frame
 PHI_DEG = 40.0
 RADIUS_MM = 225.0
 L0_MM = 30.0
-LEFT_SHIFT_MM = 2.0
+LEFT_SHIFT_MM = 1.0
 END_MARGIN_MM = 20.0
 
 OUT_DIR = Path(__file__).resolve().parents[4] / "plans" / "stage3_design"
@@ -112,7 +112,7 @@ def main():
         "full_shifted_centreline_R": shifted_C.tolist(),
         "lumen_R_m": lumen_R.tolist(),
     }
-    out_path = OUT_DIR / "phi40_L30_left2mm_design.json"
+    out_path = OUT_DIR / f"phi40_L30_left{LEFT_SHIFT_MM:.0f}mm_design.json"
     with open(out_path, "w") as f:
         json.dump(design, f, indent=2, default=float)
     print(f"\nsaved design to {out_path}")

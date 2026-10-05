@@ -197,6 +197,14 @@ def main() -> None:
                          "no-decrease floor) -- InverseConfigurationPlannerConfig."
                          "enforce_magnet_z_fixed. Use when the physical setup requires the "
                          "magnet to stay on a single Z plane throughout.")
+    p.add_argument("--target-path-json", type=Path, default=None,
+                    help="track a CUSTOM path instead of the raw --lumen-file centreline -- "
+                         "e.g. the output of design_stage3_tracked_path.py "
+                         "(reads its 'tracked_path_R' key), or any JSON file whose top level "
+                         "is a plain [[x,y,z], ...] list in robot frame R. The contact-wall "
+                         "physics still comes from --lumen-file unchanged; only the "
+                         "position-tracking target (lumen_C passed to the Layer 1/2/3 solvers) "
+                         "is replaced.")
     p.add_argument("--output-root", type=Path, required=True)
     args = p.parse_args()
 
@@ -251,13 +259,28 @@ def main() -> None:
 
     perimeter = float(np.sum(np.linalg.norm(np.diff(centreline, axis=0), axis=1)))
     print(f"[vessel] {args.lumen_file} -> {centreline.shape[0]} points, "
-          f"arclength {1e3 * perimeter:.1f}mm, radius {1e3 * lumen_R.min():.2f}-{1e3 * lumen_R.max():.2f}mm")
+          f"arclength {1e3 * perimeter:.1f}mm, radius {1e3 * lumen_R.min():.2f}-{1e3 * lumen_R.max():.2f}mm "
+          f"(this is the CONTACT WALL geometry regardless of --target-path-json)")
     print(f"[vessel] centreline[0]  (world/R) = {np.round(centreline[0], 4).tolist()}")
     print(f"[vessel] centreline[-1] (world/R) = {np.round(centreline[-1], 4).tolist()}")
+
+    if args.target_path_json is not None:
+        with open(args.target_path_json) as f:
+            target_data = json.load(f)
+        target_points = target_data["tracked_path_R"] if isinstance(target_data, dict) else target_data
+        target_path = np.asarray(target_points, dtype=float)
+        target_perimeter = float(np.sum(np.linalg.norm(np.diff(target_path, axis=0), axis=1)))
+        print(f"[vessel] --target-path-json {args.target_path_json} -> {target_path.shape[0]} points, "
+              f"arclength {1e3 * target_perimeter:.1f}mm (this is what Layer 1/2/3 actually track)")
+        print(f"[vessel] target_path[0]  (world/R) = {np.round(target_path[0], 4).tolist()}")
+        print(f"[vessel] target_path[-1] (world/R) = {np.round(target_path[-1], 4).tolist()}")
+    else:
+        target_path = centreline
 
     vessel_dir = out_root / "vessel_lumen"
     vessel_dir.mkdir(parents=True, exist_ok=True)
     np.savez(vessel_dir / "vessel_centreline.npz", lumen_C=centreline, lumen_R=lumen_R)
+    np.savez(vessel_dir / "target_path.npz", target_path=target_path)
     (vessel_dir / "provenance.json").write_text(json.dumps(provenance, indent=2))
 
     planner_config = make_inverse_config()
@@ -297,7 +320,7 @@ def main() -> None:
     t0 = time.perf_counter()
     inverse_result = solve_from_controller_pack(
         controller_pack=controller_pack,
-        lumen_C=centreline,
+        lumen_C=target_path,
         config=planner_config,
         output_dir=inverse_dir,
         alternative_initial_states=[np.asarray(controller_pack["p0"], dtype=float)],
@@ -324,7 +347,7 @@ def main() -> None:
         print(f"\n[layer3] time-parameterising the INVERSE path -> {time_param_dir}", flush=True)
         time_parameterize_saved_inverse_path(
             inverse_output_dir=inverse_dir, controller_pack=controller_pack,
-            config=tp_config, output_dir=time_param_dir, lumen_C=centreline,
+            config=tp_config, output_dir=time_param_dir, lumen_C=target_path,
         )
     else:
         global_dir = vessel_dir / "global_configuration_converged"
@@ -343,7 +366,7 @@ def main() -> None:
         t0 = time.perf_counter()
         global_result = optimize_from_saved_inverse_result(
             inverse_output_dir=inverse_dir, controller_pack=controller_pack,
-            lumen_C=centreline, config=global_config, output_dir=global_dir,
+            lumen_C=target_path, config=global_config, output_dir=global_dir,
         )
         print(f"[layer2] done in {time.perf_counter() - t0:.1f}s  "
               f"nodes={len(getattr(global_result, 'nodes', []))}", flush=True)
@@ -351,7 +374,7 @@ def main() -> None:
         print(f"\n[layer3] time-parameterising the GLOBAL path -> {time_param_dir}", flush=True)
         time_parameterize_saved_global_path(
             global_output_dir=global_dir, controller_pack=controller_pack,
-            config=tp_config, output_dir=time_param_dir, lumen_C=centreline,
+            config=tp_config, output_dir=time_param_dir, lumen_C=target_path,
         )
 
     npz = time_param_dir / "time_parameterized_configuration_path.npz"

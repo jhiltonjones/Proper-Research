@@ -34,7 +34,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
 from proper_research.rig_calibration import (
-    BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, REFERENCE_MAGNET_POSE6, beam_base_pose6,
+    BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, MAGNET_EXCLUSION_RADIUS_BASE_M, REFERENCE_MAGNET_POSE6,
+    beam_base_pose6,
 )
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import (
     build_model_bundle, reference_orientation_matrix, solve_pose,
@@ -67,6 +68,15 @@ def parse_args():
     p.add_argument("--end-margin-mm", type=float, default=20.0,
                     help="how far short of the vessel centreline's far/distal end the "
                          "tracked path stops, mm (default: 20.0)")
+    p.add_argument("--exclusion-floor-mm", type=float, default=MAGNET_EXCLUSION_RADIUS_BASE_M * 1000.0,
+                    help="magnet-to-beam-base safety floor saved into this design's "
+                         "magnet_pose6_R/exclusion_floor_mm fields, for direct use as "
+                         "build_vessel_plan.py's --start-position-json. Keep this comfortably "
+                         "below --radius-mm (the floor pins the magnet on the constraint "
+                         "boundary with ~0 slack if set equal to the actual start distance -- "
+                         f"see build_vessel_plan.py's module docstring). Default: "
+                         f"{MAGNET_EXCLUSION_RADIUS_BASE_M * 1000.0:.0f}mm "
+                         "(rig_calibration.MAGNET_EXCLUSION_RADIUS_BASE_M).")
     p.add_argument("--lumen-file", default=CURRENT_LUMEN_FILE,
                     help=f"digitized vessel lumen file (default: rig_calibration.CURRENT_LUMEN_FILE "
                          f"= {CURRENT_LUMEN_FILE})")
@@ -81,6 +91,7 @@ def parse_args():
 
 def design_tracked_path(
     *, phi_deg, radius_mm, psi_deg, l0_mm, left_shift_mm, end_margin_mm, lumen_file,
+    exclusion_floor_mm=MAGNET_EXCLUSION_RADIUS_BASE_M * 1000.0,
 ):
     """Pure computation, no file I/O -- returns the design dict. Split out
     from main() so another script can call this directly (e.g. a sweep over
@@ -155,6 +166,11 @@ def design_tracked_path(
         "tracked_path_R": tracked_path.tolist(),
         "full_shifted_centreline_R": shifted_C.tolist(),
         "lumen_R_m": lumen_R.tolist(),
+        # These two keys make this same file directly usable as
+        # build_vessel_plan.py's --start-position-json (it reads exactly
+        # these two keys and ignores the rest).
+        "magnet_pose6_R": np.concatenate([xyz0, rotvec0]).tolist(),
+        "exclusion_floor_mm": exclusion_floor_mm,
     }
 
 
@@ -163,7 +179,7 @@ def main():
     design = design_tracked_path(
         phi_deg=args.phi_deg, radius_mm=args.radius_mm, psi_deg=args.psi_deg, l0_mm=args.l0_mm,
         left_shift_mm=args.left_shift_mm, end_margin_mm=args.end_margin_mm,
-        lumen_file=args.lumen_file,
+        lumen_file=args.lumen_file, exclusion_floor_mm=args.exclusion_floor_mm,
     )
 
     if args.tag:

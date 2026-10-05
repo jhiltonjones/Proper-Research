@@ -245,11 +245,25 @@ def make_experiment_config(
 def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
+    initial_poses: tuple | None = None,
 ):
     """Build the model and controller objects needed by both offline stages.
 
     This function intentionally does not call ``solve_from_controller_pack``,
     ``optimize_from_saved_inverse_result``, or ``run_simulation``.
+
+    Parameters
+    ----------
+    initial_poses
+        Optional ``(pivot_point, start_point, L0, dt)`` override, in the same
+        shape ``make_initial_poses()`` returns. Pass this instead of
+        monkey-patching ``initial_conditions.make_initial_poses`` /
+        ``planning_context.make_initial_poses`` at the module level (the
+        pattern several vessel_stage_a scripts used to inject a custom
+        beam-base/magnet pose) -- that pattern mutates shared module state
+        and is unsafe if two callers do it in sequence or concurrently.
+        Default ``None`` calls ``make_initial_poses()`` exactly as before,
+        so every existing non-patching caller is unaffected.
 
     Returns
     -------
@@ -260,7 +274,9 @@ def build_planning_context(
     out_root = Path(exp_cfg.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    pivot_point, start_point, L0, dt = make_initial_poses()
+    pivot_point, start_point, L0, dt = (
+        make_initial_poses() if initial_poses is None else initial_poses
+    )
 
     # The contact model needs a lumen that the (straight) nominal beam sits
     # well inside, or the analytic contact Jacobian fails FD validation and the

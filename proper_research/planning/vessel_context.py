@@ -45,6 +45,7 @@ def build_vessel_planning_context(
     run_root: Path | None = None,
     insertion_max_m: float | None = None,
     jacobian_mode: str = "fast",
+    initial_poses: tuple | None = None,
 ):
     """Like ``planning_context.build_planning_context()``, but the
     contact-aware model's lumen is the REAL digitized vessel geometry from
@@ -59,6 +60,14 @@ def build_vessel_planning_context(
     solving where "fast" mode's numerical-estimator artifact can make the
     optimizer chase a bad gradient -- see `build_controller`'s own
     docstring.
+
+    `initial_poses`: optional ``(pivot_point, start_point, L0, dt)``
+    override, same shape as ``initial_conditions.make_initial_poses()``
+    returns. Threaded into BOTH the internal ``build_planning_context()``
+    call and this function's own rebuild call below, so the two stay
+    consistent -- the same guarantee module-level monkey-patching used to
+    provide, without reassigning shared module state. ``None`` (default)
+    preserves existing behavior exactly.
 
     Returns
     -------
@@ -111,6 +120,8 @@ def build_vessel_planning_context(
     kwargs: dict[str, Any] = {}
     if run_root is not None:
         kwargs["run_root"] = run_root
+    if initial_poses is not None:
+        kwargs["initial_poses"] = initial_poses
     exp_cfg, bundle, controller_pack, out_root = build_planning_context(**kwargs)
 
     contact_model = bundle.models.get("contact")
@@ -154,7 +165,9 @@ def build_vessel_planning_context(
         make_initial_poses,
     )
 
-    _, start_point, L0, dt = make_initial_poses()
+    _, start_point, L0, dt = (
+        make_initial_poses() if initial_poses is None else initial_poses
+    )
     plant_key = "contact" if exp_cfg.model.plant_contact else "no_contact"
     plant_model = bundle.models[plant_key]
     jacobian_model = bundle.models[exp_cfg.model.jacobian_variant]

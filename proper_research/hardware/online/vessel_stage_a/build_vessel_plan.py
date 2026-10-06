@@ -343,6 +343,7 @@ def main() -> None:
         config=planner_config,
         output_dir=inverse_dir,
         alternative_initial_states=[np.asarray(controller_pack["p0"], dtype=float)],
+        beam_base_m=BEAM_BASE_PIVOT[:3],
     )
     print(f"[layer1] done in {time.perf_counter() - t0:.1f}s  "
           f"all_nodes_feasible={inverse_result.all_nodes_feasible}", flush=True)
@@ -387,6 +388,7 @@ def main() -> None:
         global_result = optimize_from_saved_inverse_result(
             inverse_output_dir=inverse_dir, controller_pack=controller_pack,
             lumen_C=target_path, config=global_config, output_dir=global_dir,
+            beam_base_m=BEAM_BASE_PIVOT[:3],
         )
         print(f"[layer2] done in {time.perf_counter() - t0:.1f}s  "
               f"nodes={len(getattr(global_result, 'nodes', []))}", flush=True)

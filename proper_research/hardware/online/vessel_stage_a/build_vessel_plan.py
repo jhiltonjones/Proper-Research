@@ -313,6 +313,13 @@ def main() -> None:
     shared["finite_difference_insertion_step_m"] = args.finite_difference_insertion_step_m
     shared["maximum_chain_rule_relative_error"] = args.maximum_chain_rule_relative_error
     shared["node_timeout_s"] = args.node_timeout_s
+    if args.no_contact_plant and "require_contact_model" in shared:
+        # The default planner config refuses to solve against a model that
+        # doesn't report contact_cfg.enabled=True -- a sensible guard against
+        # accidentally planning a real vessel without contact awareness, but
+        # it must be relaxed for a DELIBERATE --no-contact-plant comparison
+        # run, which is exactly a contact-blind solve by design.
+        shared["require_contact_model"] = False
     if args.skip_chain_rule_validation_at_start:
         shared["finite_difference_validation_at_start"] = False
     if args.lock_magnet_z:
@@ -371,7 +378,8 @@ def main() -> None:
             maximum_refinement_rounds=1, maximum_nodes=200,
             maximum_iterations=40, maximum_wall_time_s=180.0,
             stagnation_function_evaluations=4000, dense_validation_enabled=True,
-            compute_node_jacobian_diagnostics=False, require_contact_model=True,
+            compute_node_jacobian_diagnostics=False,
+            require_contact_model=not args.no_contact_plant,
             insertion_non_decreasing=False, fix_initial_state=True,
         )
         print(f"\n[layer2] Layer 1 incomplete -- global optimiser (recover_partial) -> {global_dir}", flush=True)

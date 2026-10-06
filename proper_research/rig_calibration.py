@@ -119,7 +119,11 @@ ADVANCER_PORT = "/dev/ttyACM0"
 # differs from this by >2mm). When the vessel is re-digitized, update ONLY
 # this one path; every script that imports CURRENT_LUMEN_FILE picks up the
 # change automatically instead of needing its own hardcoded filename edited.
-CURRENT_LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_zcorrected.json"
+# 2026-10-06: physical vessel wall moved; re-digitized from
+# vessel_lumen_robot_frame.json (raw, stale Z=-0.016567 like every prior
+# digitization) and Z-corrected the same way as the 2026-10-05 file -- see
+# vessel_lumen_robot_frame_2026-10-06_zcorrected.json's own git history.
+CURRENT_LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_2026-10-06_zcorrected.json"
 
 # ---------------------------------------------------------------------------
 # Safety margins

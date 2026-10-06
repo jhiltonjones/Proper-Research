@@ -5,10 +5,19 @@ contact -- this checks what the offline-configuration optimizer's own
 model predicts there, and whether THAT state is well- or ill-conditioned,
 to help explain why the optimizer struggles to find it).
 
-Usage: python diagnose_real_lab_state.py <q1> <q2> <q3> <q4> <q5> <q6> <insertion_mm>
+Also saves a top-down (world X-Y) + side (world X-Z) plot of the real
+beam's full predicted centreline against the real vessel, since the
+side view is the only one that shows the Z-offset finding at all (a
+top-down-only view would hide it completely).
+
+Usage: python diagnose_real_lab_state.py <q1> <q2> <q3> <q4> <q5> <q6> <insertion_mm> [--out-png PATH]
 """
 import sys
+from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
@@ -17,8 +26,10 @@ from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import 
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, REFERENCE_MAGNET_POSE6, beam_base_pose6
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import build_model_bundle, solve_pose
 from proper_research.controllers.beam_jacobian_providers import build_diagnostic_adapter
+from proper_research.vision.detect_blue import load_vessel_lumen_robot_frame
 
 CONTACT_BAND_M = 0.5e-3
+OUT_DIR = Path(__file__).resolve().parents[4] / "plans" / "stage3_design"
 
 
 def contact_profile(model, xyz, rotvec, insertion_m):
@@ -51,6 +62,9 @@ def main():
     q = np.array([float(x) for x in sys.argv[1:7]])
     insertion_mm = float(sys.argv[7])
     L_m = insertion_mm / 1000.0
+    out_png = None
+    if "--out-png" in sys.argv:
+        out_png = Path(sys.argv[sys.argv.index("--out-png") + 1])
 
     print(f"q (rad) = {q.tolist()}")
     print(f"q (deg) = {np.degrees(q).tolist()}")
@@ -98,6 +112,54 @@ def main():
     U, S, _ = np.linalg.svd(J)
     print(f"full 3x7 Jacobian singular values: {np.round(S, 5)}")
     print(f"condition number (sigma1/sigma_min_nonzero) = {S[0]/max(S[-1], 1e-12):.3e}")
+
+    # ---------------------------------------------------------------
+    # Plot: top-down (X-Y) + side (X-Z) views of the real beam shape
+    # against the real vessel. The side view is the only one that shows
+    # the magnet-Z-vs-beam-base-Z offset at all.
+    # ---------------------------------------------------------------
+    lumen_C, lumen_R, _ = load_vessel_lumen_robot_frame(CURRENT_LUMEN_FILE)
+    contact_pt = centerline[int(round(s_frac * (centerline.shape[0] - 1)))]
+
+    fig, (ax_xy, ax_xz) = plt.subplots(1, 2, figsize=(13, 6.5))
+
+    for ax, cols, labels in ((ax_xy, (0, 1), ("world X (R), m", "world Y (R), m")),
+                              (ax_xz, (0, 2), ("world X (R), m", "world Z (R), m"))):
+        i, j = cols
+        ax.plot(lumen_C[:, i], lumen_C[:, j], "-", color="tab:cyan", lw=2, label="real vessel centreline")
+        ax.fill_between(lumen_C[:, i], lumen_C[:, j] - lumen_R, lumen_C[:, j] + lumen_R,
+                         color="tab:cyan", alpha=0.15, label="vessel wall (+-radius)")
+        ax.plot(beam_base_xyz[i], beam_base_xyz[j], "ks", markersize=10, label="beam base")
+        ax.plot(centerline[:, i], centerline[:, j], "o-", color="tab:orange", lw=2, markersize=4,
+                label="real-state beam centreline (model)")
+        ax.plot(xyz[i], xyz[j], "D", color="tab:purple", markersize=10, label="magnet position")
+        ax.plot(tip[i], tip[j], "*", color="gold", markeredgecolor="k", markersize=16, label="tip")
+        ax.plot(contact_pt[i], contact_pt[j], "x", color="red", markersize=14, markeredgewidth=3,
+                label=f"contact point (c_min={c_min*1e3:.2f}mm)")
+        ax.set_xlabel(labels[0])
+        ax.set_ylabel(labels[1])
+        ax.set_aspect("equal")
+        ax.grid(True, alpha=0.3)
+
+    ax_xz.axhline(beam_base_xyz[2], color="gray", ls="--", lw=1, alpha=0.7)
+    ax_xz.annotate(f"beam-base Z = {beam_base_xyz[2]*1e3:.1f}mm", xy=(beam_base_xyz[0], beam_base_xyz[2]),
+                    xytext=(10, 8), textcoords="offset points", fontsize=8, color="gray")
+    ax_xz.annotate(f"magnet Z = {xyz[2]*1e3:.1f}mm\n(offset {abs(xyz[2]-beam_base_xyz[2])*1e3:.1f}mm)",
+                    xy=(xyz[0], xyz[2]), xytext=(10, -18), textcoords="offset points",
+                    fontsize=8, color="tab:purple")
+
+    ax_xy.set_title("Top-down (X-Y)")
+    ax_xz.set_title("Side (X-Z) -- shows the Z offset")
+    ax_xy.legend(loc="upper left", fontsize=7)
+    fig.suptitle(f"Real lab state: insertion={insertion_mm:.0f}mm, c_min={c_min*1e3:.2f}mm, "
+                 f"cond(J)={S[0]/max(S[-1],1e-12):.1f}, rank={int(np.sum(S > 1e-6*S[0]))}", fontsize=11)
+    fig.tight_layout()
+
+    if out_png is None:
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        out_png = OUT_DIR / f"real_lab_state_ins{insertion_mm:.0f}mm.png"
+    fig.savefig(out_png, dpi=150)
+    print(f"\nsaved plot to {out_png}")
 
 
 if __name__ == "__main__":

@@ -68,10 +68,17 @@ class NodeSolveTimeoutError(TimeoutError):
 
 @contextlib.contextmanager
 def _node_solve_deadline(seconds: float):
-    """Wall-clock deadline around a single scipy solver call. SIGALRM-based
-    (main-thread/Unix only -- this project's planning scripts are single-
-    process and synchronous, so that's always satisfied here). A no-op when
-    seconds is None or <= 0 (the default, matching all prior behaviour)."""
+    """SUPERSEDED by ``_run_node_attempt_with_hard_timeout`` below -- kept
+    only because nothing else in this module references the old SIGALRM
+    approach any more; do not add new callers.
+
+    2026-10-06: confirmed via the node33 continuation investigation
+    (phi30_L30_left1mm contact run) that SIGALRM cannot interrupt a hang
+    inside the contact model's own inner nonlinear equilibrium solve --
+    signals only deliver between Python bytecode instructions, and a stuck
+    native/long-running numerical loop never yields one. A ~multi-hour,
+    unrecoverable stall at a single multistart attempt was observed live;
+    this wrapper's "deadline" never fired."""
     if not seconds or seconds <= 0:
         yield
         return
@@ -88,6 +95,77 @@ def _node_solve_deadline(seconds: float):
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _run_node_attempt_with_hard_timeout(fn: Any, seconds: float) -> Any:
+    """Run ``fn()`` (a zero-argument callable, typically one
+    ``least_squares``/``minimize`` call for a single multistart attempt) with
+    a real, OS-level wall-clock deadline: fork a child process, and if it has
+    not finished within ``seconds``, terminate/kill it outright.
+
+    This replaces ``_node_solve_deadline``'s SIGALRM approach, which cannot
+    interrupt a hang inside native code or a long-running internal iteration
+    (see that function's updated docstring and the 2026-10-06 node33
+    continuation investigation that confirmed it live). A process kill is
+    unconditional -- it always interrupts, no matter what the child is
+    doing -- so a single pathological attempt (e.g. the contact model's
+    inner equilibrium solve failing to converge near first wall-touch) can
+    no longer hang the whole offline path indefinitely: the caller's
+    existing ``except Exception`` handling treats the timeout exactly like
+    any other failed attempt and moves on to the NEXT multistart guess
+    (``_candidate_guesses``' jacobian-predicted / extrapolated / perturbed
+    starting points), i.e. the solver can "jump" to a different candidate
+    configuration instead of being stuck retrying the same one forever.
+
+    A no-op passthrough (direct in-process call, no fork) when ``seconds``
+    is ``None``/``<= 0`` -- the default, matching all prior behaviour when
+    ``node_timeout_s`` is disabled. ``fn`` and everything it closes over
+    (the adapter, objective, guess, bounds, ...) must not need to mutate any
+    state the PARENT relies on -- true here, since ``_solve_one_node``
+    always re-validates the returned state's physical output fresh in the
+    parent via ``objective.refresh_output(state, commit=False)`` and only
+    commits a result after that independent re-check (see the comment at
+    that call site); nothing downstream trusts state living inside the
+    forked child.
+    """
+    if not seconds or seconds <= 0:
+        return fn()
+
+    import multiprocessing as _mp
+
+    ctx = _mp.get_context("fork")
+    result_queue: Any = ctx.Queue()
+
+    def _target() -> None:
+        try:
+            result_queue.put(("ok", fn()))
+        except Exception as exc:  # re-raised in the parent below
+            result_queue.put(("error", exc))
+
+    process = ctx.Process(target=_target)
+    process.start()
+    process.join(float(seconds))
+    if process.is_alive():
+        process.terminate()
+        process.join(5.0)
+        if process.is_alive():
+            process.kill()
+            process.join()
+        raise NodeSolveTimeoutError(
+            f"node solve exceeded {seconds:.0f}s wall-clock deadline "
+            "(hard-killed; SIGALRM cannot interrupt this class of hang -- "
+            "see _run_node_attempt_with_hard_timeout's docstring)"
+        )
+    try:
+        status, payload = result_queue.get_nowait()
+    except Exception as exc:
+        raise NodeSolveTimeoutError(
+            "node solve subprocess exited without a result "
+            f"(exitcode={process.exitcode})"
+        ) from exc
+    if status == "error":
+        raise payload
+    return payload
 
 
 Array = np.ndarray
@@ -1668,8 +1746,8 @@ def _solve_one_node(
     for attempt_index, guess in enumerate(guesses, start=1):
         try:
             if exclusion_constraint is None:
-                with _node_solve_deadline(config.node_timeout_s):
-                    solved = least_squares(
+                def _attempt_least_squares() -> Any:
+                    return least_squares(
                         objective.residual,
                         guess,
                         jac=objective.jacobian,
@@ -1682,6 +1760,9 @@ def _solve_one_node(
                         max_nfev=int(config.maximum_function_evaluations),
                         verbose=0,
                     )
+                solved = _run_node_attempt_with_hard_timeout(
+                    _attempt_least_squares, config.node_timeout_s
+                )
                 state = np.asarray(solved.x, dtype=float).reshape(7)
                 reason = f"scipy_status_{solved.status}: {solved.message}"
                 solver_objective = float(2.0 * solved.cost)
@@ -1694,8 +1775,8 @@ def _solve_one_node(
                 objective_scale = max(
                     1.0, float(objective.scalar_objective(guess))
                 )
-                with _node_solve_deadline(config.node_timeout_s):
-                    solved = minimize(
+                def _attempt_slsqp() -> Any:
+                    return minimize(
                         lambda state_value: (
                             objective.scalar_objective(state_value)
                             / objective_scale
@@ -1720,6 +1801,9 @@ def _solve_one_node(
                             "disp": False,
                         },
                     )
+                solved = _run_node_attempt_with_hard_timeout(
+                    _attempt_slsqp, config.node_timeout_s
+                )
                 state = np.asarray(solved.x, dtype=float).reshape(7)
                 reason = (
                     f"scipy_slsqp_status_{solved.status}: {solved.message}; "

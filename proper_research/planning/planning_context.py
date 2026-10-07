@@ -142,9 +142,13 @@ def make_robot_config() -> JointSpaceRobotConfig:
     ``start_point`` from ``make_initial_poses`` the initial magnet-pose IK
     returns exactly those six joint angles.
 
-    ``tcp_to_magnet_pose6 = (0, 0, 0.03, 0, 0, 0)`` -- the source magnet sits
-    30 mm below the TCP along TCP.z, the same transform
-    ``robotics_frame_measurement_validation.CONFIG.T_tcp_magnet_pose6`` uses.
+    ``tcp_to_magnet_pose6`` is sourced from
+    ``initial_conditions.TCP_TO_MAGNET_POSE6`` (itself
+    ``rig_calibration.TCP_TO_MAGNET_POSE6``), currently
+    ``(0, 0, 0.43, 0, 0, 0)`` -- the source magnet sits 0.43 m below the TCP
+    along TCP.z, post the 2026-10-02 remount (this docstring previously said
+    "30 mm", a stale pre-remount value; the code always used the imported
+    constant, so this was a comment-only staleness, not a live bug).
     (The stale ``urik.CONFIG.T_tcp_magnet_pose6`` is 0.47 m and must be
     overridden here.)  ``active_tcp_pose6 = 0`` because the robot's installed
     TCP offset is zero (flange == TCP).
@@ -204,8 +208,16 @@ def make_inverse_config() -> InverseConfigurationPlannerConfig:
 def make_experiment_config(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
+    plant_contact: bool = True,
 ):
-    """Recreate the single ExperimentConfig used by the working script."""
+    """Recreate the single ExperimentConfig used by the working script.
+
+    `plant_contact`: True (default) builds the contact-aware experiment
+    (plant AND Jacobian model both "contact" -- the plant actually sees the
+    wall). False builds the structurally contact-blind counterpart (plant
+    AND Jacobian model both "no_contact") -- for the "same plan, no-contact
+    model" comparison run, not a mix of one contact-aware and one blind.
+    """
     # Radius-axis contact study (2026-09): centre point is the +30/-50 geometry,
     # which already has a complete L1->L2->L3 reference under full_control_stack.
     lumen_config = make_double_bend_lumen_config(
@@ -213,10 +225,11 @@ def make_experiment_config(
         second_angle_deg=-70.0,
     )
 
+    jacobian_variant = "contact" if plant_contact else "no_contact"
     experiments = make_curvature_jacobian_grid(
         run_root=Path(run_root),
         lumen_configs=(lumen_config,),
-        jacobian_variants=("contact",),
+        jacobian_variants=(jacobian_variant,),
         controller_kinds=("mpc",),
         solver_modes=("sqp_full",),
         inverse_sequence_modes=("rollout_ltv",),
@@ -227,7 +240,7 @@ def make_experiment_config(
         Np=15,
         N_sqp=50,
         max_steps=25,
-        plant_contact=True,
+        plant_contact=plant_contact,
         adaptive_rollout_enabled=False,
     )
 
@@ -245,22 +258,44 @@ def make_experiment_config(
 def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
+    initial_poses: tuple | None = None,
+    plant_contact: bool = True,
 ):
     """Build the model and controller objects needed by both offline stages.
 
     This function intentionally does not call ``solve_from_controller_pack``,
     ``optimize_from_saved_inverse_result``, or ``run_simulation``.
 
+    Parameters
+    ----------
+    initial_poses
+        Optional ``(pivot_point, start_point, L0, dt)`` override, in the same
+        shape ``make_initial_poses()`` returns. Pass this instead of
+        monkey-patching ``initial_conditions.make_initial_poses`` /
+        ``planning_context.make_initial_poses`` at the module level (the
+        pattern several vessel_stage_a scripts used to inject a custom
+        beam-base/magnet pose) -- that pattern mutates shared module state
+        and is unsafe if two callers do it in sequence or concurrently.
+        Default ``None`` calls ``make_initial_poses()`` exactly as before,
+        so every existing non-patching caller is unaffected.
+    plant_contact
+        Passed straight through to ``make_experiment_config`` -- True
+        (default, unchanged behavior) builds the contact-aware experiment,
+        False builds the structurally contact-blind one (plant AND
+        Jacobian model both "no_contact").
+
     Returns
     -------
     tuple
         ``(exp_cfg, bundle, controller_pack, out_root)``.
     """
-    exp_cfg = make_experiment_config(run_root=Path(run_root))
+    exp_cfg = make_experiment_config(run_root=Path(run_root), plant_contact=plant_contact)
     out_root = Path(exp_cfg.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    pivot_point, start_point, L0, dt = make_initial_poses()
+    pivot_point, start_point, L0, dt = (
+        make_initial_poses() if initial_poses is None else initial_poses
+    )
 
     # The contact model needs a lumen that the (straight) nominal beam sits
     # well inside, or the analytic contact Jacobian fails FD validation and the

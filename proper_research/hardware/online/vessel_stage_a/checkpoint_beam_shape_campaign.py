@@ -56,8 +56,6 @@ from proper_research.hardware.online.zshift_grid_toolkit import zraise_patch
 
 zraise_patch.apply(30.0)
 
-import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-import proper_research.planning.planning_context as planning_context_mod
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
 # ---------------------------------------------------------------------------
@@ -79,9 +77,6 @@ ADVANCER_PORT = "/dev/ttyACM0"
 def _make_initial_poses():
     return PIVOT.copy(), np.array(START_PT), 0.025, 0.01
 
-
-initial_conditions_mod.make_initial_poses = _make_initial_poses
-planning_context_mod.make_initial_poses = _make_initial_poses
 
 from proper_research.planning.vessel_context import build_vessel_planning_context
 from proper_research.planning.planning_context import make_design_config, make_robot_config
@@ -326,7 +321,7 @@ def build_adapters():
     """Build BOTH the contact-aware and free-space (no-contact) diagnostic
     adapters, sharing the same lumen/robot config."""
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = build_vessel_planning_context(
-        lumen_file=LUMEN_FILE, insertion_max_m=INSERTION_MAX_M,
+        lumen_file=LUMEN_FILE, insertion_max_m=INSERTION_MAX_M, initial_poses=_make_initial_poses(),
     )
     adapter_contact = controller_pack["plant_diagnostic_joint_adapter"]
 

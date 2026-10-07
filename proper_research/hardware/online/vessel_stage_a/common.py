@@ -221,27 +221,66 @@ def check_robot_safe(robot_ip: str = ROBOT_IP) -> None:
         robot.close()
 
 
+def raised_state_stream_config_factory(real_config_cls):
+    """Return a drop-in replacement callable for `real_config_cls`
+    (StateStreamConfig) whose T_robot_beam_pose6 z defaults to the
+    recalibrated beam-base height (BEAM_BASE_PIVOT_Z) and whose
+    marker_min_count/marker_max_count default to 2 -- the physical rig's
+    middle marker was permanently removed 2026-09-29; tip-position tracking
+    is unaffected, only the now-unused chord tangent is (see
+    StateStreamConfig's own `_tip_and_tangent_start_px` docstring). Only the
+    DEFAULT changes -- an explicit kwarg the caller passes still wins.
+
+    SINGLE SOURCE for a patch that `run_open_loop_vessel.py` and
+    `run_mpc_delay_aware_vessel.py` each used to define as their own
+    byte-for-byte-identical copy (`_patched_state_stream_config`/
+    `_RaisedStateStreamConfig`) -- centralized here (2026-10-07, the
+    "no frames contradicting, DRY" pass) so those two scripts and this
+    module's own `_raised_stream_stream_config` (used by
+    `check_camera_healthy`) can never drift apart on what "recalibrated"
+    means."""
+    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
+
+    def _patched_state_stream_config(**kwargs):
+        kwargs.setdefault("marker_min_count", 2)
+        kwargs.setdefault("marker_max_count", 2)
+        cfg = real_config_cls(**kwargs)
+        if "T_robot_beam_pose6" not in kwargs:
+            pose6 = list(cfg.T_robot_beam_pose6)
+            pose6[2] = BEAM_BASE_PIVOT_Z
+            cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
+        return cfg
+
+    return _patched_state_stream_config
+
+
+def patch_state_stream_config_for_recalibrated_rig(pf_module) -> None:
+    """Monkeypatch `pf_module.StateStreamConfig` (close_loop_path_follow's
+    own module-level reference, read by its `StateStreamConfig(...)` call
+    site) with `raised_state_stream_config_factory`'s callable, built from
+    whatever class `pf_module.StateStreamConfig` currently is. Must be
+    called before anything else reassigns that attribute, since the
+    "real" class is captured from it at call time, not re-resolved later."""
+    pf_module.StateStreamConfig = raised_state_stream_config_factory(pf_module.StateStreamConfig)
+
+
 def _raised_stream_stream_config():
     """A StateStreamConfig instance with T_robot_beam_pose6's z set to the
     recalibrated beam-base height -- everything else (calibration, axis
-    conventions, ROI paths) taken from the real, validated default.
+    conventions, ROI paths) taken from the real, validated default. Built
+    from the same `raised_state_stream_config_factory` the live runners use
+    (see that function's docstring), so preflight's camera check and the
+    real run can never disagree about the beam-base height.
 
     2026-10-02 fix: this used to add the module-level Z_RAISE_M (stale at
     its old +30mm default now that nothing in the fixed closed-loop runners
     sets it anymore, see Z_RAISE_M's own comment) -- `check_camera_healthy`'s
     insertion-length verification was therefore checking against a pivot
-    53mm off from the one the actual run uses (run_mpc_delay_aware_vessel.py/
-    run_open_loop_vessel.py's own StateStreamConfig patches, fixed to the
-    same BEAM_BASE_PIVOT_Z separately). Imports that same constant directly
-    instead, so preflight's camera check and the real run can never disagree
-    about the beam-base height again."""
+    53mm off from the one the actual run uses."""
     from proper_research.hardware.online.state_stream import StateStreamConfig
-    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
 
-    base = StateStreamConfig(exposure=29.0, marker_min_count=2)
-    pose6 = list(base.T_robot_beam_pose6)
-    pose6[2] = BEAM_BASE_PIVOT_Z
-    return dataclasses.replace(base, T_robot_beam_pose6=tuple(pose6))
+    cfg_cls = raised_state_stream_config_factory(StateStreamConfig)
+    return cfg_cls(exposure=29.0)
 
 
 def check_camera_healthy(

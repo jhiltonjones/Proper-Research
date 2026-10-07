@@ -469,6 +469,20 @@ class PathFollowConfig:
     workspace_xyz_min_m: tuple[float, float, float] = (0.15, -1.20, 0.20)
     workspace_xyz_max_m: tuple[float, float, float] = (1.10, -0.483, 0.70)
 
+    # 2026-10-07: direct beam-tracking-error abort, requested explicitly for
+    # the contact-vs-no-contact open-loop comparison. Previously the only
+    # thing that caught a runaway (e.g. the 2026-09-21 MPC-FJ divergence) was
+    # the workspace_xyz_min_m/max_m box above, an INDIRECT proxy (the magnet
+    # leaving its expected volume) -- it says nothing about beam-tip tracking
+    # error directly, and a divergence that stays within the workspace box
+    # would never trip it. This checks ||desired-tip|| (the same error_mm
+    # already logged every tick) directly, every tick, and sets abort_reason
+    # (stop_reason in summary.json) instead of silently continuing. 0.0
+    # (default) disables the check -- zero behaviour change for every
+    # existing caller that doesn't set this; run_open_loop_vessel.py sets it
+    # explicitly to the requested 5mm stop-and-report-failure threshold.
+    max_tracking_error_m: float = 0.0
+
     # --- robot / vision (mirrors StateStreamConfig) ----------
     robot_ip: str = "192.168.56.101"
     reader_poll_hz: float = 60.0
@@ -1592,6 +1606,12 @@ def main() -> None:
                 b_z = np.asarray(mapper.T_R_B.rotation[:, 2], dtype=float)
                 error = error - float(np.dot(error, b_z)) * b_z
             error_mm = 1.0e3 * float(np.linalg.norm(error))
+            if cfg.max_tracking_error_m > 0.0 and error_mm > 1.0e3 * cfg.max_tracking_error_m:
+                abort_reason = (
+                    f"tracking_error_exceeded({error_mm:.2f}mm > "
+                    f"{1.0e3 * cfg.max_tracking_error_m:.2f}mm)"
+                )
+                break
             q = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
 
             ref_state = np.asarray(reference.state, dtype=float)

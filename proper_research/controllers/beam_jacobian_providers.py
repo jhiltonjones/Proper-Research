@@ -160,6 +160,9 @@ def build_diagnostic_adapter(
     beam_model: Any,
     controller_pack: dict[str, Any],
     jacobian_mode: str = "fast",
+    hessian_inversion: str = "tikhonov",
+    hessian_rank_gap_min_ratio: float = 100.0,
+    hessian_rank_floor: float = 1e-9,
 ) -> Any:
     """A six-output ``JointSpaceBeamMPCAdapter`` around an arbitrary beam model.
 
@@ -200,6 +203,9 @@ def build_diagnostic_adapter(
         beam_model,
         forward_adapter=forward_adapter,
         jacobian_mode=jacobian_mode,
+        hessian_inversion=hessian_inversion,
+        hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+        hessian_rank_floor=hessian_rank_floor,
     )
     return JointSpaceBeamMPCAdapter(
         magnet_transform_fn=magnet_transform_fn,

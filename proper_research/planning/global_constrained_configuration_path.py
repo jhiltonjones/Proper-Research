@@ -1575,6 +1575,7 @@ def _solve_global_problem(
     state_max: Array,
     config: GlobalConfigurationOptimizerConfig,
     path: CentrelinePath | None = None,
+    beam_base_m: Any | None = None,
 ) -> tuple[_SolveOutcome, _QuadraticPathObjective, _TaskConstraints]:
     node_count = seed.s.size
     objective = _QuadraticPathObjective(
@@ -1672,14 +1673,18 @@ def _solve_global_problem(
             insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
         )
     if config.magnet_beam_base_exclusion_radius_m is not None:
-        from proper_research.simulation.simulations.initial_conditions import (
-            make_initial_poses,
-        )
-        beam_pivot, _start, _L0, _dt = make_initial_poses()
+        if beam_base_m is not None:
+            resolved_beam_base_m = np.asarray(beam_base_m, dtype=float).reshape(3)
+        else:
+            from proper_research.simulation.simulations.initial_conditions import (
+                make_initial_poses,
+            )
+            beam_pivot, _start, _L0, _dt = make_initial_poses()
+            resolved_beam_base_m = np.asarray(beam_pivot[:3], dtype=float)
         base_exclusion_constraint = NodeBaseExclusionConstraints(
             adapter=adapter, state_min=state_min, state_max=state_max,
             node_count=node_count,
-            base_m=np.asarray(beam_pivot[:3], dtype=float),
+            base_m=resolved_beam_base_m,
             radius_m=float(config.magnet_beam_base_exclusion_radius_m),
             joint_step_rad=float(config.magnet_jacobian_joint_step_rad),
             insertion_step_m=float(config.magnet_jacobian_insertion_step_m),
@@ -2920,6 +2925,7 @@ def optimize_from_inverse_result(
     lumen_C: Array,
     config: GlobalConfigurationOptimizerConfig,
     output_dir: str | Path | None,
+    beam_base_m: Any | None = None,
 ) -> GlobalConfigurationPathResult:
     """Globally refine/recover and smooth an inverse configuration path.
 
@@ -2927,6 +2933,12 @@ def optimize_from_inverse_result(
     The refinement loop keeps the best (feasible-then-least-violating) round it
     has seen; if no round produces a feasible path, the exact inverse feasible
     path is returned unchanged, flagged ``fallback_to_inverse_path``.
+
+    ``beam_base_m``: see ``offline_inverse_configuration_head_exclusion.
+    solve_offline_inverse_configuration``'s docstring -- the actual beam-base
+    pivot ``controller_pack`` was built against, used for
+    ``config.magnet_beam_base_exclusion_radius_m``'s hard safety constraint
+    instead of ``initial_conditions.make_initial_poses()``'s stale default.
     """
     config.validate()
     required = ("p0", "p_min", "p_max", "plant_diagnostic_joint_adapter")
@@ -3025,6 +3037,7 @@ def optimize_from_inverse_result(
             state_max=state_max,
             config=round_config,
             path=path,
+            beam_base_m=beam_base_m,
         )
         # A solve that stopped early (wall time / stagnation) can return an
         # iterate a hair outside the box; the beam model rejects L <= 0, so
@@ -3586,6 +3599,7 @@ def optimize_from_saved_inverse_result(
     lumen_C: Array,
     config: GlobalConfigurationOptimizerConfig,
     output_dir: str | Path | None,
+    beam_base_m: Any | None = None,
 ) -> GlobalConfigurationPathResult:
     inverse_result = load_inverse_path_result(inverse_output_dir)
     return optimize_from_inverse_result(
@@ -3594,6 +3608,7 @@ def optimize_from_saved_inverse_result(
         lumen_C=lumen_C,
         config=config,
         output_dir=output_dir,
+        beam_base_m=beam_base_m,
     )
 
 

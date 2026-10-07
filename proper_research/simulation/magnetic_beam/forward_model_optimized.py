@@ -303,12 +303,23 @@ class MagneticBeamForwardModelOptimized(LegacyMagneticBeamForwardModel):
         debug_hessian_terms: bool = False,
         mode: str = "fast",
         reuse_cached: bool = True,
+        hessian_inversion: str = "tikhonov",
+        hessian_rank_gap_min_ratio: float = 100.0,
+        hessian_rank_floor: float = 1e-9,
     ) -> np.ndarray:
         """Return d[tip_xyz, tip_tangent]/d[source pose tangent, insertion].
 
         This reuses one nominal equilibrium, the same H/Gtheta construction and
         the same implicit solve used by the position Jacobian. The extra three
         rows are obtained from analytic quaternion/kinematic sensitivity.
+
+        ``hessian_inversion``: see ``sensitivity_optimized.SensitivityOptions``
+        -- "tikhonov" (default, unchanged legacy behaviour: an escalating-
+        regularization retry loop that only engages on an outright solve
+        failure, not on ill-conditioning) or "truncated_svd" (a rank-aware
+        pseudo-inverse; validated against direct finite differences of the
+        forward model to fix catastrophic contact-state Jacobian errors --
+        see the 2026-10-06 node33/node150 investigation). Opt-in only.
         """
         started = time.perf_counter()
         self.jacobian_call_count += 1
@@ -323,6 +334,9 @@ class MagneticBeamForwardModelOptimized(LegacyMagneticBeamForwardModel):
             eps_hess=eps_hess,
             debug_jac=debug_jac,
             debug_hessian_terms=debug_hessian_terms,
+            hessian_inversion=hessian_inversion,
+            hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+            hessian_rank_floor=hessian_rank_floor,
         )
         if (
             reuse_cached
@@ -364,6 +378,9 @@ class MagneticBeamForwardModelOptimized(LegacyMagneticBeamForwardModel):
                 debug_hessian_terms=debug_hessian_terms,
                 difference_scheme="forward" if mode == "fast" else "central",
                 workers=self.sensitivity_workers,
+                hessian_inversion=hessian_inversion,
+                hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+                hessian_rank_floor=hessian_rank_floor,
             ),
             H_override=H_override,
         )

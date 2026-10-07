@@ -218,8 +218,23 @@ def _make_beam_jacobian_callback(
     *,
     forward_adapter,
     jacobian_mode: str,
+    hessian_inversion: str = "tikhonov",
+    hessian_rank_gap_min_ratio: float = 100.0,
+    hessian_rank_floor: float = 1e-9,
 ):
-    """Return d[tip,tangent]/d[world translation, world rotation,L]."""
+    """Return d[tip,tangent]/d[world translation, world rotation,L].
+
+    ``hessian_inversion``: see ``sensitivity_optimized.SensitivityOptions``
+    -- "tikhonov" (default, unchanged legacy behaviour) or "truncated_svd"
+    (rank-aware pseudo-inverse; validated against direct finite differences
+    to fix catastrophic contact-state Jacobian errors -- see the 2026-10-06
+    node33/node150/node140-160 investigation). Opt-in only; passed straight
+    through to the underlying beam model if it accepts the kwarg (the
+    contact-aware MagneticBeamForwardModelOptimized does; a model that
+    doesn't recognise it falls back to its own default silently only if it
+    uses **kwargs -- confirmed both jacobian_output_actuation_tangent and
+    jacobian_tip_actuation_tangent accept it explicitly).
+    """
     if jacobian_mode not in {"fast", "accurate"}:
         raise ValueError("jacobian_mode must be 'fast' or 'accurate'.")
 
@@ -234,11 +249,21 @@ def _make_beam_jacobian_callback(
             model.set_cache(forward_adapter.get_baseline_cache_copy())
             model.solve(p7, commit=True, reuse_cache=True)
 
+            hessian_kwargs = (
+                dict(
+                    hessian_inversion=hessian_inversion,
+                    hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+                    hessian_rank_floor=hessian_rank_floor,
+                )
+                if hasattr(model, "jacobian_output_actuation_tangent")
+                else {}
+            )
             if hasattr(model, "jacobian_output_actuation_tangent"):
                 result = model.jacobian_output_actuation_tangent(
                     p7,
                     solve_if_needed=False,
                     mode=jacobian_mode,
+                    **hessian_kwargs,
                 )
                 return np.asarray(result, dtype=float).reshape(6, 7)
 

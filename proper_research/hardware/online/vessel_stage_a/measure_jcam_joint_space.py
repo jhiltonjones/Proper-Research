@@ -14,15 +14,17 @@ from scipy.spatial.transform import Rotation as Rot
 
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.hardware.online.vessel_stage_a.run_open_loop_vessel import _robot_kin as rk
-from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+from proper_research.rig_calibration import (
+    BEAM_BASE_XYZ_M, CURRENT_LUMEN_FILE, MAGNET_EXCLUSION_RADIUS_BASE_M, REFERENCE_MAGNET_POSE6,
+    ROBOT_IP, beam_base_pose6,
+)
 from proper_research.hardware.online.vessel_stage_a.sweep_free_space_arc_dipole import (
     build_model_bundle, reference_orientation_matrix, path_safety_check, find_safe_path,
 )
 from proper_research.controllers.beam_jacobian_providers import from_model_bundle
 from proper_research.hardware.online.vessel_stage_a import common as vsa_common
 
-ROBOT_IP = "192.168.56.101"
-EXCLUSION_RADIUS_M = 0.080
+EXCLUSION_RADIUS_M = MAGNET_EXCLUSION_RADIUS_BASE_M
 PHI_DEG = 40.0
 RADIUS_MM = 225.0
 MAX_DQ_RAD = np.radians(5.0)
@@ -32,12 +34,9 @@ RESULTS_DIR = Path(__file__).resolve().parents[4] / "calibration_2026-10-05"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 beam_base_xyz = BEAM_BASE_XYZ_M.copy()
-beam_base_xyz6 = np.concatenate([beam_base_xyz, [3.14159265, 0.0, 0.0]])
-LUMEN_FILE = "/home/jack/Proper-Research/vessel_lumen_robot_frame_left1p5mm_zcorrected.json"
-placeholder_magnet_pose6 = np.array(
-    [0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
-     -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929]
-)
+beam_base_xyz6 = beam_base_pose6()
+LUMEN_FILE = CURRENT_LUMEN_FILE
+placeholder_magnet_pose6 = REFERENCE_MAGNET_POSE6
 controller_pack = {"robot_dh": rk.dh, "T_F_M": rk.T_F_M}
 
 

@@ -127,7 +127,6 @@ Usage
         --out-dir close_loop_logs/myrun --schedule-cache /tmp/vessel_c_schedule.npy
 """
 import argparse
-import dataclasses
 import json
 import math
 import os
@@ -157,49 +156,17 @@ _LAST_OUTPUT_DIR: Path | None = None
 _METADATA_WRITTEN = False
 
 # --- fix 3: raised vision reference pose (see module docstring) -----------
-import proper_research.hardware.online.state_stream as state_stream_mod
-
-_RealStateStreamConfig = state_stream_mod.StateStreamConfig
-
-
-def _RaisedStateStreamConfig(**kwargs):
-    """Drop-in for StateStreamConfig with T_robot_beam_pose6's z set to the
-    recalibrated beam-base height (_BEAM_BASE_PIVOT_Z) -- called exactly
-    like the real dataclass (positional defaults preserved), only the pose
-    default changes.
-
-    2026-10-02 fix: this used to ADD common.Z_RAISE_M (driven by a
-    --z-raise-mm CLI flag) on top of the library default -- that
-    offset-from-a-moving-target scheme required this script, build_vessel_
-    plan.py, and capture_live_start_position.py to all be passed the SAME
-    z-raise value by hand, and a mismatch silently misread real camera
-    detections (see this module's docstring fix 3). Now sets the pose
-    directly to the fixed, recalibrated absolute height -- no flag, no
-    offset arithmetic, nothing to keep in sync.
-
-    2026-09-29: also defaults marker_min_count/marker_max_count to 2 -- the
-    physical rig's middle (tangent_start) marker was permanently removed,
-    so only base+tip are ever visible now. StateStreamConfig's own
-    _tip_and_tangent_start_px already handles the 2-marker case correctly
-    (falls back to a zero chord tangent, tip position unaffected) -- see
-    its docstring -- and this project's live vessel MPC only tracks tip
-    POSITION (n_out=3), never tangent, so losing the tangent is a no-op
-    for control. Only the DEFAULT changes (explicit marker_min_count/
-    marker_max_count kwargs, if ever passed, still win), so this is
-    isolated to this script's own patched StateStreamConfig, not the
-    shared class default other (unmodified) rigs elsewhere in this
-    project still rely on for a real 3-4-marker tangent."""
-    kwargs.setdefault("marker_min_count", 2)
-    kwargs.setdefault("marker_max_count", 2)
-    cfg = _RealStateStreamConfig(**kwargs)
-    if "T_robot_beam_pose6" not in kwargs:
-        pose6 = list(cfg.T_robot_beam_pose6)
-        pose6[2] = _BEAM_BASE_PIVOT_Z
-        cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
-    return cfg
-
-
-pf.StateStreamConfig = _RaisedStateStreamConfig
+# 2026-10-07 DRY pass: this used to define its own byte-for-byte-identical
+# copy of run_open_loop_vessel.py's StateStreamConfig patch
+# (`_RaisedStateStreamConfig`). Both now call the single shared
+# implementation in common.py -- see
+# `common.patch_state_stream_config_for_recalibrated_rig`'s docstring for
+# the full rationale (recalibrated beam-base z, marker_min/max_count=2 for
+# the permanently-removed middle marker, only-the-default-changes
+# semantics). That function reads `_BEAM_BASE_PIVOT_Z` from
+# build_vessel_plan.py itself, the same constant this module already
+# imports below, so there is nothing left to keep in sync here.
+common.patch_state_stream_config_for_recalibrated_rig(pf)
 
 # --- fix 5: disable the planner<->robot frame registration for vessel plans
 # (found live 2026-09-23, second incident of the night): `_load_plan_reference`
@@ -287,12 +254,17 @@ _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
 # rig has been recalibrated via real forward kinematics to a single fixed
 # beam-base height, so there is no longer a "raised vs unraised" choice to
 # make here, and no flag to keep in sync with the plan this script runs.
+from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
+    BEAM_BASE_PIVOT_Z as _BEAM_BASE_PIVOT_Z,
+)
 _BEAM_BASE_PIVOT_XY_ROT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1]])
-_BEAM_BASE_PIVOT_Z = -0.039627  # recalibrated 2026-10-02, matches build_vessel_plan.py
 _BEAM_BASE_PIVOT_XYZ_R = np.array([[
     _BEAM_BASE_PIVOT_XY_ROT[0], _BEAM_BASE_PIVOT_XY_ROT[1], _BEAM_BASE_PIVOT_Z,
 ]])
-_BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043  # overwritten in main() from --beam-base-exclusion-floor-mm
+_BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043  # placeholder only -- always overwritten in main() (line ~748)
+# from --beam-base-exclusion-floor-mm before any real use; this module-level
+# value is now stale relative to that flag's own default (97.0mm, see
+# argparse definition below) and should not be read as "the" default.
 _MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
 
 
@@ -450,6 +422,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
             "input_increment_weight": _INPUT_INCREMENT_WEIGHT,
             "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
+            "max_tracking_error_m": float(cfg.max_tracking_error_m),
             "state_scale_q_rad": math.radians(0.5),
             "state_scale_L_m": 0.25e-3,
             "input_scale_q_rad_s": 0.05,
@@ -519,7 +492,6 @@ pf.build_offline_solver = _wrapped_build_offline_solver
 # confirmed live 2026-09-23, same pitfall as this project's earlier offline
 # vessel-planning monkeypatches -- see vessel-planning-raised-base memory).
 import proper_research.simulation.simulations.initial_conditions as _initial_conditions_mod
-import proper_research.planning.planning_context as _planning_context_mod
 
 _ORIG_MAKE_INITIAL_POSES = _initial_conditions_mod.make_initial_poses
 
@@ -579,12 +551,10 @@ def build_or_load_schedule(
     print(f"[vessel-mpc] building genuine from_model_bundle Jacobian schedule "
           f"(contact={contact}, ~90-150s)...")
 
-    _initial_conditions_mod.make_initial_poses = _recalibrated_make_initial_poses
-    _planning_context_mod.make_initial_poses = _recalibrated_make_initial_poses
-
     reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
     _, bundle, controller_pack, _, _, _, _ = build_vessel_planning_context(
         lumen_file=lumen_file, insertion_max_m=insertion_max_mm * 1.0e-3,
+        initial_poses=_recalibrated_make_initial_poses(),
     )
     # jacobian_mode="accurate", NOT the default "fast": "fast" mode was
     # found (2026-09-23, this same vessel plan) to have a single-tick
@@ -682,6 +652,16 @@ def main() -> None:
                          "to not passing this flag at all.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
+    p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
+                    help="2026-10-07: same direct beam-tracking-error abort "
+                         "run_open_loop_vessel.py uses (PathFollowConfig.max_tracking_error_m, "
+                         "checked every control tick regardless of controller_kind) -- stop the "
+                         "run and report failure (stop_reason in summary.json) if the measured "
+                         "beam-tip tracking error ||desired-tip|| ever exceeds this. 0 disables "
+                         "the check. Default 5mm -- the same explicit safety gate used for the "
+                         "open-loop contact-vs-no-contact comparison, applied here so the "
+                         "closed-loop contact-vs-no-contact runs are stopped under the same "
+                         "criterion.")
     p.add_argument("--magnet-rise-limit-mm", type=float, default=_MAGNET_RISE_LIMIT_M * 1e3,
                     help="independent safety monitor: abort if the magnet's own FK-computed z "
                          "rises more than this above its start position -- see module "
@@ -966,6 +946,7 @@ def main() -> None:
     cfg.control_hz = common.CONTROL_HZ
     cfg.max_control_steps = args.max_control_steps
     cfg.initial_insertion_m = l0
+    cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
 
     cfg.output_root = args.out_dir
     cfg.run_name = args.run_name
@@ -978,7 +959,9 @@ def main() -> None:
         f"servo_stream_hz={cfg.servo_stream_hz}\n"
         f"[vessel-mpc] CONTROLLER = exact Q_N=0, R700, contact={_CONTACT}, "
         f"beam_base_pivot_z={_BEAM_BASE_PIVOT_Z*1e3:.1f}mm, "
-        f"safety abort |L-Lref|>{args.insertion_offset_abort_mm:.1f}mm"
+        f"safety abort |L-Lref|>{args.insertion_offset_abort_mm:.1f}mm, "
+        f"max_tracking_error={args.max_tracking_error_mm:.1f}mm "
+        f"(0=disabled; run stops and reports stop_reason=tracking_error_exceeded(...) if tripped)"
     )
     try:
         pf.main()

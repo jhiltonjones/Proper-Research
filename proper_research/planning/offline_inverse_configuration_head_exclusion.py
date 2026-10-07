@@ -2061,6 +2061,7 @@ def solve_offline_inverse_configuration(
     config: InverseConfigurationPlannerConfig,
     output_dir: str | Path | None = None,
     alternative_initial_states: Iterable[Any] = (),
+    beam_base_m: Any | None = None,
 ) -> InversePathResult:
     """Solve the contact-aware offline inverse configuration path.
 
@@ -2086,6 +2087,20 @@ def solve_offline_inverse_configuration(
     output_dir:
         Optional diagnostics directory.  When supplied, CSV, JSON, NPZ and PNG
         files are written.
+
+    beam_base_m:
+        Optional ``[x, y, z]`` reference point for
+        ``config.magnet_beam_base_exclusion_radius_m``'s hard safety
+        constraint. When omitted (``None``), falls back to
+        ``initial_conditions.make_initial_poses()``'s own pivot -- which
+        carries a stale, pre-2026-10-02 Z (see that function's own comment)
+        that does NOT match ``rig_calibration.BEAM_BASE_XYZ_M`` or whatever
+        beam-base pivot this adapter was actually built against. Found
+        2026-10-06 (via plot_magnet_vs_beam_base.py on a real solved path):
+        this made the exclusion constraint's own real-world safety margin up
+        to ~1.3mm tighter than intended, silently. Callers that know the
+        REAL beam base this adapter was built against (every current one
+        does -- see ``solve_from_controller_pack``) should pass it here.
     """
     config.validate()
     state0 = _finite_vector(initial_state, 7, "initial_state")
@@ -2160,14 +2175,19 @@ def solve_offline_inverse_configuration(
                 provider=position_provider, z_ceiling_m=z0_m,
             )
         if config.magnet_beam_base_exclusion_radius_m is not None:
-            from proper_research.simulation.simulations.initial_conditions import (
-                make_initial_poses,
-            )
-            beam_pivot, _start, _L0, _dt = make_initial_poses()
-            beam_base_m = np.asarray(beam_pivot[:3], dtype=float)
+            if beam_base_m is not None:
+                resolved_beam_base_m = _finite_vector(
+                    beam_base_m, 3, "beam_base_m"
+                )
+            else:
+                from proper_research.simulation.simulations.initial_conditions import (
+                    make_initial_poses,
+                )
+                beam_pivot, _start, _L0, _dt = make_initial_poses()
+                resolved_beam_base_m = np.asarray(beam_pivot[:3], dtype=float)
             base_exclusion_constraint = _MagnetBaseExclusionConstraint(
                 provider=position_provider,
-                base_m=beam_base_m,
+                base_m=resolved_beam_base_m,
                 radius_m=float(config.magnet_beam_base_exclusion_radius_m),
             )
 
@@ -2482,8 +2502,16 @@ def solve_from_controller_pack(
     config: InverseConfigurationPlannerConfig,
     output_dir: str | Path | None,
     alternative_initial_states: Iterable[Any] = (),
+    beam_base_m: Any | None = None,
 ) -> InversePathResult:
-    """Convenience integration with the existing joint-space factory output."""
+    """Convenience integration with the existing joint-space factory output.
+
+    ``beam_base_m``: see ``solve_offline_inverse_configuration``'s docstring
+    -- pass the actual beam-base pivot this ``controller_pack`` was built
+    against (e.g. ``BEAM_BASE_PIVOT[:3]`` in build_vessel_plan.py) so the
+    magnet-to-beam-base safety constraint checks against the real pivot, not
+    ``initial_conditions.make_initial_poses()``'s stale default.
+    """
     required = (
         "p0",
         "p_min",
@@ -2504,6 +2532,7 @@ def solve_from_controller_pack(
         config=config,
         output_dir=output_dir,
         alternative_initial_states=alternative_initial_states,
+        beam_base_m=beam_base_m,
     )
 
 

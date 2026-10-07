@@ -283,18 +283,13 @@ def _centerline_of(result) -> np.ndarray:
 
 
 def build_model_bundle(lumen_file: str, beam_base_xyz6: np.ndarray, placeholder_magnet_pose6: np.ndarray, insertion_m: float):
-    import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-    import proper_research.planning.planning_context as planning_context_mod
-
-    def _make_initial_poses():
-        return beam_base_xyz6.copy(), placeholder_magnet_pose6.copy(), insertion_m, 0.01
-
-    initial_conditions_mod.make_initial_poses = _make_initial_poses
-    planning_context_mod.make_initial_poses = _make_initial_poses
-
     from proper_research.planning.vessel_context import build_vessel_planning_context
+
+    initial_poses = (beam_base_xyz6.copy(), placeholder_magnet_pose6.copy(), insertion_m, 0.01)
     exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = (
-        build_vessel_planning_context(lumen_file=lumen_file, insertion_max_m=0.12)
+        build_vessel_planning_context(
+            lumen_file=lumen_file, insertion_max_m=0.12, initial_poses=initial_poses,
+        )
     )
     return bundle
 
@@ -859,13 +854,8 @@ def main() -> None:
             "closer to the beam base/insertion assembly than any prior sweep."
         )
 
-    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
-        BEAM_BASE_PIVOT_Z, BEAM_BASE_PIVOT_XY_ROT,
-    )
-    beam_base_xyz6 = np.array([
-        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
-        3.14159265, 0.0, 0.0,
-    ])
+    from proper_research.rig_calibration import beam_base_pose6
+    beam_base_xyz6 = beam_base_pose6()
     beam_base_xyz = beam_base_xyz6[:3]
 
     seed_q = np.asarray(args.seed_joints, dtype=float) if args.seed_joints is not None else np.array(
@@ -885,10 +875,8 @@ def main() -> None:
     # reference pose as the placeholder instead (same pattern as
     # probe_beam_configuration.py); every actual sweep pose below still goes
     # through model.solve(p7) directly, bypassing this IK path entirely.
-    placeholder_magnet_pose6 = np.array(
-        [0.49596750885047175, -0.5726262253988297, -0.0396560038331531,
-         -2.6740649395181184, 1.6483563099965164, -0.0008255535458713929]
-    )
+    from proper_research.rig_calibration import REFERENCE_MAGNET_POSE6
+    placeholder_magnet_pose6 = REFERENCE_MAGNET_POSE6
     print("[sweep] building model bundle (no-contact)...")
     bundle = build_model_bundle(args.lumen_file, beam_base_xyz6, placeholder_magnet_pose6, insertion_m)
     model = bundle.models["no_contact"]

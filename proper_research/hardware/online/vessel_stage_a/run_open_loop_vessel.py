@@ -23,13 +23,11 @@ Usage
 from __future__ import annotations
 
 import argparse
-import dataclasses
 from pathlib import Path
 
 import numpy as np
 
 import proper_research.hardware.online.close_loop_path_follow as pf
-import proper_research.hardware.online.state_stream as state_stream_mod
 from proper_research.hardware.online.vessel_stage_a import common
 from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
     BEAM_BASE_PIVOT_XY_ROT, BEAM_BASE_PIVOT_Z,
@@ -37,8 +35,6 @@ from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
-
-_RealStateStreamConfig = state_stream_mod.StateStreamConfig
 
 # 2026-09-30 fix: same bug run_mpc_delay_aware_vessel.py's module docstring
 # documents as "fix 5" (found live 2026-09-23) -- close_loop_path_follow.py's
@@ -65,31 +61,15 @@ pf._find_shape_npz = lambda plan_dir: Path(__file__)
 
 
 def _patch_state_stream_config() -> None:
-    """Patch pf.StateStreamConfig with (a) T_robot_beam_pose6's z set to the
-    recalibrated beam-base height (BEAM_BASE_PIVOT_Z, imported from
-    build_vessel_plan.py -- same fixed constant the plan was built against)
-    and (b) marker_min_count/marker_max_count defaulted to 2 -- see
-    run_mpc_delay_aware_vessel.py's identical 2026-09-29 fix for why (the
-    physical rig's middle marker was permanently removed; tip position
-    tracking is unaffected, only the now-unused chord tangent is). Only the
-    DEFAULT changes; explicit kwargs still win.
-
-    2026-10-02 fix: removed the --z-raise-mm offset-from-a-moving-target
-    scheme entirely (same change as build_vessel_plan.py's and
-    run_mpc_delay_aware_vessel.py's own 2026-10-02 fixes) -- sets the pose
-    directly to the fixed, recalibrated absolute height instead."""
-
-    def _patched_state_stream_config(**kwargs):
-        kwargs.setdefault("marker_min_count", 2)
-        kwargs.setdefault("marker_max_count", 2)
-        cfg = _RealStateStreamConfig(**kwargs)
-        if "T_robot_beam_pose6" not in kwargs:
-            pose6 = list(cfg.T_robot_beam_pose6)
-            pose6[2] = BEAM_BASE_PIVOT_Z
-            cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
-        return cfg
-
-    pf.StateStreamConfig = _patched_state_stream_config
+    """Patch pf.StateStreamConfig for the recalibrated rig -- delegates to
+    `common.patch_state_stream_config_for_recalibrated_rig`, the single
+    shared implementation `run_mpc_delay_aware_vessel.py` also uses
+    (2026-10-07 DRY pass: this used to be its own byte-for-byte-identical
+    copy of that script's `_RaisedStateStreamConfig`; see the shared
+    function's docstring for the full rationale). Kept as a thin
+    zero-argument wrapper purely so this file's own call site below
+    doesn't need to change."""
+    common.patch_state_stream_config_for_recalibrated_rig(pf)
 
 
 _robot_kin = _resolve_robot_kinematics(make_robot_config())
@@ -178,6 +158,11 @@ def main() -> None:
                          "recalibrated.json's exclusion_floor_mm; override to match whatever "
                          "start-position JSON the plan you're running was actually built from.")
     p.add_argument("--max-control-steps", type=int, default=1000)
+    p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
+                    help="stop the run and report failure (stop_reason in summary.json) if the "
+                         "measured beam-tip tracking error ||desired-tip|| ever exceeds this, "
+                         "checked every control tick. 0 disables the check. Default 5mm -- the "
+                         "explicit safety gate for the contact-vs-no-contact open-loop comparison.")
     p.add_argument("--skip-preflight", action="store_true")
     p.add_argument("--path-check-noise-tol-mm", type=float, default=0.5,
                     help="see _safe_reset_with_retreat's docstring -- a start position whose "
@@ -221,6 +206,7 @@ def main() -> None:
     cfg.control_hz = common.CONTROL_HZ
     cfg.max_control_steps = args.max_control_steps
     cfg.initial_insertion_m = l0
+    cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
 
     cfg.output_root = args.out_dir
     cfg.run_name = args.run_name
@@ -229,7 +215,9 @@ def main() -> None:
           f"[open_loop_vessel] q0={q0.tolist()} L0={l0 * 1000:.2f}mm\n"
           f"[open_loop_vessel] servo_stream_hz={cfg.servo_stream_hz} "
           f"joint_velocity_limit_rad_s={cfg.joint_velocity_limit_rad_s} "
-          f"max_joint_step_rad={cfg.max_joint_step_rad}")
+          f"max_joint_step_rad={cfg.max_joint_step_rad}\n"
+          f"[open_loop_vessel] max_tracking_error_mm={args.max_tracking_error_mm} "
+          f"(0=disabled; run stops and reports stop_reason=tracking_error_exceeded(...) if tripped)")
     pf.main()
 
 

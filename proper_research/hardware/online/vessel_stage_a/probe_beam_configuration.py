@@ -109,8 +109,6 @@ def main() -> None:
     from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import (
         BEAM_BASE_PIVOT_Z, BEAM_BASE_PIVOT_XY_ROT,
     )
-    import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-    import proper_research.planning.planning_context as planning_context_mod
 
     beam_base_xyz6 = np.array([
         BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
@@ -136,14 +134,13 @@ def main() -> None:
     # its own IK seed internally, but we override state0 explicitly below
     # with our own magnet_pose6/insertion regardless, so the placeholder
     # start_point here is never actually used for the probe itself.
-    def _make_initial_poses():
-        return beam_base_xyz6.copy(), magnet_pose6.copy(), args.insertion_mm / 1000.0, 0.01
-    initial_conditions_mod.make_initial_poses = _make_initial_poses
-    planning_context_mod.make_initial_poses = _make_initial_poses
+    initial_poses = (beam_base_xyz6.copy(), magnet_pose6.copy(), args.insertion_mm / 1000.0, 0.01)
 
     from proper_research.planning.vessel_context import build_vessel_planning_context
     exp_cfg, bundle, controller_pack, out_root, lumen_C, lumen_R, provenance = (
-        build_vessel_planning_context(lumen_file=args.lumen_file, insertion_max_m=0.08)
+        build_vessel_planning_context(
+            lumen_file=args.lumen_file, insertion_max_m=0.08, initial_poses=initial_poses,
+        )
     )
     contact = bool(args.contact)
     model = bundle.models["contact" if contact else "no_contact"]

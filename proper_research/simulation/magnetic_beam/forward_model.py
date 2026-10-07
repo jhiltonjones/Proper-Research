@@ -437,8 +437,19 @@ class MagneticBeamForwardModel:
         debug_hessian_terms: bool = False,
         mode: str = "fast",
         reuse_cached: bool = True,
+        hessian_inversion: str = "tikhonov",
+        hessian_rank_gap_min_ratio: float = 100.0,
+        hessian_rank_floor: float = 1e-9,
     ) -> np.ndarray:
-        """Return d[tip_xyz, tip_tangent]/d[source pose tangent, insertion]."""
+        """Return d[tip_xyz, tip_tangent]/d[source pose tangent, insertion].
+
+        ``hessian_inversion``: see ``sensitivity.SensitivityOptions`` --
+        "tikhonov" (default, unchanged legacy behaviour) or "truncated_svd"
+        (a rank-aware pseudo-inverse, validated to fix catastrophic
+        contact-state Jacobian errors -- see the 2026-10-06 node33/node150
+        investigation). Opt-in only; nothing changes unless a caller passes
+        this explicitly.
+        """
         p7 = self._validate_p7(p7)
         if mode not in {"fast", "accurate"}:
             raise ValueError("mode must be 'fast' or 'accurate'.")
@@ -450,6 +461,9 @@ class MagneticBeamForwardModel:
             eps_hess=eps_hess,
             debug_jac=debug_jac,
             debug_hessian_terms=debug_hessian_terms,
+            hessian_inversion=hessian_inversion,
+            hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+            hessian_rank_floor=hessian_rank_floor,
         )
         if (
             reuse_cached
@@ -487,6 +501,9 @@ class MagneticBeamForwardModel:
                 debug_jac=debug_jac,
                 debug_hessian_terms=debug_hessian_terms,
                 difference_scheme="forward" if mode == "fast" else "central",
+                hessian_inversion=hessian_inversion,
+                hessian_rank_gap_min_ratio=hessian_rank_gap_min_ratio,
+                hessian_rank_floor=hessian_rank_floor,
             ),
             H_override=H_override,
         )
@@ -884,6 +901,9 @@ class MagneticBeamForwardModel:
         eps_hess: float,
         debug_jac: bool,
         debug_hessian_terms: bool,
+        hessian_inversion: str = "tikhonov",
+        hessian_rank_gap_min_ratio: float = 100.0,
+        hessian_rank_floor: float = 1e-9,
     ) -> tuple:
         return (
             tuple(np.asarray(p7, float).tolist()),
@@ -892,6 +912,9 @@ class MagneticBeamForwardModel:
             float(eps_hess),
             bool(debug_jac),
             bool(debug_hessian_terms),
+            str(hessian_inversion),
+            float(hessian_rank_gap_min_ratio),
+            float(hessian_rank_floor),
         )
 
     def _can_reuse_sensitivity_hessian(

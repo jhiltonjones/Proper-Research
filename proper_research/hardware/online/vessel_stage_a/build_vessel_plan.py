@@ -39,8 +39,6 @@ from pathlib import Path
 
 import numpy as np
 
-import proper_research.simulation.simulations.initial_conditions as initial_conditions_mod
-import proper_research.planning.planning_context as planning_context_mod
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M, BEAM_BASE_ROTVEC
 
 # 2026-10-02 fix: removed the --z-raise-mm/zraise_patch indirection entirely.
@@ -183,6 +181,15 @@ def main() -> None:
                          "--skip-chain-rule-validation-at-start's help above for the "
                          "full story. 'accurate' is slower per-evaluation; pass 'fast' "
                          "to restore the old (buggy-for-this-case) behaviour if needed.")
+    p.add_argument("--no-contact-plant", action="store_true",
+                    help="solve against the structurally contact-blind model instead of "
+                         "the contact-aware one -- plant AND Jacobian model both "
+                         "'no_contact' (not a mix). Use this to run the SAME "
+                         "--start-position-json/--target-path-json/--lumen-file plan a "
+                         "second time for a contact-vs-no-contact comparison: the "
+                         "no-contact solve never sees the wall at all, so any solution "
+                         "difference is attributable to the contact physics, not a "
+                         "different target/geometry.")
     p.add_argument("--dt", type=float, default=0.1)
     p.add_argument("--insertion-start-mm", type=float, default=L_CMD * 1000.0,
                     help="initial inserted length the offline planner starts from AND the "
@@ -199,6 +206,14 @@ def main() -> None:
                          "no-decrease floor) -- InverseConfigurationPlannerConfig."
                          "enforce_magnet_z_fixed. Use when the physical setup requires the "
                          "magnet to stay on a single Z plane throughout.")
+    p.add_argument("--target-path-json", type=Path, default=None,
+                    help="track a CUSTOM path instead of the raw --lumen-file centreline -- "
+                         "e.g. the output of design_stage3_tracked_path.py "
+                         "(reads its 'tracked_path_R' key), or any JSON file whose top level "
+                         "is a plain [[x,y,z], ...] list in robot frame R. The contact-wall "
+                         "physics still comes from --lumen-file unchanged; only the "
+                         "position-tracking target (lumen_C passed to the Layer 1/2/3 solvers) "
+                         "is replaced.")
     p.add_argument("--output-root", type=Path, required=True)
     args = p.parse_args()
 
@@ -215,11 +230,7 @@ def main() -> None:
 
     insertion_start_m = args.insertion_start_mm / 1000.0
 
-    def _make_initial_poses():
-        return BEAM_BASE_PIVOT.copy(), start_point.copy(), insertion_start_m, DT_INIT
-
-    initial_conditions_mod.make_initial_poses = _make_initial_poses
-    planning_context_mod.make_initial_poses = _make_initial_poses
+    initial_poses = (BEAM_BASE_PIVOT.copy(), start_point.copy(), insertion_start_m, DT_INIT)
 
     print(f"[build] pivot_point (beam base) = {BEAM_BASE_PIVOT.tolist()}")
     print(f"[build] start_point (source magnet) = {start_point.tolist()}  "
@@ -246,10 +257,13 @@ def main() -> None:
     )
 
     print(f"[build] jacobian_mode = {args.jacobian_mode!r}")
+    print(f"[build] plant_contact = {not args.no_contact_plant} "
+          f"({'contact-aware' if not args.no_contact_plant else 'structurally contact-BLIND'} plant+Jacobian model)")
     exp_cfg, bundle, controller_pack, out_root, centreline, lumen_R, provenance = (
         build_vessel_planning_context(
             lumen_file=args.lumen_file, insertion_max_m=insertion_max_m,
-            jacobian_mode=args.jacobian_mode,
+            jacobian_mode=args.jacobian_mode, initial_poses=initial_poses,
+            plant_contact=not args.no_contact_plant,
         )
     )
     out_root = args.output_root
@@ -257,13 +271,28 @@ def main() -> None:
 
     perimeter = float(np.sum(np.linalg.norm(np.diff(centreline, axis=0), axis=1)))
     print(f"[vessel] {args.lumen_file} -> {centreline.shape[0]} points, "
-          f"arclength {1e3 * perimeter:.1f}mm, radius {1e3 * lumen_R.min():.2f}-{1e3 * lumen_R.max():.2f}mm")
+          f"arclength {1e3 * perimeter:.1f}mm, radius {1e3 * lumen_R.min():.2f}-{1e3 * lumen_R.max():.2f}mm "
+          f"(this is the CONTACT WALL geometry regardless of --target-path-json)")
     print(f"[vessel] centreline[0]  (world/R) = {np.round(centreline[0], 4).tolist()}")
     print(f"[vessel] centreline[-1] (world/R) = {np.round(centreline[-1], 4).tolist()}")
+
+    if args.target_path_json is not None:
+        with open(args.target_path_json) as f:
+            target_data = json.load(f)
+        target_points = target_data["tracked_path_R"] if isinstance(target_data, dict) else target_data
+        target_path = np.asarray(target_points, dtype=float)
+        target_perimeter = float(np.sum(np.linalg.norm(np.diff(target_path, axis=0), axis=1)))
+        print(f"[vessel] --target-path-json {args.target_path_json} -> {target_path.shape[0]} points, "
+              f"arclength {1e3 * target_perimeter:.1f}mm (this is what Layer 1/2/3 actually track)")
+        print(f"[vessel] target_path[0]  (world/R) = {np.round(target_path[0], 4).tolist()}")
+        print(f"[vessel] target_path[-1] (world/R) = {np.round(target_path[-1], 4).tolist()}")
+    else:
+        target_path = centreline
 
     vessel_dir = out_root / "vessel_lumen"
     vessel_dir.mkdir(parents=True, exist_ok=True)
     np.savez(vessel_dir / "vessel_centreline.npz", lumen_C=centreline, lumen_R=lumen_R)
+    np.savez(vessel_dir / "target_path.npz", target_path=target_path)
     (vessel_dir / "provenance.json").write_text(json.dumps(provenance, indent=2))
 
     planner_config = make_inverse_config()
@@ -284,6 +313,13 @@ def main() -> None:
     shared["finite_difference_insertion_step_m"] = args.finite_difference_insertion_step_m
     shared["maximum_chain_rule_relative_error"] = args.maximum_chain_rule_relative_error
     shared["node_timeout_s"] = args.node_timeout_s
+    if args.no_contact_plant and "require_contact_model" in shared:
+        # The default planner config refuses to solve against a model that
+        # doesn't report contact_cfg.enabled=True -- a sensible guard against
+        # accidentally planning a real vessel without contact awareness, but
+        # it must be relaxed for a DELIBERATE --no-contact-plant comparison
+        # run, which is exactly a contact-blind solve by design.
+        shared["require_contact_model"] = False
     if args.skip_chain_rule_validation_at_start:
         shared["finite_difference_validation_at_start"] = False
     if args.lock_magnet_z:
@@ -303,10 +339,11 @@ def main() -> None:
     t0 = time.perf_counter()
     inverse_result = solve_from_controller_pack(
         controller_pack=controller_pack,
-        lumen_C=centreline,
+        lumen_C=target_path,
         config=planner_config,
         output_dir=inverse_dir,
         alternative_initial_states=[np.asarray(controller_pack["p0"], dtype=float)],
+        beam_base_m=BEAM_BASE_PIVOT[:3],
     )
     print(f"[layer1] done in {time.perf_counter() - t0:.1f}s  "
           f"all_nodes_feasible={inverse_result.all_nodes_feasible}", flush=True)
@@ -330,7 +367,7 @@ def main() -> None:
         print(f"\n[layer3] time-parameterising the INVERSE path -> {time_param_dir}", flush=True)
         time_parameterize_saved_inverse_path(
             inverse_output_dir=inverse_dir, controller_pack=controller_pack,
-            config=tp_config, output_dir=time_param_dir, lumen_C=centreline,
+            config=tp_config, output_dir=time_param_dir, lumen_C=target_path,
         )
     else:
         global_dir = vessel_dir / "global_configuration_converged"
@@ -342,14 +379,16 @@ def main() -> None:
             maximum_refinement_rounds=1, maximum_nodes=200,
             maximum_iterations=40, maximum_wall_time_s=180.0,
             stagnation_function_evaluations=4000, dense_validation_enabled=True,
-            compute_node_jacobian_diagnostics=False, require_contact_model=True,
+            compute_node_jacobian_diagnostics=False,
+            require_contact_model=not args.no_contact_plant,
             insertion_non_decreasing=False, fix_initial_state=True,
         )
         print(f"\n[layer2] Layer 1 incomplete -- global optimiser (recover_partial) -> {global_dir}", flush=True)
         t0 = time.perf_counter()
         global_result = optimize_from_saved_inverse_result(
             inverse_output_dir=inverse_dir, controller_pack=controller_pack,
-            lumen_C=centreline, config=global_config, output_dir=global_dir,
+            lumen_C=target_path, config=global_config, output_dir=global_dir,
+            beam_base_m=BEAM_BASE_PIVOT[:3],
         )
         print(f"[layer2] done in {time.perf_counter() - t0:.1f}s  "
               f"nodes={len(getattr(global_result, 'nodes', []))}", flush=True)
@@ -357,7 +396,7 @@ def main() -> None:
         print(f"\n[layer3] time-parameterising the GLOBAL path -> {time_param_dir}", flush=True)
         time_parameterize_saved_global_path(
             global_output_dir=global_dir, controller_pack=controller_pack,
-            config=tp_config, output_dir=time_param_dir, lumen_C=centreline,
+            config=tp_config, output_dir=time_param_dir, lumen_C=target_path,
         )
 
     npz = time_param_dir / "time_parameterized_configuration_path.npz"

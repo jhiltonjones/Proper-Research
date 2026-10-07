@@ -93,6 +93,139 @@ class InverseJacobianStep:
     predicted_beam_positions: Array
     predicted_beam_errors: Array
     first_predicted_beam_error_m: float
+    # 2026-10-07: hard-constraint-clip diagnostics (magnet exclusion /
+    # z-workspace), all default-safe (None/False) so every existing caller's
+    # InverseJacobianStep construction is unaffected. magnet_abort_reason
+    # mirrors ProcessIsolatedDelayAwareAdapter's info["abort_reason"] hook
+    # (controller_adapters.py's OfflineJointControllerAdapter.__call__
+    # already reads it generically via getattr(step, "magnet_abort_reason",
+    # None) -- no-op for any step object that doesn't set it).
+    magnet_clip_active: bool = False
+    magnet_exclusion_margin_m: float = float("nan")
+    magnet_z_margin_m: float = float("nan")
+    magnet_abort_reason: str | None = None
+
+
+def project_joint_velocity_for_halfspace(
+    command_joint6: Array, g_row: Array, rhs: float, velocity_limit_joint6: Array,
+) -> tuple[Array, bool, float, float]:
+    """Minimum-Euclidean-norm projection of a 6-vector joint-velocity command
+    onto the half-space ``{x : g_row @ x >= rhs}``, then re-clipped to
+    ``velocity_limit_joint6`` (a bound that would require exceeding the
+    velocity limit to respect cannot be honoured in one step -- same
+    principle as ``InverseJacobianBeamController._clip``).
+
+    This is the resolved-rate-controller analogue of the linearized
+    inequality `delay_aware_mpc.py`'s `_configure_magnet_exclusion`/
+    `_configure_magnet_workspace` add to the MPC's QP: same first-order
+    distance/height model (``g_row`` = constraint-gradient row, ``rhs`` =
+    required one-tick rate), but enforced by a closed-form half-space
+    projection instead of a QP inequality -- consistent with this
+    controller's whole "no preview, no constraints beyond clipping" design.
+
+    Returns ``(projected, was_clipped, slack_before, slack_after)``, where
+    slack is ``g_row @ x - rhs`` (negative = constraint violated at that
+    point; still negative in slack_after means the velocity limit alone
+    was not enough to satisfy it in one tick).
+    """
+    g_norm2 = float(g_row @ g_row)
+    val_before = float(g_row @ command_joint6)
+    slack_before = val_before - rhs
+    if slack_before >= 0.0 or g_norm2 < 1.0e-12:
+        return command_joint6, False, slack_before, slack_before
+    lam = (rhs - val_before) / g_norm2
+    projected = command_joint6 + lam * g_row
+    projected = np.clip(projected, -velocity_limit_joint6, velocity_limit_joint6)
+    slack_after = float(g_row @ projected) - rhs
+    return projected, True, slack_before, slack_after
+
+
+def make_magnet_exclusion_hold_gate(
+    *,
+    magnet_position_fn: Callable[[Array], Array],
+    magnet_position_jacobian_fn: Callable[[Array], Array],
+    dt: float,
+    magnet_exclusion_lumen_C_m: Any | None = None,
+    magnet_exclusion_radius_m: float | None = None,
+    magnet_z_bounds_m: tuple[float, float] | None = None,
+) -> Callable[[Array, Any, dict], tuple[Array, dict]]:
+    """Build a close_loop_path_follow._COMMAND_SAFETY_GATE callable: HOLDS
+    position (returns an all-zero 7-vector command, robot stays exactly
+    where it is) on any tick where the controller's RAW command --
+    unmodified, computed with no awareness of these constraints -- would,
+    over one tick, push the magnet closer than magnet_exclusion_radius_m
+    to the nearest point in magnet_exclusion_lumen_C_m, or outside
+    magnet_z_bounds_m.
+
+    This is the deliberately punitive alternative to
+    InverseJacobianBeamController's own anticipatory clip (which instead
+    projects the command to the constraint boundary and lets the robot
+    keep moving -- "the controller handles it"). Use THIS gate, not that
+    clip, when the point of the experiment is to show the controller does
+    NOT understand the constraint at all (unlike MPC, whose in-QP
+    formulation structurally cannot produce an infeasible solution): the
+    controller's own math is left completely untouched here (call it with
+    no magnet_* kwargs at all, i.e. the plain naive baseline), and this
+    gate sits entirely OUTSIDE it, between "controller decides" and
+    "robot executes" -- the naive controller keeps trying to command
+    motion into the excluded region every tick it wants to, and keeps
+    getting held in place, which is the visible demonstration.
+
+    Same first-order distance/height linearization as delay_aware_mpc.py's
+    _configure_magnet_exclusion/_configure_magnet_workspace and this
+    module's own project_joint_velocity_for_halfspace -- a pure go/no-go
+    check here (no projection, no partial correction).
+    """
+    lumen = (
+        None if magnet_exclusion_lumen_C_m is None
+        else np.asarray(magnet_exclusion_lumen_C_m, dtype=float).reshape(-1, 3)
+    )
+
+    def gate(command: Array, measured_state: Any, info: dict) -> tuple[Array, dict]:
+        if measured_state is None:
+            return command, {"magnet_gate_held": False, "magnet_gate_reason": None}
+        state = np.asarray(measured_state, dtype=float).reshape(7)
+        command = np.asarray(command, dtype=float).reshape(7)
+        joint_cmd = command[:6]
+
+        p_mag = np.asarray(magnet_position_fn(state), dtype=float).reshape(3)
+        J_mag = np.asarray(magnet_position_jacobian_fn(state), dtype=float).reshape(3, 7)[:, :6]
+
+        reasons: list[str] = []
+        if magnet_exclusion_radius_m is not None and lumen is not None:
+            diffs = p_mag[None, :] - lumen
+            dists = np.linalg.norm(diffs, axis=1)
+            k = int(np.argmin(dists))
+            d_nom = float(dists[k])
+            normal = diffs[k] / max(d_nom, 1.0e-9)
+            g = normal @ J_mag
+            predicted = d_nom + float(g @ joint_cmd) * dt
+            if predicted < magnet_exclusion_radius_m:
+                reasons.append(
+                    f"exclusion(predicted={predicted*1e3:.2f}mm < "
+                    f"{magnet_exclusion_radius_m*1e3:.2f}mm)"
+                )
+
+        if magnet_z_bounds_m is not None:
+            z_min, z_max = magnet_z_bounds_m
+            g_z = J_mag[2, :]
+            z_nom = float(p_mag[2])
+            predicted_z = z_nom + float(g_z @ joint_cmd) * dt
+            if predicted_z < z_min or predicted_z > z_max:
+                reasons.append(
+                    f"zworkspace(predicted_z={predicted_z*1e3:.1f}mm not in "
+                    f"[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
+                )
+
+        if reasons:
+            return np.zeros(7, dtype=float), {
+                "magnet_gate_held": True,
+                "magnet_gate_reason": "; ".join(reasons),
+                "magnet_gate_raw_command": command.tolist(),
+            }
+        return command, {"magnet_gate_held": False, "magnet_gate_reason": None}
+
+    return gate
 
 
 class InverseJacobianBeamController:
@@ -120,6 +253,12 @@ class InverseJacobianBeamController:
         selective_damping_gain: float = 0.0,
         selective_damping_floor: float = 0.01,
         reference_position_jacobians: Any = None,
+        magnet_position_fn: Callable[[Array], Array] | None = None,
+        magnet_position_jacobian_fn: Callable[[Array], Array] | None = None,
+        magnet_exclusion_lumen_C_m: Any | None = None,
+        magnet_exclusion_radius_m: float | None = None,
+        magnet_z_bounds_m: tuple[float, float] | None = None,
+        magnet_constraint_violation_abort_m: float = 2.0e-3,
     ) -> None:
         self.reference = reference
         # The controller records what it was handed. Ask any instance
@@ -176,6 +315,47 @@ class InverseJacobianBeamController:
             raise ValueError("selective_damping_gain must be finite and >= 0.")
         if self.selective_damping_floor <= 0.0 or not np.isfinite(self.selective_damping_floor):
             raise ValueError("selective_damping_floor must be finite and > 0.")
+
+        # 2026-10-07: optional anticipatory hard-constraint clip for magnet
+        # exclusion / z-workspace -- the two constraints MPC enforces inside
+        # its own QP (delay_aware_mpc.py's _configure_magnet_exclusion/
+        # _configure_magnet_workspace) that this controller previously had
+        # NO protection against at all (only a toothless +-2pi joint box and
+        # the generic velocity/accel clip -- see this controller's own
+        # module docstring). All default None/disabled: zero behaviour
+        # change for every existing caller that doesn't pass these.
+        # magnet_position_fn/magnet_position_jacobian_fn: callables taking
+        # the measured 7-vector state and returning the magnet's xyz (3,)
+        # and its (3,7) position Jacobian w.r.t. [q1..q6,L] (insertion
+        # column is always zero -- the magnet is rigidly on the end
+        # effector, same convention as magnet_position_jacobian_m in
+        # delay_aware_mpc.py). Same linearization MPC uses (closest point
+        # in magnet_exclusion_lumen_C_m, z-row of the same Jacobian), but
+        # applied as a closed-form half-space projection each tick instead
+        # of a QP inequality -- see project_joint_velocity_for_halfspace.
+        self.magnet_position_fn = magnet_position_fn
+        self.magnet_position_jacobian_fn = magnet_position_jacobian_fn
+        self.magnet_exclusion_lumen_C_m = (
+            None if magnet_exclusion_lumen_C_m is None
+            else np.asarray(magnet_exclusion_lumen_C_m, dtype=float).reshape(-1, 3)
+        )
+        self.magnet_exclusion_radius_m = (
+            None if magnet_exclusion_radius_m is None else float(magnet_exclusion_radius_m)
+        )
+        self.magnet_z_bounds_m = (
+            None if magnet_z_bounds_m is None
+            else (float(magnet_z_bounds_m[0]), float(magnet_z_bounds_m[1]))
+        )
+        self.magnet_constraint_violation_abort_m = float(magnet_constraint_violation_abort_m)
+        self._magnet_clip_enabled = (
+            self.magnet_position_fn is not None
+            and self.magnet_position_jacobian_fn is not None
+            and (self.magnet_exclusion_radius_m is not None or self.magnet_z_bounds_m is not None)
+        )
+        if self.magnet_exclusion_radius_m is not None and self.magnet_exclusion_lumen_C_m is None:
+            raise ValueError("magnet_exclusion_radius_m requires magnet_exclusion_lumen_C_m.")
+        if self.magnet_z_bounds_m is not None and self.magnet_z_bounds_m[0] >= self.magnet_z_bounds_m[1]:
+            raise ValueError("magnet_z_bounds_m must be (z_min, z_max) with z_min < z_max.")
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -263,6 +443,17 @@ class InverseJacobianBeamController:
             command = command + projector @ reference_input
 
         command = self._clip(command, state, previous)
+
+        magnet_clip_active = False
+        magnet_exclusion_margin_m = float("nan")
+        magnet_z_margin_m = float("nan")
+        magnet_abort_reason = None
+        if self._magnet_clip_enabled:
+            (
+                command, magnet_clip_active, magnet_exclusion_margin_m,
+                magnet_z_margin_m, magnet_abort_reason,
+            ) = self._clip_magnet_constraints(command, state)
+
         elapsed = time.perf_counter() - started
 
         predicted_state = state + self.dt * command
@@ -287,6 +478,10 @@ class InverseJacobianBeamController:
             first_predicted_beam_error_m=float(
                 np.linalg.norm(predicted_tip - desired)
             ),
+            magnet_clip_active=magnet_clip_active,
+            magnet_exclusion_margin_m=magnet_exclusion_margin_m,
+            magnet_z_margin_m=magnet_z_margin_m,
+            magnet_abort_reason=magnet_abort_reason,
         )
 
     def _selective_damped_pseudo_inverse(self, jacobian: Array) -> Array:
@@ -321,6 +516,84 @@ class InverseJacobianBeamController:
         gains = s / (s**2 + lam2)
         return (vt.T * gains) @ u.T
 
+    def _clip_magnet_constraints(
+        self, command: Array, state: Array,
+    ) -> tuple[Array, bool, float, float, str | None]:
+        """Anticipatory half-space projection for magnet-exclusion-radius
+        and magnet-z-workspace, applied AFTER the standard velocity/accel/
+        state-box clip (so this never asks for more than the velocity limit
+        already allows -- project_joint_velocity_for_halfspace's own
+        final re-clip enforces that per-constraint too).
+
+        Sequential, not a joint QP: exclusion first, then z_min, then
+        z_max, each only correcting if its own linearized margin would
+        otherwise go negative one tick from now. Constraints that conflict
+        within one tick's velocity budget are NOT guaranteed to be jointly
+        satisfied -- an intentional limitation matching this controller's
+        whole "no preview, no constraints beyond clipping" design, not an
+        oversight. If the clip still leaves a real (not just linearization-
+        noise-level) violation after projection, magnet_abort_reason is
+        set so the caller's generic info["abort_reason"] hook (see
+        controller_adapters.OfflineJointControllerAdapter.__call__) can
+        stop the run -- the same anticipatory-clip-plus-reactive-monitor
+        layering every other hard constraint in this project uses.
+        """
+        joint_cmd = command[:6].copy()
+        vlim6 = self.velocity_limit[:6]
+        clipped_any = False
+        abort_reason = None
+
+        p_mag = np.asarray(self.magnet_position_fn(state), dtype=float).reshape(3)
+        J_mag = np.asarray(self.magnet_position_jacobian_fn(state), dtype=float).reshape(3, 7)[:, :6]
+
+        excl_margin = float("nan")
+        if self.magnet_exclusion_radius_m is not None:
+            lumen = self.magnet_exclusion_lumen_C_m
+            diffs = p_mag[None, :] - lumen
+            dists = np.linalg.norm(diffs, axis=1)
+            k = int(np.argmin(dists))
+            d_nom = float(dists[k])
+            normal = diffs[k] / max(d_nom, 1.0e-9)
+            g = normal @ J_mag
+            rhs = (self.magnet_exclusion_radius_m - d_nom) / self.dt
+            joint_cmd, was_clipped, slack_before, slack_after = project_joint_velocity_for_halfspace(
+                joint_cmd, g, rhs, vlim6,
+            )
+            clipped_any = clipped_any or was_clipped
+            excl_margin = d_nom - self.magnet_exclusion_radius_m
+            if slack_after < -self.magnet_constraint_violation_abort_m / max(self.dt, 1.0e-9):
+                abort_reason = (
+                    f"inverse_jacobian_magnet_exclusion_unclippable("
+                    f"d_nom={d_nom*1e3:.2f}mm radius={self.magnet_exclusion_radius_m*1e3:.2f}mm)"
+                )
+
+        z_margin = float("nan")
+        if self.magnet_z_bounds_m is not None:
+            z_min, z_max = self.magnet_z_bounds_m
+            z_nom = float(p_mag[2])
+            g_z = J_mag[2, :]
+            # z >= z_min
+            joint_cmd, c1, _, slack_after_min = project_joint_velocity_for_halfspace(
+                joint_cmd, g_z, (z_min - z_nom) / self.dt, vlim6,
+            )
+            # z <= z_max  <=>  (-g_z) . x >= (z_nom - z_max)/dt
+            joint_cmd, c2, _, slack_after_max = project_joint_velocity_for_halfspace(
+                joint_cmd, -g_z, (z_nom - z_max) / self.dt, vlim6,
+            )
+            clipped_any = clipped_any or c1 or c2
+            z_margin = min(z_nom - z_min, z_max - z_nom)
+            tol = self.magnet_constraint_violation_abort_m / max(self.dt, 1.0e-9)
+            if slack_after_min < -tol or slack_after_max < -tol:
+                reason = (
+                    f"inverse_jacobian_magnet_zworkspace_unclippable("
+                    f"z={z_nom*1e3:.1f}mm bounds=[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
+                )
+                abort_reason = abort_reason or reason
+
+        command = command.copy()
+        command[:6] = joint_cmd
+        return command, clipped_any, excl_margin, z_margin, abort_reason
+
     def _clip(self, command: Array, state: Array, previous: Array) -> Array:
         command = np.clip(command, -self.velocity_limit, self.velocity_limit)
         command = np.clip(
@@ -350,6 +623,12 @@ def build_inverse_jacobian_controller(
     selective_damping_gain: float = 0.0,
     selective_damping_floor: float = 0.01,
     reference_position_jacobians: Any = None,
+    magnet_position_fn: Callable[[Array], Array] | None = None,
+    magnet_position_jacobian_fn: Callable[[Array], Array] | None = None,
+    magnet_exclusion_lumen_C_m: Any | None = None,
+    magnet_exclusion_radius_m: float | None = None,
+    magnet_z_bounds_m: tuple[float, float] | None = None,
+    magnet_constraint_violation_abort_m: float = 2.0e-3,
 ) -> InverseJacobianBeamController:
     """Build it from the same ``ConfigurationMPCConfig`` the MPCs use.
 
@@ -358,6 +637,10 @@ def build_inverse_jacobian_controller(
     being compared against. Pass ``reference_position_jacobians`` (the same
     schedule ``mpc_ltv_offline`` uses) to additionally match the Jacobian
     *source* -- the "inverse-LTV" baseline.
+
+    The ``magnet_*`` arguments (all optional, default None/disabled) add the
+    anticipatory magnet-exclusion-radius / magnet-z-workspace clip -- see
+    ``InverseJacobianBeamController``'s own docstring on those parameters.
     """
     return InverseJacobianBeamController(
         reference=reference,
@@ -376,6 +659,12 @@ def build_inverse_jacobian_controller(
         selective_damping_gain=selective_damping_gain,
         selective_damping_floor=selective_damping_floor,
         reference_position_jacobians=reference_position_jacobians,
+        magnet_position_fn=magnet_position_fn,
+        magnet_position_jacobian_fn=magnet_position_jacobian_fn,
+        magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
+        magnet_exclusion_radius_m=magnet_exclusion_radius_m,
+        magnet_z_bounds_m=magnet_z_bounds_m,
+        magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
     )
 
 
@@ -383,4 +672,6 @@ __all__ = [
     "InverseJacobianBeamController",
     "InverseJacobianStep",
     "build_inverse_jacobian_controller",
+    "project_joint_velocity_for_halfspace",
+    "make_magnet_exclusion_hold_gate",
 ]

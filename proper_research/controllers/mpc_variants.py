@@ -39,6 +39,7 @@ cannot compute inside one sample period is not a win.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 import numpy as np
@@ -327,12 +328,23 @@ def precompute_schedule(
     reference: Any,
     jacobian_provider: Callable[[Array], Array],
     allow_undeclared_jacobian: bool = True,
+    progress_every: int = 0,
 ) -> Array:
     """Evaluate the Jacobian once per reference sample.
 
     Deliberately routed through the same provider the online rung uses, so the
     offline schedule and the online relinearisation differ only in *where* they
     are evaluated — never in which model they come from.
+
+    ``progress_every``: 0 (default) prints nothing -- the original silent
+    behaviour, unchanged for every existing caller. A positive value prints
+    "schedule: i/count" every that many samples plus a final elapsed-time
+    line -- this loop has no other progress signal (each "accurate"-mode
+    sample is a full quasistatic solve + implicit-sensitivity solve, so a
+    few hundred samples can silently run for many minutes with nothing on
+    screen, easily read as "stuck" or "recomputing something that should
+    already be cached" -- see run_mpc_delay_aware_vessel.py's
+    build_or_load_schedule, 2026-10-07).
     """
     jacobian_at, _ = declare_provider(
         jacobian_provider, allow_undeclared=allow_undeclared_jacobian
@@ -340,10 +352,14 @@ def precompute_schedule(
     count = int(reference.sample_count)
     schedule = np.empty((count, 3, 7), dtype=float)
     states = np.asarray(reference.state, dtype=float)
+    t0 = time.monotonic() if progress_every > 0 else None
     for index in range(count):
         schedule[index] = np.asarray(
             jacobian_at(states[index]), dtype=float
         ).reshape(3, 7)
+        if progress_every > 0 and (index % progress_every == 0 or index == count - 1):
+            elapsed_s = time.monotonic() - t0
+            print(f"  schedule: {index + 1}/{count} ({elapsed_s:.0f}s elapsed)", flush=True)
     if not np.all(np.isfinite(schedule)):
         raise FloatingPointError("The precomputed Jacobian schedule is not finite.")
     return schedule

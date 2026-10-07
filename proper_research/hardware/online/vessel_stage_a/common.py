@@ -366,18 +366,36 @@ def preflight(
     magnet_exclusion_lumen_C_m: np.ndarray | None = None,
     magnet_exclusion_radius_m: float | None = None,
     magnet_z_bounds_m: tuple[float, float] | None = None,
+    reset_target_q0: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float]:
     """Full pre-run sequence: health checks + reset. Returns (q0, L0) from the plan.
 
     When `magnet_transform_fn` and at least one of the exclusion/z-bounds
     args are given, the reset motion's straight-line joint-space path is
     validated safe before it moves -- see `reset_to_plan_initial_safe`.
+
+    `reset_target_q0`: 2026-10-07, opt-in, None by default (unchanged
+    behaviour for every existing caller -- resets to the plan's own q0,
+    same as before). When given, the robot resets to THIS joint target
+    instead -- lets a run start the magnet at a different distance from
+    the beam base than the plan's own designed start position, e.g. to
+    test a wider --beam-base-exclusion-floor-mm than the plan's own start
+    distance would otherwise satisfy, WITHOUT re-running the offline
+    configuration-path/Jacobian-schedule pipeline at all. The function
+    still RETURNS the plan's own (q0, l0) -- used for cfg.initial_
+    insertion_m and this function's own insertion-length camera check,
+    both unaffected by this override -- only the reset motion's actual
+    target changes.
     """
     q0, l0 = load_plan_initial_state(plan_dir)
     print(f"[preflight] plan initial state: q0={np.round(q0, 4).tolist()} L0={l0*1000:.2f}mm")
+    reset_q0 = q0 if reset_target_q0 is None else np.asarray(reset_target_q0, dtype=float).reshape(6)
+    if reset_target_q0 is not None:
+        print(f"[preflight] reset target OVERRIDDEN to {np.round(reset_q0, 4).tolist()} "
+              f"(plan's own trajectory/schedule unaffected)")
     check_camera_healthy(expected_insertion_m=l0, insertion_tol_mm=insertion_tol_mm)
     reset_to_plan_initial_safe(
-        q0, robot_ip=robot_ip,
+        reset_q0, robot_ip=robot_ip,
         magnet_transform_fn=magnet_transform_fn,
         magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
@@ -385,3 +403,59 @@ def preflight(
     )
     check_robot_safe(robot_ip=robot_ip)
     return q0, l0
+
+
+def resolve_start_pose_at_radius(
+    q0_seed: np.ndarray, radius_mm: float, *, robot_kin,
+) -> np.ndarray:
+    """Return a new joint target that moves the magnet to `radius_mm` from
+    the beam base, along the SAME direction `q0_seed`'s own magnet pose
+    already sits at, with the SAME orientation -- i.e. a radial move, not
+    a new arc position.
+
+    Used to test a --beam-base-exclusion-floor-mm (or --magnet-exclusion-
+    soft-radius-mm) wider than a plan's own built-in start margin would
+    otherwise allow through the preflight reset-path check, WITHOUT
+    re-running the offline configuration-path/Jacobian-schedule pipeline
+    (a multi-hour operation) -- see preflight's own `reset_target_q0`
+    parameter, which this is meant to feed. Shared by run_mpc_delay_
+    aware_vessel.py and run_inverse_jacobian_online_vessel.py so the
+    geometry/IK logic lives in exactly one place.
+
+    Orientation is reused UNCHANGED, not re-solved: this project's
+    reference_orientation_matrix (sweep_free_space_arc_dipole.py, used by
+    design_stage3_tracked_path.py to build every plan's own magnet_pose6_R)
+    depends only on the DIRECTION to the beam base, never on distance --
+    confirmed by reading its own implementation (both the calibration and
+    target directions are normalized before use) -- so a purely radial
+    move needs no new orientation solve.
+
+    Raises RuntimeError if the IK for the new pose does not converge.
+    """
+    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+    from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+
+    q0_seed = np.asarray(q0_seed, dtype=float).reshape(6)
+    seed_T = urik.forward_kinematics(q0_seed, robot_kin.dh, robot_kin.T_F_M).T_R_target
+    seed_xyz = seed_T[:3, 3].copy()
+    direction = seed_xyz - BEAM_BASE_XYZ_M
+    direction_norm_m = float(np.linalg.norm(direction))
+    direction = direction / direction_norm_m
+    new_xyz = BEAM_BASE_XYZ_M + direction * (float(radius_mm) * 1e-3)
+
+    T_new = seed_T.copy()
+    T_new[:3, 3] = new_xyz
+    ik = urik.inverse_kinematics_dls(
+        T_R_target=T_new, q_seed_rad=q0_seed, dh=robot_kin.dh,
+        T_F_target=robot_kin.T_F_M, cfg=robot_kin.ik_cfg,
+    )
+    if not ik.converged:
+        raise RuntimeError(
+            f"resolve_start_pose_at_radius({radius_mm}): IK did not converge for the "
+            f"radial move from {direction_norm_m*1e3:.1f}mm to {radius_mm:.1f}mm along "
+            f"the seed pose's own direction from the beam base."
+        )
+    print(f"[start-radius-override] reset target moved from {direction_norm_m*1e3:.1f}mm "
+          f"to {radius_mm:.1f}mm from the beam base (same direction/orientation, "
+          f"IK position_error={ik.final_position_error_m*1e3:.4f}mm)")
+    return np.asarray(ik.q_rad, dtype=float).reshape(6)

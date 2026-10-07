@@ -548,8 +548,18 @@ def build_or_load_schedule(
     if cache_path and os.path.exists(cache_path):
         print(f"[vessel-mpc] loading cached schedule from {cache_path}")
         return np.load(cache_path)
-    print(f"[vessel-mpc] building genuine from_model_bundle Jacobian schedule "
-          f"(contact={contact}, ~90-150s)...")
+    # 2026-10-07: dropped the old "~90-150s" estimate -- confirmed live it
+    # was optimistic for this vessel plan's actual sample count ("accurate"
+    # mode is a full quasistatic + implicit-sensitivity solve per sample,
+    # not a cheap lookup). precompute_schedule's own progress_every now
+    # prints real elapsed time instead, so this silent multi-minute loop
+    # doesn't look indistinguishable from "stuck" or "recomputing something
+    # that should already be cached" -- exactly what was reported live.
+    print(f"[vessel-mpc] no cached schedule at {cache_path!r} -- building genuine "
+          f"from_model_bundle Jacobian schedule (contact={contact}); this is a "
+          f"one-time cost for this exact (plan_dir, lumen_file, insertion_max_mm, "
+          f"contact) combination -- it will be cached to this path and reused on "
+          f"every future run with the same --schedule-cache...")
 
     reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
     _, bundle, controller_pack, _, _, _, _ = build_vessel_planning_context(
@@ -568,6 +578,7 @@ def build_or_load_schedule(
     )
     schedule = mpc_variants.precompute_schedule(
         reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
+        progress_every=25,
     )
     if cache_path:
         np.save(cache_path, schedule)
@@ -591,17 +602,55 @@ def main() -> None:
                          "fixed beam-base point/210.43mm radius, not derived from this file. "
                          "Still accepted (no longer required) purely so existing invocations "
                          "don't break; a note is printed if passed. See module docstring's fix 6.")
-    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=97.0,  # 2026-10-03: recalibrated (was 210.43) -- the recalibrated start config sits ~101.80mm from the beam base, so the old floor would have refused that start position outright. 97.0mm leaves a ~4.8mm margin below it.
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=210.0,
+                    # 2026-10-07 fix: this default was 97.0mm, correctly derived
+                    # 2026-10-03 for a DIFFERENT, older campaign whose start
+                    # position sat only ~101.80mm from the beam base
+                    # (vessel_magnet_initial_position_2026-10-02_recalibrated.json
+                    # -- the exact same stale-default class of bug already found
+                    # and fixed in run_open_loop_vessel.py's --exclusion-floor-mm).
+                    # For THIS project's current phi30_L30_left1mm_newwall plan
+                    # family, the correct floor is 210.0mm -- read directly from
+                    # plans/stage3_design/phi30_L30_left1mm_newwall_design.json's
+                    # own exclusion_floor_mm, and consistent with that plan's
+                    # actual start-position magnet-to-beam-base distance
+                    # (225.00mm, leaving a sensible ~14mm margin above the
+                    # floor -- a start position sitting BELOW its own floor, as
+                    # 97.0mm vs 225mm would not have been, is what the preflight
+                    # path-check exists to catch). Still overridable per-plan via
+                    # this flag, same as before -- just a different plan needs a
+                    # different number, not a different default-correctness bug.
                     help="the TRUE magnet-to-beam-base exclusion floor (before "
                          "--magnet-exclusion-tolerance-mm is subtracted to get the live "
-                         "abort/QP threshold). Default 210.43mm matches the project's "
-                         "established value; 2026-09-29 made overridable after a v3-vessel "
+                         "abort/QP threshold). Default 210.0mm matches the current "
+                         "phi30_L30_left1mm_newwall plan family's own design JSON; "
+                         "2026-09-29 made this overridable after a v3-vessel "
                          "centreline-tracking run aborted at gap=205.4mm < 205.4mm -- i.e. "
                          "crossed the live threshold by a hair, and post-hoc wall-clearance "
                          "analysis of that run showed zero actual lumen-wall penetration, "
                          "consistent with the shortfall being linearization/tracking-lag "
                          "error (see delay_aware_mpc.py's _configure_magnet_exclusion "
                          "docstring) rather than a real large safety breach.")
+    p.add_argument("--start-radius-override-mm", type=float, default=None,
+                    help="2026-10-07: reset the robot to a DIFFERENT magnet-to-beam-base "
+                         "distance than the plan's own designed start position, WITHOUT "
+                         "touching the offline configuration-path/Jacobian-schedule "
+                         "pipeline at all (that is a multi-hour re-plan -- Layer 1 took "
+                         "~3h10m for this exact contact plan -- this flag exists "
+                         "specifically to avoid needing it just to test a different "
+                         "--beam-base-exclusion-floor-mm/--magnet-exclusion-soft-radius-mm). "
+                         "The new start pose is computed by moving the plan's own start "
+                         "position radially along the SAME direction from the beam base "
+                         "(confirmed: this project's reference_orientation_matrix depends "
+                         "only on that direction, not distance, so the orientation is "
+                         "reused unchanged -- only the IK target's xyz moves) and solving "
+                         "its IK, seeded from the plan's own q0. The REFERENCE trajectory "
+                         "and Jacobian schedule the MPC tracks are completely unaffected -- "
+                         "only where the robot physically resets to before tracking starts "
+                         "changes, so the first few ticks will show a real (and expected) "
+                         "catch-up transient while the controller corrects the gap between "
+                         "this new start and the reference's own node 0. None (default) "
+                         "= reset to the plan's own start position, unchanged behaviour.")
     contact_group = p.add_mutually_exclusive_group(required=True)
     contact_group.add_argument("--contact", dest="contact", action="store_true")
     contact_group.add_argument("--no-contact", dest="contact", action="store_false")
@@ -776,7 +825,18 @@ def main() -> None:
     # radius, already computed above) rather than only guarding the
     # closed-loop run that follows it.
     q0, l0 = common.load_plan_initial_state(args.plan_dir)
-    magnet_z_start = float(_magnet_transform_fn(q0)[2])
+
+    reset_target_q0 = q0
+    if args.start_radius_override_mm is not None:
+        reset_target_q0 = common.resolve_start_pose_at_radius(
+            q0, args.start_radius_override_mm, robot_kin=_robot_kin,
+        )
+        print(f"[vessel-mpc] --start-radius-override-mm {args.start_radius_override_mm:.1f}: "
+              f"plan's own trajectory/schedule UNCHANGED -- only the physical reset pose moves\n"
+              f"[vessel-mpc]   plan q0={np.round(q0,4).tolist()}\n"
+              f"[vessel-mpc]   reset q0={np.round(reset_target_q0,4).tolist()}")
+
+    magnet_z_start = float(_magnet_transform_fn(reset_target_q0)[2])
     magnet_rise_limit_m = args.magnet_rise_limit_mm * 1e-3
     # Floor margin: originally a tight 5mm (matching "may never go lower"
     # read literally), which produced two false/near-false positives live
@@ -874,6 +934,9 @@ def main() -> None:
             magnet_exclusion_lumen_C_m=_MAGNET_EXCLUSION_LUMEN_C_M,
             magnet_exclusion_radius_m=_MAGNET_EXCLUSION_RADIUS_M,
             magnet_z_bounds_m=_MAGNET_Z_BOUNDS_M,
+            reset_target_q0=(
+                None if args.start_radius_override_mm is None else reset_target_q0
+            ),
         )
 
     cfg = pf.CONFIG
@@ -931,8 +994,29 @@ def main() -> None:
     # dry run first and checking the actual flange range against this box
     # before trusting it live (see HOWTO_CLOSED_LOOP_MPC.md section 0);
     # tighten/widen as needed the same way the comment history above did.
+    #
+    # 2026-10-07 fix: exactly the predicted failure mode above -- the
+    # phi30_L30_left1mm_newwall_tol0p5_2026-10-06 contact run tripped
+    # tcp_out_of_workspace([0.395, -0.685, 0.393]) at tick 42/800 (tracking
+    # error was a clean 1.09mm max up to that point -- the MPC/schedule
+    # were fine, this was purely the generic Cartesian safety net). Root
+    # cause: FK on this plan's own planned joint trajectory (both contact
+    # and no-contact variants) gives a flat z-band of 0.3867-0.3908m
+    # throughout the whole path -- the old box's z_max=0.393 left only
+    # ~2mm of headroom above that. The live run's own measured z (via FK
+    # of q_meas_rad) was climbing steadily tick-by-tick (0.3917 at tick 23
+    # -> 0.3925 at tick 42, still rising, not a one-off spike) -- the same
+    # "closed-loop MPC correction pushes past the pure planned/open-loop
+    # range" pattern the 2026-10-02 (second pass) entry above already
+    # documented for a different plan. x/y both have >100mm of margin to
+    # the box on this plan (planned union x=[0.403,0.552] y=[-0.675,-0.562]
+    # live-observed x as low as 0.398, still far inside [0.277,0.656]) --
+    # only z needed widening. +40mm margin on top of the old z ceiling
+    # (not just to the one observed trip point), matching this file's own
+    # established practice of real headroom over re-deriving to the exact
+    # new edge.
     cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
-    cfg.workspace_xyz_max_m = (0.656, -0.534, 0.393)
+    cfg.workspace_xyz_max_m = (0.656, -0.2, 0.433)
 
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True

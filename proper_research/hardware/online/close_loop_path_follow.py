@@ -510,6 +510,48 @@ CONFIG = PathFollowConfig()
 # frozen jac_provider.  None -> normal behaviour.
 _SCHEDULE_OVERRIDE = None
 
+# 2026-10-07: a comparison harness may set this to a genuinely state-
+# dependent jacobian_provider callable (e.g. from_model_bundle's, the same
+# live/relinearizing provider mpc_ltv_sqp_online already gets a bypass
+# for below). Only consumed by plain controller_kind="naive_inverse_
+# jacobian" -- every other kind, and naive_inverse_jacobian when this is
+# left None, keep their EXISTING behaviour unchanged (naive_inverse_
+# jacobian's own default is the FROZEN AnalyticalBeamJacobianProvider,
+# computed once at construction and ignoring its state argument -- see
+# the jacobian_source branch below's own comment). Exists because there
+# was previously no vessel run-script exercising a genuinely live/online
+# Jacobian for the resolved-rate controller; every existing one either
+# used the frozen default or the precomputed _SCHEDULE_OVERRIDE (LTV).
+_JACOBIAN_PROVIDER_OVERRIDE = None
+
+# 2026-10-07: a comparison harness may set this to a dict of the new
+# InverseJacobianBeamController magnet-exclusion/z-workspace clip kwargs
+# (magnet_position_fn, magnet_position_jacobian_fn, magnet_exclusion_
+# lumen_C_m, magnet_exclusion_radius_m, magnet_z_bounds_m,
+# magnet_constraint_violation_abort_m). Only applied for controller_kind
+# in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv") -- every
+# other kind, and either inverse-Jacobian kind when this is left None,
+# are unaffected (the controller's own constructor defaults keep the clip
+# disabled). Same override pattern as _SCHEDULE_OVERRIDE/
+# _JACOBIAN_PROVIDER_OVERRIDE above.
+_MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
+
+# 2026-10-07: a comparison harness may set this to a callable
+# (command, measured_state, info) -> (possibly-modified command, gate_info
+# dict). Applied right after the controller's raw command is read, before
+# ANY other clipping -- lets a controller's own math stay completely
+# unaware of a hard constraint (e.g. demonstrating that the naive inverse-
+# Jacobian controller genuinely does not understand the magnet-exclusion
+# radius the way MPC's in-QP constraint does, by letting it keep trying to
+# command motion that would violate it), while still guaranteeing the
+# ROBOT never executes a command that would -- HOLDS position (returns a
+# zero command) on a blocked tick rather than silently projecting/
+# correcting it (contrast with InverseJacobianBeamController's own
+# anticipatory clip, which is the opposite design choice: stay near the
+# boundary and keep moving). None by default -- every existing caller is
+# unaffected.
+_COMMAND_SAFETY_GATE = None
+
 # Planner(P) -> live-robot(R) rigid transform (p_R = R_fit@p_P + t_fit),
 # computed once per run by `_load_plan_reference` from the live-measured
 # start tip (2026-09-21). Exposed as module state, same pattern as
@@ -1067,7 +1109,27 @@ def main() -> None:
         )
 
         # --- frozen beam Jacobian -----------------------------
-        if cfg.controller_kind == "mpc_ltv_sqp_online":
+        _live_jac_override = globals().get("_JACOBIAN_PROVIDER_OVERRIDE")
+        if _live_jac_override is not None and cfg.controller_kind == "naive_inverse_jacobian":
+            print(
+                "[path] naive_inverse_jacobian: using externally-supplied LIVE "
+                "jacobian_provider override (genuinely state-dependent, not the "
+                "frozen AnalyticalBeamJacobianProvider default)"
+            )
+            jac_provider = _live_jac_override
+            # Same fix mpc_ltv_sqp_online's own from_model_bundle provider
+            # needed just below: BeamJacobianProvider (unlike
+            # AnalyticalBeamJacobianProvider) has no last_condition
+            # attribute, but several unconditional log/dump sites further
+            # down read jac_provider.last_condition. Attach one, valued at
+            # the initial state -- a representative snapshot, same
+            # one-shot convention AnalyticalBeamJacobianProvider's own
+            # last_condition already uses (never updated per call either).
+            _J0 = np.asarray(
+                jac_provider(np.concatenate([q0, [insertion_m]])), dtype=float
+            ).reshape(3, 7)
+            jac_provider.last_condition = float(np.linalg.cond(_J0[:, :6]))
+        elif cfg.controller_kind == "mpc_ltv_sqp_online":
             # 2026-09-16: mpc_ltv_sqp_online ("tick-frozen") is only
             # meaningful if its jacobian_provider genuinely relinearises at
             # the measured state each tick -- AnalyticalBeamJacobianProvider
@@ -1385,6 +1447,15 @@ def main() -> None:
             print(f"[path] loaded dmap {dmap_arr.shape} from {cfg.dmap_path}")
             dmap_kwargs = {"dmap": dmap_arr, "map_schedule": schedule_override}
 
+        magnet_clip_kwargs = {}
+        _magnet_clip_override = globals().get("_MAGNET_CONSTRAINT_CLIP_OVERRIDE")
+        if _magnet_clip_override is not None and cfg.controller_kind in (
+            "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
+        ):
+            magnet_clip_kwargs = dict(_magnet_clip_override)
+            print(f"[path] {cfg.controller_kind}: magnet-exclusion/z-workspace hard-"
+                  f"constraint clip ENABLED (external override)")
+
         solver = build_offline_solver(
             cfg.controller_kind,
             reference=reference,
@@ -1407,6 +1478,7 @@ def main() -> None:
             selective_damping_floor=cfg.inv_selective_damping_floor,
             relinearise_every=int(cfg.mpc_relinearise_every),
             **dmap_kwargs,
+            **magnet_clip_kwargs,
             trim_kp=cfg.trim_kp,
             trim_kn=cfg.trim_kn,
             trim_damping=cfg.trim_damping,
@@ -1570,6 +1642,14 @@ def main() -> None:
             info = result.info
             ref_index = int(info.get("reference_index", 0))
             terminal_hold = bool(info.get("terminal_hold", False))
+
+            _command_gate = globals().get("_COMMAND_SAFETY_GATE")
+            if _command_gate is not None:
+                command, _gate_info = _command_gate(
+                    command, info.get("measured_joint_state"), info,
+                )
+                command = np.asarray(command, dtype=float).reshape(7)
+                info.update(_gate_info)
 
             if not cfg.control_insertion:
                 command[6] = 0.0

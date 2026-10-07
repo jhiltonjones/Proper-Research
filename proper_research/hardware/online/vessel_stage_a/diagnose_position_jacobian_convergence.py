@@ -57,10 +57,28 @@ def tip_of(result):
     return np.asarray(result.tip, dtype=float).copy()
 
 
-def fd_ladder_position_only(model, xyz0, rotvec0, L0, label):
+def fd_ladder_position_only(model, xyz0, rotvec0, L0, label, u0_seed=None):
+    """u0_seed: None (default, unchanged for every existing caller) derives
+    the nominal warm-start from an isolated model.solve(..., reuse_cache=True)
+    -- fine for states close together in the same script run, but NOT
+    branch-consistent with a state's own trajectory history for a state
+    picked in isolation far from s=0. When provided (e.g. the converged u*
+    from a validated sequential-continuation walk from s=0 up to this exact
+    state -- see compare_cnc_corrected_sweep.py's walk_continuation), that
+    seed is used directly instead, so the +-h perturbation solves warm-start
+    from the SAME physical branch the real trajectory/schedule used."""
     p7_0 = np.concatenate([xyz0, rotvec0, [L0]])
-    result0 = model.solve(p7_0, commit=True, reuse_cache=True)
-    u_star_0 = np.asarray(result0.u_flat_opt, dtype=float).copy()
+    if u0_seed is None:
+        result0 = model.solve(p7_0, commit=True, reuse_cache=True)
+        u_star_0 = np.asarray(result0.u_flat_opt, dtype=float).copy()
+    else:
+        result0 = solve_quasistatic_insertion_optimized(
+            model.build_problem(p7_0), u0_flat=np.asarray(u0_seed, dtype=float),
+            options=model.beam, result_detail=model.result_detail,
+        )
+        u_star_0 = np.asarray(result0.u_flat_opt, dtype=float).copy()
+        model._commit_result(p7_0, result0, model.build_problem(p7_0).L_model)
+        model._invalidate_jacobian_values()
 
     J_at_h = {h_rung_idx: np.zeros((3, 7)) for h_rung_idx in range(len(H_TRANS_LADDER))}
     per_col_records = []

@@ -284,6 +284,12 @@ class OfflineJointControllerAdapter:
                 else int(np.asarray(predicted_inputs, dtype=float).reshape(-1, 7).shape[0])
             ),
             "measured_joint_state": measured_state,
+            # 2026-10-07: generic abort_reason hook (see close_loop_path_
+            # follow.py's own comment on this same key) -- no-op (None) for
+            # any step object that doesn't set it; InverseJacobianStep's
+            # magnet_abort_reason is the first non-MPC user, for the
+            # magnet-exclusion/z-workspace hard-constraint clip.
+            "abort_reason": getattr(step, "magnet_abort_reason", None),
         }
         return SolveResult(u0=command, infeasible=infeasible, info=info)
 
@@ -365,6 +371,12 @@ def build_offline_solver(
     trim_max_l_step_m: float = 2.0e-4,
     dmap: Optional[Array] = None,
     map_schedule: Optional[Array] = None,
+    magnet_position_fn: Optional[Any] = None,
+    magnet_position_jacobian_fn: Optional[Any] = None,
+    magnet_exclusion_lumen_C_m: Any = None,
+    magnet_exclusion_radius_m: Optional[float] = None,
+    magnet_z_bounds_m: Optional[tuple] = None,
+    magnet_constraint_violation_abort_m: float = 2.0e-3,
 ) -> OfflineJointControllerAdapter:
     """Build one of the five offline controllers and wrap it for the runner.
 
@@ -437,6 +449,12 @@ def build_offline_solver(
             allow_undeclared_jacobian=allow_undeclared_jacobian,
             selective_damping_gain=selective_damping_gain,
             selective_damping_floor=selective_damping_floor,
+            magnet_position_fn=magnet_position_fn,
+            magnet_position_jacobian_fn=magnet_position_jacobian_fn,
+            magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
+            magnet_exclusion_radius_m=magnet_exclusion_radius_m,
+            magnet_z_bounds_m=magnet_z_bounds_m,
+            magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
         )
     elif kind == "naive_inverse_jacobian_ltv":
         from proper_research.controllers.inverse_jacobian_controller import (
@@ -462,6 +480,12 @@ def build_offline_solver(
             selective_damping_gain=selective_damping_gain,
             selective_damping_floor=selective_damping_floor,
             reference_position_jacobians=schedule,
+            magnet_position_fn=magnet_position_fn,
+            magnet_position_jacobian_fn=magnet_position_jacobian_fn,
+            magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
+            magnet_exclusion_radius_m=magnet_exclusion_radius_m,
+            magnet_z_bounds_m=magnet_z_bounds_m,
+            magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
         )
     elif kind == "inv_2dof_trim":
         # 2026-09-17: see inverse_jacobian_2dof_trim.py's module docstring

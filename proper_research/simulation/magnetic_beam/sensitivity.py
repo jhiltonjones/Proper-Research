@@ -72,6 +72,32 @@ class SensitivityOptions:
     debug_hessian_terms: bool = False
     difference_scheme: str = "forward"
 
+    # 2026-10-06: the default "tikhonov" inversion (H + hessian_reg*I, then a
+    # dense solve) was found to go catastrophically wrong at states where the
+    # contact penalty's finite-difference Hessian has a large near-null space
+    # (most internal strain DOF genuinely don't affect contact energy when
+    # only part of the beam interacts with the wall) -- hessian_reg=1e-10 is
+    # 2-3 orders of magnitude smaller than the FD noise floor actually
+    # observed in that null space (~1e-8, including small negative
+    # eigenvalues from the finite-difference scheme, confirmed to originate
+    # in the CONTACT-ONLY Hessian term with the active set held fixed, not
+    # from the magnetic/elastic terms), so it does essentially nothing, and
+    # du_dtheta = -H_reg^-1 @ Gtheta amplifies whatever component of Gtheta
+    # lands along those near-zero directions by 10^7-10^8x. "truncated_svd"
+    # eigendecomposes H, finds the largest multiplicative gap in the sorted
+    # |eigenvalue| spectrum (at least hessian_rank_gap_min_ratio across
+    # consecutive values), and zeros out the pseudo-inverse's contribution
+    # from everything below that gap (or below hessian_rank_floor if no
+    # qualifying gap exists -- so a well-conditioned state, e.g. no-contact
+    # or the Stage-2 states, is left effectively untouched, not forcibly
+    # truncated). This must be validated against direct finite differences
+    # of the forward model state by state, not assumed correct from the
+    # spectrum shape alone -- see inspect_jacobian_columns.py /
+    # validate_rank_aware_hessian_sweep.py.
+    hessian_inversion: str = "tikhonov"
+    hessian_rank_gap_min_ratio: float = 100.0
+    hessian_rank_floor: float = 1e-9
+
     def validate(self) -> None:
         if self.eps_theta <= 0:
             raise ValueError(f"eps_theta must be positive, got {self.eps_theta}.")
@@ -85,6 +111,20 @@ class SensitivityOptions:
             raise ValueError(
                 "difference_scheme must be 'forward' or 'central', got "
                 f"{self.difference_scheme!r}."
+            )
+        if self.hessian_inversion not in {"tikhonov", "truncated_svd"}:
+            raise ValueError(
+                "hessian_inversion must be 'tikhonov' or 'truncated_svd', got "
+                f"{self.hessian_inversion!r}."
+            )
+        if self.hessian_rank_gap_min_ratio <= 1.0:
+            raise ValueError(
+                "hessian_rank_gap_min_ratio must be > 1, got "
+                f"{self.hessian_rank_gap_min_ratio}."
+            )
+        if self.hessian_rank_floor <= 0:
+            raise ValueError(
+                f"hessian_rank_floor must be positive, got {self.hessian_rank_floor}."
             )
 
 
@@ -399,6 +439,80 @@ def run_hessian_diagnostics(
     )
 
 
+def _rank_aware_hessian_solve(
+    H: np.ndarray,
+    Gtheta: np.ndarray,
+    *,
+    min_ratio: float,
+    floor: float,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Solve ``-H du = Gtheta`` with a truncated eigen-pseudo-inverse instead
+    of a dense Tikhonov-regularised solve.
+
+    Finds a multiplicative gap in the sorted ``|eigenvalue(H)|`` spectrum
+    (the biggest ratio between consecutive values) that exceeds
+    ``min_ratio`` -- but a large ratio ALONE is not sufficient evidence that
+    everything below it is finite-difference noise: a single eigenvalue can
+    legitimately dwarf a smooth, consistently-signed, slowly-decaying tail
+    that still carries real (if weak) FD-confirmed sensitivity. A genuine
+    FD-noise tail instead straddles zero -- the energy term being
+    differentiated is convex/PSD in theory, so a NEGATIVE eigenvalue can
+    only be a finite-difference artifact, never real curvature. A candidate
+    gap is therefore only accepted as a true noise-floor boundary when at
+    least one eigenvalue below it is negative; confirmed live (the 2026-10-06
+    node33/node150 investigation vs. a Stage-2 state): the bad state had 10
+    negative eigenvalues in its discarded tail, a good state had zero. Scans
+    the whole spectrum and keeps the LAST (bottom-most) qualifying gap, so a
+    real but much weaker signal band several orders of magnitude below the
+    top eigenvalue is not mistaken for noise either. If no gap qualifies
+    anywhere (a well-conditioned state, e.g. far from any contact, has no
+    such cliff), falls back to a plain absolute floor at ``floor`` -- so a
+    state that was already fine under the old Tikhonov solve is left
+    essentially untouched, not forcibly rank-reduced.
+    """
+    eigvals, eigvecs = np.linalg.eigh(H)
+    abs_eigvals = np.abs(eigvals)
+    order = np.argsort(abs_eigvals)[::-1]
+    sorted_abs = abs_eigvals[order]
+    sorted_signed = eigvals[order]
+
+    tau = floor
+    gap_index = None
+    gap_ratio = None
+    n = sorted_abs.size
+    for i in range(n - 1):
+        hi, lo = sorted_abs[i], sorted_abs[i + 1]
+        if lo <= 1e-300:
+            ratio = np.inf
+        else:
+            ratio = hi / lo
+        tail_has_negative = bool(np.any(sorted_signed[i + 1:] < 0.0))
+        if ratio >= min_ratio and hi > floor and tail_has_negative:
+            tau = float(np.sqrt(max(hi * max(lo, floor), floor * floor)))
+            gap_index = i
+            gap_ratio = float(ratio)
+
+    keep = abs_eigvals > tau
+    inv_eigvals = np.zeros_like(eigvals)
+    inv_eigvals[keep] = 1.0 / eigvals[keep]
+    du_dtheta = -(eigvecs @ (inv_eigvals[:, None] * (eigvecs.T @ Gtheta)))
+
+    diagnostics = {
+        "mode": "truncated_svd",
+        "tau": float(tau),
+        "effective_rank": int(np.sum(keep)),
+        "n_total": int(n),
+        "gap_index": gap_index,
+        "gap_ratio": gap_ratio,
+        "eigvals_sorted_abs": sorted_abs.copy(),
+        "largest_eigval": float(sorted_abs[0]) if n else float("nan"),
+        "smallest_retained_eigval": (
+            float(np.min(abs_eigvals[keep])) if np.any(keep) else float("nan")
+        ),
+    }
+    return du_dtheta, diagnostics
+
+
 def implicit_tip_jacobian(
     *,
     solution,
@@ -563,7 +677,15 @@ def implicit_tip_jacobian(
         base_value=g0,
     )
 
-    du_dtheta = -np.linalg.solve(H_reg, Gtheta)
+    rank_aware_info: dict[str, Any] = {}
+    if options.hessian_inversion == "truncated_svd":
+        du_dtheta, rank_aware_info = _rank_aware_hessian_solve(
+            H, Gtheta,
+            min_ratio=options.hessian_rank_gap_min_ratio,
+            floor=options.hessian_rank_floor,
+        )
+    else:
+        du_dtheta = -np.linalg.solve(H_reg, Gtheta)
 
     if options.debug_jac:
         print("\n--- DU_DTHETA ---")
@@ -652,6 +774,8 @@ def implicit_tip_jacobian(
         "gradient_evaluations": int(gradient_evaluations),
         "gradient_time_s": float(gradient_time_s),
         "sensitivity_time_s": float(time.perf_counter() - sensitivity_started),
+        "hessian_inversion": options.hessian_inversion,
+        **rank_aware_info,
     }
 
     return SensitivityResult(

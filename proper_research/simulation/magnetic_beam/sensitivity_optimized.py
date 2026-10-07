@@ -53,6 +53,30 @@ class SensitivityOptions:
     regularization_relative: float = 1e-10
     regularization_attempts: int = 7
 
+    # 2026-10-06: the default ("tikhonov", i.e. _solve_implicit_system's
+    # existing scipy.linalg.solve(..., assume_a="sym") escalating-lambda
+    # retry loop) tries lambda=0 FIRST and only escalates regularization if
+    # the solve raises LinAlgError or returns a non-finite result -- a
+    # near-singular (but not exactly singular) H, e.g. from a contact-state
+    # Hessian with a large near-null space, produces a FINITE but
+    # catastrophically wrong du_dtheta that sails through the finite check
+    # unregularised, since LAPACK's symmetric solver does not raise merely
+    # for ill-conditioning. Confirmed live: a contact Hessian with 23 of 27
+    # eigenvalues at the 1e-8-to-1e-15 noise floor (including small negative
+    # values -- an FD artifact of a genuine near-null space, not a sign of
+    # non-convexity) produced Jacobian columns off by 100-50,000x from
+    # direct finite differences of the forward model, with regularization_
+    # relative=1e-10 three orders of magnitude too small to matter even if
+    # it HAD engaged. "truncated_svd" eigendecomposes H and keeps only
+    # eigendirections above the largest multiplicative gap in the sorted
+    # |eigenvalue| spectrum (at least hessian_rank_gap_min_ratio), falling
+    # back to a plain floor when no such gap exists -- so an
+    # already-well-conditioned state (no contact, or the Stage-2 states)
+    # is left untouched. Opt-in only; default behaviour is unchanged.
+    hessian_inversion: str = "tikhonov"
+    hessian_rank_gap_min_ratio: float = 100.0
+    hessian_rank_floor: float = 1e-9
+
     def validate(self) -> None:
         if self.eps_theta <= 0.0:
             raise ValueError("eps_theta must be positive.")
@@ -66,6 +90,15 @@ class SensitivityOptions:
             raise ValueError("regularization_relative must be non-negative.")
         if self.regularization_attempts < 1:
             raise ValueError("regularization_attempts must be >= 1.")
+        if self.hessian_inversion not in {"tikhonov", "truncated_svd"}:
+            raise ValueError(
+                "hessian_inversion must be 'tikhonov' or 'truncated_svd', got "
+                f"{self.hessian_inversion!r}."
+            )
+        if self.hessian_rank_gap_min_ratio <= 1.0:
+            raise ValueError("hessian_rank_gap_min_ratio must be > 1.")
+        if self.hessian_rank_floor <= 0.0:
+            raise ValueError("hessian_rank_floor must be positive.")
 
 
 @dataclass(frozen=True)
@@ -469,17 +502,97 @@ def _tip_output_direct_theta_derivative(
     return Jp, Jt, 2
 
 
+def _rank_aware_hessian_solve(
+    H: np.ndarray,
+    Gtheta: np.ndarray,
+    *,
+    min_ratio: float,
+    floor: float,
+) -> tuple[np.ndarray, dict]:
+    """Truncated eigen-pseudo-inverse solve of ``-H du = Gtheta``.
+
+    Mirrors ``sensitivity._rank_aware_hessian_solve`` -- see that module's
+    docstring and ``SensitivityOptions.hessian_inversion``'s comment above
+    for the full rationale. Kept as a separate copy here (not a shared
+    import) to match this module's existing pattern of a self-contained
+    "optimized" implementation.
+    """
+    eigvals, eigvecs = np.linalg.eigh(H)
+    abs_eigvals = np.abs(eigvals)
+    order = np.argsort(abs_eigvals)[::-1]
+    sorted_abs = abs_eigvals[order]
+    sorted_signed = eigvals[order]
+
+    # A large ratio ALONE is not sufficient evidence that everything below
+    # it is FD noise -- confirmed live: at one state the single largest
+    # eigenvalue legitimately dwarfed the rest (ratio 180x), but the
+    # remaining 26 eigenvalues were a smooth, consistently POSITIVE, slowly
+    # decaying tail with real FD-confirmed sensitivity in multiple output
+    # directions; truncating there collapsed the effective rank to 1 and
+    # zeroed out that real signal. A genuine FD-noise tail instead straddles
+    # zero (the energy term being differentiated is convex/PSD in theory, so
+    # a NEGATIVE eigenvalue can only be finite-difference artifact, never
+    # real curvature) -- node150's known-bad state had 10 negative
+    # eigenvalues in its discarded tail, this state had zero. So a candidate
+    # gap is only accepted as a genuine noise-floor boundary if at least one
+    # eigenvalue below it is negative; otherwise the tail is treated as real
+    # (if weak) signal and left alone. Scans the whole spectrum and keeps
+    # the LAST (bottom-most) qualifying gap, so a real but much weaker
+    # signal band several orders of magnitude below the top eigenvalue is
+    # not mistaken for noise either.
+    tau = floor
+    gap_index = None
+    gap_ratio = None
+    n = sorted_abs.size
+    for i in range(n - 1):
+        hi, lo = sorted_abs[i], sorted_abs[i + 1]
+        ratio = np.inf if lo <= 1e-300 else hi / lo
+        tail_has_negative = bool(np.any(sorted_signed[i + 1:] < 0.0))
+        if ratio >= min_ratio and hi > floor and tail_has_negative:
+            tau = float(np.sqrt(max(hi * max(lo, floor), floor * floor)))
+            gap_index = i
+            gap_ratio = float(ratio)
+
+    keep = abs_eigvals > tau
+    inv_eigvals = np.zeros_like(eigvals)
+    inv_eigvals[keep] = 1.0 / eigvals[keep]
+    du_dtheta = -(eigvecs @ (inv_eigvals[:, None] * (eigvecs.T @ Gtheta)))
+
+    diagnostics = {
+        "tau": float(tau),
+        "effective_rank": int(np.sum(keep)),
+        "n_total": int(n),
+        "gap_index": gap_index,
+        "gap_ratio": gap_ratio,
+        "largest_eigval": float(sorted_abs[0]) if n else float("nan"),
+        "smallest_retained_eigval": (
+            float(np.min(abs_eigvals[keep])) if np.any(keep) else float("nan")
+        ),
+    }
+    return np.asarray(du_dtheta, dtype=float), diagnostics
+
+
 def _solve_implicit_system(
     H: np.ndarray,
     Gtheta: np.ndarray,
     *,
     options: SensitivityOptions,
-) -> tuple[np.ndarray, str, float]:
+) -> tuple[np.ndarray, str, float, dict]:
     H = np.asarray(H, dtype=float)
     Gtheta = np.asarray(Gtheta, dtype=float)
     n = H.shape[0]
     eye = np.eye(n, dtype=float)
     scale = max(float(np.linalg.norm(H, ord=np.inf)), 1.0)
+
+    if options.hessian_inversion == "truncated_svd":
+        du, rank_info = _rank_aware_hessian_solve(
+            H, Gtheta,
+            min_ratio=options.hessian_rank_gap_min_ratio,
+            floor=options.hessian_rank_floor,
+        )
+        if not np.all(np.isfinite(du)):
+            raise LinAlgError("Rank-aware implicit sensitivity solve failed.")
+        return du, "truncated_svd", np.nan, rank_info
 
     # First attempt is exactly the unregularised implicit system. Regularisation
     # is introduced only if the linear solve fails or returns non-finite values.
@@ -499,7 +612,7 @@ def _solve_implicit_system(
                 check_finite=False,
             )
             if np.all(np.isfinite(du)):
-                return np.asarray(du, dtype=float), "scipy_symmetric_solve", lam
+                return np.asarray(du, dtype=float), "scipy_symmetric_solve", lam, {}
         except (LinAlgError, ValueError) as exc:
             last_error = exc
 
@@ -507,7 +620,7 @@ def _solve_implicit_system(
     du, *_ = np.linalg.lstsq(H, -Gtheta, rcond=None)
     if not np.all(np.isfinite(du)):
         raise LinAlgError("Implicit sensitivity linear solve failed.") from last_error
-    return np.asarray(du, dtype=float), "lstsq", np.nan
+    return np.asarray(du, dtype=float), "lstsq", np.nan, {}
 
 
 def implicit_tip_jacobian(
@@ -605,7 +718,7 @@ def implicit_tip_jacobian(
     kinematics_time_s = time.perf_counter() - kinematics_started
 
     linear_started = time.perf_counter()
-    du_dtheta, linear_solve_method, regularization = _solve_implicit_system(
+    du_dtheta, linear_solve_method, regularization, rank_aware_info = _solve_implicit_system(
         H,
         Gtheta,
         options=options,
@@ -646,6 +759,8 @@ def implicit_tip_jacobian(
             float(np.linalg.cond(H)) if options.debug_jac else np.nan
         ),
         "debug_hessian_terms_requested": bool(options.debug_hessian_terms),
+        "hessian_inversion": options.hessian_inversion,
+        **rank_aware_info,
     }
 
     return SensitivityResult(

@@ -228,6 +228,231 @@ def make_magnet_exclusion_hold_gate(
     return gate
 
 
+def make_magnet_exclusion_selective_clip_gate(
+    *,
+    magnet_position_fn: Callable[[Array], Array],
+    magnet_position_jacobian_fn: Callable[[Array], Array],
+    dt: float,
+    magnet_exclusion_lumen_C_m: Any | None = None,
+    magnet_exclusion_radius_m: float | None = None,
+    magnet_z_bounds_m: tuple[float, float] | None = None,
+) -> Callable[[Array, Any, dict], tuple[Array, dict]]:
+    """Build a close_loop_path_follow._COMMAND_SAFETY_GATE callable: a THIRD
+    option alongside make_magnet_exclusion_hold_gate ("hold": zero the whole
+    7-vector on any predicted violation) and InverseJacobianBeamController's
+    own internal clip ("clip": minimum-norm projection of the WHOLE 6-vector
+    onto the constraint boundary, touching every joint a little). This gate
+    instead zeroes ONLY the individual joint-velocity components whose own
+    sign is pushing the predicted margin further into violation, and passes
+    every other component through completely unmodified -- joints not
+    implicated in the violation, and the insertion-rate channel (this
+    constraint's gradient never touches insertion; see magnet_position_
+    jacobian_fn's documented convention), keep exactly the value the naive
+    controller's own, still-completely-unaware math produced.
+
+    For a single linearized half-space constraint g.x >= rhs, joint i's own
+    contribution to the margin is g_i * x_i: positive means that joint is
+    HELPING satisfy the constraint, negative means it is HURTING (pushing
+    the margin further below the threshold). "The commands that violate" is
+    read as the HURTING set; those are clipped to zero, the HELPING/neutral
+    set is kept as commanded. If both the exclusion and a z-workspace bound
+    are predicted to be violated on the same tick, a joint is clipped if it
+    hurts EITHER constraint (set union).
+
+    Unlike the full minimum-norm projection, zeroing only the offending
+    components is not guaranteed to fully resolve the violation (the
+    helping components alone may not be enough) -- info["magnet_gate_
+    still_violating"] lists which constraint(s), if any, remain predicted-
+    violated after this partial clip, so that is visible in the log rather
+    than silently assumed away.
+
+    Same first-order distance/height linearization as
+    make_magnet_exclusion_hold_gate and project_joint_velocity_for_halfspace.
+    """
+    lumen = (
+        None if magnet_exclusion_lumen_C_m is None
+        else np.asarray(magnet_exclusion_lumen_C_m, dtype=float).reshape(-1, 3)
+    )
+
+    def gate(command: Array, measured_state: Any, info: dict) -> tuple[Array, dict]:
+        no_op = {
+            "magnet_gate_held": False, "magnet_gate_reason": None,
+            "magnet_gate_clipped_joints": [], "magnet_gate_still_violating": [],
+        }
+        if measured_state is None:
+            return command, no_op
+        state = np.asarray(measured_state, dtype=float).reshape(7)
+        command = np.asarray(command, dtype=float).reshape(7).copy()
+        joint_cmd = command[:6]
+
+        p_mag = np.asarray(magnet_position_fn(state), dtype=float).reshape(3)
+        J_mag = np.asarray(magnet_position_jacobian_fn(state), dtype=float).reshape(3, 7)[:, :6]
+
+        hurting = np.zeros(6, dtype=bool)
+        reasons: list[str] = []
+        excl_active = False
+        z_active = False
+        g = None
+        d_nom = None
+        g_z = None
+        z_nom = None
+
+        if magnet_exclusion_radius_m is not None and lumen is not None:
+            diffs = p_mag[None, :] - lumen
+            dists = np.linalg.norm(diffs, axis=1)
+            k = int(np.argmin(dists))
+            d_nom = float(dists[k])
+            normal = diffs[k] / max(d_nom, 1.0e-9)
+            g = normal @ J_mag
+            predicted = d_nom + float(g @ joint_cmd) * dt
+            if predicted < magnet_exclusion_radius_m:
+                excl_active = True
+                joints_here = (g * joint_cmd) < 0.0
+                hurting |= joints_here
+                reasons.append(
+                    f"exclusion(predicted={predicted*1e3:.2f}mm < "
+                    f"{magnet_exclusion_radius_m*1e3:.2f}mm, "
+                    f"clipped_joints={np.where(joints_here)[0].tolist()})"
+                )
+
+        if magnet_z_bounds_m is not None:
+            z_min, z_max = magnet_z_bounds_m
+            g_z = J_mag[2, :]
+            z_nom = float(p_mag[2])
+            predicted_z = z_nom + float(g_z @ joint_cmd) * dt
+            if predicted_z < z_min:
+                z_active = True
+                joints_here = (g_z * joint_cmd) < 0.0  # pushing z down further
+                hurting |= joints_here
+                reasons.append(
+                    f"zworkspace_low(predicted_z={predicted_z*1e3:.1f}mm < "
+                    f"{z_min*1e3:.1f}mm, clipped_joints={np.where(joints_here)[0].tolist()})"
+                )
+            elif predicted_z > z_max:
+                z_active = True
+                joints_here = (g_z * joint_cmd) > 0.0  # pushing z up further
+                hurting |= joints_here
+                reasons.append(
+                    f"zworkspace_high(predicted_z={predicted_z*1e3:.1f}mm > "
+                    f"{z_max*1e3:.1f}mm, clipped_joints={np.where(joints_here)[0].tolist()})"
+                )
+
+        if not reasons:
+            return command, no_op
+
+        joint_cmd_clipped = joint_cmd.copy()
+        joint_cmd_clipped[hurting] = 0.0
+        command[:6] = joint_cmd_clipped
+
+        still_violating: list[str] = []
+        if excl_active:
+            predicted2 = d_nom + float(g @ joint_cmd_clipped) * dt
+            if predicted2 < magnet_exclusion_radius_m:
+                still_violating.append("exclusion")
+        if z_active:
+            z_min, z_max = magnet_z_bounds_m
+            predicted_z2 = z_nom + float(g_z @ joint_cmd_clipped) * dt
+            if predicted_z2 < z_min or predicted_z2 > z_max:
+                still_violating.append("zworkspace")
+
+        return command, {
+            "magnet_gate_held": bool(hurting.any()),
+            "magnet_gate_reason": "; ".join(reasons),
+            "magnet_gate_clipped_joints": np.where(hurting)[0].tolist(),
+            "magnet_gate_still_violating": still_violating,
+            "magnet_gate_raw_command": command.tolist(),
+        }
+
+    return gate
+
+
+def make_magnet_independent_safety_monitor(
+    *,
+    magnet_position_fn: Callable[[Array], Array],
+    magnet_exclusion_lumen_C_m: Any | None = None,
+    magnet_exclusion_radius_m: float | None = None,
+    magnet_z_bounds_m: tuple[float, float] | None = None,
+    inner_gate: Callable[[Array, Any, dict], tuple[Array, dict]] | None = None,
+) -> Callable[[Array, Any, dict], tuple[Array, dict]]:
+    """Wrap an existing close_loop_path_follow._COMMAND_SAFETY_GATE (or
+    None) with an INDEPENDENT, measured-state safety backstop -- the
+    inverse-Jacobian-script equivalent of run_mpc_delay_aware_vessel.py's
+    "fix 4" (independent magnet-z safety monitor) and "fix 6" (independent
+    magnet-exclusion-radius safety monitor), ported rather than re-derived
+    (2026-10-08, DRY: this project's MPC script already built and live-
+    validated this exact mechanism after real near-misses where the primary
+    protection reported success while the magnet had already left bounds).
+
+    Every tick, AFTER `inner_gate` (if any -- hold/selective/clip/None, i.e.
+    whatever --magnet-protection chose) has had its say, this recomputes the
+    magnet's ACTUAL CURRENT position from the MEASURED state -- not the
+    one-tick-ahead PREDICTED state the gates above reason about -- and sets
+    info["abort_reason"] if it has ALREADY left [z_min, z_max] or dropped
+    inside magnet_exclusion_radius_m of the nearest point in
+    magnet_exclusion_lumen_C_m. This is independent of whether any upstream
+    gate is active, correct, or even installed: it runs identically under
+    --magnet-protection off, same as the MPC script's monitors run
+    regardless of the QP's own (separately validated) in-solve constraints.
+
+    Does not modify `command` or `gate_info["magnet_gate_*"]` fields -- the
+    one-tick-ahead gates above remain responsible for preventing tomorrow's
+    violation; this only stops the run once a violation has ALREADY
+    happened, as a last-resort backstop, exactly mirroring the MPC script's
+    own post-hoc (not preventive) monitors.
+
+    NOTE (see run_mpc_delay_aware_vessel.py's own module docstring, fix 4):
+    this monitor, like its MPC counterpart, does NOT bind general
+    Cartesian/TCP-workspace excursions -- only the magnet's own exclusion-
+    radius and z-bounds. The redundant arm joints can still swing the
+    flange/TCP into close_loop_path_follow.py's separate tcp_out_of_workspace
+    box while the magnet itself stays fully within these bounds; that
+    failure mode is caught (after the fact, same as for MPC) only by that
+    generic check, not by this one.
+    """
+    lumen = (
+        None if magnet_exclusion_lumen_C_m is None
+        else np.asarray(magnet_exclusion_lumen_C_m, dtype=float).reshape(-1, 3)
+    )
+
+    def monitor(command: Array, measured_state: Any, info: dict) -> tuple[Array, dict]:
+        if inner_gate is not None:
+            command, gate_info = inner_gate(command, measured_state, info)
+        else:
+            gate_info = dict(info)
+
+        if measured_state is None:
+            return command, gate_info
+
+        state = np.asarray(measured_state, dtype=float).reshape(7)
+        p_mag = np.asarray(magnet_position_fn(state), dtype=float).reshape(3)
+
+        reasons: list[str] = []
+        if magnet_exclusion_radius_m is not None and lumen is not None:
+            d_nom = float(np.min(np.linalg.norm(p_mag[None, :] - lumen, axis=1)))
+            if d_nom < magnet_exclusion_radius_m:
+                reasons.append(
+                    f"independent_magnet_exclusion_violated(d={d_nom*1e3:.2f}mm < "
+                    f"{magnet_exclusion_radius_m*1e3:.2f}mm)"
+                )
+        if magnet_z_bounds_m is not None:
+            z_min, z_max = magnet_z_bounds_m
+            z_now = float(p_mag[2])
+            if z_now < z_min or z_now > z_max:
+                reasons.append(
+                    f"independent_magnet_z_violated(z={z_now*1e3:.1f}mm not in "
+                    f"[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
+                )
+
+        if reasons:
+            new_reason = "; ".join(reasons)
+            existing = gate_info.get("abort_reason")
+            gate_info["abort_reason"] = f"{existing}; {new_reason}" if existing else new_reason
+
+        return command, gate_info
+
+    return monitor
+
+
 class InverseJacobianBeamController:
     """Damped resolved-rate control with nullspace configuration regulation."""
 
@@ -674,4 +899,6 @@ __all__ = [
     "build_inverse_jacobian_controller",
     "project_joint_velocity_for_halfspace",
     "make_magnet_exclusion_hold_gate",
+    "make_magnet_exclusion_selective_clip_gate",
+    "make_magnet_independent_safety_monitor",
 ]

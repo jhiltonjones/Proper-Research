@@ -96,6 +96,8 @@ from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
 from proper_research.controllers.inverse_jacobian_controller import make_magnet_exclusion_hold_gate
+from proper_research.controllers.inverse_jacobian_controller import make_magnet_exclusion_selective_clip_gate
+from proper_research.controllers.inverse_jacobian_controller import make_magnet_independent_safety_monitor
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
 from proper_research.simulation.simulations.initial_conditions import make_initial_poses
@@ -294,27 +296,58 @@ def main() -> None:
                          "plan's own start position, unchanged behaviour.")
     p.add_argument("--magnet-rise-limit-mm", type=float, default=40.0)
     p.add_argument("--magnet-floor-margin-mm", type=float, default=40.0)
-    p.add_argument("--magnet-protection", choices=["clip", "hold", "off"], default="clip",
+    p.add_argument("--magnet-protection-margin-mm", type=float, default=3.0,
+                    help="2026-10-08: safety margin ADDED to the exclusion radius (and "
+                         "SUBTRACTED from the z-workspace bounds) that the PREDICTIVE "
+                         "gate (clip/hold/selective -- whichever --magnet-protection "
+                         "chose) enforces, so it starts reacting before the TRUE floor "
+                         "rather than exactly at it. Does NOT change the TRUE floor "
+                         "itself, which the independent measured-state monitor "
+                         "(make_magnet_independent_safety_monitor, always active) keeps "
+                         "checking unchanged -- this only buys the predictive gate some "
+                         "slack. Exists because the gate's one-tick-ahead check is a "
+                         "first-order linear prediction assuming the commanded velocity "
+                         "is achieved instantly and exactly; real execution (servoJ's own "
+                         "--servo-lookahead-s smoothing, vision/FK measurement noise) can "
+                         "differ from that by a small amount each tick, and a controller "
+                         "riding the floor with nullspace_gain=0 has nothing pulling it "
+                         "back -- confirmed live 2026-10-08: a 19-tick, ~0.1-0.3mm/tick "
+                         "smooth creep through a 255mm floor, final breach only 0.097mm, "
+                         "with the gate never once predicting a violation in that window. "
+                         "0 disables (restores the original exactly-at-the-floor gate "
+                         "behaviour).")
+    p.add_argument("--magnet-protection", choices=["clip", "hold", "selective", "off"], default="clip",
                     help="how the magnet-exclusion-radius/z-workspace constraints are "
-                         "enforced (2026-10-07, three genuinely different experimental "
-                         "conditions, not just on/off): "
+                         "enforced (2026-10-07/2026-10-08, four genuinely different "
+                         "experimental conditions, not just on/off): "
                          "'clip' (default) -- InverseJacobianBeamController's own "
-                         "anticipatory clip projects the command to the boundary and the "
-                         "robot keeps moving; the controller 'handles' the constraint. "
+                         "anticipatory clip: a minimum-norm projection of the WHOLE "
+                         "6-vector onto the constraint boundary (every joint touched a "
+                         "little); the robot keeps moving; the controller 'handles' the "
+                         "constraint. "
                          "'hold' -- the controller's own math stays COMPLETELY naive/"
                          "unaware of the constraint (no clip at all), but an external "
                          "gate (close_loop_path_follow._COMMAND_SAFETY_GATE) sits between "
                          "the controller's raw output and the robot and HOLDS position "
-                         "(zero command) on any tick the raw command would violate -- the "
-                         "'does the naive controller actually understand this constraint, "
-                         "unlike MPC's in-QP formulation' comparison. "
+                         "(zeroes the WHOLE 7-vector) on any tick the raw command would "
+                         "violate -- the 'does the naive controller actually understand "
+                         "this constraint, unlike MPC's in-QP formulation' comparison. "
+                         "'selective' -- also an external gate (controller stays naive), "
+                         "but instead of zeroing everything it zeroes ONLY the individual "
+                         "joint-velocity components whose own sign is pushing the "
+                         "predicted margin further into violation (g_i*command_i<0), and "
+                         "passes every other component -- including the insertion-rate "
+                         "channel, which this constraint never touches -- through exactly "
+                         "as the naive controller commanded it. Not guaranteed to fully "
+                         "resolve the violation (logged as magnet_gate_still_violating "
+                         "when it doesn't); see make_magnet_exclusion_selective_clip_gate. "
                          "'off' -- neither: the controller's raw, unaware command is sent "
                          "to the robot unmodified. NOT SAFE as a live hardware baseline "
                          "for this constraint specifically -- only the generic velocity/"
                          "accel/toothless-state-box clip and the tcp_out_of_workspace box "
-                         "remain. Use 'hold' instead if you want to see the naive "
-                         "controller's true (unaware) behaviour without risking the magnet "
-                         "actually reaching the beam base.")
+                         "remain. Use 'hold' or 'selective' instead if you want to see the "
+                         "naive controller's true (unaware) behaviour without risking the "
+                         "magnet actually reaching the beam base.")
 
     p.add_argument("--max-control-steps", type=int, default=1000)
     p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
@@ -357,6 +390,24 @@ def main() -> None:
     print(f"[inv-jac-online] magnet z-bounds: start_z={magnet_z_start*1e3:.1f}mm "
           f"bounds=[{magnet_z_bounds_m[0]*1e3:.1f},{magnet_z_bounds_m[1]*1e3:.1f}]mm")
 
+    # The PREDICTIVE gate (clip/hold/selective) enforces the TRUE floor plus
+    # this margin, so it starts reacting before the true boundary rather than
+    # exactly at it -- see --magnet-protection-margin-mm's help text. The
+    # independent measured-state monitor below is NOT given this margin: it
+    # keeps checking the TRUE floor unchanged, as the final backstop.
+    protection_margin_m = args.magnet_protection_margin_mm * 1e-3
+    gate_exclusion_radius_m = exclusion_radius_m + protection_margin_m
+    gate_z_bounds_m = (
+        magnet_z_bounds_m[0] + protection_margin_m,
+        magnet_z_bounds_m[1] - protection_margin_m,
+    )
+    if protection_margin_m > 0:
+        print(f"[inv-jac-online] predictive-gate safety margin: {args.magnet_protection_margin_mm:.1f}mm "
+              f"-> gate radius={gate_exclusion_radius_m*1e3:.1f}mm "
+              f"(true floor {exclusion_radius_m*1e3:.1f}mm unchanged for the independent monitor), "
+              f"gate z-bounds=[{gate_z_bounds_m[0]*1e3:.1f},{gate_z_bounds_m[1]*1e3:.1f}]mm "
+              f"(true [{magnet_z_bounds_m[0]*1e3:.1f},{magnet_z_bounds_m[1]*1e3:.1f}]mm unchanged)")
+
     pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
     pf._COMMAND_SAFETY_GATE = None
     if args.magnet_protection == "clip":
@@ -364,8 +415,8 @@ def main() -> None:
             magnet_position_fn=_magnet_position_fn,
             magnet_position_jacobian_fn=_magnet_position_jacobian_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_radius_m,
-            magnet_z_bounds_m=magnet_z_bounds_m,
+            magnet_exclusion_radius_m=gate_exclusion_radius_m,
+            magnet_z_bounds_m=gate_z_bounds_m,
         )
         print("[inv-jac-online] magnet protection: CLIP (controller's own anticipatory "
               "projection -- it 'handles' the constraint and keeps moving)")
@@ -375,12 +426,26 @@ def main() -> None:
             magnet_position_jacobian_fn=_magnet_position_jacobian_fn,
             dt=1.0 / common.CONTROL_HZ,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
-            magnet_exclusion_radius_m=exclusion_radius_m,
-            magnet_z_bounds_m=magnet_z_bounds_m,
+            magnet_exclusion_radius_m=gate_exclusion_radius_m,
+            magnet_z_bounds_m=gate_z_bounds_m,
         )
         print("[inv-jac-online] magnet protection: HOLD (controller stays completely "
               "naive/unaware of the constraint; an external gate holds position -- zero "
               "command -- on any tick its raw output would violate it)")
+    elif args.magnet_protection == "selective":
+        pf._COMMAND_SAFETY_GATE = make_magnet_exclusion_selective_clip_gate(
+            magnet_position_fn=_magnet_position_fn,
+            magnet_position_jacobian_fn=_magnet_position_jacobian_fn,
+            dt=1.0 / common.CONTROL_HZ,
+            magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
+            magnet_exclusion_radius_m=gate_exclusion_radius_m,
+            magnet_z_bounds_m=gate_z_bounds_m,
+        )
+        print("[inv-jac-online] magnet protection: SELECTIVE (controller stays completely "
+              "naive/unaware of the constraint; an external gate zeroes ONLY the "
+              "individual joint-velocity components pushing toward violation on any tick "
+              "its raw output would violate it, passing the rest -- including insertion -- "
+              "through unmodified)")
     else:
         print("[inv-jac-online] magnet protection: OFF -- the controller's raw, "
               "unaware command goes straight to the robot. NOT a safe baseline for "
@@ -388,6 +453,29 @@ def main() -> None:
               "toothless-state-box clip and tcp_out_of_workspace remain. Use "
               "--magnet-protection hold if you want this comparison without risking "
               "the magnet actually reaching the beam base.")
+
+    # DRY port (2026-10-08) of run_mpc_delay_aware_vessel.py's "fix 4"/"fix 6"
+    # independent, measured-state safety monitors -- always installed,
+    # composing with whatever --magnet-protection chose above (including
+    # None for "off"), exactly mirroring that these monitors run
+    # unconditionally in the MPC script too, regardless of the QP's own
+    # separately-validated in-solve constraints. See
+    # make_magnet_independent_safety_monitor's docstring for what this does
+    # and does NOT catch (notably: NOT tcp_out_of_workspace excursions --
+    # that remains the only thing checking the robot's own TCP frame against
+    # the generic Cartesian box, since redundant joints can swing the arm
+    # there even while the magnet itself stays within these bounds).
+    pf._COMMAND_SAFETY_GATE = make_magnet_independent_safety_monitor(
+        magnet_position_fn=_magnet_position_fn,
+        magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
+        magnet_exclusion_radius_m=exclusion_radius_m,
+        magnet_z_bounds_m=magnet_z_bounds_m,
+        inner_gate=pf._COMMAND_SAFETY_GATE,
+    )
+    print("[inv-jac-online] independent magnet-z/exclusion safety monitor: ACTIVE "
+          "(measured-state backstop, same mechanism as run_mpc_delay_aware_vessel.py's "
+          "fix 4/fix 6 -- aborts if the magnet has ALREADY left bounds, independent of "
+          "the --magnet-protection mode above)")
 
     reset_target_q0 = None
     if args.start_radius_override_mm is not None:
@@ -453,7 +541,7 @@ def main() -> None:
     # see that script's own 2026-10-07 comment for the full derivation).
     # Reused here, not re-derived -- this is the SAME vessel plan family.
     cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
-    cfg.workspace_xyz_max_m = (0.656, -0.534, 0.433)
+    cfg.workspace_xyz_max_m = (0.656, -0.2, 0.433)
 
     cfg.output_root = args.out_dir
     cfg.run_name = args.run_name

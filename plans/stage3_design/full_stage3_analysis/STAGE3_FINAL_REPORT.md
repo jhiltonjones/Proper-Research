@@ -394,16 +394,25 @@ more specific claim of literal null-space motion is not made here.)*
 
 ### 5.1 Design
 
-Two additional magnet-protection gate modes were built and tested beyond the
-external hold-everything gate used in §4: a **clip** mode (the controller's
-own internal minimum-norm half-space projection onto the constraint boundary)
-and a **selective** mode (an external gate that zeroes only the individual
-joint-velocity components whose own sign is pushing the predicted margin
-further into violation, passing every other component through unmodified).
-Six hardware reps at the 255mm exclusion floor test two independent pairings
-of gate mode and Jacobian model:
+An additional magnet-protection gate mode was built beyond the external
+hold-everything gate used in §4: a **selective** mode (an external gate that
+zeroes only the individual joint-velocity components whose own sign is
+pushing the predicted margin further into violation, passing every other
+component through unmodified). Six hardware reps at the 255mm exclusion
+floor test this gate with two different Jacobian models. (A separate
+**clip** mode also exists — the controller's own internal minimum-norm
+half-space projection — but is not part of the verified evidence below: one
+run set's directory name suggested it used `clip`, but replaying the actual
+control law against its logged states and testing all three candidate gate
+implementations against the logged commands shows a 100% match to the
+**selective** gate specifically (406/406, 357/357, and 396/396 ticks across
+its three reps, against 86-94% for the clip and hold candidates on the same
+data) — this set, despite its name, also ran the selective gate. This
+mismatch between directory name and actual run configuration is consistent
+with a labelling oversight flagged, but not corrected, before the run was
+executed.)
 
-| | selective gate + contact Jacobian | clip gate + no-contact Jacobian |
+| | selective gate + contact Jacobian | selective gate + no-contact Jacobian |
 |---|---|---|
 | completed | **0/3** — all stopped on a generic robot-workspace-box violation unrelated to the magnet constraint, at $s\approx62$-$64$mm | **0/3** — same generic workspace-box stop, at control step 357-406 |
 | exclusion-gate clip activity | 0-1.9% of ticks | magnet never within 0.5mm of its own floor |
@@ -459,10 +468,13 @@ robot physically exits its own workspace box.
 ### 5.3 Scope of this result
 
 This mechanism was confirmed to reproduce across **two independent Jacobian
-sources (contact, no-contact) and two independent gate implementations
-(selective, clip)** — it is a property of how this control law resolves
-kinematic redundancy, not an artefact of one specific Jacobian model or one
-specific gate design. It does **not** change the H3 verdict in §4: the
+sources (contact, no-contact)**, both using the selective gate (verified
+directly from logged commands, not from directory names — see §5.1) — it is
+a property of how this control law resolves kinematic redundancy, not an
+artefact of the specific Jacobian model supplied. Whether it also reproduces
+under the controller's internal **clip** mode specifically remains untested;
+no verified hardware run in this investigation's record actually exercised
+that gate mode. It does **not** change the H3 verdict in §4: the
 exclusion gate itself works correctly throughout every rep examined here. It
 is, however, a second, entirely independent reason the inverse-Jacobian
 controller underperforms MPC, and a plausible (though not separately
@@ -839,7 +851,7 @@ condition and every other condition tested in this investigation.
 | **H1** — contact-aware planning is required for an executable open-loop plan | **Strongly supported** | measured tracking divergence between plans lags the model-predicted contact onset by ~22mm; early contact is tolerable, sustained contact is not |
 | **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | radius-matched on both legs via logged metadata; completion (3/3→0/3 for the wrong model vs 3/3→3/3 for the correct one) is the decisive evidence; magnet-position and insertion-length data make the mechanism directly observable, not just inferred |
 | **H3** — MPC vs inverse-Jacobian constraint awareness | **Strongly supported** | exact (agreement = 1.000) recovery of the controller's raw commands; the architectural difference is latent, not demonstrated, in the one cell where the constraint never binds; roughly half of the tight-floor infeasible episodes are a workspace-height violation, not the named exclusion-radius violation |
-| **H3b** — unregularized redundant-configuration drift (secondary mechanism) | **Supported as a second, independent failure mode** | reproduces across 2 Jacobian models × 2 gate implementations; does not alter the H3 verdict, since the exclusion gate itself works correctly throughout |
+| **H3b** — unregularized redundant-configuration drift (secondary mechanism) | **Supported as a second, independent failure mode** | reproduces across 2 Jacobian models, both verified (via command replay, not directory names) to have run under the selective gate; the internal clip mode remains untested; does not alter the H3 verdict, since the exclusion gate itself works correctly throughout |
 | **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Partially supported, and shown to strengthen specifically at the tight exclusion floor** | mismatch-vs-tracking-error correlation is near-zero at the loose floor and clearly positive (+0.47 to +0.75) at the tight floor; a 2.64× command-direction over-prediction is specific to the no-contact-scheduled MPC condition at the tight floor; the effect remains sub-millimetre in absolute command-weighted terms |
 | **H5** — a trajectory-varying Jacobian outperforms any single fixed one | **Supported** | the scheduled Jacobian beats both a well-conditioned and an ill-conditioned frozen alternative on completion and/or tracking quality; the two frozen ablations' differing failure timing (conditioning-limited vs staleness-limited) is established but not fully reconciled with each other |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | the infeasible-request rate is exactly zero at both gains tested; the resulting tracking degradation is consistent with, but not proven to be, underdamped oscillatory behaviour, and is independent of the exclusion constraint entirely |

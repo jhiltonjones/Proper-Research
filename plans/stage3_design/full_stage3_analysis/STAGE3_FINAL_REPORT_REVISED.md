@@ -401,15 +401,16 @@ mode remains untested in this record.
 
 ## 6. H4 — Scheduled Jacobian accuracy against the contact model at the measured state
 
-Sections 6.1 (why $J_C^{state}$ is the only physically-grounded reference),
-6.2-6.4 (the whole-run Q1/Q2/Q3 tables: relative-Frobenius mismatch,
-command-weighted error, gain ratio, direction angle), and 6.5 (the
-staleness-vs-missing-physics secondary decomposition) are **unchanged from
-the prior report** and are not repeated here. The headline whole-run finding
-stands: the no-contact-scheduled MPC condition at the tight floor is the
-outlier on every one of $E_J$, $\epsilon_u$, and the 2.64$\times$ gain
-ratio simultaneously, and its mismatch-vs-tracking-error correlation moves
-from near-zero at the loose floor to +0.47 at the tight floor.
+Sections 6.1-6.4 of `STAGE3_FINAL_REPORT.md` (why $J_C^{state}$ is the only
+physically-grounded reference; the whole-run Q1/Q2/Q3 tables: relative-
+Frobenius mismatch, command-weighted error, gain ratio, direction angle; and
+the staleness-vs-missing-physics secondary decomposition, there numbered
+§6.5) are **unchanged from the prior report** and are not repeated here. The
+headline whole-run finding stands: the no-contact-scheduled MPC condition at
+the tight floor is the outlier on every one of $E_J$, $\epsilon_u$, and the
+2.64$\times$ gain ratio simultaneously, and its mismatch-vs-tracking-error
+correlation moves from near-zero at the loose floor to +0.47 at the tight
+floor.
 
 ### 6.5 New: common-progress-matched bins, and temporal ordering against H2's failure
 
@@ -532,7 +533,7 @@ entirely.
 
 ---
 
-## 9. Task 1 — The $s\approx57$-$61$mm local transient: deep diagnostic
+## 9. The $s\approx57$-$61$mm local transient in scheduled contact-aware MPC: expanded diagnostic
 
 The prior report's §1.4 ruled out eight candidates jointly (schedule
 conditioning, one-step prediction error, all three singular values,

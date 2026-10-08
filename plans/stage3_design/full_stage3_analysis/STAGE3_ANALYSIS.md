@@ -109,8 +109,26 @@ directly against the hardware logs, not assumed:
   5.8-6.1. The index-505 spike produces **no visible error spike** at the
   corresponding tick (logged error there: 0.13-0.83mm across the three runs).
   So while the index-505 defect is real and the repair is a legitimate fix, it
-  is **not** the explanation for the dominant tracking bump in this dataset —
-  something else at s≈57mm is responsible, not yet identified here.
+  is **not** the explanation for the dominant tracking bump in this dataset.
+
+  **Targeted follow-up (2026-10-08):** a small, focused diagnostic at
+  s=54-60mm (all three reps, every tick in the window) plotted $e_{track}$,
+  $e_{pred}$ against the scheduled Jacobian, all three singular values of
+  $J_{sched}$, $\|u\|$, tick-to-tick $\|\Delta u\|$, the live constraint
+  margin, insertion rate, and schedule-vs-live error together
+  (`tables/s54_60mm_targeted_detail.csv`, `figures/s54_60mm_targeted_diagnostic.png`).
+  **Nothing examined aligns with the peak.** Every quantity sits at an
+  entirely ordinary value through this window: $\sigma_1/\sigma_3$ (condition)
+  averages 4.85-4.88 across reps (same as the broad 4-17 baseline, §0.3), the
+  constraint margin averages 10.9-13.1mm (nowhere near the 0mm floor),
+  schedule-vs-live divergence averages 33-35% (squarely inside the range H4
+  shows has no tick-level relationship to tracking error, §5.2), and neither
+  $\|u\|$ nor $\|\Delta u\|$ shows an outlier at the peak tick. Per this
+  report's own standard (a bump does not need to be solved to publish the
+  main result): **this is left as an unexplained local transient.** Whatever
+  drives it is not visible in any of the eight quantities checked here, and
+  it is not large enough (max 3.655mm, well under every abort threshold) to
+  threaten any of this report's main conclusions.
 - The index-progression (0-9) near-singularity, present in both schedule
   files and therefore live in every run analysed, also does not produce an
   obvious tracking spike at the very start of the path (logged error at steps
@@ -445,6 +463,139 @@ cannot legally be executed, and gets held") but shows the **specific constraint
 involved is not always the one hypothesised**. Reporting this as a pure
 exclusion-radius effect would be wrong.
 
+### 4.6 A third gate mode (selective per-joint clip) and a new, distinct failure mode it exposes
+
+**Added 2026-10-08.** A third `--magnet-protection` option was built: `selective`
+— on a predicted violation, zeroes only the individual joint-velocity
+components whose own sign pushes the margin further into violation
+(`g_i·command_i<0`), passing every other component (including insertion)
+through exactly as the naive controller commanded it. This sits between
+`hold` (zero everything) and the controller's own `clip` (minimum-norm
+projection of everything). Three reps were run at 255mm (live 250mm) with
+the **repaired** contact schedule (§0.3) — directly comparable to the
+matched255 MPC-$J_C$ condition (§3), which used the identical schedule file.
+
+**Completion and tracking:**
+
+| | InvJac-selective + $J_C$ (255mm, repaired sched) | MPC + $J_C$ (255mm matched, same sched) |
+|---|---|---|
+| completed | **0/3** — all `tcp_out_of_workspace`, s≈62-64mm (~83-84% progress) | **3/3** `path_complete` |
+| RMSE (full run) | 1.21-1.24mm | 0.70-0.77mm |
+| gate (magnet-exclusion) clip activity | 0-1.9% of ticks | n/a (in-QP) |
+| min magnet distance | 257.7-258.6mm | 250.9-251.1mm |
+
+**The selective gate did its job — it is not what ended these runs.** Fewer
+than 2% of ticks ever needed any clipping, and the magnet never got within
+7mm of its own floor in any of the three reps. All three runs instead hit
+`tcp_out_of_workspace` — the same generic, magnet-unrelated Cartesian-box
+check discussed in §4.5 and in this report's live debugging history
+(`close_loop_path_follow.py`'s box on the robot's own `getActualTCPPose()`,
+not the magnet position) — at a strikingly consistent point, s≈62-64mm,
+across all three reps.
+
+**This is a different, inverse-Jacobian-specific failure mode: unregularized
+null-space drift.** Figure: `figures/h3_invjac_vs_mpc_redundancy_drift.png`.
+Overlaying joint-0 (base rotation) against path progress for both controllers
+on the *identical* floor and schedule shows their trajectories tracking each
+other almost exactly from s=0 to s≈55mm — then **sharply diverging**: MPC's
+joint-0 plateaus near −30° to −33° and stays there for the rest of the path;
+the inverse-Jacobian controller's keeps climbing past −20° (off the top of
+the plotted range) in the same window its tracking error blows past 5mm and
+the TCP crosses the workspace box. The same pattern was independently found
+at the *contact-MPC* level in §0.3/§4.6 above (the unexplained s≈57mm
+error peak) and is visible again here in a *different* controller — this
+project's third independent line of evidence that something about this
+specific stretch of the path (s≈55-65mm) is locally demanding, even though
+no single examined quantity (§0.3) explains why.
+
+**Why does MPC absorb this and the naive controller doesn't?** Both
+controllers are run with zero explicit posture/nullspace regularization
+(`nullspace_gain=0` for the inverse-Jacobian controller, `Q_N=0` for MPC —
+deliberately matched, this whole project's standard fair-comparison
+condition, §3). But MPC's QP cost is not *only* the state cost: its
+`R=700·R0` input-tracking weight and its input-increment weight apply to the
+**entire 7-dimensional commanded input**, including the 4 redundant
+directions that don't affect tip tracking at all — these cost terms
+implicitly damp *all* joint velocity, task-relevant or not, every single
+tick, with no need for an explicit posture target. The naive
+inverse-Jacobian controller's redundancy resolution, with `nullspace_gain=0`,
+has **no such term anywhere** — the null-space projector
+$(I-J^+J)$ is multiplied by a gain of exactly zero, so the four redundant
+directions are completely free to drift however the damped-least-squares
+solution's own numerical asymmetries happen to push them, with nothing
+pulling them back, tick after tick, for as long as the run lasts. Over most
+of the path this drift is harmless (task tracking is by construction
+insensitive to it) — but when the path *also* becomes locally demanding
+(the same s≈55-65mm region flagged above), MPC's implicit, always-on input
+damping keeps it inside a bounded, recoverable configuration, while the
+naive controller — having wandered further from a "normal" posture for
+longer, with literally nothing resisting that drift — has no mechanism to
+recover and the divergence runs away.
+
+**This is a genuinely different mechanism from H3's main finding
+(constraint-awareness).** The magnet-exclusion gate worked correctly
+throughout; the failure comes from the complete absence of *any* regularizer
+on the redundant joints, magnet-related or not — a cost specific to how
+naive resolved-rate control handles kinematic redundancy, not to the
+exclusion-radius constraint this section otherwise focuses on. It is also a
+plausible, though not separately confirmed, contributor to why the inverse-
+Jacobian conditions in the main 210mm/255mm factorial (§1, §3) show larger
+late-path tracking degradation generally, beyond what the magnet-exclusion
+hold/clip mechanism alone explains.
+
+### 4.7 Is the redundancy-drift mechanism specific to the contact Jacobian? No — it reproduces with the no-contact Jacobian too
+
+**Added 2026-10-08.** §4.6 demonstrated the mechanism with one Jacobian
+(contact) and one gate mode (`selective`). To check this is a property of
+the inverse-Jacobian control law itself — not an artefact of that specific
+Jacobian or gate — three more reps were run at the same 255mm floor with
+the **no-contact** Jacobian schedule (and its own matched plan-dir/reference
+path) and the **clip** gate mode (the controller's own internal projection,
+a third combination not tried before):
+
+| | InvJac-clip + $J_{NC}$ (255mm) | MPC + $J_{NC}$ (255mm, closedloop) |
+|---|---|---|
+| completed | **0/3** — all `tcp_out_of_workspace`, step 357-406 | **0/3** — all `tracking_error_exceeded`, step 304-309 |
+| RMSE (full run) | 1.72-2.41mm | 1.08-1.11mm |
+| min magnet distance | 255.5-257.6mm (floor=255mm) | 250.0-250.3mm (live=250mm) |
+| joint-0 range, first 350 ticks | −50.0° to −24.7° (one rep reaches −24.7°) | −50.3° to −29.4°, identical across all 3 reps |
+
+**Both controllers fail at this floor with the no-contact schedule — but
+for different reasons, and the inverse-Jacobian controller's failure mode
+is the same one found in §4.6.** MPC-$J_{NC}$'s failure here is the H2/H3
+schedule-fidelity story already established (§3.4): it gives up via its own
+`max_tracking_error_m` check, early (step ~305), with joint-0 staying
+tightly and *identically* bounded across all three reps (−50.3° to −29.4°,
+essentially zero rep-to-rep variability) — consistent with MPC's input cost
+continuing to regularize the redundant directions even while the no-contact
+schedule itself is failing to track. The inverse-Jacobian controller
+survives notably longer (step 357-406) before failing by the **same route**
+as §4.6: `tcp_out_of_workspace`, with joint-0 pushing *past* wherever MPC's
+own trajectory plateaus (one rep reaches −24.7°, 4.7° beyond MPC's bound;
+the other two stay closer to −32°, showing real rep-to-rep variability in
+how far the unregularized drift runs before the box trips it). The magnet-
+exclusion gate again did its job in every rep — minimum magnet distance
+stayed 0.5-2.6mm clear of the 255mm floor — so, exactly as in §4.6, the
+gate is not what ends these runs.
+
+Figure: `figures/h3_invjac_redundancy_drift_jacobian_independence.png` —
+joint-0, tracking error, and magnet distance vs path progress for all four
+conditions (contact pairing solid, no-contact pairing dashed) on one set of
+axes. The qualitative shape repeats: whichever Jacobian/schedule pair is
+used, the inverse-Jacobian controller's joint-0 trajectory tracks its MPC
+counterpart closely at first, then drifts past it in the same mid-path
+region, while MPC's stays bounded (whether MPC itself ultimately succeeds,
+as with $J_C$, or fails by a different, earlier mechanism, as with
+$J_{NC}$).
+
+**Conclusion:** the unregularized-null-space-drift mechanism identified in
+§4.6 is a property of the inverse-Jacobian control law's redundancy
+resolution (`nullspace_gain=0`, no term anywhere penalizing the 4 redundant
+directions), not of the specific Jacobian model or gate mode used to
+demonstrate it. It reproduces with a different Jacobian source, a different
+gate implementation, and a different (already-failing-for-other-reasons)
+MPC comparator.
+
 ---
 
 ## 5. H4 — Scheduled vs live Jacobian accuracy
@@ -698,8 +849,15 @@ free-space behaviour. This directly supports reading the two ablations as:
 - **idx0 = a pathologically ill-conditioned, physically anomalous frozen
   Jacobian** that happens not to behave like a textbook free-space matrix.
 
-Three reps of each, both at TRUE floor=210mm (live=205mm), identical to the
-scheduled MPC-$J_C$ baseline — all three conditions are directly comparable.
+**Floor verified directly from each run's own `controller_metadata.json`, not
+assumed from the run names or the command originally given to produce
+them** — a specific check run on 2026-10-08 after a request to confirm this
+rather than infer it: all three idx0 runs and all three idx100 runs report
+`magnet_exclusion_source: beam_base_fixed_210.00mm`,
+`magnet_exclusion_radius_m: 0.205` (TRUE floor=210mm, live=205mm),
+**identical to each other and to the scheduled MPC-$J_C$ baseline**. The two
+frozen ablations below are therefore a genuinely same-radius comparison, and
+are treated as one; there is no 210mm-vs-255mm split to make for this pair.
 
 ### 7.0.1 The headline reversal
 
@@ -1044,7 +1202,7 @@ Figure: `figures/gain_ablation.png`.
 ## 9. Deliverables index
 
 1. **Per-run summary table:** `tables/per_run_summary_closedloop.csv` (34 closed-loop/frozen/matched/excluded runs, `cell_role` column) + `openloop_reused/common_interval_stats.csv` (4 open-loop runs).
-2. **Figures:** `figures/` — `closedloop_tracking_{210,255}mm.png`, `mpc_nc_vs_c_255mm_lag_crosstrack.png`, `h3_representative_stall_event.png`, `magnet_config_vs_progress.png`, `magnet_xy_vs_exclusion_boundary.png`, `frozen_vs_scheduled_magnet_config.png`, `h4_jacobian_accuracy.png`, `h5_frozen_vs_scheduled_jacobian.png`, `h5_frozen_schedule_divergence.png`, `h5_three_way_tracking_comparison.png`, `h5_three_way_lag_comparison.png`, `h5_idx0_vs_idx100_divergence_and_angle.png`, `gain_ablation.png`; open-loop figures in `openloop_reused/`.
+2. **Figures:** `figures/` — `closedloop_tracking_{210,255}mm.png`, `mpc_nc_vs_c_255mm_lag_crosstrack.png`, `h3_representative_stall_event.png`, `magnet_config_vs_progress.png`, `magnet_xy_vs_exclusion_boundary.png`, `frozen_vs_scheduled_magnet_config.png`, `h2_magnet_distance_and_insertion_story.png`, `h3_invjac_vs_mpc_redundancy_drift.png` (§4.6), `h3_invjac_redundancy_drift_jacobian_independence.png` (§4.7), `s54_60mm_targeted_diagnostic.png` (§0.3 targeted diagnostic), `h4_jacobian_accuracy.png`, `h5_frozen_vs_scheduled_jacobian.png`, `h5_frozen_schedule_divergence.png`, `h5_three_way_tracking_comparison.png`, `h5_three_way_lag_comparison.png`, `h5_idx0_vs_idx100_divergence_and_angle.png`, `gain_ablation.png`; open-loop figures in `openloop_reused/`.
 3. **Interaction-effects table:** `tables/h2_interaction_effects.csv` (210 vs 255 for MPC and inverse-Jacobian, both Jacobians, radius-matched) — see §3.1. The MPC-vs-InvJac comparison at each radius is also in that table (`mpc_vs_inv_at_C`, `mpc_vs_inv_at_NC` columns).
 4. **210mm frozen-vs-scheduled ablation tables:** `tables/h5_frozen_vs_scheduled_summary.csv`, `tables/h5_frozen_schedule_divergence.csv` (idx0 vs scheduled, §7.1-7.4), `tables/h5_idx0_vs_idx100_schedule_comparison.csv` (idx0 vs idx100 vs the true schedule at every index, §7.7) — see §7. **Not included in any 210-vs-255 factorial comparison**, per the brief.
 5. **Inverse-controller infeasible-command table:** `tables/h3_invjac_infeasible_commands.csv`, MPC counterpart `tables/h3_mpc_constraint_margin.csv` — see §4.2.
@@ -1053,7 +1211,9 @@ Figure: `figures/gain_ablation.png`.
 
 Additional tables produced along the way: `tables/common_interval_{210,255}mm.csv`
 (§1), `tables/longitudinal_lag_vs_crosstrack.csv` (§3.4), `tables/magnet_configuration_envelope.csv`
-(§6), `tables/gain_ablation.csv` (§8).
+(§6), `tables/gain_ablation.csv` (§8), `tables/s54_60mm_targeted_detail.csv`
+(§0.3 targeted diagnostic, 137 rows), `tables/h4_v2_jacobian_accuracy_per_sample.csv`
+(H4's guided-sampling dataset, 1636 rows, 8 conditions — see §5).
 
 ---
 
@@ -1088,7 +1248,19 @@ and is held in place every single time; MPC rides the same constraint on
 are needed: the difference is **latent, not demonstrated**, in the one cell
 where the constraint never binds (InvJac-$J_{NC}$ @210mm, 0 infeasible ticks);
 and at 255mm roughly half of the infeasible episodes are **z-workspace**
-violations, not the beam-base-radius violations the hypothesis names.
+violations, not the beam-base-radius violations the hypothesis names. A
+third, genuinely distinct failure mode was also found and generalized
+(§4.6-4.7): with the magnet-exclusion gate working perfectly (0-1.9% clip
+activity, magnet never closer than 0.5mm to its floor), three independent
+inverse-Jacobian conditions — two Jacobian sources (contact, no-contact), two
+gate implementations (`selective`, `clip`) — all still fail via
+`tcp_out_of_workspace`, caused by unregularized drift in the controller's
+redundant joint directions (`nullspace_gain=0`, no term anywhere penalizing
+them) that MPC's input-tracking/increment cost bounds implicitly even with
+no explicit posture cost (`Q_N=0`). This is a control-law property, not an
+artefact of one Jacobian or one gate, and a plausible (not separately
+confirmed) contributor to the inverse-Jacobian conditions' broader late-path
+degradation in the main factorial.
 
 **H4 (scheduled-vs-live Jacobian accuracy):** the schedule is measurably
 imperfect (17-44% relative Frobenius error) and more so where state deviation
@@ -1142,7 +1314,7 @@ constraint awareness.
 |---|---|---|
 | **H1** — contact modelling required | **Strongly supported** | divergence onset lags predicted contact onset by ~22mm |
 | **H2** — $\Delta_J$ interaction with radius | **Supported** (updated 2026-10-08) | direction and magnitude both confirmed on a radius-matched rerun ($\Delta_J^{255}=+0.406>\Delta_J^{210}=-0.101$, live thresholds 205mm/250mm verified identical on both legs via `controller_metadata.json`); completion evidence (3/3→0/3 for MPC-$J_{NC}$, 3/3→3/3 for MPC-$J_C$) remains the most decisive piece; lag sub-claim only true of the terminal state, not the whole run |
-| **H3** — MPC vs inverse-Jacobian constraint awareness | **Supported** | exact (agreement=1.000) replay confirms the mechanism; latent (not demonstrated) when the constraint never binds; ~half the 255mm episodes are z-workspace, not radius |
+| **H3** — MPC vs inverse-Jacobian constraint awareness | **Supported** | exact (agreement=1.000) replay confirms the mechanism; latent (not demonstrated) when the constraint never binds; ~half the 255mm episodes are z-workspace, not radius; a third, distinct failure mode (unregularized null-space drift, §4.6-4.7) was found and confirmed to generalize across 2 Jacobian sources x 2 gate modes — the exclusion gate itself works throughout, so this does not change the constraint-awareness verdict, but it is a second, independent reason the inverse-Jacobian controller underperforms |
 | **H4** — scheduled-vs-live accuracy, state-deviation driven | **Partially supported** | mismatch is real and structured as predicted, but too small in command/prediction terms to be a primary cause of the main results |
 | **H5** — trajectory-varying Jacobian materially helps | **Supported on outcome; mechanism is two-sided, confirmed by a second ablation** | scheduled beats BOTH frozen ablations on completion (idx0 3/3, idx100 0/3, scheduled 3/3) and on every common-interval metric; idx0's failure mode is conditioning-driven (confirmed, §7.3), idx100's is a clean staleness/alignment-driven late lag blowup (confirmed, §7.5, exactly the mechanism the brief originally proposed) — idx0 alone had wrongly suggested staleness didn't matter at all |
 | Gain ablation sub-hypothesis (higher gain → more infeasible requests) | **Contradicted** | infeasible rate is 0.000 at both gains; degradation is consistent with underdamped/oscillatory behaviour (not confirmed by a damping sweep), but is established to be independent of constraint pressure regardless of mechanism |

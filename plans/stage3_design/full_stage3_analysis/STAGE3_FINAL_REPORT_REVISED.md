@@ -40,20 +40,44 @@ them, and both are now reported as directly-established-on-magnitude-only,
 with the directional claim downgraded to attempted-and-inconclusive; (3) H2's
 §3.3 counterfactual is clarified to have substituted $J_C^{state}$ repeated
 across the whole horizon, and a second, literal contact-schedule-window
-counterfactual is added alongside it; (4) §5.2's null-space finding is
-strengthened with a pipeline-stage decomposition showing the effect is
-intrinsic to the controller's own task-space solve, not injected by clipping
-or gating; (5) §6.5's gain-ratio figures are checked for denominator
-robustness; (6) §9's transient diagnostic is extended with an exact-peak-tick
-same-state replay, which **reverses its own "remains unexplained" verdict**
-for two of three reps; (7) the integrated discussion's claim that MPC's cost
-structure "directly avoids" the redundant-drift failure mode is softened to
+counterfactual is added alongside it; (4) §5.2's null-space finding was
+*at the time* reported as strengthened by a pipeline-stage decomposition
+(this specific point was itself subsequently found to rest on a flawed
+premise — see the next revision note below, which supersedes it); (5) §6.5's
+gain-ratio figures are checked for denominator robustness; (6) §9's
+transient diagnostic is extended with an exact-peak-tick same-state replay,
+which **reverses its own "remains unexplained" verdict** for two of three
+reps; (7) the integrated discussion's claim that MPC's cost structure
+"directly avoids" the redundant-drift failure mode is softened to
 "consistent with," since no ablation isolates those cost terms as causal;
 (8) three numerical/terminology slips are corrected (H1's completion count,
 H5's "any single fixed" overclaim, and an $s$-vs-insertion-length mix-up in
 §6.5). Every change is made in place, at the point it occurs, not collected
 here — this note is a map of where to look, not a substitute for reading
 those sections.
+
+**Revision note (§5.2 correction, most important single correction in this
+document).** A later reviewer identified a mathematical inconsistency in
+§5.2's null-space-energy analysis: a damped-least-squares command is, for
+any damping value, guaranteed to lie exactly in the row space of the
+Jacobian it was solved with, so projecting it onto the null space of that
+**same** Jacobian must give (near-)zero energy — not the $0.2$-$0.4$ the
+original analysis reported. Direct verification confirmed the original
+analysis had projected the command (solved with the **scheduled**
+Jacobian) onto the null space of the **live, state-recomputed** contact
+model — a different matrix. $E_N$ was therefore never a measurement of
+"unregulated null-space motion in the control law's own solve" (a quantity
+that is identically zero by construction and so could never have shown
+this); it is a measurement of schedule-vs-state Jacobian mismatch,
+channelled through the executed command. §5.2 is rewritten in place to
+report this correction in full, including the verification numbers, and
+every downstream reference to "null-space energy" in §5.4, §10, §12, and
+this audit is updated to describe $E_N$ correctly. The underlying *data*
+($E_N$'s numerical values, its growth, its correlation with margin collapse)
+is unchanged and still reported; only the characterization of what it
+measures is corrected. "Accumulated redundant-configuration drift" as a
+phenomenon is **not** withdrawn — it now rests on §5.1's direct joint-angle
+measurement alone, which does not depend on this issue.
 
 All figures referenced are in `figures/`, all tables in `tables/`, all new
 analysis code in `scripts/`.
@@ -387,8 +411,10 @@ responsible, addressed on its own terms in §5.
 ## 5. Secondary mechanism — redundant-configuration drift and workspace exit
 
 *(H3b's own content from the prior report, now with a quantitative
-workspace-face/DOF decomposition and an explicit null-space projection —
-both newly computed this pass.)*
+workspace-face/DOF decomposition — newly computed this pass — and a
+schedule-vs-state mismatch projection that was originally characterized as
+a null-space projection of the control law's own behaviour; §5.2 reports
+why that characterization was wrong and what the quantity actually measures.)*
 
 ### 5.1 The exact binding face, and which joint moves it (revises the prior report's "joint 0" framing)
 
@@ -428,58 +454,82 @@ plus the margin's own first-order sensitivity to each joint
   the remaining margin to zero.** `tables/h3b_workspace_failure_decomposition.csv`
   provides the full per-tick decomposition behind this summary.
 
-### 5.2 Is it literally null-space motion?
+### 5.2 Is it literally null-space motion? — no, and a direct check shows why the original framing was wrong
 
-Using the full $3\times7$ tip-position Jacobian $J_p$ at each tick and
-$P_N=I-J_p^{\dagger}J_p$, every logged inverse-Jacobian command $u$ was
-split into $u_N=P_N u$ (null/redundant) and $u_R=(I-P_N)u$ (task-relevant),
-reporting $E_N=\|u_N\|^2/\|u\|^2$ in an early window ($s<30$mm) vs a
-pre-failure window (the tail before the `tcp_out_of_workspace` stop)
-(`tables/h3b_null_redundant_projection.csv`, `figures/h3b_redundant_projection.png`)
-**[hardware, direct]**:
+**This subsection was substantively corrected during a later pass, after an
+external reviewer identified a mathematical inconsistency in the original
+$E_N$ analysis. The correction is reported in full, including what was
+wrong and why, rather than silently replacing the old numbers.**
 
-| pairing | $E_N$, early (mean) | $E_N$, pre-failure (mean) |
-|---|---|---|
-| selective, contact Jacobian | 0.026 | **0.214** |
-| selective, no-contact Jacobian | 0.022 | **0.382** |
+**The problem, stated precisely.** For damped least squares,
+$u=J^T(JJ^T+\lambda^2I)^{-1}e$, the command $u$ is — for *any* damping
+$\lambda$ — a linear combination of the columns of $J^T$, and therefore lies
+*exactly* in the row space of $J$. If $P_N=I-J^\dagger J$ is built from that
+**same** $J$, then mathematically $P_Nu=0$ up to floating-point precision,
+always, regardless of damping, conditioning, or how close $J$ is to
+singular. A nonzero $E_N=\|P_Nu\|^2/\|u\|^2$ of $0.2$-$0.4$, as the original
+version of this subsection reported, is therefore only possible if $P_N$ was
+built from a **different** matrix than the one the command was actually
+solved with.
 
-**$E_N$ grows roughly 10-17$\times$ from the early region to the
-pre-failure region, in both Jacobian pairings** — a genuine, large,
-and consistent increase in the fraction of commanded motion that lies in
-the kinematic null space of the tip task. It is not, however, close to 1:
-even immediately before the workspace exit, 58-79% of the command's squared
-norm is still task-relevant. **This supports "accumulated redundant-
-configuration drift" as a real, substantial, and growing phenomenon, but
-not "almost pure null-space motion"** — the two-stage per-DOF account in
-§5.1 (many joints drifting mostly in task-irrelevant combinations, a
-smaller task-relevant remainder still present throughout) is the more
-precise description, and is what the data directly shows.
+**Direct verification, done immediately on this concern being raised.** The
+controller's actual command (`proper_research/controllers/inverse_jacobian_
+controller.py`, `solve()`, confirmed by reading the source directly) uses
+the **scheduled** Jacobian at that tick's reference index,
+$J_{sched}[\text{index}]$ — not a live recomputation. Every $E_N$ value in
+the original version of this subsection, however, was computed with
+$P_N$ built from `live_jac.live_jacobian`, i.e. $J_C^{state}(x_k)$ or
+$J_{NC}^{cf}(x_k)$ — the contact model **recomputed at the measured state**,
+a genuinely different matrix from $J_{sched}$ whenever the two disagree.
+`scripts/verify_null_space_projection_jacobian.py` recomputes $E_N$ both
+ways at three sample ticks of one run, confirming this exactly:
 
-The prior report's wording, *"the four redundant directions are completely
-free to drift however the resolved-rate solution's own numerical
-asymmetries happen to push them"*, is replaced with: **the inverse
-controller has no secondary objective that regulates accumulated redundant
-configuration, whereas MPC's full-input and input-increment costs penalize
-every commanded direction — task-relevant or not — on every tick.** This is
-the same point the prior report already made in its closing sentence of
-§5.2; it is now the only form of the claim retained, and it is directly
-supported by $E_N$ growing rather than staying flat, rather than by an
-unverified "completely free" characterization.
+| tick | $E_N$ with $P_N$ from $J_{sched}$ (same $J$ as the solve) | $E_N$ with $P_N$ from $J_{live}$ (different $J$) | $\|J_{live}-J_{sched}\|/\|J_{sched}\|$ |
+|---|---|---|---|
+| 50 | $4.7\times10^{-10}$ | 0.047 | 0.145 |
+| 250 | $8.5\times10^{-8}$ | 0.074 | 0.337 |
+| 350 | $1.1\times10^{-4}$ | 0.587 | 0.342 |
 
-**Where in the pipeline does this growth actually originate?** The $E_N$
-values above are computed on the logged/executed command, which has already
-passed through the controller's own velocity/acceleration/state-box clip and
-the external selective gate — raising the question of whether the growth is
-a property of the controller's own task-space solve, or is partly injected
-by one of those two downstream stages (clipping and especially a
-selective, per-component zeroing gate can rotate a command out of the
-row-space of $J_p$ even if the original solve did not). A follow-up pass
-decomposed all three pipeline stages separately — $u_{raw}$ (the pure
-damped-least-squares solution, before any clip), $u_{clipped}$ (after the
-velocity/acceleration/state-box clip), and $u_{gated}$ (after the selective
-gate, which should equal the logged command) — and projected each
-(`tables/h3b_pipeline_stage_nullspace.csv`, `figures/h3b_pipeline_stage_nullspace.png`)
-**[hardware, direct]**:
+**Using the same Jacobian the command was solved with gives $E_N\approx0$
+to machine precision, exactly as the mathematics requires. All of the
+reported $0.2$-$0.4$ signal came from using a different Jacobian for the
+projection than for the solve.**
+
+**What $E_N$, as actually computed, measures instead.** It is not, and
+given the mathematics above *cannot be*, a measurement of "unregulated
+null-space motion generated by the control law's own solve" — that quantity
+is identically zero by construction for any damped-least-squares command,
+checked against its own Jacobian. What $E_N$ actually measures is: **the
+fraction of the executed (schedule-derived) command that would be
+redundant if the contact model recomputed at the current measured state
+were used instead of the schedule** — i.e. a null-space-projected view of
+*schedule-vs-true-state Jacobian mismatch*, the same underlying quantity H4
+(§6) measures via relative-Frobenius norm, command-weighted error, and gain
+ratio, now viewed through a different (null-space) lens, channelled through
+the direction of the actual executed command. Its growth from
+$\approx0.02$-$0.03$ (early) to $\approx0.21$-$0.38$ (pre-failure), in both
+Jacobian pairings, is therefore better read as **consistent with** H4's
+independent finding that schedule-vs-state mismatch grows through the path
+(especially post-contact) than as a new, independent mechanism of its own.
+
+**What this means for "accumulated redundant-configuration drift."** The
+*term* is retained, but its evidentiary basis changes: it now rests on
+§5.1's direct, Jacobian-independent measurement (joint angles $q_1,q_2$
+diverging from the matched-MPC trajectory over path progress — a
+measurement that does not depend on which Jacobian is used for any
+projection) rather than on this $E_N$ analysis. The previously-made claim
+*"the inverse controller has no secondary objective that regulates
+accumulated redundant configuration, whereas MPC's ... costs penalize every
+commanded direction"* remains a defensible **interpretation** of §5.1's
+joint-divergence evidence, but is no longer additionally supported by a
+null-space-energy measurement, because that measurement was not measuring
+what it was reported to measure.
+
+**The pipeline-stage check (§5.2's own follow-up) is still informative, once
+correctly captioned.** $E_N$ (in its actual, schedule-vs-state-mismatch
+sense) was computed separately for $u_{raw}$ (pre-clip), $u_{clipped}$, and
+$u_{gated}$ (the logged command) (`tables/h3b_pipeline_stage_nullspace.csv`,
+`figures/h3b_pipeline_stage_nullspace.png`) **[model, direct]**:
 
 | pairing | stage | $E_N$, early (mean) | $E_N$, pre-failure (mean) |
 |---|---|---|---|
@@ -490,20 +540,14 @@ gate, which should equal the logged command) — and projected each
 | selective, no-contact | $u_{clipped}$ | 0.023 | 0.382 |
 | selective, no-contact | $u_{gated}$ | 0.023 | 0.382 |
 
-**All three stages show essentially the same growth, in both pairings — the
-raw, pre-clip task-space solution already exhibits the full early-to-
-pre-failure increase.** This rules out the clip and the selective gate as
-the source of the growing null-space energy: it is a property of the
-controller's own damped-least-squares resolution of redundancy, not a
-downstream pipeline artefact. This strengthens, rather than merely repeats,
-the finding above — the growth is intrinsic to the control law itself,
-consistent with the "no secondary objective regulates accumulated redundant
-configuration" reading just above, now checked against the alternative
-explanation rather than assumed. (The early-region means here differ
-slightly from the table above — 0.058/0.023 vs 0.026/0.022 — due to a
-different tick-subsampling stride on a noisy per-tick quantity; both this
-table's own three stages were computed on an identical tick set, so the
-stage-to-stage comparison is unaffected.)
+All three stages show the same growth, confirming the schedule-vs-state
+mismatch signal already exists in the raw, pre-clip command and is not
+injected or altered by the velocity/acceleration clip or the selective
+gate — a valid and still-useful finding, but now correctly read as "clipping
+and gating do not add or remove schedule-vs-state mismatch" rather than
+"the growth is intrinsic to the control law's own null-space behaviour,"
+since the latter was never a quantity this projection could measure in the
+first place.
 
 ### 5.3 Scope (unchanged from the prior report's §5.3)
 
@@ -514,15 +558,21 @@ mode remains untested in this record.
 
 ### 5.4 Origin of inverse-controller lag and redundant drift
 
-§5.1-5.3 establish the *end* of a possible causal chain (workspace exit,
-a growing null-space-energy fraction, measured in two narrow windows). They
-do not establish whether that end is preceded by a staged sequence —
-$e_{lag}\uparrow\to\|u_{raw}\|\uparrow\to\|u_N\|\uparrow\to$ configuration
+§5.1-5.3 establish the *end* of a possible causal chain (workspace exit;
+and, per §5.2's corrected reading, a growing schedule-vs-state Jacobian
+mismatch channelled through the command, measured in two narrow windows).
+They do not establish whether that end is preceded by a staged sequence —
+$e_{lag}\uparrow\to\|u_{raw}\|\uparrow\to E_N\uparrow\to$ configuration
 drift $\to h_{x_{max}}\downarrow\to$ exit — or whether a Jacobian-mismatch-
 driven *reduction in effective tracking gain* is what starts that sequence
 in the first place. This subsection tests both questions directly, for all
 6 selective-gate runs, at full trajectory resolution (not just the two
-narrow windows §5.2 used).
+narrow windows §5.2 used. **Note on $E_N$ below:** per §5.2's correction,
+$E_N$ is a schedule-vs-state-mismatch quantity, not a measurement of the
+control law's own null-space behaviour — it is used in this subsection for
+exactly that reason, as a companion measure of mismatch alongside $e_{lag}$,
+$k_\parallel$, and excess lag, not as independent evidence of "redundant
+drift" in the control-law sense.)
 
 **A critical constraint on any explanation, stated up front and honoured
 throughout:** both pairings — contact-Jacobian and no-contact-Jacobian —
@@ -533,13 +583,40 @@ Jacobians; a mechanism that is specific to the no-contact Jacobian can only
 ever be a contributor to one pairing's version of a failure that also,
 independently, happens to the other.
 
+`figures/lag_three_layer_synthesis.png` assembles the evidence this
+subsection develops into a single three-row figure, built entirely from the
+same data computed below (no separate analysis of its own) — one row per
+layer of the proposed mechanism, both pairings and all 3 reps overlaid, with
+contact onset ($s=28.5$mm) and each pairing's own mean exit $s$ marked as
+vertical lines in every row:
+
+- **Row 1 (Layer 1):** measured $e_{lag}$ for both pairings against the
+  shared theoretical $K_p=0.6$ baseline $v_s\Delta t/K_p$ (black dashed) —
+  both pairings track this shared floor closely before $s\approx40$mm.
+- **Row 2 (Layer 2):** $k_\parallel$ for both pairings against the nominal
+  $K_p=0.6$ (black dashed) — the no-contact pairing visibly sits below the
+  contact pairing, and below nominal, from shortly after contact onset.
+- **Row 3 (Layer 3):** $E_N$ — the schedule-vs-state mismatch energy
+  channelled through the executed command, §5.2's corrected quantity, *not*
+  a measurement of the control law's own null-space behaviour — (solid, left
+  axis) rising alongside $h_{x_{max}}$ (dotted, right axis) falling toward
+  zero at exit, both pairings.
+
+The three rows make the full chain visible at a glance: Layer 1's shared
+lag floor is visibly left behind by the no-contact pairing around
+$s\approx40$-$50$mm, exactly where Layer 2 shows its $k_\parallel$ departing
+from the contact pairing's own, and exactly where Layer 3's $E_N$ begins its
+own rise alongside the shared-face exit. The per-quantity numbers and
+statistics behind each row are developed in §5.4.1-§5.4.4 below.
+
 #### 5.4.1 Full-trajectory chronology
 
 `scripts/lag_chronology_analysis.py` computed, at full tick resolution for
 all 6 runs, $e_{lag}=s_{ref}-s_{tip}$, $e_\perp$ (cross-track), $\|e\|$,
 $\|u_{raw}\|$ (the pre-clip damped-least-squares command), absolute $q_1,q_2$,
 and $h_{x_{max}}$; and, at a moderate stride across the full run (not just
-two narrow windows), $E_N$ via the same null-space projection as §5.2
+two narrow windows), $E_N$ — the schedule-vs-state mismatch energy, §5.2's
+corrected quantity, computed identically but at finer path coverage
 (`tables/lag_chronology_per_tick.csv`, `tables/lag_chronology_EN_strided.csv`,
 `figures/lag_chronology_combined.png`) **[hardware/model, direct]**. For
 each quantity, its onset is the path progress at which it first departs,
@@ -557,14 +634,15 @@ $E_N$ threshold inside the sampled window at all.)
 **The proposed chronology holds, but asymmetrically between the two
 pairings.** For the **no-contact** pairing, the order is clean and
 well-separated — lag and error rise first ($\approx48$mm), then command
-norm ($\approx52$mm), then null-space energy ($\approx59$mm), then $q_2$
-drift ($\approx70$mm), then the margin crosses a 20mm threshold and exits
-($\approx73$-$75$mm) — a genuine $\approx25$mm-long staged cascade, in
-exactly the proposed order. For the **contact** pairing, the same events are
-compressed into a $\approx5$mm window immediately before exit
-($58$-$63$mm) — present, in the same relative order, but not meaningfully
-*staged*; this pairing is a much weaker test of "does a chronology precede
-the exit" than the no-contact pairing is. **A caveat on the no-contact
+norm ($\approx52$mm), then schedule-vs-state mismatch energy ($\approx59$mm),
+then $q_2$ drift ($\approx70$mm), then the margin crosses a 20mm threshold
+and exits ($\approx73$-$75$mm) — a genuine $\approx25$mm-long staged
+cascade, in exactly the proposed order. For the **contact** pairing, the
+same events are compressed into a $\approx5$mm window immediately before
+exit ($58$-$63$mm) — present, in the same relative order, but not
+meaningfully *staged*; this pairing is a much weaker test of "does a
+chronology precede the exit" than the no-contact pairing is. **A caveat on
+the no-contact
 pairing's own mean onset values: they mask real rep-to-rep spread** — one
 of the three no-contact reps reaches these onsets $15$-$25$mm later than the
 other two on several quantities (lag onset $64.6$mm vs $39$-$41$mm; $u_{raw}$
@@ -643,9 +721,29 @@ the longitudinal direction, not a general gain inflation/deflation.
 
 #### 5.4.4 Theoretical baseline and excess lag
 
+**Which baseline formula is correct depends on exactly how this controller's
+$K_p$ enters its control law, and was checked directly against source
+rather than assumed.** `inverse_jacobian_controller.py`'s `solve()` computes
+`task_velocity = pseudo @ (self.position_gain * (desired - measured) /
+self.dt)` — i.e. the commanded velocity is
+$\dot\chi=\hat J^\dagger(K_p\,e/\Delta t)$, so the position correction
+actually realized over one control tick is
+$\Delta p\approx J\dot\chi\,\Delta t=J\hat J^\dagger K_p\,e\approx K_p\,e$
+(since $J\hat J^\dagger\approx I$ in task space for a well-conditioned,
+full-row-rank $J$) — **the $\Delta t$ cancels out of the per-tick
+correction, but the reference's own per-tick advance, $v_s\Delta t$, does
+not**, since it is a genuinely discrete, one-tick quantity. The steady-state
+balance between these two is $K_p\,e_{ss}=v_s\Delta t$, giving
+$e_{ss}\approx v_s\Delta t/K_p$ — confirming, from the actual control law
+rather than a generic assumption, that the $\Delta t$-inclusive baseline
+below is the version applicable to this specific (discrete, no-feedforward)
+implementation, not the continuous-time $v_s/K_p$ form that would apply to
+a different control-law structure.
+
 Using each run's own logged $K_p$ and the reference's own precomputed path
-speed $v_s$ (no feedforward term exists in this controller), the simple
-scalar-proportional-tracking baseline $e_{lag,expected}=v_s\cdot\Delta t/K_p$
+speed $v_s$ (no feedforward term exists in this controller: confirmed from
+`solve()`, where the feedforward branches are both gated off in every run
+analysed here), the baseline $e_{lag,expected}=v_s\cdot\Delta t/K_p$
 gives an **excess lag** $e_{excess}=e_{lag,measured}-e_{lag,expected}$
 (`tables/excess_lag_baseline.csv`) **[model, direct]**:
 
@@ -668,6 +766,14 @@ disagree.
 
 #### 5.4.5 Does raising the gain fix it? Revisiting the gain ablation through lag and cross-track
 
+**This re-analysis is offered as generic evidence about the gain trade-off,
+not as a direct test of the 255mm selective-gate failure itself — the
+conditions differ on three axes at once** (no-contact Jacobian only vs both
+pairings; hold gate vs selective gate; 210mm vs the 255mm floor where H3b's
+failure occurs), and no run in this investigation varies gain at the actual
+255mm/selective-gate condition. Whether raising $K_p$ would prevent or
+worsen that specific failure was not tested and is not claimed here.
+
 The gain ablation (§8, $K_p=0.6$ vs $1.0$, both no-contact Jacobian, hold
 gate, 210mm) was originally used only to test whether a higher gain
 increases infeasible-request pressure (it does not). Re-examined through
@@ -686,8 +792,13 @@ the tail ($+154\%$).** This matches the reviewer's first anticipated
 outcome — gain trades lag for oscillation — with a sharper edge than
 anticipated: it is not simply "typical lag for oscillation," it is "modest
 typical-lag improvement, at the cost of a worse lag tail *and* substantially
-worse lateral tracking." Raising $K_p$ is not a fix for the architecture
-problem; it changes which failure mode dominates. (A fourth statistic,
+worse lateral tracking." **Stated to match what this specific data supports
+and no more: existing gain-ablation data (at 210mm, hold gate, no-contact
+Jacobian) show that increasing proportional gain reduces typical lag but
+substantially worsens tail and lateral tracking; therefore higher gain is
+not a cost-free remedy at the condition actually tested. Whether it would
+prevent the specific 255mm selective-gate workspace failure this subsection
+is otherwise concerned with was not tested.** (A fourth statistic,
 final-tick lag, is not reported here: inspection of the per-tick series
 shows the controller settles into a `terminal_hold` state once the
 reference completes, where $e_{lag}$ repeatedly returns to a near-identical
@@ -710,7 +821,8 @@ $$
 &e_{lag}\uparrow\ (\approx48\text{mm})\ \rightarrow\ \|u_{raw}\|\uparrow\ (\approx52\text{mm})\ \rightarrow\ E_N\uparrow\ (\approx59\text{mm})\\
 &\rightarrow\ q_2\text{ drift }(\approx70\text{mm})\ \rightarrow\ h_{x_{max}}\downarrow\ \rightarrow\ \texttt{tcp\_out\_of\_workspace}\ (\approx74\text{mm})\\
 &\text{(this downstream chain: well-staged for no-contact, §5.4.1; compressed}\\
-&\text{into a 5mm pre-exit window, same order, for contact)}
+&\text{into a 5mm pre-exit window, same order, for contact; }E_N\text{ here is the}\\
+&\text{schedule-vs-state mismatch energy of §5.2, not control-law null-space motion)}
 \end{aligned}
 }
 $$
@@ -719,17 +831,21 @@ $$
 mechanistic account of *why* the no-contact pairing develops more lag than
 the contact pairing (reduced realized longitudinal gain, §5.4.3), and that
 this additional lag precedes, in a well-separated staged order, the same
-downstream command-growth/redundancy-growth/configuration-drift/exit
-sequence §5.1-5.2 already established for the endpoint. **It does not
-establish that this mechanism is the explanation for the shared failure
-mode**, precisely because the contact pairing — whose realized gain stays
-near nominal and whose excess lag stays near baseline throughout — still
-exits on the identical $x_{max}$ face, with the same terminal cross-track
-magnitude, on a compressed version of the same event order. The honest
-reading: the wrong Jacobian is a real, quantified, mechanistically-grounded
-*lag amplifier*, operating on top of an architecture-intrinsic
-redundant-configuration-drift mechanism (§5.1-5.2, present under both
-Jacobian models) that remains the explanation for the shared failure itself.
+downstream command-growth/mismatch-growth/configuration-drift/exit sequence
+§5.1 (configuration drift) and §5.2 (schedule-vs-state mismatch, corrected)
+already established for the endpoint. **It does not establish that this
+mechanism is the explanation for the shared failure mode**, precisely
+because the contact pairing — whose realized gain stays near nominal and
+whose excess lag stays near baseline throughout — still exits on the
+identical $x_{max}$ face, with the same terminal cross-track magnitude, on a
+compressed version of the same event order. The honest reading: the wrong
+Jacobian is a real, quantified, mechanistically-grounded *lag amplifier*,
+operating on top of an architecture-intrinsic configuration-drift mechanism
+(§5.1, the direct $q_1/q_2$-vs-matched-MPC measurement, present under both
+Jacobian models) that remains the primary candidate explanation for the
+shared failure itself — and that mechanism's own evidentiary basis is now
+§5.1's joint-angle measurement alone, not the $E_N$ analysis, per §5.2's
+correction.
 
 ---
 
@@ -1137,11 +1253,18 @@ consistently the $x_{max}$ TCP-box face; an early, low-sensitivity,
 multi-joint drift (led by the shoulder joint) that slowly erodes the
 margin, followed by a late, high-sensitivity base-joint drift
 ($\approx14\times$ the shoulder joint's own sensitivity) that spends what
-remains of it (§5.1); and a null-space-energy fraction that grows
-10-17$\times$ from early path progress to the pre-failure window, though it
-never exceeds $\approx40\%$ of the command's squared norm even immediately
-before the exit (§5.2) — "accumulated redundant-configuration drift" is the
-precise, evidence-matched term, not "null-space drift." MPC's in-QP
+remains of it (§5.1) — the direct, Jacobian-independent measurement
+underlying "accumulated redundant-configuration drift," the precise,
+evidence-matched term, not "null-space drift." A companion quantity, $E_N$,
+grows 10-17$\times$ from early path progress to the pre-failure window
+(never exceeding $\approx40\%$ of the command's squared norm); this was
+originally reported as a measurement of the control law's own null-space
+behaviour, but a direct check (§5.2) found that premise mathematically
+impossible for a damped-least-squares command projected against its own
+Jacobian, and traced $E_N$'s actual meaning to schedule-vs-state Jacobian
+mismatch channelled through the command — still a real, growing signal,
+corroborating §5.1 temporally, but not itself evidence of null-space
+behaviour in the control law. MPC's in-QP
 constraint is directly observed to keep every tick feasible (§4.1, never
 violated on any MPC tick analysed) — that part is a direct measurement. The
 further claim that its input and input-increment costs are *why* its
@@ -1154,8 +1277,9 @@ naive controller's redundancy resolution at zero gain has no analogous term
 — but is reported as an interpretation consistent with the evidence, not as
 a directly demonstrated causal mechanism. A full-trajectory chronology
 (§5.4) now shows this drift is preceded, in a staged and well-separated
-order for the no-contact pairing (lag $\to$ command growth $\to$ null-space
-growth $\to$ configuration drift $\to$ exit), by a measurable reduction in
+order for the no-contact pairing (lag $\to$ command growth $\to$
+mismatch-energy growth $\to$ configuration drift $\to$ exit), by a
+measurable reduction in
 the controller's *realized* longitudinal closed-loop gain where the
 Jacobian is wrong ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) —
 but the contact-Jacobian pairing, whose realized gain stays near nominal
@@ -1245,7 +1369,7 @@ operates under.
 | **H1** — contact-aware planning required for an executable open-loop plan | **Strongly supported** | 2/2 contact-aware reps complete vs 0/2 no-contact reps (4 runs total); divergence lags predicted contact onset by $\approx22$mm | Directly demonstrated (model-vs-model comparison at matched states) |
 | **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | completion asymmetry (3/3$\to$3/3 vs 3/3$\to$0/3); workspace/exclusion margins confirmed generous throughout (ruling out a workspace-exhaustion reading); H4's gain-ratio mismatch elevated before the terminal failure; same-state replay shows the actual command differs substantially in magnitude from a contact-informed one at every examined state | Magnitude-level facts (completion, margins, command-difference size) directly demonstrated; the *directional* claim ("the wrong model's command is less effective") was attempted via same-state counterfactual and found inconclusive (§3.3) — not directly demonstrated |
 | **H3a** — MPC vs inverse-Jacobian intrinsic constraint awareness | **Strongly supported** | exact (1.000 agreement) raw-command recovery; MPC never violates its own in-QP constraint on any tick | Directly demonstrated |
-| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified; $E_N$ grows 10-17$\times$ pre-failure but stays $<0.4$; a full lag→command→redundancy→drift→exit chronology is staged and well-separated for the no-contact pairing, compressed but same-ordered for contact (§5.4) | Directly demonstrated (workspace-face/DOF decomposition + null-space projection + full-trajectory chronology); "redundant-configuration drift," not "null-space drift"; the wrong Jacobian is shown to be a quantified lag-amplifier ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) but not the explanation for the shared failure mode, which both Jacobian pairings exhibit identically |
+| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified via direct joint-angle measurement (§5.1); a companion schedule-vs-state-mismatch quantity ($E_N$) grows 10-17$\times$ pre-failure, correlating temporally (§5.4); a full lag→command→mismatch→drift→exit chronology is staged and well-separated for the no-contact pairing, compressed but same-ordered for contact (§5.4) | Directly demonstrated via workspace-face/DOF decomposition and joint-angle divergence (§5.1); "redundant-configuration drift," not "null-space drift" — and, after a correction prompted by external review, not supported by a null-space-projection measurement at all: $E_N$ was found to measure schedule-vs-state Jacobian mismatch, not the control law's own null-space behaviour (§5.2), since a damped-least-squares command is mathematically guaranteed to have zero null-space component against its own Jacobian; the wrong Jacobian is separately shown to be a quantified lag-amplifier ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) but not the explanation for the shared failure mode, which both Jacobian pairings exhibit identically |
 | **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Supported, and shown to precede the H2 failure temporally** | mismatch/gain-ratio/$\epsilon_u$ all elevated in matched 45-55mm and 55-60mm bins, before the 60-64mm failure bin; the headline 60-64mm gain ratio (7.94$\times$) and the earlier-bin elevation both confirmed robust to a denominator-robustness check (§6.6) | Direct re-binned measurement, now checked for statistical robustness; a temporal-ordering observation consistent with H2's causal chain, but — since H2's own same-state directional mechanism is inconclusive (§3.3) — not itself sufficient to establish causality |
 | **H5** — the trajectory-varying Jacobian outperformed both tested fixed linearizations | **Supported on outcome; mechanism unresolved** | completion/tracking outcome (scheduled 3/3 + best tracking; idx0 3/3 but worse tracking; idx100 0/3, fails late) is a direct hardware observation | Outcome directly demonstrated; the *why* (a same-state counterfactual was built specifically to test this) is attempted and inconclusive once the metric's sign is corrected (§7.3) — only the prior report's correlational directional-alignment check remains as supporting evidence for the mechanism |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | 0% infeasible-request rate at both gains | Unchanged; underdamping is plausible, not demonstrated |
@@ -1318,6 +1442,17 @@ output from the first script is unaffected and was independently verified,
 
 *Pass 3:* `lag_chronology_combined.png`, `k_parallel_vs_s.png`.
 
+*Pass 4 (requested after reading pass 3, same section):*
+`scripts/lag_three_layer_synthesis.py` and
+`figures/lag_three_layer_synthesis.png` — a single assembled view of §5.4's
+three layers (lag floor, gain reduction, redundant-drift-to-exit), built
+entirely from pass 3's own tables with no new live-model evaluation.
+
+*Pass 5 (§5.2 correction, prompted by a further review of pass 4):*
+`scripts/verify_null_space_projection_jacobian.py` — the direct check
+confirming $E_N$ was computed with $P_N$ built from a different Jacobian
+than the one the command was solved with (§5.2).
+
 **Claims strengthened in pass 1** (from correlational/outcome-level to
 direct same-state or re-binned demonstration — some since revised again in
 pass 2, see below): H4's relevance to H2, via temporal ordering (§6.5);
@@ -1325,10 +1460,15 @@ H3b's mechanism, via exact workspace face and two-stage per-DOF account
 (§5.1).
 
 **Claims strengthened in pass 2** (confirmed to survive scrutiny, or
-genuinely new evidence added): H3b's null-space-energy growth is now shown
-to be intrinsic to the controller's own task-space solve, not a clip/gate
-pipeline artefact (§5.2) — this is a real strengthening, not a correction.
-The $s\approx60$-$61$mm local transient moved from "remains unexplained" to
+genuinely new evidence added): H3b's $E_N$ growth was shown, via a
+pipeline-stage decomposition, to be present in the raw pre-clip command and
+not injected by downstream clipping/gating (§5.2) — this specific,
+narrower finding survives; the broader claim it was reported alongside at
+the time ("intrinsic to the controller's own task-space solve," implying
+the control law itself generates null-space motion) did **not** survive a
+later correction — see "Claims weakened or withdrawn" below, this is not
+double-counted as a strengthening. The $s\approx60$-$61$mm local transient
+moved from "remains unexplained" to
 a candidate mechanism identified (schedule-vs-state Jacobian mismatch at
 the exact peak tick, confirmed by both matrix norm and re-solved command)
 — §9.1, a genuine new finding, not merely a reworded old one. H4's §6.5
@@ -1387,6 +1527,37 @@ vs 0/2 no-contact, 4 runs total), H5's "any single fixed" overclaim
 (neither tested fixed linearization, not every possible one), and an
 $s$-vs-insertion-length mix-up in §6.5 ($\approx90$mm is insertion length
 $L$, not the $75.3$mm path-progress $s$ actually being discussed).
+
+**Claims weakened or withdrawn, §5.2 correction (the single most important
+correction in this document — identified after pass 3/4's new analyses had
+already been written on top of the flawed premise, so its reach is wide):**
+pass 1/2's characterization of $E_N$ (§5.2) as measuring "unregulated
+null-space motion" generated by the inverse-Jacobian control law's own
+damped-least-squares solve is **withdrawn as mathematically impossible**:
+such a command lies exactly in the row space of whichever Jacobian it was
+solved with, for any damping value, so projecting it onto the null space of
+that *same* Jacobian is guaranteed near-zero — verified directly
+($4.7\times10^{-10}$ to $1.1\times10^{-4}$ across 3 sample ticks). The
+original analysis instead projected the schedule-solved command onto the
+null space of the *live, state-recomputed* contact model — a different
+matrix — so $E_N$ actually measures schedule-vs-state Jacobian mismatch,
+channelled through the command direction. This is corrected in place in
+§5.2, and every downstream reference in §5.4 (which was built using $E_N$
+as a chronology quantity, before this correction), §10, and §12 is updated
+to describe $E_N$ this way. **Not withdrawn**: the underlying data ($E_N$'s
+values, growth, and temporal correlation with margin collapse) remains
+valid and reported; "accumulated redundant-configuration drift" as a named
+phenomenon survives on §5.1's direct joint-angle evidence alone, which was
+never affected by this issue. Also addressed in the same pass, prompted by
+the same review: §5.4.4's theoretical lag-baseline formula
+($v_s\Delta t/K_p$) was verified, not corrected — reading the controller's
+actual `solve()` source confirms this is the physically correct discrete
+steady-state balance for *this* controller's specific (incremental,
+no-feedforward) control law, so the "7-24$\times$ excess lag" finding
+stands as reported; and §5.4.5's gain-ablation conclusion is narrowed to
+avoid implying the $K_p=0.6$-vs-$1.0$ test (210mm, hold gate, no-contact
+only) directly addresses the 255mm selective-gate failure it sits next to
+in the document — it does not, and the text now says so explicitly.
 
 **Mechanisms that remain unresolved**: the full delay/horizon-aware
 same-state mechanism for H2 and H5 (the single most important open item —

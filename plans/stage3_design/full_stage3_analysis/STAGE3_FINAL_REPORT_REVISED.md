@@ -230,6 +230,23 @@ inserts the most, 89.7-91.0mm) is unchanged and still correct as a
 *description* of what happens (`figures/h2_magnet_distance_and_insertion_story.png`);
 only the causal *reading* of why is revised below.
 
+A direct, geometry-grounded view of the same contrast — the **beam tip's**
+own measured trajectory (not the magnet's) plotted against the vessel's
+actual centreline and wall boundaries, reconstructed from the lumen
+geometry file rather than inferred — makes the completion asymmetry
+visually immediate (`scripts/tip_vs_vessel_geometry_255mm.py`,
+`tables/vessel_geometry_xy_mm.csv`, `tables/tip_vs_vessel_geometry_255mm.csv`,
+`figures/tip_vs_vessel_geometry_255mm.png`) **[hardware + geometry, direct]**:
+both conditions' tips hug the inner wall through the bend in close
+agreement with each other and with each controller's own offline reference;
+MPC-$J_{NC}$'s three reps all stop abruptly partway up the post-bend
+straight segment (marked with $\times$), while MPC-$J_C$'s three continue
+to the end of that segment and complete. The two conditions' own offline
+references (each condition's own plan, contact-aware vs no-contact) are
+shown lightly and are close to each other and to the wall — consistent
+with §2's finding that the two models agree well before contact and
+diverge after it.
+
 ### 3.3 Same-state counterfactual: what it establishes directly, and what it does not
 
 `scripts/h2_same_state_counterfactual.py` takes each tight-floor MPC-$J_{NC}$

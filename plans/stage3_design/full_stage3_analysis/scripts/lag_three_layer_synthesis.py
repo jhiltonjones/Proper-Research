@@ -11,9 +11,12 @@ a single three-row figure, one row per layer of the proposed mechanism:
                        k_parallel dropping below its nominal Kp=0.6 value
                        specifically post-contact, while the contact pairing
                        stays near nominal.
-  Layer 3 (bottom) -- the downstream redundant-configuration-drift chain:
-                       null-space energy E_N rising as the x_max workspace
-                       margin collapses to the tcp_out_of_workspace exit.
+  Layer 3 (bottom) -- schedule-vs-state Jacobian mismatch energy E_N (NOT
+                       the control law's own null-space behaviour -- see
+                       STAGE3_FINAL_REPORT_REVISED.md Sec 5.2 for why that
+                       characterization was corrected) rising alongside the
+                       x_max workspace margin collapsing to the
+                       tcp_out_of_workspace exit.
 
 Contact onset (s=28.5mm, the contact model's own prediction, used
 throughout this report) and each pairing's mean workspace-exit s are marked
@@ -40,7 +43,7 @@ onset = pd.read_csv(f"{OUT}/tables/lag_chronology_onset_summary.csv")
 
 exit_s_mean = onset.groupby("pairing")["final_s_mm"].mean()
 
-fig, axes = plt.subplots(3, 1, figsize=(11, 12), sharex=True)
+fig, axes = plt.subplots(3, 1, figsize=(13, 12), sharex=True)
 
 # --- Layer 1: inherent Kp=0.6 lag floor ---
 ax = axes[0]
@@ -95,10 +98,10 @@ for pairing, color in COLOR.items():
     for rep, d in sub_m.groupby("rep"):
         d = d.sort_values("s_mm")
         ax2.plot(d.s_mm, d.margin_x_max_mm, color=color, lw=1.0, alpha=0.35, ls=":")
-ax.set_ylabel(r"$E_N$ (null-space energy fraction)", fontsize=10)
+ax.set_ylabel(r"$E_N$ (schedule-vs-state mismatch energy)", fontsize=10)
 ax2.set_ylabel(r"$h_{x_{max}}$ margin (mm, dotted)", fontsize=10)
 ax2.axhline(0, color="gray", lw=0.8, ls="-")
-ax.set_title("Layer 3 -- redundant-configuration drift ($E_N$, solid) collapses the workspace margin ($h_{x_{max}}$, dotted) to exit", fontsize=10)
+ax.set_title("Layer 3 -- schedule-vs-state mismatch energy ($E_N$, solid) rises as the workspace margin ($h_{x_{max}}$, dotted) collapses to exit", fontsize=10)
 ax.legend(fontsize=8, loc="upper left")
 ax.grid(alpha=0.3)
 ax.set_xlabel("path progress $s$ (mm)", fontsize=10)
@@ -110,9 +113,10 @@ for ax in axes:
 axes[0].text(CONTACT_ONSET_MM + 0.5, 5.6, "contact onset", fontsize=7, color="gray", rotation=90, va="top")
 
 fig.suptitle(
-    "Three-layer mechanism: $K_p$=0.6 lag floor $\\to$ $J_{NC}$ gain reduction amplifies it $\\to$ redundant drift ends in workspace exit\n"
-    "(selective-gate inverse-Jacobian control, 255mm floor; both pairings exit on the same $x_{max}$ face)",
-    fontsize=11,
+    "Three-layer mechanism: $K_p$=0.6 lag floor $\\to$ $J_{NC}$ gain reduction amplifies it $\\to$ mismatch energy rises alongside workspace exit\n"
+    "(selective-gate inverse-Jacobian control, 255mm floor; both pairings exit on the same $x_{max}$ face;\n"
+    "$E_N$ is schedule-vs-state mismatch, not null-space motion -- see report §5.2)",
+    fontsize=10,
 )
 fig.tight_layout(rect=(0, 0, 1, 0.94))
 f = f"{OUT}/figures/lag_three_layer_synthesis.png"

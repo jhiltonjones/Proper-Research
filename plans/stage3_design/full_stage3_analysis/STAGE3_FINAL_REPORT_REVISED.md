@@ -27,6 +27,34 @@ labelled inline —
 Three places where this pass's evidence **revises** a claim in the prior
 report are flagged explicitly where they occur (§3.4, §5.2, §7.3).
 
+**Revision note (second pass).** An external review of the first version of
+this document identified several further issues, addressed in place rather
+than as an appendix: (1) §3.2's "pure control/tracking-authority effect, not
+a configuration-space availability effect" over-corrected the first pass's
+own fix and is softened; (2) §3.3/§3.4 and §7.3's same-state counterfactuals
+both originally scored commands with a metric
+($c_\parallel=\hat e_k^T J\Delta\chi$) whose sign was discarded despite being
+physically meaningful — correcting this **reverses** both subsections'
+headline "X times more correction" claims rather than merely softening
+them, and both are now reported as directly-established-on-magnitude-only,
+with the directional claim downgraded to attempted-and-inconclusive; (3) H2's
+§3.3 counterfactual is clarified to have substituted $J_C^{state}$ repeated
+across the whole horizon, and a second, literal contact-schedule-window
+counterfactual is added alongside it; (4) §5.2's null-space finding is
+strengthened with a pipeline-stage decomposition showing the effect is
+intrinsic to the controller's own task-space solve, not injected by clipping
+or gating; (5) §6.5's gain-ratio figures are checked for denominator
+robustness; (6) §9's transient diagnostic is extended with an exact-peak-tick
+same-state replay, which **reverses its own "remains unexplained" verdict**
+for two of three reps; (7) the integrated discussion's claim that MPC's cost
+structure "directly avoids" the redundant-drift failure mode is softened to
+"consistent with," since no ablation isolates those cost terms as causal;
+(8) three numerical/terminology slips are corrected (H1's completion count,
+H5's "any single fixed" overclaim, and an $s$-vs-insertion-length mix-up in
+§6.5). Every change is made in place, at the point it occurs, not collected
+here — this note is a map of where to look, not a substitute for reading
+those sections.
+
 All figures referenced are in `figures/`, all tables in `tables/`, all new
 analysis code in `scripts/`.
 
@@ -101,8 +129,12 @@ models, evaluated directly against each other at matched states, disagree by
 tracking accuracy depends on how much configuration freedom the magnet-
 exclusion floor leaves available.
 
-**Verdict: supported, with the failure mechanism now directly demonstrated
-via same-state counterfactual, not inferred from trajectory shape.**
+**Verdict: supported, on the completion asymmetry and the magnitude-level
+evidence (workspace margins, H4's gain-ratio mismatch, and the same-state
+command-magnitude difference). The specific claim that the wrong model's
+command is directionally *less effective* at matched states was attempted
+via a same-state counterfactual and found inconclusive — see §3.3 — not
+directly demonstrated as an earlier version of this section claimed.**
 
 ### 3.1 The interaction, matched (unchanged from the prior report)
 
@@ -147,10 +179,24 @@ tick nearest its abort, every margin is still tens of millimetres from zero.
 configurations where local tracking is easier but systematically wrong,
 falling further behind until it aborts" could be read as implying a
 workspace-pressure story): the data shows no workspace or exclusion
-pressure of any kind on MPC-$J_{NC}$ at the tight floor. Whatever is wrong
-is a pure control/tracking-authority effect, not a configuration-space
-availability effect — which is exactly what §3.3 below demonstrates
-directly.
+pressure of any kind on MPC-$J_{NC}$ at the tight floor.
+
+This needs to be stated precisely, because it is narrower than "configuration
+space doesn't matter here" — H2's own hypothesis, and §3.1's loose-vs-tight
+floor comparison, is that the exclusion floor's tightness is exactly what
+determines whether the wrong model's error is absorbable. What this
+subsection establishes is specifically that **the failure is not caused by
+the controller reaching a workspace or exclusion boundary** — not that the
+tighter floor is irrelevant to the failure. The tighter feasible set is very
+plausibly still *why* the Jacobian error becomes consequential in the first
+place (a loose feasible set lets the correct-model and wrong-model
+controllers settle on similar, equally-effective configurations, per
+§3.1/§3.4's $\Delta_J$ sign flip between floors); it just does not do so by
+being exhausted. Stated this way: **rather than the controller reaching a
+workspace or exclusion boundary, under the tighter feasible set the
+no-contact model produces insufficiently effective corrections despite
+substantial remaining constraint slack** — which is exactly what §3.3 below
+demonstrates directly.
 
 The magnet-distance-and-insertion story from the prior report (contact-aware
 MPC rides the floor at both radii; no-contact MPC pins to the floor at
@@ -160,7 +206,7 @@ inserts the most, 89.7-91.0mm) is unchanged and still correct as a
 *description* of what happens (`figures/h2_magnet_distance_and_insertion_story.png`);
 only the causal *reading* of why is revised below.
 
-### 3.3 Same-state counterfactual: the decisive evidence
+### 3.3 Same-state counterfactual: what it establishes directly, and what it does not
 
 `scripts/h2_same_state_counterfactual.py` takes each tight-floor MPC-$J_{NC}$
 rep's own measured state at $s=\{45,50,55,58,60,62,64\}$mm and solves the
@@ -169,84 +215,114 @@ identical MPC twice **[counterfactual]**:
 - $u_0^{NC}$ — no override (literally what the run did; cross-checked
   against the logged command, max relative error 0.06% across all 21
   ticks — see `tables/h2_same_state_sanity_check.csv`);
-- $u_0^{C}$ — the schedule's horizon window replaced by $J_C^{state}(x_k)$,
-  the contact model recomputed at that exact measured state (the one
-  physically-grounded reference this investigation uses, per H4 below).
+- $u_0^{C,state}$ — the schedule's horizon window replaced by
+  $J_C^{state}(x_k)$, the contact model recomputed once at the exact
+  measured state and held constant across the horizon.
 
-Both commands are then evaluated through the **same** $J_C^{state}(x_k)$ —
-never through either command's own source model — decomposed into useful
-correction along $\hat e_k=(p_{ref}-p_{tip})/\|p_{ref}-p_{tip}\|$ and
-transverse (wasted) correction (`tables/h2_same_state_counterfactual.csv`,
-`figures/h2_same_state_counterfactual.png`):
+A follow-up pass (`scripts/h2_signed_and_schedule_counterfactual.py`) added a
+second, "controller-realistic" counterfactual, $u_0^{C,sched}$, that
+substitutes the real contact schedule's own per-horizon-step window at that
+exact reference index — a genuinely different command from $u_0^{C,state}$
+($\|u_0^{C,state}-u_0^{C,sched}\|$ relative to either command's own norm
+grows from $\approx0.2$-$0.4$ at $s=45$-$58$mm to $\approx1.0$-$2.0$ at
+$s=60$-$64$mm — these two counterfactuals increasingly diverge from each
+other exactly in the late-path region this section cares about, so neither
+can stand in for the other there).
 
-| $s$ (mm) | $c_\parallel$, actual $J_{NC}$ command (mm) | $c_\parallel$, counterfactual $J_C^{state}$ command (mm) | ratio |
-|---|---|---|---|
-| 45 | 0.238 | 0.716 | 3.0$\times$ |
-| 50 | 0.202 | 0.687 | 3.4$\times$ |
-| 55 | 0.251 | 1.561 | 6.2$\times$ |
-| 58 | 0.266 | 1.677 | 6.3$\times$ |
-| 60 | 0.100 | 0.110 | 1.1$\times$ |
-| 62 | 0.096 | 0.614 | 6.4$\times$ |
-| 64 | 0.061 | 0.267 | 4.4$\times$ |
+**What is directly, robustly established: the actual command differs
+substantially from either counterfactual at every one of the 7 states, in
+every rep** — $\|u_0^{NC}-u_0^{C,state}\|$ and $\|u_0^{NC}-u_0^{C,sched}\|$
+are both comparable in size to the commands' own norms throughout
+(`tables/h2_signed_and_schedule_counterfactual.csv`). This magnitude
+comparison does not depend on any choice of sign convention and is not in
+question.
 
-(Values are mean over the 3 reps; every mark individually shows the same
-direction in all 3 reps — see the full table.)
+**What is not established: which command would actually have tracked
+better.** The original version of this subsection converted both commands'
+predicted tip motion into a scalar "useful correction,"
+$c_\parallel=\hat e_k^T J_C^{state}\Delta\chi$ with
+$\hat e_k=(p_{ref}-p_{tip})/\|p_{ref}-p_{tip}\|$, and reported the
+$J_C^{state}$-informed command as realizing "3-6$\times$ more correction." An
+external review correctly identified the same defect in this metric that
+affects H5's §7.3: discarding $c_\parallel$'s sign (as the original text did)
+throws away the one piece of information that distinguishes a genuinely
+useful command from a harmful one, and MPC's command is not intended to
+correct only the *current* tick's error in the first place — it is solved
+over a multi-step, delay-compensated horizon. Replacing $c_\parallel$ with
+the same sign-respecting, one-step-ahead $\Delta e$ metric used in §7.3
+(evaluated via $p_{ref,k+1}$, through $J_C^{state}$, for all three command
+variants) **reverses the original claim rather than confirming it**: the
+*actual* $J_{NC}$ command shows $\Delta e>0$ (a small, real predicted
+improvement) at all 21 of 21 (state, rep) combinations, while the
+$J_C^{sched}$-window counterfactual is actually *worse* than the actual
+command at all 21/21, and the $J_C^{state}$-repeated counterfactual is worse
+at 13/21.
 
-**At every one of these 7 states, independently in all 3 reps, the command
-the optimizer would have issued with the correct model achieves
-substantially more real tracking correction than the command it actually
-issued with the no-contact model** — directly establishing, not merely
-inferring, that the Jacobian mismatch degrades the realized correction at
-the exact states this condition visits. This is quantitatively consistent
-with H4's independent finding (§6) that the no-contact schedule
-over-predicts tip response by a mean gain ratio of 2.64$\times$ at this
-same floor: a controller that believes a command will produce roughly
-2.6$\times$ the actual contacted response will, after conversion to a
-correctly-scaled command, under-correct by a similar factor — matching the
-3-6$\times$ gap in realized correction measured here directly.
-
-The counterfactual's effect on the exclusion margin is *not* uniform across
-this window, and is itself informative: at $s=45$-$58$mm the $J_C^{state}$-
-informed command would have simultaneously produced *more* correction *and*
-more exclusion margin than the actual command (mean $\Delta h_{excl}$
-+9 to +13mm vs the actual command's +0.17-0.30mm) — i.e. no trade-off was
-being made there, the actual command was simply less effective on both
-counts. At $s=60$-$64$mm this reverses: the $J_C^{state}$-informed command
-would have *spent* exclusion margin to achieve its larger correction
-(mean $\Delta h_{excl}$ −0.5 to −12mm, vs the actual command's continuing
-small *positive* drift). **This is the one place in this window where a
-genuine correction-vs-margin trade-off appears** — and even there, §3.2
-already shows the actual run had nowhere close to zero margin to spend.
+**This reversal is not read here as "the no-contact command was actually
+fine" — that would simply trade one metric-driven overclaim for its
+opposite.** The same delay/horizon mismatch that makes the one-step metric
+untrustworthy for the scheduled command in §7.3 applies here too: the
+$J_C$-informed counterfactual commands are, if anything, larger in
+magnitude and more sign-variable tick to tick than the actual command, which
+is exactly the pattern a horizon-optimizing command directed at a future
+rather than immediate state would produce. Neither the discarded-sign
+original metric nor this corrected one-step metric can be trusted to settle
+which command is actually better for a delay-aware, multi-step optimizer; a
+real resolution needs the controller's own multi-step predicted-cost change
+($\Delta V_{track}$, propagated through its horizon and delay buffer), which
+is not computed in this pass. **The same-state counterfactual mechanism for
+H2 is therefore reported as attempted and inconclusive, exactly as for H5
+(§7.3) — not as a directly demonstrated mechanism**, and the "3-6$\times$ gap
+in realized correction" claim is withdrawn.
 
 ### 3.4 Revised mechanism and termination
 
+What remains directly supported, independent of the inconclusive same-state
+metric above:
+
 $$
 \boxed{
-J_{NC}^{sched}\ \text{overpredicts contacted tip response (gain ratio 2.64}\times\text{, H4)}
-\rightarrow
-\text{at matched states, the resulting command realizes 3-6}\times\text{ less tip correction than a contact-informed command would (same-state counterfactual, direct)}
-\rightarrow
-\text{tracking error accumulates (0.75}\rightarrow\text{4.07mm, Table in \S3.2)}
-\rightarrow
-\text{tracking-error abort at }s\approx64\text{mm, with every workspace/exclusion margin still tens of mm from zero.}
+\begin{aligned}
+&J_{NC}^{sched}\ \text{over-predicts contacted tip response by a magnitude ratio, independent of sign}\\
+&\text{(gain ratio 2.64}\times\text{ whole-run mean, H4 \S6; already elevated before the terminal}\\
+&\text{tracking blow-up, \S6.5 — both magnitude-only comparisons, unaffected by the sign issue above)}\\
+&\downarrow\\
+&\text{at matched states, the resulting command differs substantially in magnitude from what}\\
+&\text{a contact-informed model would command (same-state counterfactual, direct; §3.3)}\\
+&\downarrow\\
+&\textit{[whether this makes the realized tracking better or worse, one step or several steps ahead,}\\
+&\textit{is not established by any metric computed in this report — open, §11]}\\
+&\downarrow\\
+&\text{tracking error accumulates (0.75}\rightarrow\text{4.07mm, Table in \S3.2)}\\
+&\downarrow\\
+&\text{tracking-error abort at }s\approx64\text{mm, with every workspace/exclusion margin still tens of mm from zero (\S3.2).}
+\end{aligned}
 }
 $$
 
 No workspace- or exclusion-pressure term appears anywhere in this chain —
-§3.2 rules it out directly. "Gets fed in less and then gives up" and
-"retreats to configurations where local tracking is easier" are removed;
-the mechanism is a quantified, same-state-demonstrated reduction in realized
-correction, nothing more and nothing less.
+§3.2 rules it out directly, and that part of the chain is unaffected by the
+metric problem above (it is a margin measurement, not a correction-direction
+claim). "Gets fed in less and then gives up" and "retreats to configurations
+where local tracking is easier" remain removed. What is added by this
+pass's correction: the magnitude-level mismatch and margin findings are
+retained as directly demonstrated; the *directional* same-state mechanism
+step (whether the wrong model's command is actually less effective, not
+merely different) is downgraded to attempted-and-inconclusive, matching the
+same honest standard applied to H5.
 
 ### 3.5 Lag vs cross-track (unchanged from the prior report, §3.5 there)
 
 No-contact MPC's terminal lag grows 36$\times$ from 210mm to 255mm while
 cross-track grows a comparable 2.4$\times$; the honest reading remains that
 error accumulates in both components over the run, with the *terminal*
-failure specifically lag-dominated — consistent with, and now additionally
-explained by, the reduced-realized-correction mechanism in §3.4 (a command
-that under-corrects falls behind the reference's own fixed schedule,
-which is exactly what "lag" means here).
+failure specifically lag-dominated. This pattern (falling behind the
+reference's own fixed schedule, rather than diverging laterally from it) is
+*consistent with* a command that is directionally less effective than a
+contact-informed one would be — but, per §3.3's revised conclusion, that
+directional claim is not established, so this lag/cross-track pattern is
+reported as a further direct observation, not as confirmation of the
+reduced-correction mechanism.
 
 ---
 
@@ -390,6 +466,45 @@ the same point the prior report already made in its closing sentence of
 supported by $E_N$ growing rather than staying flat, rather than by an
 unverified "completely free" characterization.
 
+**Where in the pipeline does this growth actually originate?** The $E_N$
+values above are computed on the logged/executed command, which has already
+passed through the controller's own velocity/acceleration/state-box clip and
+the external selective gate — raising the question of whether the growth is
+a property of the controller's own task-space solve, or is partly injected
+by one of those two downstream stages (clipping and especially a
+selective, per-component zeroing gate can rotate a command out of the
+row-space of $J_p$ even if the original solve did not). A follow-up pass
+decomposed all three pipeline stages separately — $u_{raw}$ (the pure
+damped-least-squares solution, before any clip), $u_{clipped}$ (after the
+velocity/acceleration/state-box clip), and $u_{gated}$ (after the selective
+gate, which should equal the logged command) — and projected each
+(`tables/h3b_pipeline_stage_nullspace.csv`, `figures/h3b_pipeline_stage_nullspace.png`)
+**[hardware, direct]**:
+
+| pairing | stage | $E_N$, early (mean) | $E_N$, pre-failure (mean) |
+|---|---|---|---|
+| selective, contact | $u_{raw}$ | 0.058 | 0.208 |
+| selective, contact | $u_{clipped}$ | 0.058 | 0.214 |
+| selective, contact | $u_{gated}$ | 0.058 | 0.214 |
+| selective, no-contact | $u_{raw}$ | 0.023 | 0.381 |
+| selective, no-contact | $u_{clipped}$ | 0.023 | 0.382 |
+| selective, no-contact | $u_{gated}$ | 0.023 | 0.382 |
+
+**All three stages show essentially the same growth, in both pairings — the
+raw, pre-clip task-space solution already exhibits the full early-to-
+pre-failure increase.** This rules out the clip and the selective gate as
+the source of the growing null-space energy: it is a property of the
+controller's own damped-least-squares resolution of redundancy, not a
+downstream pipeline artefact. This strengthens, rather than merely repeats,
+the finding above — the growth is intrinsic to the control law itself,
+consistent with the "no secondary objective regulates accumulated redundant
+configuration" reading just above, now checked against the alternative
+explanation rather than assumed. (The early-region means here differ
+slightly from the table above — 0.058/0.023 vs 0.026/0.022 — due to a
+different tick-subsampling stride on a noisy per-tick quantity; both this
+table's own three stages were computed on an identical tick set, so the
+stage-to-stage comparison is unaffected.)
+
 ### 5.3 Scope (unchanged from the prior report's §5.3)
 
 Confirmed to reproduce under two independent Jacobian sources, both
@@ -416,7 +531,10 @@ floor.
 
 Whole-run means above are vulnerable to one specific distortion: the
 255mm MPC-$J_{NC}$ condition terminates at $s\approx64$mm, while its
-contact-Jacobian comparator completes the full $\approx90$mm path — a
+contact-Jacobian comparator completes the full $75.3$mm reference path (note:
+$75.3$mm is path progress $s$, the arc-length coordinate used throughout this
+report — not to be confused with insertion length $L$, which this same
+255mm contact-aware condition reaches $89.7$-$91.0$mm of, §3.4) — a
 whole-run average silently compares unlike portions of the trajectory.
 `scripts/h4_progress_binned.py` re-bins the existing 1636-tick guided
 sample (same data as §6.2-6.4, no new live-model evaluations) into shared
@@ -437,13 +555,71 @@ reached rather than omitting it silently (`tables/h4_common_progress_bins.csv`,
 ratio is already elevated for MPC-$J_{NC}$ relative to its own
 contact-Jacobian comparator in the 45-55mm and 55-60mm bins — well before
 the 60-64mm bin where tracking error and gain ratio both spike.** This is
-the temporal-ordering evidence the causal reading in §3.4 needs: the model
+temporal-ordering evidence relevant to §3.4's causal chain: the model
 mismatch is not something that only appears alongside the terminal tracking
 blow-up, it is already present and already larger than the matched
 comparator's own mismatch tens of millimetres of path progress earlier.
-This is **consistent with, and strengthens, but does not by itself prove**
-the §3.4 causal chain — the same-state counterfactual in §3.3 is the direct
-demonstration; this bin-matched table is the supporting temporal evidence.
+This is **consistent with, but does not establish**, the §3.4 causal chain —
+the same-state counterfactual attempted in §3.3 for the directional question
+is inconclusive (see there); this bin-matched table remains a magnitude-only,
+temporal-ordering observation, not a demonstration of causal direction.
+
+### 6.6 Robustness of the gain-ratio statistic
+
+A mean of a ratio can be distorted by a small number of near-zero-
+denominator ticks, so the gain-ratio figures above — especially the 60-64mm
+bin's 7.94$\times$, used repeatedly elsewhere in this report — were checked
+against two more robust statistics computed on the same per-sample data,
+re-deriving the numerator and denominator norms separately rather than
+reading only the stored ratio: the **median** (insensitive to outliers in
+either direction) and $G_{agg}=\sum_k\|J_{sched}\Delta\chi_k\|/\sum_k\|J_C^{state}\Delta\chi_k\|$
+(an aggregate, motion-weighted ratio, insensitive to a few near-zero-
+denominator ticks inflating an individual ratio — though, as this check
+found, itself vulnerable to the opposite failure mode: a single
+*anomalously large* denominator can dominate its sum and collapse the
+statistic) (`scripts/h4_gain_ratio_robustness.py`,
+`tables/h4_gain_ratio_robustness.csv`, `figures/h4_gain_ratio_robustness.png`)
+**[model, re-derived]**:
+
+| bin (mm) | condition | n | mean (original) | median | $G_{agg}$ |
+|---|---|---|---|---|---|
+| pre-contact (0-28.5) | MPC-$J_C$ | 37 | 1.28 | 1.22 | 1.34 |
+| pre-contact (0-28.5) | MPC-$J_{NC}$ | 45 | 1.29 | 1.17 | 1.26 |
+| early contact (28.5-45) | MPC-$J_C$ | 82 | 1.48 | 1.44 | 1.46 |
+| early contact (28.5-45) | MPC-$J_{NC}$ | 107 | 2.44 | 2.44 | 2.42 |
+| mid-contact (45-55) | MPC-$J_C$ | 61 | 1.59 | 1.36 | 1.90 |
+| mid-contact (45-55) | MPC-$J_{NC}$ | 60 | 2.15 | 2.11 | **0.07** |
+| late common (55-60) | MPC-$J_C$ | 29 | 1.42 | 1.40 | 1.54 |
+| late common (55-60) | MPC-$J_{NC}$ | 27 | 2.41 | 2.24 | 2.28 |
+| NC pre-failure (60-64) | MPC-$J_C$ | 12 | 1.91 | 1.82 | 1.94 |
+| NC pre-failure (60-64) | MPC-$J_{NC}$ | 19 | **7.94** | **7.30** | **7.19** |
+
+**The headline figure survives**: in the 60-64mm bin, mean (7.94), median
+(7.30), and $G_{agg}$ (7.19) all agree closely — this is a robust, large
+effect, not an artefact of a few extreme ticks. The 28.5-45mm and 55-60mm
+bins are similarly consistent across all three statistics (within
+$\approx10\%$ of each other).
+
+**The mid-contact (45-55mm) bin's $G_{agg}=0.07$ is not a real effect — it
+is a single-tick numerical artefact, traced and confirmed, not left as an
+unexplained anomaly.** Inspecting the 60 underlying per-sample rows
+directly (`tables/h4_gain_ratio_robustness_per_sample.csv`) identifies
+exactly one tick ($s=47.91$mm) whose live-model denominator,
+$\|J_C^{state}\Delta\chi\|=423.7$mm, is physically impossible for a single
+0.1s control tick in a system whose typical one-tick tip motion is
+$0.1$-$0.3$mm — three orders of magnitude larger than every other sample in
+the entire 490-row 255mm dataset (next-highest: $0.28$mm). This is a live
+Jacobian evaluation anomaly at that one state (plausibly a near-singular or
+otherwise pathological configuration passed to the contact-model solve), not
+a real physical response, and because $G_{agg}$ sums denominators before
+dividing, this single outlier dominates and collapses the bin's aggregate
+ratio. **Excluding only this one tick, the bin's three statistics converge
+to mutual agreement**: mean $2.13$, median $2.13$, $G_{agg}=2.12$ — fully
+consistent with the mean/median already reported, and with the neighbouring
+bins' elevated-but-not-yet-extreme readings. The §6.5 temporal-ordering
+claim (mismatch already elevated in the 45-55mm and 55-60mm bins, before the
+60-64mm failure bin) is therefore robust across all three bins once this one
+diagnosed artefact is excluded.
 
 ---
 
@@ -451,74 +627,120 @@ demonstration; this bin-matched table is the supporting temporal evidence.
 
 Sections 7.1 (design: why two frozen ablations, chosen to separate
 conditioning from staleness) and 7.2 (headline completion/RMSE table) are
-**unchanged from the prior report**. The verdict stands: no single fixed
+**unchanged from the prior report**. The verdict stands: neither tested fixed
 linearization matched the scheduled Jacobian's combination of tracking
 quality and robust completion.
 
-### 7.3 Why index 0 survives and index 100 does not — now with a same-state counterfactual
+### 7.3 Why index 0 survives and index 100 does not — a same-state counterfactual was attempted, and is inconclusive
 
 The prior report's directional-alignment check (index 0's dominant output
 direction staying closer to the schedule's own evolving direction than
-index 100's, at every post-contact checkpoint) was correlational. This pass
-adds a direct same-state counterfactual: at 11 states drawn from the
-**frozen-idx100 run's own hardware log** (not the scheduled baseline —
-an earlier attempt using the scheduled baseline's own small, noisily-signed
-tracking error produced sign flips too often to give a clean read, since a
-successful run's error has no sustained direction to project onto; the
-failing idx100 run's error does), the identical MPC is re-solved three
-times per state — with the real frozen-idx100 schedule (cross-checked
-against the logged command, max relative error 0.05% across all 11 states),
-with the trajectory-varying schedule's own matrix at that exact reference
-index, and with the frozen-idx0 matrix — and all three resulting commands
-are evaluated through $J_C^{state}(x_k)$ along $\hat e_k$
-(`tables/h5_same_state_counterfactual.csv`,
-`figures/h5_same_state_frozen_counterfactual.png`) **[counterfactual]**:
+index 100's, at every post-contact checkpoint) is correlational, and remains
+the only evidence this report can currently stand behind for *why* index 0
+survives and index 100 does not.
 
-| $s$ (mm) | $c_\parallel$, idx100 actual (mm) | $c_\parallel$, scheduled c/f (mm) | $c_\parallel$, idx0 c/f (mm) |
-|---|---|---|---|
-| 20 | −0.085 | −0.179 | −0.031 |
-| 40 | 0.105 | 0.866 | 0.083 |
-| 50 | −0.128 | −1.064 | −0.211 |
-| 55 | 0.110 | 1.826 | 0.166 |
-| 58 | −0.101 | −1.396 | −0.184 |
-| 60 | 0.108 | 1.118 | 0.137 |
-| 62 | −0.168 | −1.665 | −0.237 |
-| **64** | **0.016** | **3.133** | **0.063** |
-| 67 | −0.084 | 0.820 | −0.075 |
+**A same-state counterfactual was built and run, using the same 11 states
+from the frozen-idx100 run's own hardware log as before, and is reported
+here, but its original "useful correction" metric did not survive a sign
+check and the finding is revised to inconclusive as a result — this is a
+revision made during this pass, not a result carried over from an earlier
+version of this report.** The counterfactual itself (re-solving the identical
+MPC at each state with the real frozen-idx100 schedule, the trajectory-
+varying schedule's own matrix at that reference index, and the frozen-idx0
+matrix, all three commands evaluated through $J_C^{state}(x_k)$) is sound —
+sanity-check replay error against the logged command is under 0.05% at every
+state. What was wrong was the metric applied to the three resulting
+commands.
 
-(sign follows $\hat e_k$ at that tick, so a negative/positive alternation
-tick to tick is expected and not itself meaningful; magnitude is the
-relevant quantity here.)
+**The problem.** The original metric was
+$c_\parallel=\hat e_k^T J_C^{state}\Delta\chi$ with
+$\hat e_k=(p_{ref,k}-p_{tip,k})/\|p_{ref,k}-p_{tip,k}\|$, read as "useful
+correction," with its sign explicitly discarded ("a negative/positive
+alternation tick to tick is expected and not itself meaningful; magnitude is
+the relevant quantity"). That is not a valid reading: $c_\parallel>0$ means
+predicted motion *toward* the reference and $c_\parallel<0$ means predicted
+motion *away* from it, under the stated definition — the sign is exactly the
+information that distinguishes a genuinely useful command from a harmful
+one, and discarding it before reporting "a 50-200$\times$ gap" was an error
+that this report now corrects rather than repeats.
 
-Three things this directly shows:
+**The attempted fix, and why it is reported as inconclusive rather than
+successful.** Replacing $c_\parallel$ with a signed one-step predicted error
+reduction, $\Delta e=\|e_{before}\|-\|e_{after}\|$ (using the *next*
+reference sample $p_{ref,k+1}$ in both $e_{before}$ and $e_{after}$, still
+evaluated through $J_C^{state}$), gives a metric whose sign is unambiguous —
+but it reverses the qualitative story rather than confirming it:
 
-1. **The scheduled Jacobian's counterfactual command produces far more
-   realized correction than either frozen alternative at essentially every
-   state** (e.g. at $s=64$mm, 3.13mm vs 0.016mm for idx100's actual command
-   and 0.063mm for idx0 — a 50-200$\times$ gap) — a direct, same-state
-   demonstration of why continual re-linearization beats any single frozen
-   snapshot, not just an outcome-level correlation.
-2. **From $s\approx50$mm onward — entering and through idx100's own
-   reported failure-onset window (§7.3 of the prior report, $s\approx58$-
-   $68$mm) — idx0's counterfactual command produces a larger-magnitude
-   useful correction than idx100's own actual command, at 6 of 7 marks in
-   that range**, most strikingly at $s=64$mm (idx100's own command:
-   0.016mm of real correction, essentially nothing; idx0's counterfactual
-   command at the identical state: 0.063mm, $\approx4\times$ more).
-   **This directly supports the staleness reading**: idx100's command,
-   evaluated against the real contacted system at the exact moment its
-   tracking error is accelerating, has become almost uninformative, while
-   idx0 — despite its poor local conditioning — has not.
-3. **Before $s\approx50$mm, idx100's own actual command is comparable to or
-   larger than idx0's counterfactual command** at several marks (20, 40mm)
-   — consistent with the prior report's §7.2 observation that idx100
-   tracks *better* than idx0 through the early-mid path, now given a
-   mechanistic grounding rather than only a tracking-statistic comparison.
+| $s$ (mm) | idx100 actual, OLD $c_\parallel$ | idx100 actual, NEW $\Delta e$ | sched c/f, OLD $c_\parallel$ | sched c/f, NEW $\Delta e$ | idx0 c/f, OLD $c_\parallel$ | idx0 c/f, NEW $\Delta e$ |
+|---|---|---|---|---|---|---|
+| 20 | −0.085 | −0.022 | −0.179 | −0.126 | −0.031 | −0.079 |
+| 30 | 0.192 | 0.207 | 0.604 | 0.152 | 0.115 | 0.034 |
+| 40 | 0.105 | 0.119 | **0.866** | **−0.428** | 0.083 | 0.056 |
+| 50 | −0.128 | −0.038 | −1.064 | −1.707 | −0.211 | −0.126 |
+| 55 | 0.110 | 0.109 | **1.826** | **−1.904** | 0.166 | 0.158 |
+| 58 | −0.101 | −0.110 | −1.396 | −1.653 | −0.184 | −0.183 |
+| 60 | 0.108 | 0.097 | **1.118** | **−0.097** | 0.137 | 0.139 |
+| 62 | −0.168 | −0.153 | −1.665 | −2.029 | −0.237 | −0.224 |
+| **64** | **0.016** | **0.079** | **3.133** | **−3.096** | **0.063** | **0.058** |
+| 67 | −0.084 | −0.086 | **0.820** | **−2.765** | −0.075 | −0.107 |
+| 70 | 0.062 | 0.063 | 0.204 | −0.281 | 0.140 | 0.141 |
 
-The prior report's *"that is the signature of staleness specifically"* is
-retained, but is now **directly supported by same-state replay**, not only
-by the correlational directional-alignment check — which remains valid and
-is kept as corroborating evidence, not replaced.
+(`tables/h5_signed_error_reduction.csv`, `figures/h5_signed_error_reduction.png`
+— computed alongside the original table, `tables/h5_same_state_counterfactual.csv`,
+`figures/h5_same_state_frozen_counterfactual.png`.) **[counterfactual]**
+
+Under this corrected, sign-respecting metric:
+
+1. **The scheduled counterfactual's $\Delta e$ is negative — a predicted
+   *worsening*, not an improvement — at 9 of 11 states**, including the
+   exact $s=64$mm state previously used as the headline illustration: it
+   flips from $+3.13$mm (read, incorrectly, as "far more correction") to
+   $-3.10$mm (a comparably large predicted worsening) under the corrected
+   metric. **The "scheduled dominates" claim, as quantified by either
+   version of this metric, does not survive** and is withdrawn.
+2. **idx0 no longer clearly beats idx100's own actual command in the
+   late-path region.** Of the 8 marks at $s\geq50$mm, idx100's own command
+   now has a larger (less negative, or more positive) $\Delta e$ than idx0's
+   counterfactual at 5 of 8 — including $s=64$mm, where idx100
+   ($+0.079$mm) now exceeds idx0 ($+0.058$mm), the reverse of the original
+   illustration. idx0 is clearly ahead only at $s=55,60,70$mm. **The
+   staleness mechanism this same-state counterfactual was built to
+   demonstrate directly is not established by it.**
+3. All three commands remain small and comparable in magnitude throughout
+   (roughly 0.02-0.22mm for idx100 and idx0; the scheduled command is
+   consistently larger in magnitude, 0.1-3.1mm, but — per point 1 — its sign
+   is as often a predicted worsening as an improvement).
+
+**Why this happened, and why it is reported as inconclusive rather than as a
+negative result for H5's mechanism specifically.** The scheduled command is
+the only one of the three built from a model meant for live, delay-
+compensated redeployment — the real MPC re-linearizes every horizon step and
+is delay-aware (it carries a `delay_samples` parameter and solves over a
+multi-step horizon). idx100-actual and idx0-counterfactual are both frozen,
+single-matrix commands with no comparable delay compensation at this
+instant. The scheduled command's much larger magnitude, and its tendency to
+flip sign under a *one-step-ahead* metric, is consistent with it being
+intended to correct a predicted *future* tracking state rather than the
+immediate next tick — exactly the delay/horizon mismatch an external review
+of this report flagged as a concern with projecting onto the *current*
+tracking-error direction at all. The $\Delta e$ metric above is itself only
+a one-step-ahead approximation (it still does not propagate the solved
+trajectory through the controller's own horizon/delay buffer to compute the
+actual change in predicted multi-step tracking cost, $\Delta V_{track}$,
+which would be the fully rigorous fix) — so neither the original nor the
+corrected metric can be trusted to isolate the mechanism for a command whose
+intended effect is multiple steps ahead.
+
+**Net status of this subsection: the outcome-level facts from §7.2 (scheduled
+completes; idx0 completes but tracks worse; idx100 tracks well early, then
+fails late) are direct hardware observations and are unaffected by any of
+this.** The *mechanistic* claim — *why* index 0 survives and index 100 does
+not — is supported only by the correlational directional-alignment check
+carried over from the prior report (§7.2); the same-state counterfactual
+mechanism attempted in this subsection is reported as **attempted and
+inconclusive**, not as a demonstrated mechanism, and a genuine resolution
+would need the full delay/horizon-aware $\Delta V_{track}$ metric, which
+remains an open item (§11).
 
 ---
 
@@ -578,16 +800,73 @@ window, all three reps (`scripts/transient_57mm_part2.py`,
   varying gap (0.019-0.031mm) and contact-force proxy, with no abrupt
   active-set transition visible at the sampled ticks. **This diagnostic's
   stride did not land exactly on the single worst tick in two of three
-  reps**, so a contact-state check at the precise peak tick itself remains
-  a residual gap, noted honestly rather than papered over.
+  reps**, so a contact-state check at the precise peak tick itself remained
+  a residual gap at this point in the investigation — closed below.
 
-**Conclusion: after twelve candidate explanations now jointly checked
-(eight from the prior pass, four here), none shows a clear, repeatable
-anomaly coincident with the peak tick. This transient remains
-unexplained.** It is reported this way deliberately — forcing an
-explanation the data does not support would be worse than leaving it open.
-It remains small (under 3.81mm, below every abort threshold used in this
-report) and does not threaten any conclusion elsewhere in this document.
+### 9.1 Closing the residual gap: exact-peak-tick contact state, and a same-state schedule-vs-state replay
+
+Two further, exact (not coarse-stride) checks were run at the precise
+`is_peak==True` tick identified per rep (`tables/transient_peak_refine.csv`),
+closing out the two items flagged as incomplete above.
+
+**Exact-tick contact state.** Recomputing the contact model's gap and
+contact-force quantities at the exact peak tick in all three reps (not its
+coarse-stride neighbours) gives gap $35$-$37\mu$m and force $1.56$-$1.70$N —
+smooth, consistent with the immediately surrounding ticks, no penetrating
+nodes. **This adds no new information**: the exact-tick values confirm,
+rather than contradict, the coarser-stride finding already reported above.
+
+**Exact-tick same-state MPC replay — this is new, and changes the
+conclusion.** At the same three exact peak ticks, the real tick was first
+re-solved with no override (sanity-checking the replay against the logged
+command: relative error $0.011$-$0.017\%$ in reps 2 and 3, but $20.65\%$ in
+rep 4 — a genuine solver-sensitivity outlier at that specific tick, which
+needed $1350$ QP iterations against $500$-$1800$ for neighbouring ticks, and
+is reported with this caveat rather than treated as equally reliable), then
+re-solved again with the scheduled Jacobian $J_C^{sched}$ replaced by
+$J_C^{state}(x_k)$, the contact model recomputed at that exact measured
+state (`tables/transient_exact_peak_closure.csv`) **[counterfactual]**:
+
+| rep | $s$ (mm) | sanity rel. err. | $\|u_0^{sched}\|$ | $\|u_0^{state}\|$ | relative command difference |
+|---|---|---|---|---|---|
+| 2 | 60.24 | 0.017% | 0.068 | 0.210 | **211%** |
+| 3 | 60.47 | 0.011% | 0.060 | 0.217 | **262%** |
+| 4 | 60.24 | 20.65% (flagged, lower confidence) | 0.079 | 0.235 | 199% |
+
+**Swapping the scheduled Jacobian for the state-recomputed one at the exact
+peak tick changes the command by roughly $2$-$2.6\times$ in norm** — far
+larger than the schedule-vs-state mismatch found anywhere else in this
+investigation, and present in all three reps (though rep 4's number carries
+the sanity-check caveat above). Measuring the matrix-level mismatch directly
+at these same three ticks, $E_J=\|J_{sched}-J_C^{state}\|_F/\|J_C^{state}\|_F$,
+gives $0.65$-$0.66$ in all three reps — roughly double this condition's own
+whole-run mean ($0.316$ at $210$mm, H4 §6.2).
+
+**This does not contradict the original eight-candidate check** (which
+included a schedule-vs-live-state divergence quantity, found unremarkable
+over $s=54$-$60$mm) — it resolves the same issue the peak-location
+correction above already flagged: that check, like the original tracking-
+error search, was run over a window that ends at $s=60$mm and never actually
+reached the true peak at $s\approx60.2$-$60.5$mm. Checked at the right tick,
+the previously-dismissed candidate turns out to be anomalous after all.
+
+**Conclusion.** Of the twelve previously-checked candidates plus the two
+closed here, **a candidate mechanism is now identified**: an anomalously
+large schedule-vs-state-recomputed Jacobian mismatch, specific to the exact
+peak tick, that materially changes the commanded correction when tested by
+actual re-solved command (not only by matrix norm). This is supported at the
+matrix level in all 3 reps and at the command-replay level in 2 of 3 reps
+with high-confidence replay fidelity (rep 4's replay itself has a large
+baseline discrepancy at this exact tick and is reported with that caveat,
+not used to anchor the claim). Vision/measurement (1A), reference geometry
+(1B), and execution lag (1C) remain ruled out. **This is reported as a
+repeatable candidate mechanism, not yet an exhaustively characterized one**:
+a planned finer sweep of $E_J$ across the neighbouring ticks (to determine
+whether this is a sharp, isolated spike or a broader plateau) did not finish
+in time and remains open (§11). The transient remains small in absolute
+terms (under 3.81mm, below every abort threshold used in this report) and
+does not threaten any conclusion elsewhere in this document, but it is no
+longer accurately described as "unexplained."
 
 ---
 
@@ -602,18 +881,28 @@ An executable plan requires contact physics at all (H1). Whether using the
 configuration freedom: at a loose floor, both models reach the same
 near-base configurations and the wrong model's error is absorbed for free;
 at a tight floor, the wrong model's schedule mismatch is already elevated
-tens of millimetres before the eventual tracking failure (H4, §6.5), and a
-same-state counterfactual directly shows its actual commands realize
-3-6$\times$ less tracking correction than a contact-informed command would
-at the identical states (H2, §3.3) — with every workspace and exclusion
-margin confirmed to stay generous throughout, ruling out a
-configuration-space-exhaustion reading (§3.2). Nor is a single fixed
-linearization a substitute for continual updating: a same-state
-counterfactual shows the scheduled Jacobian's command realizes far more
-correction than either frozen alternative at matched states, and shows
-specifically that the well-conditioned-but-frozen matrix's own commands
-become nearly uninformative exactly where its tracking error accelerates,
-while the ill-conditioned-but-frozen matrix's commands do not (H5, §7.3).
+tens of millimetres before the eventual tracking failure (H4, §6.5), and
+the command it actually issues at matched states differs substantially in
+magnitude from what a contact-informed model would command there (H2,
+§3.3) — with every workspace and exclusion margin confirmed to stay
+generous throughout, ruling out a configuration-space-exhaustion reading
+(§3.2). **Whether that command difference makes the realized tracking
+better or worse is not established**: a same-state counterfactual was built
+for exactly this question, using a one-step signed error-reduction metric,
+and found the result sensitive to a known limitation of that metric (it
+cannot account for MPC's delay-aware, multi-step horizon) rather than
+settling the question — reported as attempted and inconclusive, not as a
+demonstrated mechanism (§3.3). The same limitation applies to H5's analogous
+counterfactual: the claim that the scheduled Jacobian's command realizes
+more correction than either frozen alternative, and that idx0 outperforms
+idx100 late in the path, does **not** survive the same sign correction (§7.3)
+and is likewise withdrawn as a directly-demonstrated mechanism. What
+survives for H5 is the outcome-level finding only: no single fixed
+linearization (of the two tested) matched the scheduled Jacobian's
+combination of tracking quality and robust completion, and the
+*correlational* directional-alignment check from the prior report (index 0's
+output direction staying closer to the schedule's own evolving direction)
+remains the only evidence offered for *why*.
 
 **Controller architecture (H3a, H3b).** Independent of modelling quality, a
 controller unable to represent the exclusion constraint inside its own
@@ -633,11 +922,18 @@ remains of it (§5.1); and a null-space-energy fraction that grows
 10-17$\times$ from early path progress to the pre-failure window, though it
 never exceeds $\approx40\%$ of the command's squared norm even immediately
 before the exit (§5.2) — "accumulated redundant-configuration drift" is the
-precise, evidence-matched term, not "null-space drift." MPC's own
-formulation avoids both problems directly: its in-QP constraint keeps every
-tick feasible, and its input and input-increment costs regularize every
-commanded direction, task-relevant or not, without any explicit posture
-target.
+precise, evidence-matched term, not "null-space drift." MPC's in-QP
+constraint is directly observed to keep every tick feasible (§4.1, never
+violated on any MPC tick analysed) — that part is a direct measurement. The
+further claim that its input and input-increment costs are *why* its
+configuration stays bounded while the inverse-Jacobian controller's drifts is
+not separately isolated by an ablation in this investigation (no run varies
+those cost weights while holding everything else fixed): it is **consistent
+with** the observed contrast — MPC stays bounded, the naive controller does
+not, and MPC's cost structure penalizes every commanded direction while the
+naive controller's redundancy resolution at zero gain has no analogous term
+— but is reported as an interpretation consistent with the evidence, not as
+a directly demonstrated causal mechanism.
 
 These remain two additive, independent sources of the performance gap
 between contact-aware MPC and every other condition tested — one about
@@ -657,39 +953,60 @@ operates under.
   revised report inherits this same caveat, since all of them evaluate
   commands through $J_C^{state}$.
 - **Same-state MPC replay reproduces logged commands to a median 0.01%
-  relative error, but is not universally exact**: 1 of 20 validation ticks
-  showed a 123% relative error on a near-zero-magnitude command,
-  attributable to a weakly-penalized QP direction rather than a replay
-  defect. Every same-state result in this report reports its own
-  per-tick sanity-check error alongside it; none of the counterfactual
-  conclusions above (§3.3, §7.3) rest on a tick flagged this way.
+  relative error, but is not universally exact**: 1 of 20 original
+  validation ticks showed a 123% relative error on a near-zero-magnitude
+  command, attributable to a weakly-penalized QP direction rather than a
+  replay defect; separately, 1 of the 3 exact-peak-tick replays in §9.1
+  showed a 20.65% sanity error, plausibly a warm-start-sensitive hard QP
+  instance at that specific tick (1350 solver iterations against 500-1800
+  elsewhere). Every same-state result in this report reports its own
+  per-tick sanity-check error alongside it, and conclusions are weighted
+  toward ticks with low replay error where the two disagree (e.g. §9.1's
+  rep 4).
+- **The same-state counterfactual metric used for H2 (§3.3) and H5 (§7.3)
+  is not resolved, and this is the most significant open methodological
+  issue in this report.** Both subsections originally scored candidate
+  commands with $c_\parallel=\hat e_k^T J\Delta\chi$ and explicitly discarded
+  its sign; correcting that with a signed one-step error-reduction metric
+  ($\Delta e$, using the next reference sample) reverses rather than
+  confirms both subsections' original headline claims. Because MPC is
+  delay-aware and solves over a multi-step horizon, a one-step metric of
+  either kind is not a trustworthy judge of a command intended to correct a
+  *future*, not current, tracking state — so the corrected metric's
+  reversal is reported as evidence the one-step approach itself is
+  inadequate, not as a new positive finding in the opposite direction. A
+  genuine resolution requires propagating each candidate command through
+  the controller's own multi-step horizon and delay buffer to compute the
+  actual change in predicted tracking cost, $\Delta V_{track}$ — not
+  attempted in this investigation. Until that is done, **H2's and H5's
+  same-state mechanism claims should both be read as attempted and
+  inconclusive**, not as directly demonstrated, despite the same-state
+  replay infrastructure itself (command reproduction, magnitude
+  comparisons) being independently validated and trustworthy.
 - **Abort thresholds differ by controller architecture** (5mm MPC / 20mm
   inverse-Jacobian / 10mm open-loop) — unchanged from the prior report.
-- **The $s\approx60$-$61$mm local transient remains unexplained** after
-  twelve candidate categories now checked (§9), including four new ones
-  this pass. It is too small to threaten any conclusion in this report.
-- **The H3b contact-state diagnostic (§9, category 1D) did not sample the
-  exact peak tick in 2 of 3 reps**, due to a coarser stride needed for
-  tractability (6-10s per equilibrium re-solve); a fully exact check at the
-  single worst tick would need either a faster contact solve or a
-  dedicated single-tick re-solve, neither performed here.
+- **The $s\approx60$-$61$mm local transient has moved from unexplained to a
+  candidate-mechanism-identified status (§9.1), but is not yet exhaustively
+  characterized.** A planned finer sweep of the schedule-vs-state mismatch
+  ($E_J$) across ticks neighbouring the exact peak, to determine whether the
+  anomaly is a sharp spike or a broader plateau, did not complete in time.
+  The mechanism itself (schedule-vs-state Jacobian mismatch) is supported
+  at the matrix level in all 3 reps and at the command-replay level in 2 of
+  3 (rep 4's replay has the sanity-check caveat above).
 - **Single robot, single vessel geometry, single beam** (unchanged).
-- **The H5 idx0-vs-idx100 early-region tracking-quality ordering is still
-  not fully reconciled with the same-state counterfactual**: before
-  $s\approx50$mm, idx100's own actual command is comparable to or exceeds
-  idx0's counterfactual command (§7.3, point 3), consistent with idx100
-  tracking better than idx0 early in the path (prior report §7.2) — but
-  this report does not have a single unifying quantity that predicts
-  *both* the early-region ordering and the late-region reversal from one
-  measurement; it reports both facts and their same-state-counterfactual
-  support, rather than resolving them into one mechanism.
-- **Would any of the above benefit from new hardware?** No single result
-  in this revised report required one — all six tasks were resolved from
-  existing logs, offline model evaluations, and same-state replay. The one
-  genuinely open item is the unexplained local transient (§9); resolving it
-  further would most plausibly need either a faster contact-model solve
-  (to sample the exact peak tick in 1D) or a dedicated high-rate logging
-  pass at that specific path region, not a new full closed-loop trial.
+- **H4's gain-ratio figures were checked for denominator robustness (§6.6)
+  and the headline 60-64mm figure survives**; one of the three "already
+  elevated before failure" bins (45-55mm) showed an apparent inconsistency
+  that traced to a single anomalous live-model evaluation at one tick
+  ($s=47.91$mm, a denominator three orders of magnitude outside the rest of
+  the 490-sample dataset) — diagnosed, excluded, and confirmed not to
+  change the bin's reading once removed. This was resolved during this
+  pass, not left open.
+- **Would any of the above benefit from new hardware?** Still no — the
+  remaining open items (a full $\Delta V_{track}$ implementation for H2/H5,
+  a finer $E_J$ sweep for the transient) are answerable from existing logs
+  and further offline/same-state computation. None requires a new
+  closed-loop trial.
 
 ---
 
@@ -697,59 +1014,129 @@ operates under.
 
 | Hypothesis | Verdict | Strongest evidence | Mechanism status |
 |---|---|---|---|
-| **H1** — contact-aware planning required for an executable open-loop plan | **Strongly supported** | 4/4 completion vs 0/4; divergence lags predicted contact onset by $\approx22$mm | Directly demonstrated (model-vs-model comparison at matched states) |
-| **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | completion asymmetry (3/3$\to$3/3 vs 3/3$\to$0/3); same-state counterfactual shows 3-6$\times$ less realized correction under the wrong model at every examined state, with workspace/exclusion margins confirmed generous throughout | Directly demonstrated via same-state counterfactual (§3.3), not inferred from trajectory shape |
+| **H1** — contact-aware planning required for an executable open-loop plan | **Strongly supported** | 2/2 contact-aware reps complete vs 0/2 no-contact reps (4 runs total); divergence lags predicted contact onset by $\approx22$mm | Directly demonstrated (model-vs-model comparison at matched states) |
+| **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | completion asymmetry (3/3$\to$3/3 vs 3/3$\to$0/3); workspace/exclusion margins confirmed generous throughout (ruling out a workspace-exhaustion reading); H4's gain-ratio mismatch elevated before the terminal failure; same-state replay shows the actual command differs substantially in magnitude from a contact-informed one at every examined state | Magnitude-level facts (completion, margins, command-difference size) directly demonstrated; the *directional* claim ("the wrong model's command is less effective") was attempted via same-state counterfactual and found inconclusive (§3.3) — not directly demonstrated |
 | **H3a** — MPC vs inverse-Jacobian intrinsic constraint awareness | **Strongly supported** | exact (1.000 agreement) raw-command recovery; MPC never violates its own in-QP constraint on any tick | Directly demonstrated |
 | **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified; $E_N$ grows 10-17$\times$ pre-failure but stays $<0.4$ | Directly demonstrated (workspace-face/DOF decomposition + null-space projection); "redundant-configuration drift," not "null-space drift" |
-| **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Supported, and shown to precede the H2 failure temporally** | mismatch/gain-ratio/$\epsilon_u$ all elevated in matched 45-55mm and 55-60mm bins, before the 60-64mm failure bin | Direct re-binned measurement; supports but does not alone establish causality (§3.3 does) |
-| **H5** — a trajectory-varying Jacobian outperforms any single fixed one | **Supported** | same-state counterfactual: scheduled command realizes 50-200$\times$ more correction than either frozen alternative at matched late-path states; idx0 outperforms idx100's own actual command in realized correction at 6/7 marks past $s\approx50$mm | Directly demonstrated via same-state counterfactual (§7.3), corroborating the prior directional-alignment finding |
+| **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Supported, and shown to precede the H2 failure temporally** | mismatch/gain-ratio/$\epsilon_u$ all elevated in matched 45-55mm and 55-60mm bins, before the 60-64mm failure bin; the headline 60-64mm gain ratio (7.94$\times$) and the earlier-bin elevation both confirmed robust to a denominator-robustness check (§6.6) | Direct re-binned measurement, now checked for statistical robustness; a temporal-ordering observation consistent with H2's causal chain, but — since H2's own same-state directional mechanism is inconclusive (§3.3) — not itself sufficient to establish causality |
+| **H5** — the trajectory-varying Jacobian outperformed both tested fixed linearizations | **Supported on outcome; mechanism unresolved** | completion/tracking outcome (scheduled 3/3 + best tracking; idx0 3/3 but worse tracking; idx100 0/3, fails late) is a direct hardware observation | Outcome directly demonstrated; the *why* (a same-state counterfactual was built specifically to test this) is attempted and inconclusive once the metric's sign is corrected (§7.3) — only the prior report's correlational directional-alignment check remains as supporting evidence for the mechanism |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | 0% infeasible-request rate at both gains | Unchanged; underdamping is plausible, not demonstrated |
 
 ---
 
 ## Audit
 
-**New scripts** (`scripts/`): `mpc_same_state_replay.py` (shared same-state
-MPC replay infrastructure, validated to 0.01% median command-reproduction
-error), `h2_workspace_timeline.py`, `h2_same_state_counterfactual.py`,
+This document has now gone through two passes: an initial mechanism-closure
+pass (against the original `STAGE3_FINAL_REPORT.md`), and a second,
+corrective pass responding to an external review of that first pass. Both
+are logged here together; nothing from either pass is hidden.
+
+**New scripts** (`scripts/`), by pass:
+
+*Pass 1:* `mpc_same_state_replay.py` (shared same-state MPC replay
+infrastructure, validated to 0.01% median command-reproduction error),
+`h2_workspace_timeline.py`, `h2_same_state_counterfactual.py`,
 `h3b_workspace_and_nullspace.py`, `h4_progress_binned.py`,
 `h5_same_state_counterfactual.py`, `transient_57mm_part2.py` (+
 `transient_57mm_part2_figure_final.py`, `transient_peak_refine.py`).
 
-**New tables**: `h2_workspace_margin_timeline.csv`,
-`h2_workspace_margin_at_marks.csv`, `h2_same_state_counterfactual.csv` (+
-sanity check), `h3b_workspace_failure_decomposition.csv`,
+*Pass 2 (this review response):* `h2_signed_and_schedule_counterfactual.py`
+(literal-schedule-window counterfactual + signed $\Delta e$ metric for H2),
+`h5_signed_error_reduction.py` (signed $\Delta e$ metric for H5),
+`h3b_pipeline_stage_nullspace.py` (raw/clipped/gated $E_N$ decomposition),
+`transient_exact_peak_closure.py` (exact-peak-tick same-state replay),
+`h4_gain_ratio_robustness.py` (median/aggregate/outlier-excluded gain-ratio
+statistics, §6.6).
+
+**New tables**, by pass:
+
+*Pass 1:* `h2_workspace_margin_timeline.csv`, `h2_workspace_margin_at_marks.csv`,
+`h2_same_state_counterfactual.csv` (+ sanity check), `h3b_workspace_failure_decomposition.csv`,
 `h3b_workspace_failure_summary.csv`, `h3b_null_redundant_projection.csv`,
-`h4_common_progress_bins.csv`, `h5_same_state_counterfactual.csv` (+
-sanity check), `transient_57mm_diagnostic_summary.csv`,
-`transient_57mm_1D_contact_state.csv`.
+`h4_common_progress_bins.csv`, `h5_same_state_counterfactual.csv` (+ sanity check),
+`transient_57mm_diagnostic_summary.csv`, `transient_57mm_1D_contact_state.csv`,
+`transient_peak_refine.csv`.
 
-**New figures**: `h2_workspace_margin_timeline.png`,
-`h2_same_state_counterfactual.png`, `h3b_workspace_drift_mechanism.png`,
-`h3b_redundant_projection.png`, `h4_progress_binned_accuracy.png`,
-`h5_same_state_frozen_counterfactual.png`, `transient_57mm_deep_diagnostic.png`.
+*Pass 2:* `h2_signed_and_schedule_counterfactual.csv`,
+`h5_signed_error_reduction.csv`, `h3b_pipeline_stage_nullspace.csv`,
+`transient_exact_peak_closure.csv`, `h4_gain_ratio_robustness.csv` (+
+`h4_gain_ratio_robustness_per_sample.csv`).
 
-**Claims strengthened** (from correlational/outcome-level to direct
-same-state or re-binned demonstration): H2's whole causal chain (§3.3-3.4);
-H5's staleness reading (§7.3); H4's relevance to H2, via temporal ordering
-(§6.5); H3b's mechanism, via exact workspace face and two-stage per-DOF
-account (§5.1) and a measured (not assumed) null-space-energy fraction
-(§5.2).
+**New figures**, by pass:
 
-**Claims weakened / corrected**: H2's prior "retreats to configurations
-where local tracking is easier" / workspace-pressure framing — directly
-contradicted by measured margins staying generous throughout (§3.2); the
-prior report's "joint 0 diverges" single-DOF account of H3b's workspace
-exit — refined into a two-stage, multi-joint account with the base joint's
-large sensitivity but late onset (§5.1); "the four redundant directions
-are completely free to drift" — replaced with a measured, bounded (never
-exceeding $\approx40\%$) and growing null-space-energy fraction (§5.2).
+*Pass 1:* `h2_workspace_margin_timeline.png`, `h2_same_state_counterfactual.png`,
+`h3b_workspace_drift_mechanism.png`, `h3b_redundant_projection.png`,
+`h4_progress_binned_accuracy.png`, `h5_same_state_frozen_counterfactual.png`,
+`transient_57mm_deep_diagnostic.png`.
 
-**Mechanisms that remain unresolved**: the $s\approx60$-$61$mm local
-transient (§9, now checked against twelve candidates); the H5 early-region
-tracking-quality ordering between idx0 and idx100 (§7.3 point 3 / §11).
+*Pass 2:* `h2_signed_and_schedule_counterfactual.png`,
+`h5_signed_error_reduction.png`, `h3b_pipeline_stage_nullspace.png`,
+`h4_gain_ratio_robustness.png`.
+
+**Claims strengthened in pass 1** (from correlational/outcome-level to
+direct same-state or re-binned demonstration — some since revised again in
+pass 2, see below): H4's relevance to H2, via temporal ordering (§6.5);
+H3b's mechanism, via exact workspace face and two-stage per-DOF account
+(§5.1).
+
+**Claims strengthened in pass 2** (confirmed to survive scrutiny, or
+genuinely new evidence added): H3b's null-space-energy growth is now shown
+to be intrinsic to the controller's own task-space solve, not a clip/gate
+pipeline artefact (§5.2) — this is a real strengthening, not a correction.
+The $s\approx60$-$61$mm local transient moved from "remains unexplained" to
+a candidate mechanism identified (schedule-vs-state Jacobian mismatch at
+the exact peak tick, confirmed by both matrix norm and re-solved command)
+— §9.1, a genuine new finding, not merely a reworded old one. H4's §6.5
+temporal-ordering claim (gain ratio elevated before the terminal tracking
+blow-up) is now confirmed robust to a denominator-robustness check across
+all three bins, after diagnosing and excluding one anomalous single-tick
+live-model evaluation that had initially made the 45-55mm bin look
+inconsistent (§6.6).
+
+**Claims weakened or withdrawn in pass 1** (vs. the original report): H2's
+prior "retreats to configurations where local tracking is easier" /
+workspace-pressure framing — directly contradicted by measured margins
+staying generous throughout (§3.2); the prior report's "joint 0 diverges"
+single-DOF account of H3b's workspace exit — refined into a two-stage,
+multi-joint account (§5.1); "the four redundant directions are completely
+free to drift" — replaced with a measured, bounded, growing null-space-
+energy fraction (§5.2).
+
+**Claims weakened or withdrawn in pass 2** (vs. pass 1 of *this* document —
+the most important entries in this audit): pass 1's H2 §3.3/§3.4 claim that
+a same-state counterfactual "directly" showed the actual command realizing
+"3-6$\times$ less tip correction" than a contact-informed one is
+**withdrawn**: the metric's sign was discarded without justification, and
+correcting it reverses rather than confirms the claim. Pass 1's H5 §7.3
+claim that the scheduled command realizes "50-200$\times$ more correction"
+and that idx0 "directly" outperforms idx100 late in the path is likewise
+**withdrawn** for the same reason. Both are downgraded to attempted-and-
+inconclusive pending a full delay/horizon-aware cost metric ($\Delta
+V_{track}$), not merely reworded with softer language — the quantitative
+claims themselves no longer stand. §3.2's pass-1 wording ("a pure
+control/tracking-authority effect, not a configuration-space availability
+effect") over-corrected the original report and is narrowed. The integrated
+discussion's claim that MPC's cost structure "directly avoids" the
+redundant-drift failure mode is downgraded to "consistent with," since no
+ablation isolates those cost terms as causal. Three numerical/terminology
+slips from pass 1 are corrected: H1's "4/4" (should read 2/2 contact-aware
+vs 0/2 no-contact, 4 runs total), H5's "any single fixed" overclaim
+(neither tested fixed linearization, not every possible one), and an
+$s$-vs-insertion-length mix-up in §6.5 ($\approx90$mm is insertion length
+$L$, not the $75.3$mm path-progress $s$ actually being discussed).
+
+**Mechanisms that remain unresolved**: the full delay/horizon-aware
+same-state mechanism for H2 and H5 (the single most important open item —
+needs $\Delta V_{track}$, not a one-step metric); a finer characterization
+of the transient's $E_J$ anomaly (sharp spike vs. broader plateau, §9.1); the
+H5 early-region tracking-quality ordering between idx0 and idx100 (§7.3,
+point 3 analogue / §11). The H4 gain-ratio denominator-robustness check
+(§6.6) is **resolved**, not open: the headline 7.94$\times$ figure and the
+45-55mm/55-60mm temporal-ordering claim both survive, once one diagnosed
+single-tick numerical outlier is excluded.
 
 **Would any result here genuinely require a new hardware experiment to
-resolve further?** No — see §11's final bullet. The local transient's
-residual gap (exact-peak-tick contact state) is better addressed by a
-faster offline contact solve or targeted re-logging than by a new trial.
+resolve further?** Still no. The remaining open items — the full
+$\Delta V_{track}$ computation and the finer transient sweep — are
+answerable from existing logs and further offline or same-state
+computation. None requires a new closed-loop trial.

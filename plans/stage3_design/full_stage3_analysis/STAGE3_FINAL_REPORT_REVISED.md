@@ -512,6 +512,225 @@ verified via command replay (not directory names) to have run the selective
 gate; does not alter the H3a verdict; the controller's internal **clip**
 mode remains untested in this record.
 
+### 5.4 Origin of inverse-controller lag and redundant drift
+
+§5.1-5.3 establish the *end* of a possible causal chain (workspace exit,
+a growing null-space-energy fraction, measured in two narrow windows). They
+do not establish whether that end is preceded by a staged sequence —
+$e_{lag}\uparrow\to\|u_{raw}\|\uparrow\to\|u_N\|\uparrow\to$ configuration
+drift $\to h_{x_{max}}\downarrow\to$ exit — or whether a Jacobian-mismatch-
+driven *reduction in effective tracking gain* is what starts that sequence
+in the first place. This subsection tests both questions directly, for all
+6 selective-gate runs, at full trajectory resolution (not just the two
+narrow windows §5.2 used).
+
+**A critical constraint on any explanation, stated up front and honoured
+throughout:** both pairings — contact-Jacobian and no-contact-Jacobian —
+fail 0/3, on the *same* `tcp_out_of_workspace` / $x_{max}$ face (§5.1). Any
+mechanism offered below for *why* lag or drift develops must not be read as
+explaining the shared failure itself unless it operates equally under both
+Jacobians; a mechanism that is specific to the no-contact Jacobian can only
+ever be a contributor to one pairing's version of a failure that also,
+independently, happens to the other.
+
+#### 5.4.1 Full-trajectory chronology
+
+`scripts/lag_chronology_analysis.py` computed, at full tick resolution for
+all 6 runs, $e_{lag}=s_{ref}-s_{tip}$, $e_\perp$ (cross-track), $\|e\|$,
+$\|u_{raw}\|$ (the pre-clip damped-least-squares command), absolute $q_1,q_2$,
+and $h_{x_{max}}$; and, at a moderate stride across the full run (not just
+two narrow windows), $E_N$ via the same null-space projection as §5.2
+(`tables/lag_chronology_per_tick.csv`, `tables/lag_chronology_EN_strided.csv`,
+`figures/lag_chronology_combined.png`) **[hardware/model, direct]**. For
+each quantity, its onset is the path progress at which it first departs,
+and stays departed for 5+ consecutive samples, more than $3\sigma$ from its
+own early-path ($s<20$mm) mean (`tables/lag_chronology_onset_summary.csv`):
+
+| pairing | $e_{lag}$ | $\|e\|$ | $\|u_{raw}\|$ | $E_N$ | $q_2$ | $h_{x_{max}}<20$mm | exit |
+|---|---|---|---|---|---|---|---|
+| selective, contact | 61.6 | 61.1 | 62.0 | 58.0† | 62.6 | 63.0 | 63.2 |
+| selective, no-contact | 48.1 | 48.1 | 51.9 | 58.8 | 69.9 | 73.4 | 73.5 |
+
+(mean onset $s$ in mm across 3 reps; † only 1 of 3 contact reps crossed the
+$E_N$ threshold inside the sampled window at all.)
+
+**The proposed chronology holds, but asymmetrically between the two
+pairings.** For the **no-contact** pairing, the order is clean and
+well-separated — lag and error rise first ($\approx48$mm), then command
+norm ($\approx52$mm), then null-space energy ($\approx59$mm), then $q_2$
+drift ($\approx70$mm), then the margin crosses a 20mm threshold and exits
+($\approx73$-$75$mm) — a genuine $\approx25$mm-long staged cascade, in
+exactly the proposed order. For the **contact** pairing, the same events are
+compressed into a $\approx5$mm window immediately before exit
+($58$-$63$mm) — present, in the same relative order, but not meaningfully
+*staged*; this pairing is a much weaker test of "does a chronology precede
+the exit" than the no-contact pairing is. **A caveat on the no-contact
+pairing's own mean onset values: they mask real rep-to-rep spread** — one
+of the three no-contact reps reaches these onsets $15$-$25$mm later than the
+other two on several quantities (lag onset $64.6$mm vs $39$-$41$mm; $u_{raw}$
+onset $67.9$mm vs $42$-$45$mm), and is also the one rep that exits earliest
+($69.99$mm vs $75.32$mm for the other two, which reach the very end of the
+reference before tripping the box) — the staged cascade is real but its
+exact timing is not tightly reproducible rep to rep. Separately, absolute
+$q_1$ (not the $\delta\chi$-vs-matched-MPC quantity §5.1 uses) departs from
+its *own* early-path value much earlier ($32$-$39$mm, both pairings) than
+$q_2$ does by this same-quantity test — this does not contradict §5.1's
+finding (that $q_1$'s divergence *from MPC's own trajectory* comes late),
+since MPC's own $q_1$ may be drifting similarly early; it is a different
+reference, not a different fact.
+
+#### 5.4.2 The most important comparison: does the wrong Jacobian cause more lag?
+
+Directly comparing the 3 contact-Jacobian vs 3 no-contact-Jacobian selective
+reps (full-run statistics, `tables/lag_chronology_onset_summary.csv`):
+
+| quantity | contact $J_C$ | no-contact $J_{NC}$ | ratio |
+|---|---|---|---|
+| $e_{lag}$ mean (mm) | 0.39 | 1.09 | 2.8$\times$ |
+| $e_{lag}$ median (mm) | 0.28 | 0.60 | 2.1$\times$ |
+| $e_{lag}$ max (mm) | 3.05 | 5.57 | 1.8$\times$ |
+| $e_\perp$ mean (mm) | 0.50 | 0.68 | 1.4$\times$ |
+| $e_\perp$ max (mm) | 4.53 | 4.53 | 1.0$\times$ |
+
+**This is neither of the two outcomes the chronology hypothesis
+anticipated — it is a third, more precise one.** $J_{NC}$ does develop
+substantially more **longitudinal lag** than $J_C$ (1.8-2.8$\times$ across
+every statistic) — the wrong-Jacobian mismatch is a real, measurable
+lag-amplifier. But **cross-track error's own maximum is essentially
+identical between the two pairings** (4.53mm vs 4.53mm), and its mean is
+only mildly higher for $J_{NC}$ (1.4$\times$, far below the lag ratio). Read
+together with the shared-failure-face constraint above: the wrong Jacobian
+measurably worsens *how far behind* the controller falls, but does not
+explain *how large* the lateral/configuration error becomes at the point of
+failure — that converges to nearly the same value regardless of which
+Jacobian is used. This is consistent with treating the shared $x_{max}$-face
+exit as architecture-intrinsic (present, and converging to the same
+magnitude, under both Jacobian models, exactly as the "both pairings fail on
+the same face" constraint above requires), with the wrong Jacobian acting as
+a genuine but secondary amplifier of the *lag* component specifically, not
+as an explanation of the common failure mode itself.
+
+#### 5.4.3 Effective longitudinal gain: the mechanistic bridge
+
+`scripts/effective_gain_and_baseline_analysis.py` computed, at each sampled
+state, $M_k=J_C^{state}(x_k)\,\hat J_k^\dagger$ (the controller's own
+schedule-based damped pseudo-inverse $\hat J_k^\dagger$, mapped through the
+physically-grounded contact model) and projected it onto the local path
+tangent $t_k$:
+$$k_{\parallel,k}=K_p\,t_k^T J_C^{state}(x_k)\,\hat J_k^\dagger\,t_k,\qquad
+k_{\perp,k}=\left\|(I-t_kt_k^T)J_C^{state}(x_k)\hat J_k^\dagger t_k\right\|$$
+— the controller's *realized* closed-loop gain in the direction of travel,
+as opposed to its *nominal* $K_p=0.6$
+(`tables/k_parallel_k_perp_selective.csv`, `figures/k_parallel_vs_s.png`)
+**[model, direct]**:
+
+| pairing (s>45mm, post-contact) | $k_\parallel$ mean | $k_\parallel$ median | $n$ |
+|---|---|---|---|
+| selective, contact | 0.569 | 0.571 | 137 |
+| selective, no-contact | 0.397 | 0.392 | 183 |
+
+**The contact-Jacobian pairing's realized gain sits almost exactly at its
+own nominal $K_p=0.6$ in the post-contact region; the no-contact pairing's
+realized gain is $\approx30\%$ lower.** This is the mechanistic bridge the
+chronology in §5.4.1-5.4.2 needed: $J_{NC}$ does not merely differ from
+$J_C$ in the abstract — mapped through the controller's own pseudo-inverse
+and evaluated against the real contacted response, it measurably reduces how
+much of the commanded correction actually reaches the tip in the travel
+direction, specifically in the region where the two models disagree.
+$k_\perp$ does not differentiate the two pairings (mean $\approx0.21$-$0.22$
+both, with a handful of large outliers in each) — the effect is specific to
+the longitudinal direction, not a general gain inflation/deflation.
+
+#### 5.4.4 Theoretical baseline and excess lag
+
+Using each run's own logged $K_p$ and the reference's own precomputed path
+speed $v_s$ (no feedforward term exists in this controller), the simple
+scalar-proportional-tracking baseline $e_{lag,expected}=v_s\cdot\Delta t/K_p$
+gives an **excess lag** $e_{excess}=e_{lag,measured}-e_{lag,expected}$
+(`tables/excess_lag_baseline.csv`) **[model, direct]**:
+
+| region | contact $J_C$, mean excess (mm) | contact $J_C$, median | no-contact $J_{NC}$, mean excess (mm) | no-contact $J_{NC}$, median |
+|---|---|---|---|---|
+| pre-contact ($s\leq28.5$mm) | 0.086 | 0.071 | 0.035 | 0.064 |
+| post-contact ($s>28.5$mm) | 0.180 | **0.023** | **1.273** | **0.557** |
+
+**Pre-contact, both pairings sit close to the simple baseline and are
+similar to each other** — consistent with H1's independent finding that the
+two models agree before contact. **Post-contact, the contact pairing stays
+close to baseline (its median excess is nearly zero — most ticks track at
+essentially the baseline-predicted lag, with the mean pulled up by
+occasional excursions), while the no-contact pairing's excess lag grows to
+7$\times$ (mean) to 24$\times$ (median) the contact pairing's own value.**
+This directly supports the reviewer's hypothesised mechanism: $J_{NC}$
+develops lag well beyond what proportional gain alone explains, specifically
+after contact onset — exactly where, and only where, the two physical models
+disagree.
+
+#### 5.4.5 Does raising the gain fix it? Revisiting the gain ablation through lag and cross-track
+
+The gain ablation (§8, $K_p=0.6$ vs $1.0$, both no-contact Jacobian, hold
+gate, 210mm) was originally used only to test whether a higher gain
+increases infeasible-request pressure (it does not). Re-examined through
+lag and cross-track specifically (`tables/gain_ablation_lag_reanalysis.csv`)
+**[hardware, direct]**:
+
+| gain | lag mean (mm) | lag median (mm) | lag p95 (mm) | cross-track mean (mm) | cross-track p95 (mm) |
+|---|---|---|---|---|---|
+| 0.6 | 0.395 | 0.360 | **0.979** | 0.210 | 0.563 |
+| 1.0 | 0.300 | 0.271 | **1.398** | 0.404 | 1.429 |
+
+**Raising $K_p$ reduces *typical* lag (mean $-24\%$, median $-25\%$) but
+makes the lag distribution's own *tail* worse (p95 $+43\%$), while
+cross-track degrades substantially at both the mean ($+92\%$) and especially
+the tail ($+154\%$).** This matches the reviewer's first anticipated
+outcome — gain trades lag for oscillation — with a sharper edge than
+anticipated: it is not simply "typical lag for oscillation," it is "modest
+typical-lag improvement, at the cost of a worse lag tail *and* substantially
+worse lateral tracking." Raising $K_p$ is not a fix for the architecture
+problem; it changes which failure mode dominates. (A fourth statistic,
+final-tick lag, is not reported here: inspection of the per-tick series
+shows the controller settles into a `terminal_hold` state once the
+reference completes, where $e_{lag}$ repeatedly returns to a near-identical
+small residual — $0.0628$mm, reproduced to 6 decimal places across several
+ticks and across different runs — reflecting the polyline projection
+geometry of the terminal reference point rather than any property of the
+gain being tested; using it as a summary statistic would be misleading.)
+
+#### 5.4.6 Synthesis
+
+$$
+\boxed{
+\begin{aligned}
+&K_p=0.6\text{, moving reference}\ \rightarrow\ \text{baseline tracking lag (both pairings, pre-contact; }\\
+&\text{contact pairing stays near this baseline even post-contact, §5.4.4)}\\
+&\downarrow\ \text{(no-contact pairing only, from here)}\\
+&J_{NC}\text{ reduces realized longitudinal gain }\approx30\%\text{ specifically post-contact (§5.4.3)}\\
+&\rightarrow\ \text{excess lag }7\text{-}24\times\text{ the contact pairing's, same region (§5.4.4)}\\
+&\downarrow\\
+&e_{lag}\uparrow\ (\approx48\text{mm})\ \rightarrow\ \|u_{raw}\|\uparrow\ (\approx52\text{mm})\ \rightarrow\ E_N\uparrow\ (\approx59\text{mm})\\
+&\rightarrow\ q_2\text{ drift }(\approx70\text{mm})\ \rightarrow\ h_{x_{max}}\downarrow\ \rightarrow\ \texttt{tcp\_out\_of\_workspace}\ (\approx74\text{mm})\\
+&\text{(this downstream chain: well-staged for no-contact, §5.4.1; compressed}\\
+&\text{into a 5mm pre-exit window, same order, for contact)}
+\end{aligned}
+}
+$$
+
+**What this does and does not establish.** It establishes a measured,
+mechanistic account of *why* the no-contact pairing develops more lag than
+the contact pairing (reduced realized longitudinal gain, §5.4.3), and that
+this additional lag precedes, in a well-separated staged order, the same
+downstream command-growth/redundancy-growth/configuration-drift/exit
+sequence §5.1-5.2 already established for the endpoint. **It does not
+establish that this mechanism is the explanation for the shared failure
+mode**, precisely because the contact pairing — whose realized gain stays
+near nominal and whose excess lag stays near baseline throughout — still
+exits on the identical $x_{max}$ face, with the same terminal cross-track
+magnitude, on a compressed version of the same event order. The honest
+reading: the wrong Jacobian is a real, quantified, mechanistically-grounded
+*lag amplifier*, operating on top of an architecture-intrinsic
+redundant-configuration-drift mechanism (§5.1-5.2, present under both
+Jacobian models) that remains the explanation for the shared failure itself.
+
 ---
 
 ## 6. H4 — Scheduled Jacobian accuracy against the contact model at the measured state
@@ -933,7 +1152,16 @@ with** the observed contrast — MPC stays bounded, the naive controller does
 not, and MPC's cost structure penalizes every commanded direction while the
 naive controller's redundancy resolution at zero gain has no analogous term
 — but is reported as an interpretation consistent with the evidence, not as
-a directly demonstrated causal mechanism.
+a directly demonstrated causal mechanism. A full-trajectory chronology
+(§5.4) now shows this drift is preceded, in a staged and well-separated
+order for the no-contact pairing (lag $\to$ command growth $\to$ null-space
+growth $\to$ configuration drift $\to$ exit), by a measurable reduction in
+the controller's *realized* longitudinal closed-loop gain where the
+Jacobian is wrong ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) —
+but the contact-Jacobian pairing, whose realized gain stays near nominal
+throughout, still exits on the same face via a compressed version of the
+same sequence, so the wrong Jacobian is established as a quantified
+*lag amplifier* on top of this architectural drift, not as its cause.
 
 These remain two additive, independent sources of the performance gap
 between contact-aware MPC and every other condition tested — one about
@@ -1017,7 +1245,7 @@ operates under.
 | **H1** — contact-aware planning required for an executable open-loop plan | **Strongly supported** | 2/2 contact-aware reps complete vs 0/2 no-contact reps (4 runs total); divergence lags predicted contact onset by $\approx22$mm | Directly demonstrated (model-vs-model comparison at matched states) |
 | **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | completion asymmetry (3/3$\to$3/3 vs 3/3$\to$0/3); workspace/exclusion margins confirmed generous throughout (ruling out a workspace-exhaustion reading); H4's gain-ratio mismatch elevated before the terminal failure; same-state replay shows the actual command differs substantially in magnitude from a contact-informed one at every examined state | Magnitude-level facts (completion, margins, command-difference size) directly demonstrated; the *directional* claim ("the wrong model's command is less effective") was attempted via same-state counterfactual and found inconclusive (§3.3) — not directly demonstrated |
 | **H3a** — MPC vs inverse-Jacobian intrinsic constraint awareness | **Strongly supported** | exact (1.000 agreement) raw-command recovery; MPC never violates its own in-QP constraint on any tick | Directly demonstrated |
-| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified; $E_N$ grows 10-17$\times$ pre-failure but stays $<0.4$ | Directly demonstrated (workspace-face/DOF decomposition + null-space projection); "redundant-configuration drift," not "null-space drift" |
+| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified; $E_N$ grows 10-17$\times$ pre-failure but stays $<0.4$; a full lag→command→redundancy→drift→exit chronology is staged and well-separated for the no-contact pairing, compressed but same-ordered for contact (§5.4) | Directly demonstrated (workspace-face/DOF decomposition + null-space projection + full-trajectory chronology); "redundant-configuration drift," not "null-space drift"; the wrong Jacobian is shown to be a quantified lag-amplifier ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) but not the explanation for the shared failure mode, which both Jacobian pairings exhibit identically |
 | **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Supported, and shown to precede the H2 failure temporally** | mismatch/gain-ratio/$\epsilon_u$ all elevated in matched 45-55mm and 55-60mm bins, before the 60-64mm failure bin; the headline 60-64mm gain ratio (7.94$\times$) and the earlier-bin elevation both confirmed robust to a denominator-robustness check (§6.6) | Direct re-binned measurement, now checked for statistical robustness; a temporal-ordering observation consistent with H2's causal chain, but — since H2's own same-state directional mechanism is inconclusive (§3.3) — not itself sufficient to establish causality |
 | **H5** — the trajectory-varying Jacobian outperformed both tested fixed linearizations | **Supported on outcome; mechanism unresolved** | completion/tracking outcome (scheduled 3/3 + best tracking; idx0 3/3 but worse tracking; idx100 0/3, fails late) is a direct hardware observation | Outcome directly demonstrated; the *why* (a same-state counterfactual was built specifically to test this) is attempted and inconclusive once the metric's sign is corrected (§7.3) — only the prior report's correlational directional-alignment check remains as supporting evidence for the mechanism |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | 0% infeasible-request rate at both gains | Unchanged; underdamping is plausible, not demonstrated |
@@ -1026,10 +1254,13 @@ operates under.
 
 ## Audit
 
-This document has now gone through two passes: an initial mechanism-closure
-pass (against the original `STAGE3_FINAL_REPORT.md`), and a second,
-corrective pass responding to an external review of that first pass. Both
-are logged here together; nothing from either pass is hidden.
+This document has now gone through three passes: an initial mechanism-
+closure pass (against the original `STAGE3_FINAL_REPORT.md`), a second,
+corrective pass responding to an external review of that first pass, and a
+third pass adding a new analysis (§5.4, the origin of inverse-controller lag
+and redundant drift) requested by that same reviewer after reading the
+second pass. All three are logged here together; nothing from any pass is
+hidden.
 
 **New scripts** (`scripts/`), by pass:
 
@@ -1048,6 +1279,14 @@ infrastructure, validated to 0.01% median command-reproduction error),
 `h4_gain_ratio_robustness.py` (median/aggregate/outlier-excluded gain-ratio
 statistics, §6.6).
 
+*Pass 3 (new analysis, same reviewer):* `lag_chronology_analysis.py`
+(full-trajectory $e_{lag}/e_\perp/\|e\|/\|u_{raw}\|/E_N/q_1/q_2/h_{x_{max}}$
+chronology, §5.4.1-5.4.2), `effective_gain_and_baseline_analysis.py` +
+`effective_gain_part23_only.py` (the first has a known bug in its Part 2
+only, superseded by the second for Parts 2-3; Part 1's $k_\parallel/k_\perp$
+output from the first script is unaffected and was independently verified,
+§5.4.3-5.4.5).
+
 **New tables**, by pass:
 
 *Pass 1:* `h2_workspace_margin_timeline.csv`, `h2_workspace_margin_at_marks.csv`,
@@ -1062,6 +1301,10 @@ statistics, §6.6).
 `transient_exact_peak_closure.csv`, `h4_gain_ratio_robustness.csv` (+
 `h4_gain_ratio_robustness_per_sample.csv`).
 
+*Pass 3:* `lag_chronology_per_tick.csv`, `lag_chronology_EN_strided.csv`,
+`lag_chronology_onset_summary.csv`, `k_parallel_k_perp_selective.csv`,
+`gain_ablation_lag_reanalysis.csv`, `excess_lag_baseline.csv`.
+
 **New figures**, by pass:
 
 *Pass 1:* `h2_workspace_margin_timeline.png`, `h2_same_state_counterfactual.png`,
@@ -1072,6 +1315,8 @@ statistics, §6.6).
 *Pass 2:* `h2_signed_and_schedule_counterfactual.png`,
 `h5_signed_error_reduction.png`, `h3b_pipeline_stage_nullspace.png`,
 `h4_gain_ratio_robustness.png`.
+
+*Pass 3:* `lag_chronology_combined.png`, `k_parallel_vs_s.png`.
 
 **Claims strengthened in pass 1** (from correlational/outcome-level to
 direct same-state or re-binned demonstration — some since revised again in
@@ -1092,6 +1337,24 @@ blow-up) is now confirmed robust to a denominator-robustness check across
 all three bins, after diagnosing and excluding one anomalous single-tick
 live-model evaluation that had initially made the 45-55mm bin look
 inconsistent (§6.6).
+
+**New analysis in pass 3** (genuinely new, not a correction of a prior
+claim): §5.4's full-trajectory chronology and effective-gain analysis.
+Headline new results: a staged ($\approx25$mm), well-ordered
+lag$\to$command$\to$redundancy$\to$drift$\to$exit cascade for the
+no-contact pairing (compressed but same-ordered for contact); the wrong
+Jacobian quantified as a $\approx30\%$ realized-longitudinal-gain reduction
+specific to the post-contact region ($k_\parallel$, §5.4.3); a $7$-$24\times$
+excess-lag gap between pairings post-contact, consistent with that gain
+reduction (§5.4.4); and a re-reading of the existing gain ablation (§8)
+showing raising $K_p$ trades modest lag improvement for a *worse* lag tail
+and substantially worse cross-track, not a clean lag-for-oscillation trade
+(§5.4.5). One data-quality note surfaced during verification, not left
+implicit: the gain-ablation runs' final-tick lag value settles into a
+`terminal_hold` artefact (an identical $0.0628$mm value recurring across
+ticks and across runs, reflecting the terminal reference point's own
+polyline-projection geometry, not the gain being tested) — this statistic
+is excluded from §5.4.5's reported comparison for exactly this reason.
 
 **Claims weakened or withdrawn in pass 1** (vs. the original report): H2's
 prior "retreats to configurations where local tracking is easier" /

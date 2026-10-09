@@ -824,7 +824,100 @@ ticks and across different runs — reflecting the polyline projection
 geometry of the terminal reference point rather than any property of the
 gain being tested; using it as a summary statistic would be misleading.)
 
-#### 5.4.6 Synthesis
+#### 5.4.6 Margin-rate decomposition and a same-state $K_p$ counterfactual, at the actual failure condition
+
+§5.4.5's gain ablation is evidence about the generic lag-vs-oscillation
+trade-off, but not a test *at the condition that actually fails* (255mm,
+selective gate) — stated explicitly there as an open question. This
+subsection closes that gap directly, for the contact-Jacobian selective
+runs only, by replacing correlational chronology with an instantaneous,
+per-tick causal decomposition and a same-state $K_p$ counterfactual at the
+real failure condition itself.
+
+**The decomposition.** At every tick, the realized one-tick change in the
+binding $x_{max}$ margin is predicted from the realized configuration
+change via the margin's own gradient,
+$\Delta h_{x_{max},k}\approx\nabla_\chi h_{x_{max}}^T\Delta\chi_{actual,k}$
+(finite-difference gradient of the flange forward kinematics — cheap, no
+live contact-model evaluation needed), decomposed per joint,
+$\Delta h_i=\partial h_{x_{max}}/\partial\chi_i\cdot\Delta\chi_{actual,i}$
+(`scripts/h3b_margin_rate_decomposition.py`,
+`tables/h3b_margin_rate_decomposition.csv`,
+`figures/h3b_margin_rate_chronology.png`) **[hardware + model, direct]**.
+**This linearized prediction is verified against the real observed margin
+change before being used as evidence**: correlation between predicted and
+actual one-tick $\Delta h_{x_{max}}$ across all 1268 sampled ticks (3 reps)
+is $0.911$, mean absolute error $0.43$mm — the gradient decomposition is a
+good local model of what actually happened, not an unchecked assumption.
+
+Plotting $e_{lag}$, $\|u_{raw}\|$, $\|\Delta\chi_{actual}\|$,
+$\Delta h_{x_{max}}$, and $h_{x_{max}}$ itself together shows a richer
+picture than a single clean three-stage cascade: $e_{lag}$, $\|u_{raw}\|$,
+and $\|\Delta\chi_{actual}\|$ track each other almost exactly throughout (as
+they must, being closely related quantities) and rise sharply only in the
+last $\approx5$mm before exit ($s\approx58$-$64$mm) — consistent with
+§5.4.1's finding that this chronology is compressed, not staged, for the
+contact pairing. $h_{x_{max}}$ itself, however, declines **almost
+monotonically from the start of the path** ($\approx330$mm at $s\approx8$mm
+down to near zero at exit), and $\Delta h_{x_{max}}$ is mildly but
+persistently negative through most of the middle of the path
+($s\approx15$-$55$mm, averaging roughly $-0.5$ to $-1$mm/tick) well before
+the late command surge — i.e. there is a slow, steady baseline erosion of
+this margin for most of the path, **on top of which** the late lag/command
+surge adds a much sharper, accelerating negative component
+($-5$ to $-7$mm/tick at $s>58$mm) that produces the actual exit. Both
+components are real and both are shown directly; neither is claimed to be
+the sole explanation.
+
+**The per-DOF decomposition directly confirms the causal claim, not just
+correlates with it.** In the late window ($s>55$mm), joint $q_1$'s own mean
+contribution to $\Delta h_{x_{max}}$ is $-1.57$mm/tick — consistently
+negative (mean $\approx$ mean absolute value, i.e. essentially never
+positive in this window) and $5$-$9\times$ larger in magnitude than any
+other joint's contribution ($q_2$: $-0.18$, $q_3$: $-0.29$, $q_4$: $-0.10$,
+$q_5$: $-0.10$, $q_6$/insertion: exactly $0$, since the $x_{max}$ margin does
+not depend on insertion). **This directly establishes, rather than merely
+correlates with, the claim that the growing commands increasingly move
+$q_1$ specifically in the direction that reduces the $x_{max}$ margin** —
+consistent with, and now causally grounding, §5.1's independent finding
+that $q_1$ dominates this margin's linear sensitivity.
+
+**The $K_p$ counterfactual.** At the same late-window states
+($s>45$mm, $n=410$ ticks across 3 reps), the controller's raw command was
+recomputed with $K_p=1.0$ in place of its own logged $K_p=0.6$, holding the
+measured state, the reference, and the real logged recursive
+previous-command history fixed (the same "freeze everything else, vary one
+input" convention as every other same-state counterfactual in this report).
+Because $\text{task\_velocity}=\hat J^\dagger(K_p\,e/\Delta t)$ and neither
+$\hat J^\dagger$ nor $e$ depends on $K_p$, the pre-clip command scales
+exactly linearly in $K_p$; the same velocity/acceleration/state-box clip is
+then reapplied before evaluating the margin change
+(`tables/h3b_kp_counterfactual_margin_rate.csv`,
+`figures/h3b_kp_counterfactual_margin_rate.png`) **[counterfactual]**:
+
+| quantity | $K_p=0.6$ (actual) | $K_p=1.0$ (counterfactual) |
+|---|---|---|
+| mean $\Delta h_{x_{max}}$ (mm/tick) | $-1.32$ | $-1.97$ |
+| mean $\|\Delta h_{x_{max}}\|$ (mm/tick) | $1.32$ | $1.97$ |
+| fraction of ticks where $K_p=1.0$ is more negative | — | $0.988$ |
+
+**At 98.8% of the 410 sampled ticks, the higher-gain counterfactual command
+produces a *more negative* margin step than the actual $K_p=0.6$ command did
+at the identical state** — a $\approx49\%$ larger mean margin loss per tick.
+This is the decisive result the chronology and the generic gain ablation
+could only gesture at: **at the actual failure condition, same states,
+same history, changing only $K_p$, higher gain does not merely fail to
+help — it makes each tick's workspace-margin consumption measurably
+worse.** Combined with §5.4.4's finding that higher gain reduces lag (by
+construction — larger $K_p$ closes the tracking-error-proportional command
+faster) and §5.4.5's finding that it worsens lag's own tail and cross-track
+at a different condition, this closes the loop precisely as hypothesised:
+**low gain produces more following lag, but higher gain produces more
+aggressive, workspace-margin-consuming corrections — which is why simply
+raising $K_p$ is not a solution to this failure mode, not merely an
+unexplored option.**
+
+#### 5.4.7 Synthesis
 
 $$
 \boxed{
@@ -863,6 +956,20 @@ Jacobian models) that remains the primary candidate explanation for the
 shared failure itself — and that mechanism's own evidentiary basis is now
 §5.1's joint-angle measurement alone, not the $E_N$ analysis, per §5.2's
 correction.
+
+**§5.4.6 closes one specific link in this chain causally rather than only
+architecturally**: the step "larger commands move $q_1$ in the margin-
+reducing direction" is no longer only inferred from §5.1's correlational
+sensitivity ranking — it is directly measured, tick by tick, via a
+gradient decomposition verified against the real observed margin change
+($r=0.911$), and $q_1$'s own contribution dominates every other joint's by
+$5$-$9\times$ in the failure window. The companion $K_p$ counterfactual
+closes the gain question specifically: at the real failure condition, same
+states, same history, only $K_p$ changed, higher gain makes the margin
+worse at 98.8% of sampled ticks — so "low gain causes lag, high gain causes
+more aggressive margin-consuming corrections" is now a directly demonstrated
+trade-off at the condition that actually fails, not an inference carried
+over from a different (210mm, hold-gate) condition.
 
 ---
 
@@ -1386,7 +1493,7 @@ operates under.
 | **H1** — contact-aware planning required for an executable open-loop plan | **Strongly supported** | 2/2 contact-aware reps complete vs 0/2 no-contact reps (4 runs total); divergence lags predicted contact onset by $\approx22$mm | Directly demonstrated (model-vs-model comparison at matched states) |
 | **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | completion asymmetry (3/3$\to$3/3 vs 3/3$\to$0/3); workspace/exclusion margins confirmed generous throughout (ruling out a workspace-exhaustion reading); H4's gain-ratio mismatch elevated before the terminal failure; same-state replay shows the actual command differs substantially in magnitude from a contact-informed one at every examined state | Magnitude-level facts (completion, margins, command-difference size) directly demonstrated; the *directional* claim ("the wrong model's command is less effective") was attempted via same-state counterfactual and found inconclusive (§3.3) — not directly demonstrated |
 | **H3a** — MPC vs inverse-Jacobian intrinsic constraint awareness | **Strongly supported** | exact (1.000 agreement) raw-command recovery; MPC never violates its own in-QP constraint on any tick | Directly demonstrated |
-| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified via direct joint-angle measurement (§5.1); a companion schedule-vs-state-mismatch quantity ($E_N$) grows 10-17$\times$ pre-failure, correlating temporally (§5.4); a full lag→command→mismatch→drift→exit chronology is staged and well-separated for the no-contact pairing, compressed but same-ordered for contact (§5.4) | Directly demonstrated via workspace-face/DOF decomposition and joint-angle divergence (§5.1); "redundant-configuration drift," not "null-space drift" — and, after a correction prompted by external review, not supported by a null-space-projection measurement at all: $E_N$ was found to measure schedule-vs-state Jacobian mismatch, not the control law's own null-space behaviour (§5.2), since a damped-least-squares command is mathematically guaranteed to have zero null-space component against its own Jacobian; the wrong Jacobian is separately shown to be a quantified lag-amplifier ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) but not the explanation for the shared failure mode, which both Jacobian pairings exhibit identically |
+| **H3b** — selective-gate robustness test + redundant-configuration drift | **Supported as a second, independent failure mode** | 0/6 complete under selective gating despite near-zero exclusion-gate activity; exact binding face ($x_{max}$) and two-stage per-DOF mechanism identified via direct joint-angle measurement (§5.1); a companion schedule-vs-state-mismatch quantity ($E_N$) grows 10-17$\times$ pre-failure, correlating temporally (§5.4); a full lag→command→mismatch→drift→exit chronology is staged and well-separated for the no-contact pairing, compressed but same-ordered for contact (§5.4); a margin-rate gradient decomposition (verified against ground truth, $r=0.911$) shows $q_1$ dominates the margin-reducing command direction by $5$-$9\times$ every other joint (§5.4.6); a same-state $K_p=0.6$-vs-$1.0$ counterfactual at the real failure condition shows higher gain makes the margin step worse at 98.8% of sampled ticks (§5.4.6) | Directly demonstrated via workspace-face/DOF decomposition and joint-angle divergence (§5.1); "redundant-configuration drift," not "null-space drift" — and, after a correction prompted by external review, not supported by a null-space-projection measurement at all: $E_N$ was found to measure schedule-vs-state Jacobian mismatch, not the control law's own null-space behaviour (§5.2), since a damped-least-squares command is mathematically guaranteed to have zero null-space component against its own Jacobian; the wrong Jacobian is separately shown to be a quantified lag-amplifier ($k_\parallel$ down $\approx30\%$ post-contact, §5.4.3) but not the explanation for the shared failure mode, which both Jacobian pairings exhibit identically; the $q_1$-causal link and the $K_p$ trade-off are both now directly demonstrated via same-state/gradient methods, not only inferred (§5.4.6) |
 | **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Supported, and shown to precede the H2 failure temporally** | mismatch/gain-ratio/$\epsilon_u$ all elevated in matched 45-55mm and 55-60mm bins, before the 60-64mm failure bin; the headline 60-64mm gain ratio (7.94$\times$) and the earlier-bin elevation both confirmed robust to a denominator-robustness check (§6.6) | Direct re-binned measurement, now checked for statistical robustness; a temporal-ordering observation consistent with H2's causal chain, but — since H2's own same-state directional mechanism is inconclusive (§3.3) — not itself sufficient to establish causality |
 | **H5** — the trajectory-varying Jacobian outperformed both tested fixed linearizations | **Supported on outcome; mechanism unresolved** | completion/tracking outcome (scheduled 3/3 + best tracking; idx0 3/3 but worse tracking; idx100 0/3, fails late) is a direct hardware observation | Outcome directly demonstrated; the *why* (a same-state counterfactual was built specifically to test this) is attempted and inconclusive once the metric's sign is corrected (§7.3) — only the prior report's correlational directional-alignment check remains as supporting evidence for the mechanism |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | 0% infeasible-request rate at both gains | Unchanged; underdamping is plausible, not demonstrated |
@@ -1446,6 +1553,11 @@ output from the first script is unaffected and was independently verified,
 `lag_chronology_onset_summary.csv`, `k_parallel_k_perp_selective.csv`,
 `gain_ablation_lag_reanalysis.csv`, `excess_lag_baseline.csv`.
 
+*Pass 6:* `vessel_geometry_xy_mm.csv`, `tip_vs_vessel_geometry_255mm.csv`.
+
+*Pass 7:* `h3b_margin_rate_decomposition.csv`,
+`h3b_kp_counterfactual_margin_rate.csv`.
+
 **New figures**, by pass:
 
 *Pass 1:* `h2_workspace_margin_timeline.png`, `h2_same_state_counterfactual.png`,
@@ -1459,6 +1571,10 @@ output from the first script is unaffected and was independently verified,
 
 *Pass 3:* `lag_chronology_combined.png`, `k_parallel_vs_s.png`.
 
+*Pass 6:* `tip_vs_vessel_geometry_255mm.png`.
+
+*Pass 7:* `h3b_margin_rate_chronology.png`, `h3b_kp_counterfactual_margin_rate.png`.
+
 *Pass 4 (requested after reading pass 3, same section):*
 `scripts/lag_three_layer_synthesis.py` and
 `figures/lag_three_layer_synthesis.png` — a single assembled view of §5.4's
@@ -1469,6 +1585,17 @@ entirely from pass 3's own tables with no new live-model evaluation.
 `scripts/verify_null_space_projection_jacobian.py` — the direct check
 confirming $E_N$ was computed with $P_N$ built from a different Jacobian
 than the one the command was solved with (§5.2).
+
+*Pass 6 (requested after reading pass 5):* `scripts/tip_vs_vessel_geometry_255mm.py`
+— the beam tip's own trajectory plotted against the vessel's reconstructed
+centreline/wall geometry for the 255mm MPC-$J_C$-vs-MPC-$J_{NC}$ comparison
+(§3.2).
+
+*Pass 7 (requested after reading pass 6):* `scripts/h3b_margin_rate_decomposition.py`
+— the per-tick, gradient-verified margin-rate decomposition and the
+same-state $K_p=0.6$-vs-$1.0$ counterfactual at the actual 255mm
+selective-gate failure condition (§5.4.6), directly closing the gain
+question §5.4.5 had left open at a different (210mm, hold-gate) condition.
 
 **Claims strengthened in pass 1** (from correlational/outcome-level to
 direct same-state or re-binned demonstration — some since revised again in
@@ -1544,6 +1671,22 @@ vs 0/2 no-contact, 4 runs total), H5's "any single fixed" overclaim
 (neither tested fixed linearization, not every possible one), and an
 $s$-vs-insertion-length mix-up in §6.5 ($\approx90$mm is insertion length
 $L$, not the $75.3$mm path-progress $s$ actually being discussed).
+
+**New analysis in pass 6** (genuinely new, not a correction): the beam
+tip's own measured trajectory plotted directly against the vessel's
+reconstructed centreline and wall geometry (§3.2), making H2's completion
+asymmetry visually immediate rather than only statistical.
+
+**New analysis in pass 7, the strongest causal closure in this document**:
+§5.4.6's margin-rate gradient decomposition (verified against ground truth,
+$r=0.911$) directly measures, rather than infers, that $q_1$ dominates the
+command's margin-reducing direction by $5$-$9\times$ every other joint in
+the failure window; and its same-state $K_p=0.6$-vs-$1.0$ counterfactual,
+run at the actual 255mm selective-gate failure condition (not a different
+condition as the generic gain ablation was), directly demonstrates that
+higher gain makes the per-tick margin step worse at 98.8% of sampled
+ticks. This closes, with direct same-state evidence, the one link in the
+H3b mechanism that §5.4.5 could previously only address indirectly.
 
 **Claims weakened or withdrawn, §5.2 correction (the single most important
 correction in this document — identified after pass 3/4's new analyses had

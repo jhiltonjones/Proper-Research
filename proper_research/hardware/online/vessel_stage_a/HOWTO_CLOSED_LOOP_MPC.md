@@ -545,7 +545,7 @@ evaluate both at every tick's actually-visited state, regardless of which
 one the live controller used:
 
 ```python
-from proper_research.hardware.online.vessel_stage_a.analyze_contact_mechanism import build_adapters
+from proper_research.hardware.online.vessel_stage_a.archive.analyze_contact_mechanism import build_adapters
 # before importing, override its module-level LUMEN_FILE/INSERTION_MAX_M/Z_RAISE_M
 # constants for YOUR plan -- they default to an older plan's values.
 adapter_contact, adapter_nocontact = build_adapters()

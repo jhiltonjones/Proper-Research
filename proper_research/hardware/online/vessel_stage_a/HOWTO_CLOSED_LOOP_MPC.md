@@ -46,15 +46,16 @@ schedule, one-step resolved-rate feedback instead of a QP), see
      from observed flange excursion on prior runs. If you change plans/
      insertion depth/exclusion floor substantially, re-check this box
      against your own runs' flange range before trusting it to catch
-     anything. As of 2026-10-01 this override is conditional on
-     `--z-raise-mm` (`< 10mm` picks an unraised-tuned box, otherwise the
-     raised/v4-tuned one) -- it was previously a single hardcoded box
-     derived only from the raised setup's own flange range, which would
-     have falsely tripped almost immediately on an unraised plan (measured
-     flange z there dips below that box's old z_min). If you build a plan
-     at a z-raise this doc hasn't seen before, don't trust either hardcoded
-     box -- derive your own from an open-loop run's logged joints (see
-     `HOWTO_VESSEL_PLANNING.md` section 5) before running closed-loop MPC.
+     anything. As of 2026-10-02 there is no `--z-raise-mm` choice at all --
+     that whole flag was removed project-wide in favor of the single fixed
+     recalibrated frame every script here now runs in (see
+     `HOWTO_VESSEL_PLANNING.md`'s "On the z-raise" note). The box itself is
+     a single fixed UNION of two measured unraised open-loop flange ranges
+     plus a 40mm margin, and is still, per its own code comment,
+     "fundamentally per-plan" -- derive your own from an open-loop run's
+     logged joints (see `HOWTO_VESSEL_PLANNING.md` section 5) before
+     trusting it for a plan whose flange range you haven't checked against
+     it.
 
   All four are computed from the **measured/commanded** joints each tick,
   after a command has already been applied -- they are a last-resort net,
@@ -121,7 +122,6 @@ python -m proper_research.hardware.online.vessel_stage_a.run_mpc_delay_aware_ves
     --schedule-cache /tmp/vessel_lumen_2026-09-29_v4_schedule_contact.npy \
     --lumen-file vessel_lumen_robot_frame_zraise42_2026-09-29.json \
     --insertion-max-mm 100 \
-    --z-raise-mm 42.044008750641574 \
     --beam-base-exclusion-floor-mm 220.0 \
     --insertion-offset-abort-mm 10.0 \
     --zero-input-reference-in-r \
@@ -199,7 +199,6 @@ python -m proper_research.hardware.online.vessel_stage_a.run_mpc_delay_aware_ves
     --schedule-cache /tmp/vessel_lumen_2026-09-30_realigned_insmax80_schedule_contact.npy \
     --lumen-file vessel_lumen_robot_frame.json \
     --insertion-max-mm 80 \
-    --z-raise-mm 0.0 \
     --right-shift-mm 1.0 \
     --contact
 ```
@@ -240,7 +239,6 @@ point instead of just the live reference):
 python -m proper_research.hardware.online.vessel_stage_a.shift_lumen_centerline \
     --lumen-file vessel_lumen_robot_frame.json \
     --shift-mm 1.0 --direction right \
-    --z-raise-mm 0.0 \
     --out vessel_lumen_robot_frame_right1mm.json
 ```
 
@@ -342,8 +340,7 @@ true for every trip observed in the 2026-09-30 study (see section 7.4).
 | `--schedule-cache` | required | `.npy` path; built once, reused after |
 | `--lumen-file` | required | vessel centreline/radius JSON |
 | `--insertion-max-mm` | required | must match the value the plan was built with |
-| `--z-raise-mm` | 0.0 | z-offset the plan/lumen were built with relative to the unraised setup |
-| `--beam-base-exclusion-floor-mm` | 210.43 | true magnet-to-beam-base exclusion floor (before tolerance is subtracted) |
+| `--beam-base-exclusion-floor-mm` | 210.0 | true magnet-to-beam-base exclusion floor (before tolerance is subtracted) |
 | `--contact` / `--no-contact` | required (mutually exclusive) | which Jacobian model the schedule/tracking use |
 | `--horizon` | 15 | MPC prediction horizon N |
 | `--max-control-steps` | 800 | hard cap on control ticks |
@@ -412,7 +409,7 @@ for rep in 1 2 3 4 5; do
         --run-name vessel_v4_mpc_contact_rep${rep} \
         --schedule-cache /tmp/vessel_lumen_2026-09-29_v4_schedule_contact.npy \
         --lumen-file vessel_lumen_robot_frame_zraise42_2026-09-29.json \
-        --insertion-max-mm 100 --z-raise-mm 42.044008750641574 \
+        --insertion-max-mm 100 \
         --beam-base-exclusion-floor-mm 220.0 --insertion-offset-abort-mm 10.0 \
         --zero-input-reference-in-r \
         --magnet-exclusion-robust-margin-mm 2.0 \

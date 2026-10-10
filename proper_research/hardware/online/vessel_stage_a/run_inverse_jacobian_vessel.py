@@ -4,27 +4,33 @@ plan, live on hardware -- direct comparator against run_mpc_delay_aware_
 vessel.py's MPC condition, for the same reference and the same Jacobian
 schedule (no-contact today).
 
-Mirrors run_open_loop_vessel.py's safety pattern exactly (vessel_stage_a
-preflight, reset-with-retreat against the magnet-to-beam-base floor,
---z-raise-mm handling, 2-marker vision), but sets controller_kind to
-"naive_inverse_jacobian_ltv" and wires the Jacobian schedule through
-close_loop_path_follow's module-level _SCHEDULE_OVERRIDE (the same
-mechanism naive_inverse_jacobian_ltv/mpc_ltv_offline use elsewhere in that
-file) instead of building an MPC worker.
+Mirrors run_open_loop_vessel.py's safety pattern (vessel_stage_a preflight,
+reset-with-retreat against the magnet-to-beam-base floor, 2-marker vision),
+but sets controller_kind to "naive_inverse_jacobian_ltv" and wires the
+Jacobian schedule through close_loop_path_follow's module-level
+_SCHEDULE_OVERRIDE (the same mechanism naive_inverse_jacobian_ltv/
+mpc_ltv_offline use elsewhere in that file) instead of building an MPC
+worker.
+
+2026-10-10 fix: this script used to carry its own independent
+--z-raise-mm-gated StateStreamConfig patch, defaulting (at --z-raise-mm 0,
+the default) to the raw library StateStreamConfig -- whose own
+T_robot_beam_pose6 z is a known-stale pre-recalibration value (see
+state_stream.py's own _DEFAULT_T_ROBOT_BEAM_POSE6 comment). Every other
+current vessel script (run_mpc_delay_aware_vessel.py,
+run_inverse_jacobian_online_vessel.py) instead always patches to the fixed
+recalibrated height via common.patch_state_stream_config_for_recalibrated_
+rig -- this script now does the same, unconditionally, matching them. The
+TCP workspace box below is likewise now the same box those two scripts use
+(derived from data in the CORRECT, recalibrated frame) rather than this
+script's own box, which was derived from a trajectory captured in the
+stale frame this fix removes.
 
 This controller has NEITHER the MPC path's in-QP magnet-exclusion/z-
 workspace constraints NOR process_isolated_adapter's post-hoc measured-
 joint monitors for those (both are MPC-specific machinery) -- the only
 live per-tick safety net here is close_loop_path_follow's own generic
-tcp_out_of_workspace box check. That box's DEFAULT bounds are tuned for
-the unrelated rectangle_stage_a workspace and would either trip
-immediately (our vessel operates in a completely different xyz region) or
-provide no real protection, so this script overrides them with a box
-derived from a VALIDATED, already-completed vessel MPC run's own achieved
-flange-frame TCP trajectory (2026-09-29, no-contact/floor220 run) plus a
-20mm margin on every side -- real data, not a guess, same principle
-rectangle_stage_a's own tuned box used (see close_loop_path_follow.py's
-workspace_xyz_min_m/max_m comments).
+tcp_out_of_workspace box check.
 
 Usage
 -----
@@ -37,20 +43,19 @@ Usage
 from __future__ import annotations
 
 import argparse
-import dataclasses
 from pathlib import Path
 
 import numpy as np
 
 import proper_research.hardware.online.close_loop_path_follow as pf
-import proper_research.hardware.online.state_stream as state_stream_mod
 from proper_research.hardware.online.vessel_stage_a import common
+from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 from proper_research.planning.planning_context import make_robot_config
 from proper_research.simulation.simulations.controller_factory_joint_space import _resolve_robot_kinematics
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
-_RealStateStreamConfig = state_stream_mod.StateStreamConfig
+common.patch_state_stream_config_for_recalibrated_rig(pf)
 
 # 2026-09-30 fix: same bug documented in run_mpc_delay_aware_vessel.py's
 # module docstring ("fix 5", found live 2026-09-23) and in run_open_loop_
@@ -74,42 +79,17 @@ def _identity_fit_planner_to_robot(npz_path, start_tip_R, T_R_B):
 pf._fit_planner_to_robot = _identity_fit_planner_to_robot
 pf._find_shape_npz = lambda plan_dir: Path(__file__)
 
-# 2026-09-29: derived from vessel_lumen_2026-09-29_v3_right0p5mm_mpc_
-# nocontact_floor220_20260929T195312Z's own q_meas_rad trajectory (639
-# ticks, path_complete, 0 wall penetration, 0 vision failures) via
-# flange-frame FK (T_F_target=eye(4), matching getActualTCPPose()'s
-# default zero TCP offset -- this codebase never calls setTcp).
-# First live inverse-jacobian attempt (2026-09-29) tripped this at step 6
-# on a completely benign flange y=-0.790m (3mm past an initial +/-20mm
-# margin) while beam-TIP tracking error was small and stable
-# (3.5-4.3mm) the whole time -- not a runaway, just a naive-inverse-
-# Jacobian run naturally sitting a few mm outside one specific MPC run's
-# exact envelope. Widened to +/-50mm: still an order of magnitude
-# tighter than the physical incidents this box exists to catch (magnet
-# hitting the table, ~25cm z excursions -- see magnet-workspace-
-# constraints memory), while giving real operating headroom.
-_VALIDATED_WORKSPACE_XYZ_MIN_M = (0.400, -0.817, 0.249)
-_VALIDATED_WORKSPACE_XYZ_MAX_M = (0.615, -0.586, 0.381)
-
-
-def _patch_state_stream_config(z_raise_mm: float) -> None:
-    z_raise_m = float(z_raise_mm) / 1000.0
-
-    def _patched_state_stream_config(**kwargs):
-        kwargs.setdefault("marker_min_count", 2)
-        kwargs.setdefault("marker_max_count", 2)
-        cfg = _RealStateStreamConfig(**kwargs)
-        if z_raise_m != 0.0 and "T_robot_beam_pose6" not in kwargs:
-            pose6 = list(cfg.T_robot_beam_pose6)
-            pose6[2] += z_raise_m
-            cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
-        return cfg
-
-    pf.StateStreamConfig = _patched_state_stream_config
+# Same validated TCP workspace box run_mpc_delay_aware_vessel.py and
+# run_inverse_jacobian_online_vessel.py use -- derived from real achieved
+# trajectories in the CORRECT (recalibrated) frame this script now also
+# runs in (see this module's 2026-10-10 fix note above). This script's own
+# previous box was derived from a trajectory captured in the stale frame
+# the fix above removes, so it no longer applies.
+_VALIDATED_WORKSPACE_XYZ_MIN_M = (0.277, -0.832, 0.170)
+_VALIDATED_WORKSPACE_XYZ_MAX_M = (0.656, -0.2, 0.433)
 
 
 BEAM_BASE_PIVOT_XY_ROT = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1]])
-BEAM_BASE_PIVOT_Z_UNRAISED = -0.016567
 
 _robot_kin = _resolve_robot_kinematics(make_robot_config())
 
@@ -183,16 +163,12 @@ def main() -> None:
                          "no live in-loop magnet-exclusion monitor -- see module docstring.")
     p.add_argument("--max-control-steps", type=int, default=1000)
     p.add_argument("--skip-preflight", action="store_true")
-    p.add_argument("--z-raise-mm", type=float, default=0.0)
     args = p.parse_args()
 
-    _patch_state_stream_config(args.z_raise_mm)
     beam_base_pivot_xyz = np.array([[
-        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1],
-        BEAM_BASE_PIVOT_Z_UNRAISED + args.z_raise_mm / 1000.0,
+        BEAM_BASE_PIVOT_XY_ROT[0], BEAM_BASE_PIVOT_XY_ROT[1], BEAM_BASE_PIVOT_Z,
     ]])
-    print(f"[inv-jac] z_raise_mm = {args.z_raise_mm}")
-    print(f"[inv-jac] beam_base_pivot_xyz = {beam_base_pivot_xyz[0].tolist()}")
+    print(f"[inv-jac] beam_base_pivot_xyz = {beam_base_pivot_xyz[0].tolist()} (recalibrated, fixed)")
 
     exclusion_floor_m = args.exclusion_floor_mm / 1000.0
 

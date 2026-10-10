@@ -9,15 +9,18 @@ live in `proper_research/hardware/online/vessel_stage_a/`.
 Everything below assumes `cd /home/jack/Proper-Research` and a live robot +
 camera connection.
 
-**On the z-raise:** the +30mm hardcoded raise used to be applied
-internally by every script here. As of 2026-09-29/30 it's a parameter,
-`--z-raise-mm`, with **default 0.0 (unraised)** — pass whatever value
-matches your actual physical rig (`30.0` to reproduce the old raised
-workspace, `42.044008750641574` for the v4 raised setup, `0.0` for an
-unraised one). Get this wrong and every downstream script will silently
-misread real camera detections by the z-raise amount — see
-`HOWTO_CLOSED_LOOP_MPC.md` section 6 for the frame-registration symptom to
-watch for.
+**On the z-raise (stale note, kept for history):** this section used to
+describe a `--z-raise-mm` flag shared by every script here. As of
+2026-10-02 that whole indirection was removed project-wide -- every
+script in this directory now uses the single, fixed, recalibrated
+`build_vessel_plan.BEAM_BASE_PIVOT_Z` instead (no flag, no per-run choice
+to get wrong). None of the example commands below pass `--z-raise-mm`
+for this reason; if you see it in an older note or log, it refers to a
+setup this doc no longer describes. The real failure mode this used to
+warn about -- a script silently misreading real camera detections by a
+z-offset -- is exactly what `HOWTO_CLOSED_LOOP_MPC.md` section 6's
+frame-registration symptom still covers, just from a different, no-longer-
+possible-to-mismatch cause.
 
 ## 0. Background: what each file represents
 
@@ -71,16 +74,14 @@ into place instead:
 
 ```bash
 python3 -m proper_research.hardware.online.vessel_stage_a.live_vessel_alignment_overlay \
-    --lumen-file vessel_lumen_robot_frame.json \
-    --z-raise-mm 0.0
+    --lumen-file vessel_lumen_robot_frame.json
 ```
 
 This opens a live camera window with the lumen's centreline/walls
 (cyan/green/red) drawn on top, projected through the **same** calibration
 the live vision pipeline actually uses (`NewFrameTipMapper`'s `T_R_B` +
 `PlanarPixelCalibration` — not an approximation). Move the vessel until the
-drawn lines match its real walls, press `q`. `--z-raise-mm` must match
-whatever this lumen file was built against.
+drawn lines match its real walls, press `q`.
 
 If the vessel's shape itself changed (not just position) — or you don't
 trust the old digitization — just re-run step 1 instead and overwrite the
@@ -106,16 +107,14 @@ directly.
 python -m proper_research.hardware.online.vessel_stage_a.shift_lumen_centerline \
     --lumen-file vessel_lumen_robot_frame.json \
     --shift-mm 1.0 --direction right \
-    --z-raise-mm 0.0 \
     --out vessel_lumen_robot_frame_right1mm.json
 ```
 
 Same tangent/normal "right" convention as the live overlay tool in
 section 1b (right = centreline shifted opposite the +90°-rotated local
-tangent); radii are left unchanged, only the centreline moves. `--z-raise-mm`
-must match the value this lumen file's own frame was built against, same
-rule as everywhere else in this doc. After shifting, treat the output file
-as a brand-new lumen file: rebuild the plan from it (step 4 below) and
+tangent); radii are left unchanged, only the centreline moves. After
+shifting, treat the output file as a brand-new lumen file: rebuild the
+plan from it (step 4 below) and
 rebuild both Jacobian schedules from the new plan before running closed-loop
 MPC (HOWTO_CLOSED_LOOP_MPC.md section 2b, "Forcing a schedule rebuild") --
 the schedule cache does not know the lumen changed and will silently keep
@@ -175,7 +174,6 @@ python -m proper_research.hardware.online.vessel_stage_a.build_vessel_plan \
     --lumen-file vessel_lumen_robot_frame_trimmed6mm.json \
     --start-position-json vessel_magnet_initial_position_live.json \
     --insertion-max-mm 65 \
-    --z-raise-mm 0.0 \
     --output-root plans/my_vessel_plan
 ```
 

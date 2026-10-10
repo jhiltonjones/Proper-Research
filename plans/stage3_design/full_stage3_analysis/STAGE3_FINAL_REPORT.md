@@ -606,7 +606,72 @@ secondary diagnostic for exactly this reason, and because it depends on the
 explicitly-labelled counterfactual $J_{NC}^{cf}$ rather than on any
 physically realized quantity.
 
-### 6.6 Conclusion
+### 6.6 Control-level validation: a full QP replay with a genuinely-255mm-planned schedule
+
+§6.2-6.4 answer "does the schedule mismatch matter" through a one-step linear
+approximation ($\epsilon_u$, gain ratio, direction angle) applied to the
+*existing* schedules — both of which were built from offline plans solved at
+the 210mm floor and only exercised at 255mm live, via a runtime radius
+override, not planned natively at that floor. A stronger, direct test is
+available: build genuinely new offline plans *and* Jacobian schedules at the
+255mm floor itself (both contact and no-contact), then re-solve the actual
+MPC QP — not a linear approximation of it — tick by tick, feeding each
+real hardware run's own measured-state history into two otherwise-identical
+controller instances that differ only in which schedule they read from, and
+compare the resulting commands directly.
+
+**Validation, before trusting anything else.** Replaying each run with the
+schedule it actually used must reproduce the real logged commands, or the
+replay itself cannot be trusted. It does: mean command error is 0.0007
+(no-contact, ~1.1% of typical command magnitude) and 0.0015 (contact, ~6%,
+median 0.00086/~3.6%) across all six reps (three per condition). The one
+exception — all three contact reps show an elevated validation error at
+exactly $s\approx72.2$mm — is not a flaw in the replay; it is the
+already-known index-505 numerical artifact in the original contact schedule
+(§1.4), and its appearance exactly there is an internal-consistency check
+confirming the replay is sensitive to the right things, not evidence against
+it. This single tick is excluded from the counterfactual statistics below.
+
+**The result: swapping in the genuinely-255mm-planned schedule changes the
+commanded behaviour substantially, not marginally.**
+
+| | mean $\|u_{new}-u_{old}\|$ | as a fraction of typical command magnitude |
+|---|---|---|
+| No-contact @255mm | 0.0105 | ~40% |
+| Contact @255mm (excl. the one artifact tick) | 0.0134 | ~55% |
+
+This difference is not uniform along the path — it is concentrated in
+specific, physically interpretable regions:
+
+- **Both conditions** show their largest divergence in the **first 10mm**
+  of the path (mean difference 0.025 no-contact / 0.029 contact) — the same
+  early-path region already flagged (§1.4) as locally sensitive.
+- **No-contact** shows a second rise at $s\approx60$-$70$mm — exactly where
+  the real no-contact run aborts (§3.2).
+- **Contact** shows a pronounced second rise across $s\approx40$-$62$mm
+  (mean 0.015-0.017) — directly overlapping both the unexplained
+  $s\approx57$mm tracking-error transient (§1.4) and the redundant-
+  configuration-drift region (§5.2). The genuinely-255mm-planned schedule
+  would have commanded meaningfully different joint motion in precisely the
+  region this report has independently flagged twice already as locally
+  demanding.
+
+**Scope of this comparison, stated explicitly.** This is a single-tick
+counterfactual: at each tick, both candidate schedules are evaluated against
+the *same* real measured-state history, so the comparison is clean and
+well-defined, but it does not forward-simulate what the robot would
+physically do if it had executed the new commands throughout — that would
+require re-simulating the full closed-loop beam dynamics from tick 0, a
+separate, larger undertaking this report does not attempt. This result
+answers "what would the controller have commanded differently, given
+everything that actually happened", not "where would the beam physically end
+up instead." With that scope in mind, it is still the strongest available
+confirmation that the schedule-vs-actual-physics mismatch identified in
+§6.2-6.4 is not a linear-approximation artefact: re-solving the real QP gives
+the same qualitative answer, in the same locations, as the one-step
+approximation did.
+
+### 6.7 Conclusion
 
 Measured against the one physically-grounded reference available on this
 hardware, the schedule mismatch is real, structured, and — in its command-
@@ -621,7 +686,11 @@ single dominant driver of the completion and tracking differences reported
 in §3-§5 — but it is a real, floor-dependent contributor, not a negligible
 one, and it is quantitatively consistent with the mechanisms H2 and H3
 establish through entirely independent evidence (magnet position, command
-recovery).
+recovery). A full QP-level replay against genuinely-255mm-planned schedules
+(§6.6) confirms this is not an artefact of the one-step linear approximation:
+re-solving the actual controller gives substantially different commands
+(40-55% of typical command magnitude) in the same early-path and
+$s\approx40$-$70$mm regions already identified as locally significant.
 
 ---
 
@@ -835,6 +904,13 @@ condition and every other condition tested in this investigation.
 - **Single robot, single vessel geometry, single beam.** No claim in this
   report has been independently checked against a second physical rig,
   vessel shape, or beam.
+- **The full-QP schedule replay (§6.6) is a single-tick counterfactual, not
+  a re-simulated trajectory.** Both candidate schedules are evaluated
+  against the same real measured-state history at every tick; the result
+  answers what the controller would have commanded differently, not where
+  the beam would physically have ended up had those commands actually been
+  executed throughout — that would require re-simulating the full closed-loop
+  beam dynamics from tick 0, which this report does not attempt.
 - **The idx0-vs-idx100 completion/tracking trade-off (§7.3) is not fully
   mechanistically reconciled.** Directional alignment with the evolving true
   Jacobian explains which frozen matrix survives to the end of the path, but
@@ -852,6 +928,6 @@ condition and every other condition tested in this investigation.
 | **H2** — contact-Jacobian × exclusion-radius interaction | **Supported** | radius-matched on both legs via logged metadata; completion (3/3→0/3 for the wrong model vs 3/3→3/3 for the correct one) is the decisive evidence; magnet-position and insertion-length data make the mechanism directly observable, not just inferred |
 | **H3** — MPC vs inverse-Jacobian constraint awareness | **Strongly supported** | exact (agreement = 1.000) recovery of the controller's raw commands; the architectural difference is latent, not demonstrated, in the one cell where the constraint never binds; roughly half of the tight-floor infeasible episodes are a workspace-height violation, not the named exclusion-radius violation |
 | **H3b** — unregularized redundant-configuration drift (secondary mechanism) | **Supported as a second, independent failure mode** | reproduces across 2 Jacobian models, both verified (via command replay, not directory names) to have run under the selective gate; the internal clip mode remains untested; does not alter the H3 verdict, since the exclusion gate itself works correctly throughout |
-| **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Partially supported, and shown to strengthen specifically at the tight exclusion floor** | mismatch-vs-tracking-error correlation is near-zero at the loose floor and clearly positive (+0.47 to +0.75) at the tight floor; a 2.64× command-direction over-prediction is specific to the no-contact-scheduled MPC condition at the tight floor; the effect remains sub-millimetre in absolute command-weighted terms |
+| **H4** — scheduled-Jacobian accuracy against the contact model at the measured state | **Partially supported, and shown to strengthen specifically at the tight exclusion floor** | mismatch-vs-tracking-error correlation is near-zero at the loose floor and clearly positive (+0.47 to +0.75) at the tight floor; a 2.64× command-direction over-prediction is specific to the no-contact-scheduled MPC condition at the tight floor; confirmed at the full-QP level, not just the one-step linear approximation — a genuinely-255mm-planned schedule changes the commanded behaviour by 40-55% of typical command magnitude, concentrated in the early path and $s\approx40$-$70$mm; the effect remains sub-millimetre in absolute command-weighted terms |
 | **H5** — a trajectory-varying Jacobian outperforms any single fixed one | **Supported** | the scheduled Jacobian beats both a well-conditioned and an ill-conditioned frozen alternative on completion and/or tracking quality; the two frozen ablations' differing failure timing (conditioning-limited vs staleness-limited) is established but not fully reconciled with each other |
 | Proportional-gain ablation (secondary) | **Hypothesis contradicted** | the infeasible-request rate is exactly zero at both gains tested; the resulting tracking degradation is consistent with, but not proven to be, underdamped oscillatory behaviour, and is independent of the exclusion constraint entirely |

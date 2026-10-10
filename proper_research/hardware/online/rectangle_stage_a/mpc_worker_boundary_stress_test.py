@@ -31,7 +31,7 @@ import json
 import math
 import time
 
-ROBOT_IP = "192.168.56.101"
+from proper_research.hardware.online.stage_a_common import ROBOT_IP
 
 
 def main() -> None:

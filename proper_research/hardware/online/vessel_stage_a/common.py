@@ -1,286 +1,93 @@
-"""Shared helpers for the vessel-navigation Stage-A run scripts: pre-flight
-reset, robot/camera health checks, and execution-layer-C defaults.
+"""Vessel Stage-A rig configuration over the shared Stage-A preflight/
+health-check infrastructure in `proper_research.hardware.online.
+stage_a_common`.
 
-Identical to `rectangle_stage_a/common.py` (same three-step preflight
-sequence, same execution-C defaults, same safety checks -- see that
-module's docstring for the full rationale) with ONE change: the beam
-base's z-height used for vision reconstruction and insertion-length
-verification is set to the recalibrated height (`build_vessel_plan.
-BEAM_BASE_PIVOT_Z`, see `_raised_stream_stream_config`'s own docstring for
-the 2026-10-02 fix), not the DEFAULT `StateStreamConfig`/`PIVOT_XYZ` values
-elsewhere in this codebase -- those are deliberately NOT changed globally,
-since every other shape's hardware runner (rectangle/triangle/U-shape/
-S-curve) still depends on them being unraised. Found live 2026-09-23: the
-vision pipeline reconstructs 3D tip position by projecting the 2D camera
-image onto a plane at `T_robot_beam_pose6`'s z -- without matching this to
-the real rig height, the reported tip z stays pinned at the WRONG height,
-which is harmless for `run_open_loop_c.py`'s own error metric (it
-explicitly projects out the z-component before reporting error_mm --
-see `close_loop_path_follow.py:1593`) but would feed an uncorrected
-phantom z-residual into the closed-loop MPC's disturbance estimator
-(`process_isolated_adapter.py` sends the RAW 3-vector
+This rig's beam base IS physically raised: vision reconstruction and the
+insertion-length chord check both need `T_robot_beam_pose6`'s z to be the
+recalibrated height (`build_vessel_plan.BEAM_BASE_PIVOT_Z`), not the
+DEFAULT `StateStreamConfig`/`PIVOT_XYZ` z used elsewhere in this codebase
+-- those are deliberately NOT changed globally, since every other shape's
+hardware runner (rectangle/triangle/U-shape/S-curve) still depends on
+them being unraised. Found live 2026-09-23: the vision pipeline
+reconstructs 3D tip position by projecting the 2D camera image onto a
+plane at `T_robot_beam_pose6`'s z -- without matching this to the real
+rig height, the reported tip z stays pinned at the WRONG height, which is
+harmless for `run_open_loop_c.py`'s own error metric (it explicitly
+projects out the z-component before reporting error_mm) but would feed an
+uncorrected phantom z-residual into the closed-loop MPC's disturbance
+estimator (`process_isolated_adapter.py` sends the RAW 3-vector
 `measured_beam_position`, no z-projection) and into `Qpbar`'s equally-
 weighted xyz cost -- silently corrupting every closed-loop tick.
+
+2026-10-10: this module used to carry its own full copy of every function
+below (byte-identical to rectangle_stage_a/common.py for the plan-
+agnostic ones, independently diverged for `check_camera_healthy`/
+`preflight`). Both packages now share one implementation in
+`stage_a_common`, parameterized by a `PivotConfig` -- see that module's
+docstring. This file supplies vessel's own raised `PivotConfig` and
+magnet-exclusion-aware preflight wiring; it owns no infrastructure logic
+of its own anymore.
 """
 from __future__ import annotations
 
-import dataclasses
-import math
-import time
-from pathlib import Path
-from typing import Callable
-
 import numpy as np
 
-ROBOT_IP = "192.168.56.101"
+from proper_research.hardware.online.stage_a_common import (
+    ROBOT_IP,
+    SERVO_STREAM_HZ,
+    CONTROL_HZ,
+    JOINT_VELOCITY_LIMIT_RAD_S,
+    MAX_JOINT_STEP_RAD,
+    JOINT_ACCELERATION_LIMIT_RAD_S2,
+    PivotConfig,
+    load_plan_initial_state,
+    reset_to_plan_initial,
+    reset_to_plan_initial_safe,
+    check_robot_safe,
+    raised_state_stream_config_factory,
+    patch_state_stream_config_for_recalibrated_rig,
+    resolve_start_pose_at_radius,
+    _validate_reset_path_safe,
+)
+from proper_research.hardware.online import stage_a_common as _shared
 
-# Same execution-layer-C defaults as rectangle_stage_a/common.py -- see
-# that module's docstring for the validation history (accumulator seam +
-# 50Hz servoJ streaming).
-SERVO_STREAM_HZ = 50.0
-CONTROL_HZ = 10.0
-JOINT_VELOCITY_LIMIT_RAD_S = 0.10
-MAX_JOINT_STEP_RAD = 0.010
-JOINT_ACCELERATION_LIMIT_RAD_S2 = 0.40
+__all__ = [
+    "ROBOT_IP", "SERVO_STREAM_HZ", "CONTROL_HZ", "JOINT_VELOCITY_LIMIT_RAD_S",
+    "MAX_JOINT_STEP_RAD", "JOINT_ACCELERATION_LIMIT_RAD_S2", "Z_RAISE_M",
+    "load_plan_initial_state", "reset_to_plan_initial", "reset_to_plan_initial_safe",
+    "check_robot_safe", "raised_state_stream_config_factory",
+    "patch_state_stream_config_for_recalibrated_rig", "resolve_start_pose_at_radius",
+    "check_camera_healthy", "preflight",
+]
 
-Z_RAISE_M = 0.03  # STALE -- do not use for the recalibrated setup, see _raised_stream_stream_config
-
-
-def load_plan_initial_state(plan_dir: str) -> tuple[np.ndarray, float]:
-    """Return (initial 6 joints, initial insertion_m) from a plan's own state[0]."""
-    npz_path = Path(plan_dir) / (Path(plan_dir).name + ".npz")
-    if not npz_path.exists():
-        candidates = list(Path(plan_dir).glob("*.npz"))
-        if len(candidates) != 1:
-            raise FileNotFoundError(
-                f"Could not find a unique plan .npz under {plan_dir!r} "
-                f"(looked for {npz_path.name}, found {[c.name for c in candidates]})."
-            )
-        npz_path = candidates[0]
-    data = np.load(npz_path)
-    state = data["state_reference"] if "state_reference" in data else data["state"]
-    return np.asarray(state[0, :6], dtype=float), float(state[0, 6])
-
-
-def reset_to_plan_initial(
-    plan_initial_q: np.ndarray,
-    *,
-    robot_ip: str = ROBOT_IP,
-    tol: float = 0.005,
-    speed: float = 0.2,
-    acceleration: float = 0.2,
-) -> None:
-    """Move the robot to the plan's start joints on its own short connection.
-    Identical to rectangle_stage_a's version -- see that module's docstring
-    for why servo_stop() before move_j() and the 3s settle matter."""
-    from proper_research.hardware.ur_rtde_robot import URRTDERobot
-
-    plan_initial_q = np.asarray(plan_initial_q, dtype=float).reshape(6)
-    robot = URRTDERobot(robot_ip, frequency=125.0)
-    robot.connect()
-    try:
-        robot.servo_stop()
-        ok = robot.move_j(list(plan_initial_q), speed=speed, acceleration=acceleration)
-        q = np.array(robot.get_joints())
-        offset = float(np.max(np.abs(q - plan_initial_q)))
-        print(f"[reset] move_j returned {ok}; max offset from plan-initial: {offset:.5f} rad")
-        if offset >= tol:
-            raise RuntimeError(
-                f"refusing to start: not at plan-initial joints after reset "
-                f"(offset {offset:.5f} rad >= tol {tol} rad)"
-            )
-    finally:
-        robot.close()
-    print("[reset] settling 3s before the harness opens its own connection...")
-    time.sleep(3.0)
+Z_RAISE_M = 0.03  # STALE -- do not use for the recalibrated setup, see _raised_pivot_config
 
 
-def _validate_reset_path_safe(
-    current_q: np.ndarray,
-    plan_initial_q: np.ndarray,
-    *,
-    magnet_transform_fn: Callable[[np.ndarray], np.ndarray],
-    magnet_exclusion_lumen_C_m: np.ndarray | None = None,
-    magnet_exclusion_radius_m: float | None = None,
-    magnet_z_bounds_m: tuple[float, float] | None = None,
-    n_samples: int = 200,
-) -> None:
-    """Raise if the straight-line JOINT-SPACE path `move_j` will take from
-    `current_q` to `plan_initial_q` would violate the magnet-exclusion
-    radius or magnet-z bounds anywhere along the way.
+def _raised_pivot_config() -> PivotConfig:
+    """This rig's own `PivotConfig`: the raised `StateStreamConfig` (z ==
+    the recalibrated `BEAM_BASE_PIVOT_Z`), with the chord-check pivot taken
+    straight from that same config -- so the camera health check and the
+    real run can never disagree about the beam-base height. Built from the
+    same `raised_state_stream_config_factory` the live runners use."""
+    from proper_research.hardware.online.state_stream import StateStreamConfig
 
-    `move_j` has zero real-time monitoring or interruption capability once
-    started, and a joint-space-linear interpolation between two safe
-    endpoints is not guaranteed to stay safe in between -- both real
-    closed-loop incidents on 2026-09-23 showed the redundant DOF can move
-    the magnet a long way for a small joint change. This must be checked
-    BEFORE the blocking motion starts.
-    """
-    if magnet_exclusion_radius_m is None and magnet_z_bounds_m is None:
-        return
-    current_q = np.asarray(current_q, dtype=float).reshape(6)
-    plan_initial_q = np.asarray(plan_initial_q, dtype=float).reshape(6)
-    worst_gap_m = math.inf
-    violations: list[str] = []
-    for i in range(n_samples):
-        t = i / (n_samples - 1)
-        q = current_q + t * (plan_initial_q - current_q)
-        xyz = np.asarray(magnet_transform_fn(q), dtype=float).reshape(3)
-        if magnet_exclusion_radius_m is not None:
-            gap_m = float(np.min(np.linalg.norm(
-                np.asarray(magnet_exclusion_lumen_C_m, dtype=float) - xyz[None, :], axis=1
-            )))
-            worst_gap_m = min(worst_gap_m, gap_m)
-            if gap_m < magnet_exclusion_radius_m:
-                violations.append(
-                    f"t={t:.3f}: exclusion gap={gap_m*1e3:.1f}mm < {magnet_exclusion_radius_m*1e3:.1f}mm"
-                )
-        if magnet_z_bounds_m is not None:
-            z_min, z_max = magnet_z_bounds_m
-            if xyz[2] < z_min or xyz[2] > z_max:
-                violations.append(
-                    f"t={t:.3f}: magnet_z={xyz[2]*1e3:.1f}mm outside "
-                    f"[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm"
-                )
-    if violations:
-        raise RuntimeError(
-            f"refusing reset: straight-line joint-space path from current joints to "
-            f"plan-initial joints would violate a magnet safety constraint at "
-            f"{len(violations)}/{n_samples} sampled points along the path -- move_j "
-            f"cannot be interrupted mid-motion once started, so this reset is refused "
-            f"before any motion begins. First violations: " + "; ".join(violations[:5])
-        )
-    msg = f"[reset-safety] path from current joints to plan-initial verified safe ({n_samples} samples)"
-    if magnet_exclusion_radius_m is not None:
-        msg += f"; worst exclusion gap along path = {worst_gap_m*1e3:.1f}mm"
-    print(msg)
-
-
-def reset_to_plan_initial_safe(
-    plan_initial_q: np.ndarray,
-    *,
-    robot_ip: str = ROBOT_IP,
-    tol: float = 0.005,
-    speed: float = 0.2,
-    acceleration: float = 0.2,
-    magnet_transform_fn: Callable[[np.ndarray], np.ndarray] | None = None,
-    magnet_exclusion_lumen_C_m: np.ndarray | None = None,
-    magnet_exclusion_radius_m: float | None = None,
-    magnet_z_bounds_m: tuple[float, float] | None = None,
-) -> None:
-    """Like `reset_to_plan_initial`, but first reads the robot's current
-    joints on a short read-only connection and validates that the
-    straight-line joint-space path `move_j` will take stays clear of the
-    magnet-exclusion radius and magnet-z bounds the whole way -- see
-    `_validate_reset_path_safe`. Refuses (raises, no motion) if not.
-
-    If no exclusion/z-bounds info is passed, this behaves exactly like
-    plain `reset_to_plan_initial` (no-op check).
-    """
-    from proper_research.hardware.ur_rtde_robot import URRTDERobot
-
-    plan_initial_q = np.asarray(plan_initial_q, dtype=float).reshape(6)
-
-    if magnet_transform_fn is not None and (
-        magnet_exclusion_radius_m is not None or magnet_z_bounds_m is not None
-    ):
-        robot = URRTDERobot(robot_ip, frequency=125.0)
-        robot.connect()
-        try:
-            current_q = np.array(robot.get_joints())
-        finally:
-            robot.close()
-        print(f"[reset-safety] current joints: {np.round(current_q, 4).tolist()}")
-        _validate_reset_path_safe(
-            current_q, plan_initial_q,
-            magnet_transform_fn=magnet_transform_fn,
-            magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
-            magnet_exclusion_radius_m=magnet_exclusion_radius_m,
-            magnet_z_bounds_m=magnet_z_bounds_m,
-        )
-
-    reset_to_plan_initial(plan_initial_q, robot_ip=robot_ip, tol=tol, speed=speed, acceleration=acceleration)
-
-
-def check_robot_safe(robot_ip: str = ROBOT_IP) -> None:
-    """Raise if the robot isn't connected and in a normal safety state."""
-    from proper_research.hardware.ur_rtde_robot import URRTDERobot
-
-    robot = URRTDERobot(robot_ip, frequency=125.0)
-    robot.connect()
-    try:
-        safety_mode = robot.get_safety_mode()
-        protective_stopped = robot.is_protective_stopped()
-        print(f"[health] robot safety_mode={safety_mode} protective_stopped={protective_stopped}")
-        if protective_stopped or safety_mode not in (1, 2):
-            raise RuntimeError(
-                f"robot not in a safe/normal state (safety_mode={safety_mode}, "
-                f"protective_stopped={protective_stopped})"
-            )
-    finally:
-        robot.close()
-
-
-def raised_state_stream_config_factory(real_config_cls):
-    """Return a drop-in replacement callable for `real_config_cls`
-    (StateStreamConfig) whose T_robot_beam_pose6 z defaults to the
-    recalibrated beam-base height (BEAM_BASE_PIVOT_Z) and whose
-    marker_min_count/marker_max_count default to 2 -- the physical rig's
-    middle marker was permanently removed 2026-09-29; tip-position tracking
-    is unaffected, only the now-unused chord tangent is (see
-    StateStreamConfig's own `_tip_and_tangent_start_px` docstring). Only the
-    DEFAULT changes -- an explicit kwarg the caller passes still wins.
-
-    SINGLE SOURCE for a patch that `run_open_loop_vessel.py` and
-    `run_mpc_delay_aware_vessel.py` each used to define as their own
-    byte-for-byte-identical copy (`_patched_state_stream_config`/
-    `_RaisedStateStreamConfig`) -- centralized here (2026-10-07, the
-    "no frames contradicting, DRY" pass) so those two scripts and this
-    module's own `_raised_stream_stream_config` (used by
-    `check_camera_healthy`) can never drift apart on what "recalibrated"
-    means."""
-    from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEAM_BASE_PIVOT_Z
-
-    def _patched_state_stream_config(**kwargs):
-        kwargs.setdefault("marker_min_count", 2)
-        kwargs.setdefault("marker_max_count", 2)
-        cfg = real_config_cls(**kwargs)
-        if "T_robot_beam_pose6" not in kwargs:
-            pose6 = list(cfg.T_robot_beam_pose6)
-            pose6[2] = BEAM_BASE_PIVOT_Z
-            cfg = dataclasses.replace(cfg, T_robot_beam_pose6=tuple(pose6))
-        return cfg
-
-    return _patched_state_stream_config
-
-
-def patch_state_stream_config_for_recalibrated_rig(pf_module) -> None:
-    """Monkeypatch `pf_module.StateStreamConfig` (close_loop_path_follow's
-    own module-level reference, read by its `StateStreamConfig(...)` call
-    site) with `raised_state_stream_config_factory`'s callable, built from
-    whatever class `pf_module.StateStreamConfig` currently is. Must be
-    called before anything else reassigns that attribute, since the
-    "real" class is captured from it at call time, not re-resolved later."""
-    pf_module.StateStreamConfig = raised_state_stream_config_factory(pf_module.StateStreamConfig)
+    cfg_cls = raised_state_stream_config_factory(StateStreamConfig)
+    return PivotConfig(
+        build_scfg=lambda: cfg_cls(exposure=29.0),
+        chord_pivot_xyz=lambda scfg: np.asarray(scfg.T_robot_beam_pose6[:3], dtype=float),
+        image_filename="/dev/shm/vessel_stage_a_camera_check.png",
+    )
 
 
 def _raised_stream_stream_config():
     """A StateStreamConfig instance with T_robot_beam_pose6's z set to the
     recalibrated beam-base height -- everything else (calibration, axis
-    conventions, ROI paths) taken from the real, validated default. Built
-    from the same `raised_state_stream_config_factory` the live runners use
-    (see that function's docstring), so preflight's camera check and the
-    real run can never disagree about the beam-base height.
-
-    2026-10-02 fix: this used to add the module-level Z_RAISE_M (stale at
-    its old +30mm default now that nothing in the fixed closed-loop runners
-    sets it anymore, see Z_RAISE_M's own comment) -- `check_camera_healthy`'s
-    insertion-length verification was therefore checking against a pivot
-    53mm off from the one the actual run uses."""
-    from proper_research.hardware.online.state_stream import StateStreamConfig
-
-    cfg_cls = raised_state_stream_config_factory(StateStreamConfig)
-    return cfg_cls(exposure=29.0)
+    conventions, ROI paths) taken from the real, validated default. Used
+    directly (not just via `check_camera_healthy`) by several scripts in
+    this package that need a raised `StateStreamConfig` of their own
+    (e.g. `approach_vessel_contact.py`, `measure_jcam_*.py`,
+    `fixed_dipole_arc_*.py`, `sweep_free_space_arc_dipole.py`)."""
+    return _raised_pivot_config().build_scfg()
 
 
 def check_camera_healthy(
@@ -289,80 +96,19 @@ def check_camera_healthy(
 ) -> None:
     """Raise if the camera/vision pipeline can't reliably find the tip.
 
-    Identical to rectangle_stage_a's version except the pivot pose (both
-    for vision reconstruction and for the insertion-length chord
-    measurement) is set to the recalibrated beam-base height to match the
-    real rig -- see this module's docstring. Without this, the insertion-
-    length chord ||tip - pivot|| would pick up a spurious vertical
-    component (tip.z correctly matched, pivot.z stale), inflating the
-    measured length by roughly 10-15mm and spuriously failing this check
-    even when the advancer is correctly positioned.
+    See `stage_a_common.check_camera_healthy` for the full behavior; this
+    just supplies this rig's own raised `PivotConfig`.
     """
-    from proper_research.hardware.online.state_stream import NewFrameTipMapper
-    from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
-
-    scfg = _raised_stream_stream_config()
-    pivot_xyz_raised = np.asarray(scfg.T_robot_beam_pose6[:3], dtype=float)
-    mapper = NewFrameTipMapper(scfg)
-    camera = CameraSource(
-        CameraConfig(
-            cam_index=0, exposure=29.0, image_filename="/dev/shm/vessel_stage_a_camera_check.png",
-            roi_polygon_path=scfg.roi_polygon_path, manual_boundary_path=scfg.manual_boundary_path,
-            pivot_hint=tuple(scfg.pivot_hint_px),
-        ),
-        pivot_point_pose6=np.asarray(scfg.T_robot_beam_pose6),
-        robot_joints_getter=lambda: None, robot_pose_getter=lambda: None,
-        insertion_length_getter=lambda: 0.02, frame_processor=mapper,
+    _shared.check_camera_healthy(
+        min_valid_fraction, n_frames,
+        expected_insertion_m=expected_insertion_m, insertion_tol_mm=insertion_tol_mm,
+        pivot_config=_raised_pivot_config(),
     )
-    camera.start()
-    try:
-        time.sleep(1.0)
-        found = 0
-        lengths_mm: list[float] = []
-        for _ in range(n_frames):
-            est, _age = camera.latest(0.5)
-            if est is not None:
-                found += 1
-                tip = np.asarray(est.tip_position_m, dtype=float)
-                if np.all(np.isfinite(tip)):
-                    lengths_mm.append(float(np.linalg.norm(tip - pivot_xyz_raised)) * 1e3)
-            time.sleep(0.1)
-        frac = found / n_frames
-        print(f"[health] camera: {found}/{n_frames} frames had a valid tip estimate "
-              f"(raised pivot z={pivot_xyz_raised[2]*1e3:.1f}mm)")
-        if frac < min_valid_fraction:
-            raise RuntimeError(
-                f"camera unhealthy: only {found}/{n_frames} frames found the tip "
-                f"(need >= {min_valid_fraction:.0%})"
-            )
-        if expected_insertion_m is not None:
-            expected_mm = expected_insertion_m * 1000.0
-            if len(lengths_mm) < int(min_valid_fraction * n_frames):
-                raise RuntimeError(
-                    f"insertion-length check: only {len(lengths_mm)}/{n_frames} frames had a "
-                    f"valid reading -- cannot verify physical insertion against the plan's "
-                    f"expected L0={expected_mm:.1f}mm. Refusing to proceed."
-                )
-            measured_mm = float(np.median(lengths_mm))
-            diff_mm = abs(measured_mm - expected_mm)
-            print(f"[health] insertion length: measured={measured_mm:.1f}mm "
-                  f"(median of {len(lengths_mm)} frames) expected={expected_mm:.1f}mm "
-                  f"diff={diff_mm:.1f}mm")
-            if diff_mm > insertion_tol_mm:
-                raise RuntimeError(
-                    f"insertion mismatch: camera-measured physical length {measured_mm:.1f}mm "
-                    f"differs from the plan's expected L0={expected_mm:.1f}mm by {diff_mm:.1f}mm "
-                    f"(tolerance {insertion_tol_mm:.1f}mm). The advancer likely retained an "
-                    f"extension from a previous run -- physically retract/re-home it to the "
-                    f"plan's start before proceeding."
-                )
-    finally:
-        camera.stop()
 
 
 def preflight(
     plan_dir: str, *, robot_ip: str = ROBOT_IP, insertion_tol_mm: float = 3.0,
-    magnet_transform_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+    magnet_transform_fn=None,
     magnet_exclusion_lumen_C_m: np.ndarray | None = None,
     magnet_exclusion_radius_m: float | None = None,
     magnet_z_bounds_m: tuple[float, float] | None = None,
@@ -370,92 +116,16 @@ def preflight(
 ) -> tuple[np.ndarray, float]:
     """Full pre-run sequence: health checks + reset. Returns (q0, L0) from the plan.
 
-    When `magnet_transform_fn` and at least one of the exclusion/z-bounds
-    args are given, the reset motion's straight-line joint-space path is
-    validated safe before it moves -- see `reset_to_plan_initial_safe`.
-
-    `reset_target_q0`: 2026-10-07, opt-in, None by default (unchanged
-    behaviour for every existing caller -- resets to the plan's own q0,
-    same as before). When given, the robot resets to THIS joint target
-    instead -- lets a run start the magnet at a different distance from
-    the beam base than the plan's own designed start position, e.g. to
-    test a wider --beam-base-exclusion-floor-mm than the plan's own start
-    distance would otherwise satisfy, WITHOUT re-running the offline
-    configuration-path/Jacobian-schedule pipeline at all. The function
-    still RETURNS the plan's own (q0, l0) -- used for cfg.initial_
-    insertion_m and this function's own insertion-length camera check,
-    both unaffected by this override -- only the reset motion's actual
-    target changes.
+    See `stage_a_common.preflight` for the full behavior (magnet-exclusion
+    reset-path safety, `reset_target_q0` override); this just supplies
+    this rig's own raised `PivotConfig`.
     """
-    q0, l0 = load_plan_initial_state(plan_dir)
-    print(f"[preflight] plan initial state: q0={np.round(q0, 4).tolist()} L0={l0*1000:.2f}mm")
-    reset_q0 = q0 if reset_target_q0 is None else np.asarray(reset_target_q0, dtype=float).reshape(6)
-    if reset_target_q0 is not None:
-        print(f"[preflight] reset target OVERRIDDEN to {np.round(reset_q0, 4).tolist()} "
-              f"(plan's own trajectory/schedule unaffected)")
-    check_camera_healthy(expected_insertion_m=l0, insertion_tol_mm=insertion_tol_mm)
-    reset_to_plan_initial_safe(
-        reset_q0, robot_ip=robot_ip,
+    return _shared.preflight(
+        plan_dir, robot_ip=robot_ip, insertion_tol_mm=insertion_tol_mm,
+        pivot_config=_raised_pivot_config(),
         magnet_transform_fn=magnet_transform_fn,
         magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
         magnet_z_bounds_m=magnet_z_bounds_m,
+        reset_target_q0=reset_target_q0,
     )
-    check_robot_safe(robot_ip=robot_ip)
-    return q0, l0
-
-
-def resolve_start_pose_at_radius(
-    q0_seed: np.ndarray, radius_mm: float, *, robot_kin,
-) -> np.ndarray:
-    """Return a new joint target that moves the magnet to `radius_mm` from
-    the beam base, along the SAME direction `q0_seed`'s own magnet pose
-    already sits at, with the SAME orientation -- i.e. a radial move, not
-    a new arc position.
-
-    Used to test a --beam-base-exclusion-floor-mm (or --magnet-exclusion-
-    soft-radius-mm) wider than a plan's own built-in start margin would
-    otherwise allow through the preflight reset-path check, WITHOUT
-    re-running the offline configuration-path/Jacobian-schedule pipeline
-    (a multi-hour operation) -- see preflight's own `reset_target_q0`
-    parameter, which this is meant to feed. Shared by run_mpc_delay_
-    aware_vessel.py and run_inverse_jacobian_online_vessel.py so the
-    geometry/IK logic lives in exactly one place.
-
-    Orientation is reused UNCHANGED, not re-solved: this project's
-    reference_orientation_matrix (sweep_free_space_arc_dipole.py, used by
-    design_stage3_tracked_path.py to build every plan's own magnet_pose6_R)
-    depends only on the DIRECTION to the beam base, never on distance --
-    confirmed by reading its own implementation (both the calibration and
-    target directions are normalized before use) -- so a purely radial
-    move needs no new orientation solve.
-
-    Raises RuntimeError if the IK for the new pose does not converge.
-    """
-    from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
-    from proper_research.rig_calibration import BEAM_BASE_XYZ_M
-
-    q0_seed = np.asarray(q0_seed, dtype=float).reshape(6)
-    seed_T = urik.forward_kinematics(q0_seed, robot_kin.dh, robot_kin.T_F_M).T_R_target
-    seed_xyz = seed_T[:3, 3].copy()
-    direction = seed_xyz - BEAM_BASE_XYZ_M
-    direction_norm_m = float(np.linalg.norm(direction))
-    direction = direction / direction_norm_m
-    new_xyz = BEAM_BASE_XYZ_M + direction * (float(radius_mm) * 1e-3)
-
-    T_new = seed_T.copy()
-    T_new[:3, 3] = new_xyz
-    ik = urik.inverse_kinematics_dls(
-        T_R_target=T_new, q_seed_rad=q0_seed, dh=robot_kin.dh,
-        T_F_target=robot_kin.T_F_M, cfg=robot_kin.ik_cfg,
-    )
-    if not ik.converged:
-        raise RuntimeError(
-            f"resolve_start_pose_at_radius({radius_mm}): IK did not converge for the "
-            f"radial move from {direction_norm_m*1e3:.1f}mm to {radius_mm:.1f}mm along "
-            f"the seed pose's own direction from the beam base."
-        )
-    print(f"[start-radius-override] reset target moved from {direction_norm_m*1e3:.1f}mm "
-          f"to {radius_mm:.1f}mm from the beam base (same direction/orientation, "
-          f"IK position_error={ik.final_position_error_m*1e3:.4f}mm)")
-    return np.asarray(ik.q_rad, dtype=float).reshape(6)

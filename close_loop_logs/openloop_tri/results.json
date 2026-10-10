@@ -1,0 +1,28 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_tri/runs/openloop_x1_rep1_20260910T134306Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.6265044849906367,
+    "mean_track_mm": 1.449557251908397,
+    "max_track_mm": 3.117,
+    "p95_track_mm": 2.934,
+    "mean_hold_mm": 0.07633333333333334,
+    "final_mm": 0.026
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_tri/runs/openloop_x1_rep2_20260910T134410Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.581561323937218,
+    "mean_track_mm": 1.430618320610687,
+    "max_track_mm": 3.055,
+    "p95_track_mm": 2.8869999999999996,
+    "mean_hold_mm": 0.22240000000000001,
+    "final_mm": 0.199
+  }
+]

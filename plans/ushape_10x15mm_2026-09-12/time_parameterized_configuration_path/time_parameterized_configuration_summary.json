@@ -1,0 +1,100 @@
+{
+  "configuration": {
+    "sample_period_s": 0.1,
+    "state_velocity_limit": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.002
+    ],
+    "state_acceleration_limit": [
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.02
+    ],
+    "velocity_safety_factor": 0.8,
+    "acceleration_safety_factor": 0.8,
+    "maximum_path_speed_m_s": 0.003,
+    "maximum_path_acceleration_m_s2": 0.02,
+    "start_path_speed_m_s": 0.0,
+    "end_path_speed_m_s": 0.0,
+    "timing_subdivisions_per_interval": 4,
+    "beam_validation_samples_per_interval": 3,
+    "validate_nonlinear_beam": true,
+    "require_nonlinear_beam_feasible": false,
+    "require_saved_global_feasible": false,
+    "require_saved_dense_feasible": false,
+    "beam_validation_position_tolerance_m": null,
+    "beam_validation_tangent_tolerance_rad": null,
+    "interpolation": "natural_cubic",
+    "linear_program_tolerance": 1e-10,
+    "constraint_tolerance": 1e-08,
+    "debug": true
+  },
+  "summary": {
+    "time_parameterized": true,
+    "globally_feasible": true,
+    "source_global_feasible": true,
+    "source_dense_validation_feasible": true,
+    "beam_validation_performed": true,
+    "beam_validation_feasible": true,
+    "duration_s": 21.3,
+    "raw_duration_s": 20.58279304349307,
+    "number_mpc_samples": 214,
+    "number_timing_grid_points": 621,
+    "number_spatial_beam_validation_samples": 621,
+    "maximum_velocity_limit_ratio": 0.9693282159327167,
+    "maximum_acceleration_limit_ratio": 0.9783749487237506,
+    "maximum_state_rate": [
+      0.020936680107964966,
+      0.035995013005089116,
+      0.014022525590735288,
+      0.016568790609584567,
+      0.014171440624167784,
+      0.00417067970811114,
+      0.0015509251454923468
+    ],
+    "maximum_state_acceleration": [
+      0.1746063340973144,
+      0.3913499794895003,
+      0.12231978627247694,
+      0.17277084111635166,
+      0.10437898245604336,
+      0.0430727103644602,
+      0.01494057978452012
+    ],
+    "maximum_path_speed_m_s": 0.0028989849357032495,
+    "maximum_absolute_path_acceleration_m_s2": 0.01518204812235417,
+    "maximum_beam_position_error_m": 0.0011851415422204903,
+    "maximum_beam_tangent_error_rad": 2.742175762449473,
+    "endpoint_state_rate_norms": [
+      0.0,
+      0.0
+    ],
+    "interpolation": "natural_cubic",
+    "constraint_model": "kinematic configuration velocity and acceleration limits",
+    "torque_constraints_included": false,
+    "jerk_constraints_included": false,
+    "path_parameter": "lumen_arc_length_m",
+    "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+    "input_layout": "qd1_qd2_qd3_qd4_qd5_qd6_insertion_rate",
+    "controllable_interval_at_start": [
+      0.0,
+      5.581981051941453e-06
+    ]
+  },
+  "output_files": {
+    "csv": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path/time_parameterized_configuration_path.csv",
+    "json": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path/time_parameterized_configuration_summary.json",
+    "npz": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path/time_parameterized_configuration_path.npz",
+    "spatial_validation_csv": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path/time_parameterized_spatial_validation.csv",
+    "plot": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path/time_parameterized_configuration_path.png"
+  }
+}

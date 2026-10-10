@@ -1,0 +1,85 @@
+{
+  "timestamp_utc": "2026-09-09T15:16:10.576847+00:00",
+  "config": {
+    "dry_run": true,
+    "target_offset_R_mm": [
+      0.0,
+      -10.0,
+      -5.0
+    ],
+    "tolerance_mm": 1.5,
+    "converged_hold_ticks": 8,
+    "project_error_to_beam_plane": true,
+    "control_hz": 10.0,
+    "servo_lookahead_s": 0.2,
+    "servo_gain": 200,
+    "max_joint_step_rad": 0.006,
+    "max_control_steps": 2,
+    "max_state_age_s": 0.5,
+    "warmup_timeout_s": 20.0,
+    "settle_ticks_before_target": 10,
+    "controller_type": "jacobian",
+    "position_gain": 0.6,
+    "damping": 0.05,
+    "nullspace_gain": 0.0,
+    "control_insertion": false,
+    "pid_kp": 3.0,
+    "pid_ki": 0.6,
+    "pid_kd": 0.05,
+    "pid_integral_limit_m": 0.02,
+    "pid_jv_damping": 0.001,
+    "pid_kp_insertion": 0.8,
+    "advancer_port": "/dev/ttyACM0",
+    "advancer_dry_run": true,
+    "beam_axial_axis_R": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "beam_plane_normal_axis_R": [
+      -1.0,
+      0.0,
+      0.0
+    ],
+    "jacobian_source": "analytical_beam",
+    "magnet_tip_coupling": 1.0,
+    "insertion_axial_gain": 1.0,
+    "dipole_unit_in_magnet_body": [
+      0.0,
+      0.0,
+      -1.0
+    ],
+    "joint_velocity_limit_rad_s": 0.1,
+    "joint_acceleration_limit_rad_s2": 0.4,
+    "insertion_rate_limit_m_s": 0.002,
+    "speed_j_acceleration_rad_s2": 0.8,
+    "workspace_xyz_min_m": [
+      0.2,
+      -1.2,
+      -0.3
+    ],
+    "workspace_xyz_max_m": [
+      1.1,
+      -0.2,
+      0.7
+    ],
+    "robot_ip": "192.168.56.101",
+    "reader_poll_hz": 60.0,
+    "robot_max_age_s": 0.15,
+    "initial_insertion_m": 0.04,
+    "cam_index": 0,
+    "exposure": 27.0,
+    "gain": 0.0,
+    "grab_period_s": 0.004,
+    "reconstruct_period_s": 0.01,
+    "image_filename": "/dev/shm/proper_closeloop_frame.png",
+    "output_root": "close_loop_logs",
+    "run_name": "close_loop_tip"
+  },
+  "stop_reason": "max_control_steps",
+  "control_steps": 2,
+  "started_moving": false,
+  "jacobian_condition": 7714.08,
+  "servo_commands_sent": 0,
+  "vision_detection_failures": 0
+}

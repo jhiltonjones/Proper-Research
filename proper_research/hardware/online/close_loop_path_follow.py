@@ -1,0 +1,2034 @@
+"""Trace a square / triangle tip path online with an offline joint-space controller.
+
+Same servoJ + advancer closed loop as :mod:`close_loop_tip_control`, but the
+target is a *moving* timed reference instead of one fixed point, driven through
+``build_offline_solver`` (the exact seam the simulation comparison uses).
+
+Two ways to get the timed reference
+----------------------------------
+``reference_source = "plan_dir"``
+    Load a real offline-planner output -- the directory written by
+
+        run_inverse_head_exclusion.py
+          -> run_global_configuration.py
+          -> run_time_parameterization.py
+
+    via ``load_configuration_reference``.  This is the "all the framework wired
+    together" path: geometry -> inverse configuration -> global smoothing ->
+    time parameterisation -> online tracking.  The planner works in its own
+    model/world frame, so the reference's ``desired_position_m`` must already be
+    in the hardware robot-base frame for the tracking error to mean anything --
+    verify that once, supervised, before trusting a run.
+
+``reference_source = "synthetic"``  (default)
+    Build the shape directly in the hardware robot-base frame, in the beam
+    bending plane (B.y sideways via the joints, B.x axial via the advancer),
+    centred on the *current* tip.  No planner, no frame ambiguity -- runnable
+    immediately, and it exercises exactly the same online stack.
+
+Recording
+---------
+* ``path_follow.jsonl``      -- one JSON object per control tick
+* ``tip_trajectory.csv``     -- flat table: tip, reference, error, q, insertion
+* ``path_follow_plot.png``   -- tip vs reference in the shape plane + error(t)
+
+    python -m proper_research.hardware.online.close_loop_path_follow
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import signal
+import time
+from dataclasses import asdict, dataclass, replace as replace_dc
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+import numpy as np
+
+from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
+from proper_research.hardware.online.close_loop_tip_control import (
+    AnalyticalBeamJacobianProvider,
+    SimpleBeamJacobianProvider,
+    _make_output_dir,
+    _mpc_config,
+    _translational_jacobian_fd,
+)
+from proper_research.hardware.online.controller_adapters import (
+    OfflineControllerConfig,
+    build_offline_solver,
+)
+from proper_research.hardware.online.messages import now_monotonic
+from proper_research.hardware.online.state_stream import (
+    NewFrameTipMapper,
+    RobotJointStream,
+    StateStreamConfig,
+    _DebugLineFilter,
+)
+
+
+# =============================================================================
+# USER CONFIGURATION -- edit here; there are no terminal arguments
+# =============================================================================
+
+
+@dataclass
+class PathFollowConfig:
+    dry_run: bool = False
+
+    # --- where the timed reference comes from ---------------------
+    reference_source: str = "plan_dir"      # "synthetic" | "plan_dir"
+    # 2026-09-10: feasible closed 8 mm apex-at-start triangle from
+    # plan_shape_path.py with the calibrated model (E=2.5 MPa, N52 900 A m^2).
+    # Beam starts at 30 mm (== initial_conditions L0); insertion 30-39 mm.
+    # (plans/square_2mm_2026-09-10/ is the smaller square alternative.)
+    plan_dir: str = "plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path"
+    # The offline planner runs in its own world frame (legacy pivot, beam
+    # horizontal along -X).  shape_centreline.npz (written next to the plan by
+    # plan_shape_path.py) carries tip0 / u_axis / v_axis in that frame; we fit
+    # a rigid planner->robot-base transform from it + the measured start tip so
+    # the plan's desired_position_m lands in R.  Leave blank to auto-locate.
+    plan_frame_npz: str = ""
+
+    # --- synthetic shape (reference_source == "synthetic") -------
+    shape: str = "triangle"                    # "square" | "triangle"
+    shape_size_mm: float = 6.0               # half the side/height; shape starts at the current tip
+    shape_speed_mm_s: float = 1.5            # tip traversal speed along the path
+    shape_laps: int = 1
+    shape_settle_s: float = 1.0              # hold at the first corner before moving
+    shape_end_hold_s: float = 2.0            # hold at the last corner after the lap
+    # In-plane axes of the beam frame B the shape is drawn in.
+    #   u -> plotted as the horizontal axis   (default B.y: sideways, joints)
+    #   v -> plotted as the vertical axis     (default B.x: axial, advancer)
+    shape_axis_u: str = "b_y"
+    shape_axis_v: str = "b_x"
+
+    # --- controller ----------------------------------------------
+    #   "naive_inverse_jacobian"     : InverseJacobianBeamController (resolved-rate)
+    #   "naive_inverse_jacobian_ltv" : same, but Jacobian comes from the SAME
+    #                                  precomputed per-sample schedule
+    #                                  mpc_ltv_offline uses ("inverse-LTV",
+    #                                  the matched baseline -- needs an
+    #                                  external schedule, see build_offline_solver)
+    #   "mpc_lti"                : BeamOutputTrackingMPC, one frozen Jacobian
+    #   "mpc_ltv_offline"        : one Jacobian per reference sample (== mpc_lti
+    #                              here, since the beam Jacobian is frozen)
+    #   "inv_2dof_trim"          : persistent nominal feedforward + non-
+    #                              integrating feedback trim (see
+    #                              inverse_jacobian_2dof_trim.py) -- needs
+    #                              accumulator_seam=True,
+    #                              feedforward_joint_trajectory=False; live-
+    #                              validated development point trim_kp=0.6,
+    #                              trim_kn=0.0 (rectangle_stage_a/README.md)
+    controller_kind: str = "naive_inverse_jacobian"
+    position_gain: float = 0.6
+    damping: float = 5.0e-2
+    nullspace_gain: float = 0.0
+    trim_kp: float = 0.6
+    trim_kn: float = 0.0
+    trim_damping: float = 5.0e-2
+    trim_q_max: float = 0.03
+    trim_enable_logging: bool = False
+    # "inv_7dof_delay_aware" only: normalized-DLS actuator scales (see
+    # inverse_jacobian_7dof_delay_aware.py) and the insertion channel's
+    # per-tick position-step clip (== dt * insertion_velocity_limit_m_s,
+    # matched to MPC's own |u_L|<=2mm/s so the two controllers share the
+    # same physical authority).
+    trim_su_joint: float = 0.05
+    trim_su_insertion: float = 5.0e-3
+    trim_max_l_step_m: float = 2.0e-4
+    # "inv_2dof_map_trim" only: path to a .npz with a `dmap` key, (N,3)
+    # metres -- see inverse_jacobian_2dof_map_trim.py. The controller's
+    # map_schedule comes from _SCHEDULE_OVERRIDE (the genuine LTV schedule,
+    # same as naive_inverse_jacobian_ltv/mpc_ltv_offline use), NOT a
+    # separate config field -- a caller running this controller kind must
+    # set _SCHEDULE_OVERRIDE the same way run_mpc_ltv.py does.
+    dmap_path: str = ""
+    feedforward: bool = False
+    # 2026-09-17: full, UNPROJECTED reference-input feedforward inside
+    # InverseJacobianBeamController.solve() (command += reference_input,
+    # not command += projector @ reference_input). The projected version
+    # (feedforward=True) only lets through the nullspace-consistent part of
+    # the planned velocity, which is why the direct-apply-seam INV run
+    # underperformed open-loop-FF -- the null-space projection was starving
+    # it of most of the planned motion on top of the seam problem. Only
+    # meaningful when feedforward=True (it replaces that term, doesn't add
+    # to it -- see solve()). naive_inverse_jacobian(_ltv) only.
+    feedforward_full: bool = False
+    control_insertion: bool = True
+
+    # --- MPC (controller_kind == "mpc_lti" / "mpc_ltv_offline") ---
+    mpc_prediction_horizon: int = 12
+    mpc_freeze_index: int = 0             # reference sample the LTI model linearises at
+    mpc_position_error_scale_mm: float = 0.5
+    mpc_position_tracking_weight: float = 1.0
+    mpc_use_dare_terminal_cost: bool = True
+
+    # --- feedforward (trajectory tracking) ---------------------
+    # False : pure feedback -- servo q_meas + the controller step toward the tip
+    #         target.  Ignores the planned joint trajectory; with an accurate
+    #         plan this is WORSE than open-loop (2026-09-10 triangle: inv RMS
+    #         1.70, mpc_lti 1.47, vs open-loop 1.31 mm).
+    # True  : servo the PLANNED joints reference.state[i][:6] plus the
+    #         controller's CORRECTION as a trim, planned insertion rate to the
+    #         advancer.  For MPC the planned input reference.input[i] is
+    #         subtracted from the command first (the MPC already feeds it
+    #         forward internally) so it is not double-counted.  2026-09-10:
+    #         inv+FF RMS 1.06 mm / max 2.07 -- the best of all controllers.
+    feedforward_joint_trajectory: bool = True
+    feedforward_correction_scale: float = 1.0   # multiplies the feedback step in FF mode
+    # Diagnostic escape hatch: MPC kinds normally have feedforward_joint_trajectory
+    # force-disabled in main() (see the comment there -- known worse terminal
+    # convergence, ~1.4-1.6mm).  Set this True to run mpc_lti/mpc_ltv_offline WITH
+    # feedforward anyway, e.g. to collect instrumented data diagnosing *why* it is
+    # worse instead of just avoiding the mode.
+    force_mpc_feedforward: bool = False
+    # 2026-09-17: THIRD seam, replacing the "fair-seam" direct-apply mode
+    # (q_target = q_meas + delta_q) for future comparisons. The direct-apply
+    # seam was invalidated: `servoJ` only realizes ~beta=0.2 of a relative
+    # position-target error per tick (see servoj-realization-gain memory),
+    # so q_meas+delta_q lets the un-realized ~80% of every commanded
+    # increment compound into unbounded lag (measured 0->0.26 rad over one
+    # run) -- not a controller-architecture problem, a seam problem. The old
+    # anchored seam (feedforward_joint_trajectory=True, q_target =
+    # ref_state[target_index]+trim) avoided this because the planner's own
+    # absolute target self-corrects every tick, but that ties the command to
+    # the PLANNER, not the controller -- unfair to a controller that wants
+    # to depart from the plan.
+    #   The accumulator seam keeps the "absolute-target" property (servoJ
+    # behaves well with those) without anchoring to the planner: the
+    # CONTROLLER owns a running commanded-trajectory state
+    # q_cmd_{k+1} = q_cmd_k + dt*u_k, and q_target_k = q_cmd_{k+1}. Missed
+    # low-level motion is never reset away (unlike q_meas+delta_q, which
+    # re-zeros the base every tick), but if the controller changes its mind
+    # q_cmd moves with it (unlike ref_state+trim, which is locked to the
+    # plan). Takes precedence over feedforward_joint_trajectory's q_target
+    # branch below when True; feedforward_joint_trajectory still controls
+    # the MPC ref_input double-count subtraction into `corr`.
+    accumulator_seam: bool = False
+    # 2026-09-11 fix #2 (diagnosed root cause: MPC's u0 does not shrink to zero
+    # as the tracking error shrinks/grows the way inverse-Jacobian's does --
+    # corr(|u0|,error) collapses to ~0.03-0.14 at the hold vs inverse-Jacobian's
+    # 0.98-1.0 -- so once FF bakes that "sticky" u0 into a trim on the FROZEN
+    # terminal reference position, nothing pulls it back toward the true
+    # residual). When True: once terminal_hold is reached, fall back to pure
+    # feedback (q_target = q_meas + delta_q, exactly the non-FF branch) instead
+    # of trimming the frozen ref_state[target_index] -- feedforward stays in
+    # charge during transit (where it already works), feedback takes over for
+    # the static hold (where it's needed). See beam-lateral-authority-limit
+    # memory for the diagnosis this is based on.
+    ff_trim_base_switch_at_hold: bool = False
+    # 2026-09-11 fix #1 (same diagnosis, different lever): ConfigurationMPCConfig's
+    # input_increment_weight (Rd) penalises u0 changing from the controller's
+    # OWN previous output -- confirmed NOT a hard velocity-limit saturation
+    # (max per-axis |u0| at hold was 0.062 rad/s vs the 0.10 rad/s bound), so
+    # this is a genuine soft-cost lever. None = leave ConfigurationMPCConfig's
+    # default (1e-3); set to a smaller value (e.g. 1e-4 or 0.0) to make MPC's
+    # u0 respond more to the CURRENT residual instead of "stay near last tick" --
+    # only applied when feedforward_joint_trajectory is True, so it never
+    # touches MPC's already-winning pure-feedback behaviour.
+    mpc_ff_input_increment_weight: float | None = None
+    # 2026-09-11: general (NOT FF-gated) overrides for the same two QP cost
+    # terms, to test "does MPC's constraint-aware horizon beat inverse-Jacobian
+    # once control-effort regularisation is minimised, so its UNCONSTRAINED
+    # behaviour matches resolved-rate and only the box constraints + lookahead
+    # can differentiate them". Both None = ConfigurationMPCConfig defaults
+    # (input_tracking_weight=1e-2, input_increment_weight=1e-3) unchanged.
+    # CAUTION: driving these toward 0 removes positive-definite structure from
+    # the QP Hessian -- on an ill-conditioned problem (this beam's Jacobian
+    # condition number is ~1.5e5-1.7e5 depending on shape) that can mean MORE
+    # solver iterations/time, not fewer; watch solver_time_s/iterations, not
+    # just tracking error, when using this.
+    mpc_input_tracking_weight_override: float | None = None
+    mpc_input_increment_weight_override: float | None = None
+    # 2026-09-12: ROOT-CAUSE candidate for MPC+FF being worse than open loop
+    # in EVERY variant tried (horizon 1/15, default/reduced Rd, DARE on/off,
+    # directional_damping 0/0.1) -- none of those touch this term.
+    # `ConfigurationMPCConfig.state_tracking_weight` (default 1.0) with
+    # `state_error_scale`=0.5deg/joint gives an effective weight of
+    # ~1/(0.0087rad)^2 ~ 13000 per joint-radian^2 in `_linear_cost`'s
+    # `S.T@Qbar@(free_state-state_reference)` term -- a JOINT-SPACE
+    # catch-up-to-the-planned-trajectory cost, entirely separate from (and
+    # far larger in scale than) the beam OUTPUT-tracking Qp term. In pure
+    # feedback this is a reasonable regulariser (like inverse-Jacobian's own
+    # nullspace_gain). In FEEDFORWARD mode it is redundant AND uncoordinated:
+    # the robot is already servoed directly to `ref_state[target_index]`, so
+    # this term just re-derives "how far is measured_state from the current
+    # target" every tick and bakes a large joint-space pull into `command` --
+    # only `ref_input` (the planned VELOCITY) gets subtracted before treating
+    # `command` as an output-space trim, so this pull leaks straight through.
+    # Live-confirmed 2026-09-12: at horizon=1 (isolating out any lookahead
+    # effect), MPC's actual u0_correction has NEGATIVE mean cosine similarity
+    # (-0.30, 82% of ticks) against what plain DLS would command given the
+    # IDENTICAL measured error and frozen Jacobian -- i.e. much of MPC's
+    # command is pointing in a direction unrelated to (often opposed to) the
+    # beam-tip correction actually needed. None = ConfigurationMPCConfig's
+    # default (1.0) unchanged; set to 0.0 to test removing this term
+    # entirely in FF mode.
+    mpc_state_tracking_weight_override: float | None = None
+    # 2026-09-16: null-space-motion diagnostic Experiment 3 -- zeroes the
+    # R-term's reference target (cost becomes v^T R v instead of
+    # (v-v_ref)^T R (v-v_ref)) while leaving Q, Qp and Rd untouched. See
+    # ConfigurationMPCConfig.diagnostic_zero_input_reference_in_R's comment.
+    mpc_diagnostic_zero_input_reference_in_R: bool = False
+    # 2026-09-16: mpc_ltv_sqp_online ("tick-frozen") real-time-latency fix --
+    # the genuinely state-dependent jac_provider costs ~254ms/call on measured
+    # (off-reference-manifold) states versus ~9ms along the smooth precomputed
+    # schedule, which on hardware collapsed the real control rate from the
+    # nominal 10Hz to ~3.2Hz and produced a 9.46mm divergent run (root-caused
+    # via jacobian_at() timing + inter-tick dt comparison against inv/lti/ltv,
+    # all of which held a steady 0.100s/tick). Confirmed offline in a
+    # nonlinear-plant closed-loop simulation that throttling relinearisation
+    # to every 2-20 ticks costs ~0 tracking accuracy on the S-curve shape
+    # (RMS flat at 0.115mm from every=1 to every=20) while cutting Jacobian
+    # calls proportionally -- see mpc_variants.build_sqp_online_mpc's
+    # relinearise_every docstring. 1 = relinearise every tick (original,
+    # real-time-latency-limited behaviour); N > 1 reuses the last evaluated
+    # Jacobian for N-1 ticks between relinearisations. Ignored by the other
+    # three controller kinds.
+    mpc_relinearise_every: int = 1
+    # 2026-09-17: inverse-Jacobian static-vs-LTV Jacobian characterisation
+    # study. When True, freezes the SAME schedule naive_inverse_jacobian_ltv
+    # already uses (from_model_bundle-derived, matching mpc_ltv_offline's
+    # source exactly) to its first sample and holds it for the whole run --
+    # mirroring mpc_lti's freeze trick. This keeps the static and LTV
+    # inverse-Jacobian conditions using the IDENTICAL Jacobian model,
+    # differing only in whether it updates along the trajectory, avoiding
+    # the frozen-AnalyticalBeamJacobianProvider-vs-complete-model confound
+    # found in naive_inverse_jacobian's live behaviour. Ignored by all other
+    # controller kinds.
+    inv_freeze_schedule_at_start: bool = False
+    # 2026-09-11: real-time-fairness safety net -- confirmed via
+    # target_index-jump-per-tick analysis that mpc_ltv_offline overran the
+    # 100ms/10Hz control budget on 73% of ticks on a hard (ill-conditioned)
+    # shape (mean solve 160ms, max 419ms), causing the WALLCLOCK-based
+    # reference progress to silently skip 1.6 samples/tick on average instead
+    # of 1 -- an unfair comparison against inverse-Jacobian's near-instant
+    # (~0.1ms) solve. mpc_lti was NOT affected (0% overrun) on the same run,
+    # so this is solver-time-specific, not a blanket MPC problem. None = no
+    # override (ConfigurationMPCConfig.solver_time_limit_s stays 0 = OSQP
+    # default/unbounded); set to a fraction of dt (e.g. 0.08 at 10Hz) to force
+    # OSQP to return its best solution within budget instead of overrunning.
+    mpc_solver_time_limit_s: float | None = None
+    # 2026-09-11: explicit anisotropic input regularisation (see
+    # BeamOutputMPCConfig.directional_damping's docstring for the full
+    # diagnosis) -- penalises only the near-null singular direction of each
+    # horizon step's local Jacobian, unlike the isotropic
+    # mpc_input_tracking_weight_override which plateaus without reaching
+    # inverse-Jacobian's directional-damping behaviour. 0.0 = disabled.
+    mpc_directional_damping: float = 0.0
+    mpc_directional_damping_floor: float = 0.01
+    # 2026-09-14: SOFT wall-avoidance for real-vessel work (see
+    # BeamOutputMPCConfig.wall_avoidance_gain's docstring for the full
+    # design -- soft, not a hard constraint, since wall contact is
+    # sometimes necessary in a sharp vessel, not a failure). 0.0 (default)
+    # = disabled, identical behaviour to before this was added. Requires
+    # vessel_lumen_file when > 0 (the real digitized geometry the penalty
+    # is computed against -- see detect_blue.py::draw_vessel_lumen_for_planner).
+    mpc_wall_avoidance_gain: float = 0.0
+    vessel_lumen_file: str = ""
+    mpc_wall_avoidance_margin_mm: float = 0.5
+    mpc_wall_avoidance_beam_radius_mm: float = 1.0
+    # 2026-09-12: convenience preset bundling two independent, complementary
+    # fixes for MPC's FF hold-phase pathology (negative corr(|trim|,error),
+    # see beam-lateral-authority-limit memory): (a) SPATIAL -- turn on
+    # mpc_directional_damping at the value validated in "Round 4" (no-FF,
+    # h12) if it's still at its default 0.0; (b) TEMPORAL -- disable the DARE
+    # terminal cost and reduce input_increment_weight (Rd) if not already
+    # overridden, removing the "sticky u0" mechanism. Only touches fields
+    # still at their un-overridden default, so an explicit
+    # mpc_directional_damping / mpc_use_dare_terminal_cost /
+    # mpc_input_increment_weight_override the caller already set wins.
+    # CAUTION: Rd near-zero was tried once before (1e-6, pure feedback,
+    # horizon 30, NO directional damping) and made solve time/tracking
+    # WORSE -- that failure was the Hessian losing positive-definite
+    # structure on an ill-conditioned QP with nothing to compensate.
+    # directional_damping reintroduces exactly that structure in the
+    # direction that matters, and the default here (1e-4, not 1e-6) is more
+    # conservative -- but this combination is UNTESTED; watch
+    # solver_time_s/iterations, not just tracking error.
+    mpc_conditioning_fix: bool = False
+    mpc_conditioning_fix_directional_damping: float = 0.1
+    mpc_conditioning_fix_input_increment_weight: float = 1.0e-4
+
+    # --- inverse-Jacobian selective damping (2026-09-12) --------
+    # Opt-in per-singular-value damping refinement -- see
+    # InverseJacobianBeamController's docstring. 0.0 = disabled (unchanged
+    # isotropic DLS behaviour).
+    inv_selective_damping_gain: float = 0.0
+    inv_selective_damping_floor: float = 0.01
+
+    # --- tip-position estimator (2026-09-12) --------------------
+    # "raw" = unfiltered camera tip (unchanged default behaviour); "kalman" =
+    # _ConstantVelocityKalman3D above, filtering the MEASUREMENT the
+    # controller reacts to (before it reaches build_offline_solver's
+    # adapter) so temporal-smoothing knobs (Rd, DLS damping) can be tuned
+    # for control behaviour without also filtering vision noise.
+    tip_estimator: str = "raw"                    # "raw" | "kalman"
+    kf_process_noise_std_m_s2: float = 0.02        # unmodelled accel scale
+    kf_measurement_noise_std_m: float = 3.0e-4     # ~0.3mm camera noise floor
+
+    # --- control loop -------------------------------------------
+    control_hz: float = 10.0
+    servo_lookahead_s: float = 0.20
+    servo_gain: int = 200
+    # 2026-09-17 (condition "C" of the A/B/C seam-and-rate identification
+    # test -- see servoj-realization-gain memory): only meaningful when
+    # accumulator_seam=True. When > control_hz, the outer 10Hz control loop
+    # still ticks at control_hz (sensing, solve, one accumulator update per
+    # tick), but the segment from the OLD q_cmd to the NEW q_cmd is linearly
+    # interpolated into round(servo_stream_hz/control_hz) intermediate
+    # absolute joint targets, each sent via its own servoJ call spaced
+    # 1/servo_stream_hz apart. Live-identified: this on its own (holding the
+    # accumulator seam fixed) cut mean command-tracking error 11.8->2.7mrad
+    # and max 36.2->8.7mrad on a benign single-joint step, on top of the
+    # seam fix's own G 0.199->1.0 jump. Default 10.0 = same as control_hz,
+    # i.e. exactly one servoJ call per tick (today's unchanged behaviour).
+    servo_stream_hz: float = 10.0
+    # 2026-09-11: briefly raised 0.006 -> 0.012 -> 0.018 while diagnosing why
+    # pure-feedback inverse-Jacobian doesn't reach the 20mm triangle's corners
+    # (see beam-lateral-authority-limit memory: the old 0.006 cap was pinned
+    # on 75% of ticks). Reverted back to the original 0.006 alongside
+    # joint_velocity_limit_rad_s/joint_acceleration_limit_rad_s2 per user
+    # request, to keep a consistent baseline for the open-loop/inv/mpc_lti/
+    # mpc_ltv x FF/no-FF comparison -- the corner-reaching fix that actually
+    # works cleanly is feedforward, not loosened limits (which helped pure
+    # feedback partially but measurably hurt feedforward).
+    max_joint_step_rad: float = 0.006
+    max_control_steps: int = 600
+    max_state_age_s: float = 0.50
+    warmup_timeout_s: float = 20.0
+    settle_ticks_before_start: int = 10
+    project_error_to_beam_plane: bool = True
+
+    # --- beam frame B in R (kept in sync with robotics_frame_measurement_validation) --
+    beam_axial_axis_R: tuple[float, float, float] = (-1.0, 0.0, 0.0)
+    beam_plane_normal_axis_R: tuple[float, float, float] = (0.0, 0.0, -1.0)
+
+    # --- frozen beam Jacobian ----------------------------------
+    jacobian_source: str = "analytical_beam"   # "analytical_beam" | "kinematic_scalar"
+    magnet_tip_coupling: float = 1.0
+    insertion_axial_gain: float = 1.0
+    # 2026-09-10 calibration: source-magnet dipole direction in the magnet body
+    # frame that gives a world -X (beam-axial) dipole at the reference pose.
+    # Same value as robotics_frame_measurement_validation / close_loop_tip_control.
+    dipole_unit_in_magnet_body: tuple[float, float, float] = (-0.932073, 0.361306, 0.026427)
+
+    # --- advancer (insertion) ---------------------------------
+    advancer_port: str = "/dev/ttyACM0"
+    advancer_dry_run: bool = False
+
+    # --- limits ----------------------------------------------
+    # 2026-09-11: velocity/accel/step-cap were all raised today while
+    # diagnosing why pure-feedback inverse-Jacobian doesn't reach the 20mm
+    # triangle's corners (see beam-lateral-authority-limit memory). Confirmed
+    # the raise helps pure feedback somewhat but HURTS feedforward (RMS
+    # 1.61->2.14, visible overshoot at one corner) -- feedforward's trim is
+    # normally small and was already well-tuned against the tighter original
+    # limits, so loosening them just removes useful damping on the few ticks
+    # where the trim spikes. Reverted all three back to original here per
+    # user request, to keep a consistent, FF-validated baseline for the
+    # upcoming open-loop/inv/mpc_lti/mpc_ltv x FF/no-FF x 3-rep comparison.
+    joint_velocity_limit_rad_s: float = 0.10
+    joint_acceleration_limit_rad_s2: float = 0.40
+    insertion_rate_limit_m_s: float = 2.0e-3
+
+    # x_min widened 0.20->0.19->0.15 (2026-09-21): the frame-mismatch-fixed
+    # gamma=0/R700/w_L=0 controller repeatably stopped at
+    # tcp_out_of_workspace right at the rectangle path's terminal corner
+    # (x~=0.198m, then x=0.190m exactly after the first 1cm widening --
+    # i.e. the trajectory sits right at whatever the current bound is),
+    # every time with excellent tracking right up to that tick (<0.1mm
+    # error) -- not a runaway, this specific path's terminal corner
+    # genuinely reaches this x range. Widened further with real margin
+    # (4cm) per explicit user confirmation this is not a safety concern;
+    # y/z bounds and x_max are untouched.
+    # 2026-09-21: z_min and y_max tightened after a live MPC-FJ/U-shape run
+    # diverged (tracking error grew to ~12mm, manually stopped) without ever
+    # approaching the old bounds -- the TCP stayed >190mm inside the old
+    # workspace box the whole time, so the box wasn't the safety net. The
+    # divergent run's own trajectory dropped to z=0.110m and drifted up to
+    # y=-0.396m (both normal good runs only reach z=[0.308,0.333],
+    # y=[-0.743,-0.618]), confirming z-dropping/y-rising-toward-zero was the
+    # actual runaway direction. New bounds sit just outside normal operation
+    # (z_min=0.30, ~8mm margin below the observed floor; y_max=-0.483, from
+    # a live TCP read at the time -- both verified against two clean U-shape
+    # runs before adopting, so normal tracking is unaffected but a repeat of
+    # this specific runaway direction is caught early instead of running to
+    # ~12mm error before a human has to intervene).
+    # z_min loosened from an initial 0.30 to 0.20 after checking it against
+    # the one clean FJ run on file: legitimate (non-runaway) FJ tracking on
+    # the U-shape dips to z=0.267 during normal mid-path turns
+    # (terminal_hold=False, error 1.2-2.0mm) -- 0.30 would have false-tripped
+    # that clean run. 0.20 keeps ~67mm headroom below observed normal FJ
+    # operation while still catching a repeat of the 2026-09-21 MPC-FJ
+    # divergence (which continued past 0.30 down to z=0.110) around halfway
+    # through, instead of only at the very end.
+    workspace_xyz_min_m: tuple[float, float, float] = (0.15, -1.20, 0.20)
+    workspace_xyz_max_m: tuple[float, float, float] = (1.10, -0.483, 0.70)
+
+    # 2026-10-07: direct beam-tracking-error abort, requested explicitly for
+    # the contact-vs-no-contact open-loop comparison. Previously the only
+    # thing that caught a runaway (e.g. the 2026-09-21 MPC-FJ divergence) was
+    # the workspace_xyz_min_m/max_m box above, an INDIRECT proxy (the magnet
+    # leaving its expected volume) -- it says nothing about beam-tip tracking
+    # error directly, and a divergence that stays within the workspace box
+    # would never trip it. This checks ||desired-tip|| (the same error_mm
+    # already logged every tick) directly, every tick, and sets abort_reason
+    # (stop_reason in summary.json) instead of silently continuing. 0.0
+    # (default) disables the check -- zero behaviour change for every
+    # existing caller that doesn't set this; run_open_loop_vessel.py sets it
+    # explicitly to the requested 5mm stop-and-report-failure threshold.
+    max_tracking_error_m: float = 0.0
+
+    # --- robot / vision (mirrors StateStreamConfig) ----------
+    robot_ip: str = "192.168.56.101"
+    reader_poll_hz: float = 60.0
+    robot_max_age_s: float = 0.15
+    # Must equal initial_conditions.make_initial_poses()[2] (the offline planner
+    # start length).  2026-09-10 bigger-square study: 30 mm.
+    initial_insertion_m: float = 0.030
+
+    cam_index: int = 0
+    exposure: float = 29.0                 # matches the 2026-09-10 calibration sweeps
+    gain: float = 0.0
+    grab_period_s: float = 0.004
+    reconstruct_period_s: float = 0.01
+    image_filename: str = "/dev/shm/proper_pathfollow_frame.png"
+
+    output_root: str = "close_loop_logs"
+    run_name: str = "path_follow"
+
+
+CONFIG = PathFollowConfig()
+
+# A comparison harness may set this to an ndarray of shape [reference_samples, 3, 7]
+# (d(tip_R)/d[q1..q6, insertion] relinearised at each reference sample).  When
+# set, mpc_lti / mpc_ltv_offline use it instead of freezing / recomputing off the
+# frozen jac_provider.  None -> normal behaviour.
+_SCHEDULE_OVERRIDE = None
+
+# 2026-10-07: a comparison harness may set this to a genuinely state-
+# dependent jacobian_provider callable (e.g. from_model_bundle's, the same
+# live/relinearizing provider mpc_ltv_sqp_online already gets a bypass
+# for below). Only consumed by plain controller_kind="naive_inverse_
+# jacobian" -- every other kind, and naive_inverse_jacobian when this is
+# left None, keep their EXISTING behaviour unchanged (naive_inverse_
+# jacobian's own default is the FROZEN AnalyticalBeamJacobianProvider,
+# computed once at construction and ignoring its state argument -- see
+# the jacobian_source branch below's own comment). Exists because there
+# was previously no vessel run-script exercising a genuinely live/online
+# Jacobian for the resolved-rate controller; every existing one either
+# used the frozen default or the precomputed _SCHEDULE_OVERRIDE (LTV).
+_JACOBIAN_PROVIDER_OVERRIDE = None
+
+# 2026-10-07: a comparison harness may set this to a dict of the new
+# InverseJacobianBeamController magnet-exclusion/z-workspace clip kwargs
+# (magnet_position_fn, magnet_position_jacobian_fn, magnet_exclusion_
+# lumen_C_m, magnet_exclusion_radius_m, magnet_z_bounds_m,
+# magnet_constraint_violation_abort_m). Only applied for controller_kind
+# in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv") -- every
+# other kind, and either inverse-Jacobian kind when this is left None,
+# are unaffected (the controller's own constructor defaults keep the clip
+# disabled). Same override pattern as _SCHEDULE_OVERRIDE/
+# _JACOBIAN_PROVIDER_OVERRIDE above.
+_MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
+
+# 2026-10-07: a comparison harness may set this to a callable
+# (command, measured_state, info) -> (possibly-modified command, gate_info
+# dict). Applied right after the controller's raw command is read, before
+# ANY other clipping -- lets a controller's own math stay completely
+# unaware of a hard constraint (e.g. demonstrating that the naive inverse-
+# Jacobian controller genuinely does not understand the magnet-exclusion
+# radius the way MPC's in-QP constraint does, by letting it keep trying to
+# command motion that would violate it), while still guaranteeing the
+# ROBOT never executes a command that would -- HOLDS position (returns a
+# zero command) on a blocked tick rather than silently projecting/
+# correcting it (contrast with InverseJacobianBeamController's own
+# anticipatory clip, which is the opposite design choice: stay near the
+# boundary and keep moving). None by default -- every existing caller is
+# unaffected.
+_COMMAND_SAFETY_GATE = None
+
+# Planner(P) -> live-robot(R) rigid transform (p_R = R_fit@p_P + t_fit),
+# computed once per run by `_load_plan_reference` from the live-measured
+# start tip (2026-09-21). Exposed as module state, same pattern as
+# _SCHEDULE_OVERRIDE, so a runner script's build_offline_solver override
+# can read it and register it with a process-isolated adapter -- the
+# worker is spawned+warmed BEFORE this fit exists (before preflight even
+# runs), so it always solves in the raw planner frame P; only the
+# measurement crossing into the worker process needs this transform, see
+# process_isolated_adapter.py's ProcessIsolatedDelayAwareAdapter. None for
+# reference_source != "plan_dir" (the synthetic-shape path has no planner
+# frame to fit) or before _load_plan_reference has run.
+_PLANNER_TO_LIVE_TRANSFORM: tuple | None = None
+
+_AXIS_COLUMN = {"b_x": 0, "b_y": 1, "b_z": 2}
+
+
+# =============================================================================
+# tip-position estimator (2026-09-12)
+# =============================================================================
+class _ConstantVelocityKalman3D:
+    """Constant-velocity Kalman filter smoothing the camera-tracked tip.
+
+    Why: diagnosing MPC's negative hold-phase corr(|u0_correction|, error)
+    (see beam-lateral-authority-limit memory) found that the input-increment
+    weight ``Rd`` is doing double duty -- damping tick-to-tick "stickiness"
+    AND implicitly filtering vision noise. Killing ``Rd`` to fix the former
+    risks exposing the control law to raw camera jitter (the latter). This
+    filters the MEASUREMENT itself, so ``Rd``/DLS damping can be tuned purely
+    for temporal behaviour without also having to double as a noise filter.
+
+    State ``x = [pos_xyz(3), vel_xyz(3)]``, discretised white-noise-
+    acceleration process model (``process_noise_std_m_s2`` is the std of the
+    unmodelled acceleration), isotropic position-only measurement
+    (``measurement_noise_std_m``). Deliberately simple (no cross-axis
+    coupling, no adaptive covariance) -- a starting point to test the
+    decoupling idea, not a tuned final filter.
+    """
+
+    def __init__(self, process_noise_std_m_s2: float, measurement_noise_std_m: float) -> None:
+        self.q = float(process_noise_std_m_s2)
+        self.r = float(measurement_noise_std_m)
+        if self.q <= 0.0 or not np.isfinite(self.q):
+            raise ValueError("process_noise_std_m_s2 must be finite and > 0.")
+        if self.r <= 0.0 or not np.isfinite(self.r):
+            raise ValueError("measurement_noise_std_m must be finite and > 0.")
+        self.x: Optional[np.ndarray] = None
+        self.P: Optional[np.ndarray] = None
+
+    def reset(self, position_m: np.ndarray) -> None:
+        self.x = np.concatenate(
+            [np.asarray(position_m, dtype=float).reshape(3), np.zeros(3)]
+        )
+        self.P = np.eye(6) * 1.0e-6
+        self.P[3:, 3:] = np.eye(3) * 1.0   # velocity: start with no confidence
+
+    def step(self, position_m: np.ndarray, dt: float) -> np.ndarray:
+        if self.x is None:
+            self.reset(position_m)
+            return self.x[:3].copy()
+
+        F = np.eye(6)
+        F[0:3, 3:6] = np.eye(3) * dt
+        qc = self.q**2
+        block = qc * np.array(
+            [[dt**4 / 4.0, dt**3 / 2.0], [dt**3 / 2.0, dt**2]]
+        )
+        Q = np.zeros((6, 6))
+        for axis in range(3):
+            idx = [axis, axis + 3]
+            Q[np.ix_(idx, idx)] = block
+
+        x_pred = F @ self.x
+        P_pred = F @ self.P @ F.T + Q
+
+        H = np.zeros((3, 6))
+        H[:, :3] = np.eye(3)
+        R = np.eye(3) * (self.r**2)
+        S = H @ P_pred @ H.T + R
+        K = P_pred @ H.T @ np.linalg.solve(S, np.eye(3))
+        innovation = np.asarray(position_m, dtype=float).reshape(3) - H @ x_pred
+
+        self.x = x_pred + K @ innovation
+        self.P = (np.eye(6) - K @ H) @ P_pred
+        return self.x[:3].copy()
+
+
+# =============================================================================
+# synthetic shape reference -- built directly in the robot base frame
+# =============================================================================
+
+
+def _shape_corners_2d(shape: str, size_m: float) -> np.ndarray:
+    """Closed polyline (last point == first) of the shape, centred on the origin."""
+    if shape == "square":
+        unit = np.array(
+            [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]]
+        )
+    elif shape == "triangle":
+        unit = np.array(
+            [[0.0, 1.0], [-0.8660254, -0.5], [0.8660254, -0.5], [0.0, 1.0]]
+        )
+    else:
+        raise ValueError(f"shape must be 'square' or 'triangle'; got {shape!r}")
+    return unit * float(size_m)
+
+
+def _resample_polyline(corners: np.ndarray, ds: float) -> np.ndarray:
+    """Walk the polyline at ~``ds`` spacing; keeps every corner exactly."""
+    ds = max(float(ds), 1.0e-5)
+    points = [corners[0].copy()]
+    for start, end in zip(corners[:-1], corners[1:]):
+        segment = end - start
+        length = float(np.linalg.norm(segment))
+        segments = max(1, int(math.ceil(length / ds)))
+        for i in range(1, segments + 1):
+            points.append(start + segment * (i / segments))
+    return np.asarray(points, dtype=float)
+
+
+def _build_shape_reference(
+    cfg: PathFollowConfig,
+    *,
+    tip0_R: np.ndarray,
+    T_R_B: Any,
+    z0: np.ndarray,
+    dt: float,
+) -> Any:
+    """A :class:`ConfigurationReference` whose ``desired_position_m`` traces the
+    shape in the (u, v) plane of the beam frame, centred on ``tip0_R``."""
+    from proper_research.simulation.simulations import (
+        simulate_time_parameterized_configuration_mpc as base_module,
+    )
+
+    u_axis = np.asarray(T_R_B.rotation[:, _AXIS_COLUMN[cfg.shape_axis_u]], dtype=float)
+    v_axis = np.asarray(T_R_B.rotation[:, _AXIS_COLUMN[cfg.shape_axis_v]], dtype=float)
+    axial_R = np.asarray(T_R_B.rotation[:, 0], dtype=float)
+    axial_R = axial_R / (np.linalg.norm(axial_R) + 1e-12)
+
+    ds = max(cfg.shape_speed_mm_s * 1.0e-3 * dt, 1.0e-4)
+    corners = _shape_corners_2d(cfg.shape, cfg.shape_size_mm * 1.0e-3)
+    corners = corners - corners[0]                              # start AT the current tip
+    lap = _resample_polyline(corners, ds)                       # (M, 2), closed
+    one_lap = lap[1:]                                           # drop the repeated seam
+    path2d = np.vstack([lap[:1]] + [one_lap] * max(1, cfg.shape_laps))
+
+    settle = max(0, int(round(cfg.shape_settle_s / dt)))
+    end_hold = max(1, int(round(cfg.shape_end_hold_s / dt)))
+    path2d = np.vstack(
+        [np.tile(path2d[:1], (settle, 1)), path2d, np.tile(path2d[-1:], (end_hold, 1))]
+    )
+
+    count = path2d.shape[0]
+    desired = (
+        tip0_R[None, :]
+        + path2d[:, 0:1] * u_axis[None, :]
+        + path2d[:, 1:2] * v_axis[None, :]
+    )
+    seg = np.linalg.norm(np.diff(desired, axis=0), axis=1)
+    path_coordinate = np.concatenate([[0.0], np.cumsum(seg)])
+
+    z0 = np.asarray(z0, dtype=float).reshape(7)
+    reference = base_module.ConfigurationReference(
+        time_s=np.arange(count, dtype=float) * dt,
+        path_coordinate_m=path_coordinate,
+        state=np.tile(z0, (count, 1)),
+        input=np.zeros((count, 7)),
+        acceleration=np.zeros((count, 7)),
+        desired_position_m=desired,
+        desired_tangent=np.tile(axial_R, (count, 1)),
+        planned_beam_feasible=np.ones(count, dtype=bool),
+        planned_position_error_m=np.zeros(count),
+        planned_tangent_error_rad=np.zeros(count),
+        sample_period_s=float(dt),
+        source=f"synthetic_{cfg.shape}",
+    )
+    reference.validate(require_planned_beam_feasible=False)
+    return reference
+
+
+def _find_shape_npz(plan_dir: Path) -> Optional[Path]:
+    """Locate shape_centreline.npz written by plan_shape_path.py near the plan."""
+    for base in (plan_dir, *plan_dir.parents[:3]):
+        hits = sorted(base.glob("**/shape_centreline.npz"))
+        if hits:
+            return hits[0]
+    return None
+
+
+def _fit_planner_to_robot(
+    npz_path: Path, start_tip_R: np.ndarray, T_R_B: Any
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rigid (R_fit, t_fit): planner-world point -> robot-base point.
+
+    Aligns the planner's (tip0, +u forward, +v in-plane) triad with the
+    hardware (measured start tip, B.x axial, B.y in-plane) triad.  x_R =
+    R_fit @ x_planner + t_fit.
+    """
+    data = np.load(npz_path)
+    tip0_p = np.asarray(data["tip0"], dtype=float).reshape(3)
+    u_p = np.asarray(data["u_axis"], dtype=float).reshape(3)
+    v_p = np.asarray(data["v_axis"], dtype=float).reshape(3)
+    u_p = u_p / (np.linalg.norm(u_p) + 1e-12)
+    v_p = v_p - np.dot(v_p, u_p) * u_p
+    v_p = v_p / (np.linalg.norm(v_p) + 1e-12)
+    planner_basis = np.column_stack([u_p, v_p, np.cross(u_p, v_p)])
+
+    b_x = np.asarray(T_R_B.rotation[:, 0], dtype=float)  # axial  <- planner +u
+    b_y = np.asarray(T_R_B.rotation[:, 1], dtype=float)  # in-plane <- planner +v
+    b_z = np.asarray(T_R_B.rotation[:, 2], dtype=float)
+    robot_basis = np.column_stack([b_x, b_y, b_z])
+
+    r_fit = robot_basis @ planner_basis.T
+    t_fit = np.asarray(start_tip_R, dtype=float).reshape(3) - r_fit @ tip0_p
+    return r_fit, t_fit
+
+
+def _load_plan_reference(
+    cfg: PathFollowConfig, dt: float, start_tip_R: np.ndarray, T_R_B: Any
+) -> Any:
+    from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
+        load_configuration_reference,
+    )
+
+    plan_dir = Path(cfg.plan_dir).expanduser()
+    if not plan_dir.exists():
+        raise FileNotFoundError(f"plan_dir does not exist: {plan_dir}")
+    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
+    if not math.isclose(reference.sample_period_s, dt, rel_tol=1e-6, abs_tol=1e-9):
+        raise ValueError(
+            f"plan sample period {reference.sample_period_s:.4f}s != control dt "
+            f"{dt:.4f}s. Set control_hz = {1.0 / reference.sample_period_s:.3f} "
+            "or re-run time parameterisation at this rate."
+        )
+
+    npz_path = (
+        Path(cfg.plan_frame_npz).expanduser()
+        if cfg.plan_frame_npz
+        else _find_shape_npz(plan_dir)
+    )
+    if npz_path is None or not npz_path.exists():
+        raise FileNotFoundError(
+            "shape_centreline.npz not found -- needed to map the planner frame "
+            "into the robot base frame. Set plan_frame_npz explicitly."
+        )
+    r_fit, t_fit = _fit_planner_to_robot(npz_path, start_tip_R, T_R_B)
+    des_planner = np.asarray(reference.desired_position_m, dtype=float)
+    des_R = des_planner @ r_fit.T + t_fit
+    tan_planner = np.asarray(reference.desired_tangent, dtype=float)
+    tan_R = tan_planner @ r_fit.T
+    tan_R = tan_R / (np.linalg.norm(tan_R, axis=1, keepdims=True) + 1e-12)
+
+    from dataclasses import replace
+
+    print(
+        f"[path] planner->R fit: |t_fit|={np.linalg.norm(t_fit):.3f} m, "
+        f"det(R_fit)={np.linalg.det(r_fit):+.3f}\n"
+        f"[path]   plan des[0] {np.round(1e3 * des_R[0], 1).tolist()} mm  "
+        f"des[-1] {np.round(1e3 * des_R[-1], 1).tolist()} mm  (robot frame)"
+    )
+
+    # Regression check (2026-09-21, frame-mismatch fix): R_fit@p_des^P +
+    # t_fit must reproduce this SAME des_R construction at several sample
+    # indices -- catches a transposition/sign error in whatever consumes
+    # r_fit/t_fit downstream (the process-isolated adapter), not just a
+    # tautology about des_R's own construction above.
+    spot_idx = np.linspace(0, des_planner.shape[0] - 1, num=5, dtype=int)
+    spot_err = np.max(np.abs((des_planner[spot_idx] @ r_fit.T + t_fit) - des_R[spot_idx]))
+    assert spot_err < 1e-9, f"planner->R fit self-consistency check failed: {spot_err:.3e} m"
+    orth_err = float(np.max(np.abs(r_fit.T @ r_fit - np.eye(3))))
+    assert orth_err < 1e-9, f"R_fit not orthogonal: {orth_err:.3e}"
+
+    global _PLANNER_TO_LIVE_TRANSFORM
+    _PLANNER_TO_LIVE_TRANSFORM = (r_fit.copy(), t_fit.copy())
+
+    return replace(reference, desired_position_m=des_R, desired_tangent=tan_R)
+
+
+# =============================================================================
+# main
+# =============================================================================
+
+
+def main() -> None:
+    import sys
+
+    cfg = CONFIG
+    if cfg.controller_kind not in (
+        "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
+        "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online",
+        # 2026-09-17: OPEN-LOOP-FF baseline for the rectangle Stage A
+        # comparison (u=u_ref exactly, no correction) -- handled entirely by
+        # a build_offline_solver monkeypatch in the calling script, not by
+        # any branch in this file.
+        "open_loop_ff",
+        # 2026-09-17: 2DOF nominal-feedforward + non-integrating feedback
+        # trim (windup fix after the INV-LTV-1.0/accumC run) -- also handled
+        # entirely by a build_offline_solver monkeypatch in the calling
+        # script.
+        "inv_2dof_trim",
+        # 2026-09-18: inv_2dof_trim + a learned path-indexed feedforward map
+        # for the repeatable beam-model discrepancy found on the open-loop
+        # rectangle repeats (see inverse_jacobian_2dof_map_trim.py). Needs
+        # cfg.dmap_path AND _SCHEDULE_OVERRIDE set (see that check above).
+        "inv_2dof_map_trim",
+        # 2026-09-18: delay-only ablation against inv_2dof_trim (same kp/kn/
+        # damping/limits/execution) -- previews the nominal channel and task
+        # correction to the validated realization stage r=k+3 instead of
+        # k+1 (see inverse_jacobian_2dof_delay_aware.py). Uses
+        # _SCHEDULE_OVERRIDE the same way inv_2dof_map_trim does (see that
+        # check above) so this and inv_2dof_trim differ ONLY in which
+        # schedule index they read for a paired A/B, not also in Jacobian
+        # source.
+        "inv_2dof_delay_aware",
+        # 2026-09-21: matched-authority 7DOF extension of inv_2dof_delay_aware
+        # -- SAME delay-aware preview/e_pred architecture, but the feedback
+        # allocation step is a normalized-DLS pinv over all 7 actuators
+        # (joints + insertion) instead of a 6-column joint-only pinv, so the
+        # inverse-vs-MPC comparison is no longer confounded by MPC having 7
+        # feedback channels and inverse having 6 (see
+        # inverse_jacobian_7dof_delay_aware.py's module docstring for the
+        # normalization derivation and the exact-reduction-to-INV-6 unit test).
+        "inv_7dof_delay_aware",
+        # 2026-09-18: delay-aware MPC (d=2, beta_d=1, V_f=0) -- live A/B
+        # against mpc_ltv_offline (with mpc_use_dare_terminal_cost=False, the
+        # same V_f=0 baseline the offline ablation used). Handled entirely by
+        # a build_offline_solver monkeypatch in the calling script, same as
+        # the inv_2dof_* variants above -- see
+        # proper_research/controllers/mpc_delay_aware/online_adapter.py.
+        "mpc_delay_aware",
+    ):
+        raise NotImplementedError(
+            f"controller_kind={cfg.controller_kind!r} not supported; use "
+            "'naive_inverse_jacobian', 'naive_inverse_jacobian_ltv', 'mpc_lti', "
+            "'mpc_ltv_offline', 'mpc_ltv_sqp_online', 'open_loop_ff', "
+            "'inv_2dof_trim', 'inv_2dof_map_trim', 'inv_7dof_delay_aware' or 'mpc_delay_aware'."
+        )
+    # 2026-09-16: mpc_ltv_sqp_online's state-dependent jac_provider needs
+    # build_planning_context() (~3.3s, pure offline model build, no live
+    # camera/robot dependency). Built HERE, before any camera/vision setup
+    # starts below, not at its point of use later in this function -- doing
+    # it there (after the vision stream is already running) left the first
+    # ticks' measured state stale enough to trip stale_vision on 2 out of 2
+    # live attempts before this fix (control_steps=3 and 1 respectively).
+    _tf_bundle_cache: tuple[Any, Any] | None = None
+    if cfg.controller_kind == "mpc_ltv_sqp_online":
+        from proper_research.planning.planning_context import build_planning_context
+
+        _, _tf_bundle, _tf_controller_pack, _ = build_planning_context()
+        _tf_bundle_cache = (_tf_bundle, _tf_controller_pack)
+    if (
+        cfg.feedforward_joint_trajectory
+        and cfg.controller_kind not in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv")
+        and not cfg.force_mpc_feedforward
+    ):
+        # The MPC formulation (state prediction from the measured state, Delta-u
+        # cost, DARE terminal) assumes the "servo q_meas + u0" update.  Servoing
+        # the planned joints + a correction fights that -- tested 2026-09-10,
+        # mpc_*+FF terminal error ~1.6 mm.  Pure feedback for MPC (it already
+        # tracks the planned state in its cost).  Set cfg.force_mpc_feedforward
+        # to run it anyway (diagnostic runs).
+        print(f"[path] feedforward_joint_trajectory auto-disabled for {cfg.controller_kind}")
+        cfg = replace_dc(cfg, feedforward_joint_trajectory=False)
+    elif cfg.feedforward_joint_trajectory and cfg.controller_kind not in ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv"):
+        print(
+            f"[path] force_mpc_feedforward=True: leaving feedforward_joint_trajectory=True "
+            f"for {cfg.controller_kind} (known-bad mode, running for diagnostics)"
+        )
+    dt = 1.0 / cfg.control_hz
+    real_stdout = sys.stdout
+    sys.stdout = _DebugLineFilter(real_stdout)
+    output_dir = _make_output_dir(cfg)
+    log_path = output_dir / "path_follow.jsonl"
+
+    mode = "DRY-RUN (no motion)" if cfg.dry_run else "LIVE (servoJ per tick)"
+    print(f"[path] {mode}  control @ {cfg.control_hz:.1f} Hz  ref={cfg.reference_source}")
+    print(f"[path] log -> {log_path}")
+
+    stream_cfg = StateStreamConfig(
+        robot_ip=cfg.robot_ip,
+        cam_index=cfg.cam_index,
+        exposure=cfg.exposure,
+        gain=cfg.gain,
+        grab_period_s=cfg.grab_period_s,
+        reconstruct_period_s=cfg.reconstruct_period_s,
+        image_filename=cfg.image_filename,
+        beam_axial_axis_R=cfg.beam_axial_axis_R,
+        beam_plane_normal_axis_R=cfg.beam_plane_normal_axis_R,
+    )
+    mapper = NewFrameTipMapper(stream_cfg)
+    beam_axis_R = np.asarray(mapper.T_R_B.rotation[:, 0], dtype=float)
+    print(
+        f"[path] T_R_B  B.x(axial)={np.round(mapper.T_R_B.rotation[:, 0], 3).tolist()}  "
+        f"B.y(sideways)={np.round(mapper.T_R_B.rotation[:, 1], 3).tolist()}  "
+        f"B.z(camera)={np.round(mapper.T_R_B.rotation[:, 2], 3).tolist()}"
+    )
+
+    from proper_research.hardware.ur_rtde_robot import URRTDERobot
+
+    robot = URRTDERobot(cfg.robot_ip, frequency=500.0)
+    reader = RobotJointStream(cfg.robot_ip, poll_hz=cfg.reader_poll_hz, receive_only=True)
+
+    def _assert_robot_ready() -> None:
+        mode_ = robot.get_robot_mode()
+        safety = robot.get_safety_mode()
+        pstop = robot.is_protective_stopped()
+        if pstop or mode_ != 7 or safety not in (1, 2):
+            raise RuntimeError(
+                f"robot not ready (mode={mode_}, safety={safety}, protective_stop={pstop}). "
+                "Clear any protective stop on the pendant (Remote Control), then retry."
+            )
+
+    insertion_m = float(cfg.initial_insertion_m)
+
+    camera = CameraSource(
+        CameraConfig(
+            cam_index=cfg.cam_index,
+            exposure=cfg.exposure,
+            gain=cfg.gain,
+            grab_period_s=cfg.grab_period_s,
+            reconstruct_period_s=cfg.reconstruct_period_s,
+            image_filename=cfg.image_filename,
+            roi_polygon_path=stream_cfg.roi_polygon_path,
+            manual_boundary_path=stream_cfg.manual_boundary_path,
+            pivot_hint=tuple(stream_cfg.pivot_hint_px),
+        ),
+        pivot_point_pose6=np.asarray(stream_cfg.T_robot_beam_pose6, dtype=float),
+        robot_joints_getter=lambda: reader.latest_joints(cfg.robot_max_age_s),
+        robot_pose_getter=lambda: reader.latest_pose(cfg.robot_max_age_s),
+        insertion_length_getter=lambda: insertion_m,
+        frame_processor=mapper,
+    )
+
+    advancer = None
+    if cfg.control_insertion:
+        from proper_research.hardware.online.advancer_sink import (
+            AdvancerSink,
+            AdvancerSinkConfig,
+        )
+
+        advancer = AdvancerSink(
+            AdvancerSinkConfig(
+                port=cfg.advancer_port,
+                dry_run=cfg.advancer_dry_run,
+                max_rate_m_s=cfg.insertion_rate_limit_m_s,
+            )
+        )
+        print(
+            f"[path] advancer {'(dry-run)' if cfg.advancer_dry_run else 'LIVE'} "
+            f"on {cfg.advancer_port}"
+        )
+
+    stop_flag = {"stop": False}
+    prev_handler = signal.signal(
+        signal.SIGINT, lambda *_: stop_flag.__setitem__("stop", True)
+    )
+
+    steps = 0
+    ins_trim = 0.0   # accumulated feedback insertion correction (FF mode)
+    q_cmd: Any = None       # controller-owned commanded joints (accumulator_seam)
+    q_cmd_prev: Any = None  # q_cmd before this tick's update (for 50Hz interpolation)
+    ins_cmd: float | None = None  # controller-owned commanded insertion (accumulator_seam)
+    abort_reason = ""
+    started_moving = False
+    jac_provider: Any = None
+    solver: Any = None
+    reference: Any = None
+    log_file = log_path.open("w", encoding="utf-8")
+    traj_file = (output_dir / "tip_trajectory.csv").open("w", encoding="utf-8", newline="")
+    traj_file.write(
+        "step,t_s,ref_index,tip_x_m,tip_y_m,tip_z_m,"
+        "des_x_m,des_y_m,des_z_m,err_norm_mm,"
+        "q1,q2,q3,q4,q5,q6,insertion_m,terminal_hold\n"
+    )
+    t_zero = now_monotonic()
+    tip_log: list[np.ndarray] = []
+    des_log: list[np.ndarray] = []
+    err_log: list[float] = []
+    tsec_log: list[float] = []
+    # e_servo_k = q_meas_k - q_cmd_k (execution-layer fidelity, distinct
+    # from p_des-p_meas beam tracking) -- accumulator_seam only.
+    servo_err_log: list[float] = []
+
+    try:
+        _assert_robot_ready()
+        reader.start()
+        if advancer is not None:
+            advancer.start()
+        camera.start()
+        print("[path] camera + reader up; waiting for first tip + joints...")
+
+        deadline = now_monotonic() + cfg.warmup_timeout_s
+        estimate = None
+        while now_monotonic() < deadline and not stop_flag["stop"]:
+            estimate, _age = camera.latest(cfg.max_state_age_s)
+            if estimate is not None and estimate.robot_joints is not None:
+                break
+            estimate = None
+            if not camera.healthy:
+                raise RuntimeError(f"camera unhealthy during warmup: {camera.last_error!r}")
+            time.sleep(0.05)
+        if estimate is None:
+            raise RuntimeError(
+                "no fresh tip+joints within warmup_timeout_s "
+                f"(vis_fail={mapper.detection_failures}, {mapper.last_error!r})"
+            )
+
+        start_tips = []
+        while len(start_tips) < cfg.settle_ticks_before_start and not stop_flag["stop"]:
+            est, _age = camera.latest(cfg.max_state_age_s)
+            if est is not None:
+                start_tips.append(np.asarray(est.tip_position_m, dtype=float))
+            time.sleep(dt)
+        start_tip = np.mean(np.vstack(start_tips), axis=0)
+        q0 = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
+        z0 = np.concatenate([q0, [insertion_m]])
+
+        tip_filter: Optional[_ConstantVelocityKalman3D] = None
+        if cfg.tip_estimator == "kalman":
+            tip_filter = _ConstantVelocityKalman3D(
+                process_noise_std_m_s2=cfg.kf_process_noise_std_m_s2,
+                measurement_noise_std_m=cfg.kf_measurement_noise_std_m,
+            )
+            tip_filter.reset(start_tip)
+            print(
+                f"[path] tip estimator: Kalman (q={cfg.kf_process_noise_std_m_s2:g} m/s^2, "
+                f"r={1e3 * cfg.kf_measurement_noise_std_m:.2f}mm)"
+            )
+        elif cfg.tip_estimator == "raw":
+            print("[path] tip estimator: raw (unfiltered)")
+        else:
+            raise ValueError(f"tip_estimator must be 'raw' or 'kalman'; got {cfg.tip_estimator!r}")
+
+        # --- timed reference -----------------------------------
+        if cfg.reference_source == "plan_dir":
+            reference = _load_plan_reference(cfg, dt, start_tip, mapper.T_R_B)
+            print(
+                f"[path] loaded plan reference: {reference.sample_count} samples, "
+                f"{reference.duration_s:.1f}s, source={reference.source!r}"
+            )
+        else:
+            reference = _build_shape_reference(
+                cfg, tip0_R=start_tip, T_R_B=mapper.T_R_B, z0=z0, dt=dt
+            )
+            print(
+                f"[path] synthetic {cfg.shape}: {reference.sample_count} samples "
+                f"({reference.duration_s:.1f}s), size +/-{cfg.shape_size_mm:.0f}mm, "
+                f"speed {cfg.shape_speed_mm_s:.1f}mm/s, laps {cfg.shape_laps}"
+            )
+        des0 = reference.desired_position_m[0]
+        des_last = reference.desired_position_m[-1]
+        print(
+            f"[path] start tip (mm) = {np.round(1e3 * start_tip, 2).tolist()}\n"
+            f"[path] ref[0]     (mm) = {np.round(1e3 * des0, 2).tolist()}\n"
+            f"[path] ref[-1]    (mm) = {np.round(1e3 * des_last, 2).tolist()}"
+        )
+
+        # --- frozen beam Jacobian -----------------------------
+        _live_jac_override = globals().get("_JACOBIAN_PROVIDER_OVERRIDE")
+        if _live_jac_override is not None and cfg.controller_kind == "naive_inverse_jacobian":
+            print(
+                "[path] naive_inverse_jacobian: using externally-supplied LIVE "
+                "jacobian_provider override (genuinely state-dependent, not the "
+                "frozen AnalyticalBeamJacobianProvider default)"
+            )
+            jac_provider = _live_jac_override
+            # Same fix mpc_ltv_sqp_online's own from_model_bundle provider
+            # needed just below: BeamJacobianProvider (unlike
+            # AnalyticalBeamJacobianProvider) has no last_condition
+            # attribute, but several unconditional log/dump sites further
+            # down read jac_provider.last_condition. Attach one, valued at
+            # the initial state -- a representative snapshot, same
+            # one-shot convention AnalyticalBeamJacobianProvider's own
+            # last_condition already uses (never updated per call either).
+            _J0 = np.asarray(
+                jac_provider(np.concatenate([q0, [insertion_m]])), dtype=float
+            ).reshape(3, 7)
+            jac_provider.last_condition = float(np.linalg.cond(_J0[:, :6]))
+        elif cfg.controller_kind == "mpc_ltv_sqp_online":
+            # 2026-09-16: mpc_ltv_sqp_online ("tick-frozen") is only
+            # meaningful if its jacobian_provider genuinely relinearises at
+            # the measured state each tick -- AnalyticalBeamJacobianProvider
+            # (the default under jacobian_source="analytical_beam") computes
+            # its Jacobian ONCE at construction and its __call__ ignores the
+            # state argument entirely (a real-time-budget tradeoff, ~112ms
+            # for the 7 finite-differenced get_forward_kinematics calls it
+            # needs -- fine as a frozen mpc_lti-style Jacobian, silently
+            # wrong for a controller whose entire purpose is per-tick
+            # relinearisation). Bypass it here: build the same
+            # from_model_bundle-based provider compare_controllers_live.py
+            # uses for the LTV schedule -- already verified both genuinely
+            # state-dependent (relinearisation_count increments, command
+            # changes between calls) and fast enough (~8.8ms mean, ~27ms max,
+            # well inside the 100ms tick budget) in this session's smoke
+            # tests. Every other controller_kind is unaffected -- mpc_lti's
+            # and mpc_ltv_offline's own Jacobian source is the precomputed
+            # schedule, not jac_provider; naive_inverse_jacobian keeps its
+            # existing (frozen, jacobian_source-controlled) behaviour.
+            print(
+                "[path] mpc_ltv_sqp_online: building a genuinely "
+                "state-dependent Jacobian provider (from_model_bundle), "
+                "bypassing the frozen AnalyticalBeamJacobianProvider"
+            )
+            from proper_research.controllers.beam_jacobian_providers import from_model_bundle
+
+            assert _tf_bundle_cache is not None, (
+                "mpc_ltv_sqp_online reached jac_provider construction without "
+                "the pre-built bundle/controller_pack cache from the top of main()."
+            )
+            _bundle, _controller_pack = _tf_bundle_cache
+            jac_provider = from_model_bundle(
+                bundle=_bundle, controller_pack=_controller_pack, contact=False
+            )
+            # BeamJacobianProvider (unlike AnalyticalBeamJacobianProvider) has
+            # no last_condition attribute, but several unconditional log/dump
+            # sites below read jac_provider.last_condition. Attach one, valued
+            # at the initial state -- a representative snapshot, consistent
+            # with how AnalyticalBeamJacobianProvider's own last_condition is
+            # itself only ever set once (never updated per call either).
+            _J0 = np.asarray(
+                jac_provider(np.concatenate([q0, [insertion_m]])), dtype=float
+            ).reshape(3, 7)
+            jac_provider.last_condition = float(np.linalg.cond(_J0[:, :6]))
+        elif cfg.jacobian_source == "analytical_beam":
+            print("[path] building analytic beam Jacobian (forward-model solve + FK)...")
+            tcp_pose6 = np.asarray(
+                robot.get_tcp_pose() if robot.get_tcp_pose() is not None else q0 * 0.0,
+                dtype=float,
+            )
+            jac_provider = AnalyticalBeamJacobianProvider(
+                robot=robot,
+                q0=q0,
+                tcp_pose6=tcp_pose6,
+                insertion_m=insertion_m,
+                mapper=mapper,
+                dipole_unit_in_magnet_body=cfg.dipole_unit_in_magnet_body,
+            )
+        else:
+            print("[path] building kinematic-scalar Jacobian (7 FK calls)...")
+            jac_provider = SimpleBeamJacobianProvider(
+                robot=robot,
+                q0=q0,
+                beam_axis_R=beam_axis_R,
+                magnet_tip_coupling=cfg.magnet_tip_coupling,
+                insertion_axial_gain=cfg.insertion_axial_gain,
+            )
+
+        if isinstance(jac_provider, AnalyticalBeamJacobianProvider):
+            m_B = 1e3 * jac_provider.magnet_in_B_m
+            col_norms = np.linalg.norm(jac_provider.j_beam_full[:, 0:3], axis=0)
+            print(
+                f"[path] model magnet in B = [{m_B[0]:+.0f}, {m_B[1]:+.0f}, {m_B[2]:+.0f}] mm "
+                f"(coaxial: B.y/B.z ~0 -> magnet on the beam axis, ~280 mm ahead)\n"
+                f"[path] |d(tip)/d(magnet)| per axis  B.z/out={col_norms[0]:.3f}  "
+                f"B.y/in-plane={col_norms[1]:.3f}  B.x/axial={col_norms[2]:.3f} mm/mm "
+                f"(axial should be ~0 for a coaxial axial-dipole magnet)"
+            )
+        j_full = jac_provider(z0)
+        jv_robot = _translational_jacobian_fd(robot, q0)
+        with np.printoptions(precision=5, suppress=True, linewidth=160):
+            print("[path] ===== FROZEN BEAM JACOBIAN  d(tip_R xyz)/d[q1..q6, insertion] =====")
+            print("[path] rows = tip R.x, R.y, R.z   cols = q1..q6 (rad), insertion (m)")
+            for r, name in enumerate(("R.x", "R.y", "R.z")):
+                print(f"[path]   {name}: {j_full[r]}")
+            if isinstance(jac_provider, AnalyticalBeamJacobianProvider):
+                print("[path] --- J = J_beam[:, 0:3] @ Jv_robot ,  J[:,6] = J_beam[:,6] ---")
+                print("[path] J_beam (3x7) d(tip)/d[magnet_xyz(3), magnet_rot(3), insertion]:")
+                for r, name in enumerate(("R.x", "R.y", "R.z")):
+                    print(f"[path]   {name}: {jac_provider.j_beam_full[r]}")
+            print("[path] Jv_robot (3x6) d(TCP_pos)/d(q):")
+            for r, name in enumerate(("R.x", "R.y", "R.z")):
+                print(f"[path]   {name}: {jv_robot[r]}")
+            print("[path] ================================================================")
+        print(f"[path] cond(J[:, :6]) = {jac_provider.last_condition:.2f}")
+
+        # --- offline controller through the standard seam ----
+        terminal_hold_steps = max(1, int(round(cfg.control_hz * cfg.shape_end_hold_s)))
+        from dataclasses import replace as _dc_replace
+
+        mpc_config = _mpc_config(cfg, dt)
+        beam_config = None
+        if cfg.controller_kind in (
+            "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online", "mpc_delay_aware",
+        ):
+            from proper_research.simulation.simulations.simulate_time_parameterized_beam_output_mpc import (
+                BeamOutputMPCConfig,
+            )
+
+            mpc_config = _dc_replace(
+                mpc_config, prediction_horizon=int(cfg.mpc_prediction_horizon)
+            )
+            if cfg.mpc_conditioning_fix:
+                if cfg.mpc_directional_damping == 0.0:
+                    cfg = replace_dc(
+                        cfg,
+                        mpc_directional_damping=float(
+                            cfg.mpc_conditioning_fix_directional_damping
+                        ),
+                    )
+                    print(
+                        f"[path] mpc_conditioning_fix: directional_damping 0.0 -> "
+                        f"{cfg.mpc_directional_damping:g} (spatial fix)"
+                    )
+                if cfg.mpc_use_dare_terminal_cost:
+                    cfg = replace_dc(cfg, mpc_use_dare_terminal_cost=False)
+                    print(
+                        "[path] mpc_conditioning_fix: DARE terminal cost disabled "
+                        "(temporal fix)"
+                    )
+                if cfg.mpc_input_increment_weight_override is None:
+                    cfg = replace_dc(
+                        cfg,
+                        mpc_input_increment_weight_override=float(
+                            cfg.mpc_conditioning_fix_input_increment_weight
+                        ),
+                    )
+                    print(
+                        f"[path] mpc_conditioning_fix: input_increment_weight "
+                        f"override -> {cfg.mpc_input_increment_weight_override:g} "
+                        "(temporal fix)"
+                    )
+            if (
+                cfg.feedforward_joint_trajectory
+                and cfg.mpc_ff_input_increment_weight is not None
+            ):
+                print(
+                    f"[path] fix #1: overriding input_increment_weight "
+                    f"{mpc_config.input_increment_weight:g} -> "
+                    f"{cfg.mpc_ff_input_increment_weight:g} (FF mode)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_increment_weight=float(cfg.mpc_ff_input_increment_weight),
+                )
+            if cfg.mpc_input_tracking_weight_override is not None:
+                print(
+                    f"[path] overriding input_tracking_weight "
+                    f"{mpc_config.input_tracking_weight:g} -> "
+                    f"{cfg.mpc_input_tracking_weight_override:g}"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_tracking_weight=float(
+                        cfg.mpc_input_tracking_weight_override
+                    ),
+                )
+            if cfg.mpc_input_increment_weight_override is not None:
+                print(
+                    f"[path] overriding input_increment_weight "
+                    f"{mpc_config.input_increment_weight:g} -> "
+                    f"{cfg.mpc_input_increment_weight_override:g}"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    input_increment_weight=float(
+                        cfg.mpc_input_increment_weight_override
+                    ),
+                )
+            if cfg.mpc_state_tracking_weight_override is not None:
+                print(
+                    f"[path] overriding state_tracking_weight "
+                    f"{mpc_config.state_tracking_weight:g} -> "
+                    f"{cfg.mpc_state_tracking_weight_override:g} (root-cause test: "
+                    f"removes the joint-space catch-up-to-reference term from FF's trim)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    state_tracking_weight=float(
+                        cfg.mpc_state_tracking_weight_override
+                    ),
+                )
+            if cfg.mpc_diagnostic_zero_input_reference_in_R:
+                print(
+                    "[path] null-space diagnostic Experiment 3: zeroing the "
+                    "R-term's v_ref target (cost -> v^T R v; Q/Qp/Rd unchanged)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    diagnostic_zero_input_reference_in_R=True,
+                )
+            if cfg.mpc_solver_time_limit_s is not None:
+                print(
+                    f"[path] setting OSQP solver_time_limit_s -> "
+                    f"{cfg.mpc_solver_time_limit_s:g}s (real-time fairness cap)"
+                )
+                mpc_config = _dc_replace(
+                    mpc_config,
+                    solver_time_limit_s=float(cfg.mpc_solver_time_limit_s),
+                )
+            wall_kwargs: dict[str, Any] = {}
+            if float(cfg.mpc_wall_avoidance_gain) > 0.0:
+                if not cfg.vessel_lumen_file:
+                    raise ValueError(
+                        "mpc_wall_avoidance_gain > 0 requires --vessel-lumen-file "
+                        "(the real digitized vessel geometry the penalty is "
+                        "computed against)."
+                    )
+                from proper_research.vision.detect_blue import (
+                    load_vessel_lumen_robot_frame,
+                )
+                lumen_C_wall, lumen_R_wall, _ = load_vessel_lumen_robot_frame(
+                    cfg.vessel_lumen_file
+                )
+                # Queried LIVE against the measured beam position each tick
+                # (see BeamOutputMPCConfig.wall_avoidance_gain's docstring for
+                # why -- the reference path IS the centreline, so a normal
+                # precomputed from it is degenerate); the config just carries
+                # the real geometry through.
+                wall_kwargs = {
+                    "wall_avoidance_gain": float(cfg.mpc_wall_avoidance_gain),
+                    "wall_avoidance_lumen_C": lumen_C_wall,
+                    "wall_avoidance_lumen_R": lumen_R_wall,
+                    "wall_avoidance_beam_radius_m": (
+                        float(cfg.mpc_wall_avoidance_beam_radius_mm) * 1.0e-3
+                    ),
+                    "wall_avoidance_margin_m": (
+                        float(cfg.mpc_wall_avoidance_margin_mm) * 1.0e-3
+                    ),
+                }
+                print(
+                    f"[path] wall-avoidance ON: gain={cfg.mpc_wall_avoidance_gain:g}, "
+                    f"{len(lumen_C_wall)} lumen samples, queried live each tick "
+                    f"(margin={cfg.mpc_wall_avoidance_margin_mm:g}mm, "
+                    f"beam_radius={cfg.mpc_wall_avoidance_beam_radius_mm:g}mm)"
+                )
+            s = float(cfg.mpc_position_error_scale_mm) * 1.0e-3
+            beam_config = BeamOutputMPCConfig(
+                position_error_scale_m=(s, s, s),
+                position_tracking_weight=float(cfg.mpc_position_tracking_weight),
+                use_dare_terminal_cost=bool(cfg.mpc_use_dare_terminal_cost),
+                directional_damping=float(cfg.mpc_directional_damping),
+                directional_damping_floor=float(cfg.mpc_directional_damping_floor),
+                **wall_kwargs,
+            )
+
+        # Optional externally-supplied Jacobian schedule (shape [samples, 3, 7]).
+        # A comparison harness sets `close_loop_path_follow._SCHEDULE_OVERRIDE`
+        # to a relinearised-along-the-reference schedule so mpc_lti (frozen at
+        # sample 0) and mpc_ltv_offline (full schedule) are compared on the
+        # SAME model, differing only in time-variation. Also consumed by
+        # naive_inverse_jacobian_ltv ("inverse-LTV") to match mpc_ltv_offline's
+        # Jacobian *source* exactly -- see build_offline_solver's docstring.
+        # Ignored by plain naive_inverse_jacobian (which uses `jac_provider`).
+        schedule_override = globals().get("_SCHEDULE_OVERRIDE")
+        _schedule_applies = (
+            beam_config is not None
+            or cfg.controller_kind in (
+                "naive_inverse_jacobian_ltv", "inv_2dof_map_trim",
+                # 2026-09-18: paired A/B -- both read the SAME schedule
+                # (inv_2dof_trim at idx, inv_2dof_delay_aware at idx+3) so
+                # the comparison isolates the index, not the Jacobian
+                # source. Only takes effect when the calling script sets
+                # _SCHEDULE_OVERRIDE; inv_2dof_trim's existing callers that
+                # don't set it are unaffected (schedule stays None -> falls
+                # back to jacobian_provider(state), unchanged behaviour).
+                "inv_2dof_trim", "inv_2dof_delay_aware", "inv_7dof_delay_aware",
+            )
+        )
+        if schedule_override is not None and _schedule_applies:
+            schedule_override = np.asarray(schedule_override, dtype=float)
+            if schedule_override.shape != (reference.sample_count, 3, 7):
+                raise ValueError(
+                    f"_SCHEDULE_OVERRIDE shape {schedule_override.shape} != "
+                    f"({reference.sample_count}, 3, 7)"
+                )
+            print(f"[path] using external Jacobian schedule {schedule_override.shape}")
+            if (
+                cfg.inv_freeze_schedule_at_start
+                and cfg.controller_kind == "naive_inverse_jacobian_ltv"
+            ):
+                schedule_override = np.repeat(
+                    schedule_override[0:1], schedule_override.shape[0], axis=0
+                )
+                print(
+                    "[path] naive_inverse_jacobian_ltv: freezing the schedule "
+                    "to sample 0 for the whole run (static-Jacobian condition, "
+                    "same underlying model as the LTV condition)"
+                )
+        else:
+            schedule_override = None
+
+        dmap_kwargs = {}
+        if cfg.controller_kind == "inv_2dof_map_trim":
+            if not cfg.dmap_path:
+                raise ValueError("inv_2dof_map_trim requires cfg.dmap_path")
+            if schedule_override is None:
+                raise ValueError(
+                    "inv_2dof_map_trim requires _SCHEDULE_OVERRIDE set to the "
+                    "genuine LTV schedule (same as run_mpc_ltv.py does) -- "
+                    "the map term must use the same schedule it was validated "
+                    "against offline, not the default frozen jacobian_provider"
+                )
+            dmap_arr = np.load(cfg.dmap_path)["dmap"]
+            print(f"[path] loaded dmap {dmap_arr.shape} from {cfg.dmap_path}")
+            dmap_kwargs = {"dmap": dmap_arr, "map_schedule": schedule_override}
+
+        magnet_clip_kwargs = {}
+        _magnet_clip_override = globals().get("_MAGNET_CONSTRAINT_CLIP_OVERRIDE")
+        if _magnet_clip_override is not None and cfg.controller_kind in (
+            "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
+        ):
+            magnet_clip_kwargs = dict(_magnet_clip_override)
+            print(f"[path] {cfg.controller_kind}: magnet-exclusion/z-workspace hard-"
+                  f"constraint clip ENABLED (external override)")
+
+        solver = build_offline_solver(
+            cfg.controller_kind,
+            reference=reference,
+            jacobian_provider=jac_provider,
+            mpc_config=mpc_config,
+            beam_config=beam_config,
+            schedule=schedule_override,
+            freeze_index=int(cfg.mpc_freeze_index),
+            adapter_config=OfflineControllerConfig(
+                progress_mode="wallclock",
+                terminal_hold_steps=terminal_hold_steps,
+            ),
+            position_gain=cfg.position_gain,
+            damping=cfg.damping,
+            nullspace_gain=cfg.nullspace_gain,
+            feedforward=cfg.feedforward,
+            feedforward_full=cfg.feedforward_full,
+            allow_undeclared_jacobian=True,
+            selective_damping_gain=cfg.inv_selective_damping_gain,
+            selective_damping_floor=cfg.inv_selective_damping_floor,
+            relinearise_every=int(cfg.mpc_relinearise_every),
+            **dmap_kwargs,
+            **magnet_clip_kwargs,
+            trim_kp=cfg.trim_kp,
+            trim_kn=cfg.trim_kn,
+            trim_damping=cfg.trim_damping,
+            trim_q_max=cfg.trim_q_max,
+            trim_enable_logging=cfg.trim_enable_logging,
+            trim_su_joint=cfg.trim_su_joint,
+            trim_su_insertion=cfg.trim_su_insertion,
+            trim_max_l_step_m=cfg.trim_max_l_step_m,
+        )
+        # Exposed so a calling script can retrieve controller-internal state
+        # after main() returns -- e.g. inv_2dof_trim's per-tick task/null/
+        # trim decomposition log (trim_enable_logging=True) or the Q-
+        # ablation scripts' baseline-vs-counterfactual replay. Mirrors
+        # `_SCHEDULE_OVERRIDE`'s pattern: read as
+        # `close_loop_path_follow.LAST_SOLVER.controller` after `main()`.
+        globals()["LAST_SOLVER"] = solver
+        print(
+            f"[path] controller = {cfg.controller_kind}"
+            + (
+                f" (horizon={cfg.mpc_prediction_horizon}, freeze@{cfg.mpc_freeze_index})"
+                if beam_config is not None
+                else ""
+            )
+            + (
+                f" (relinearise_every={cfg.mpc_relinearise_every})"
+                if cfg.controller_kind == "mpc_ltv_sqp_online"
+                else ""
+            )
+            + "; closing the loop"
+        )
+
+        # --- persist the frozen Jacobian (+ MPC schedule, if any) as structured
+        # data, once per run, so a comparison harness can diagnose controller
+        # internals after the fact instead of only reading console prints.
+        try:
+            jac_dump = {
+                "controller_kind": cfg.controller_kind,
+                "feedforward_joint_trajectory": bool(cfg.feedforward_joint_trajectory),
+                "jacobian_source": cfg.jacobian_source,
+                "q0_rad": np.asarray(q0, dtype=float).reshape(-1).tolist(),
+                "insertion0_m": float(insertion_m),
+                "j_full_3x7": np.asarray(j_full, dtype=float).tolist(),
+                "jv_robot_3x6": np.asarray(jv_robot, dtype=float).tolist(),
+                "jacobian_condition": float(jac_provider.last_condition),
+            }
+            if isinstance(jac_provider, AnalyticalBeamJacobianProvider):
+                jac_dump["magnet_in_B_mm"] = (1e3 * jac_provider.magnet_in_B_m).tolist()
+                jac_dump["j_beam_full_3x7"] = np.asarray(
+                    jac_provider.j_beam_full, dtype=float
+                ).tolist()
+            if schedule_override is not None:
+                jac_dump["schedule_override_shape"] = list(schedule_override.shape)
+                jac_dump["schedule_override"] = schedule_override.tolist()
+            if beam_config is not None:
+                jac_dump["mpc_prediction_horizon"] = int(cfg.mpc_prediction_horizon)
+                jac_dump["mpc_freeze_index"] = int(cfg.mpc_freeze_index)
+                jac_dump["mpc_position_error_scale_mm"] = float(
+                    cfg.mpc_position_error_scale_mm
+                )
+                jac_dump["mpc_position_tracking_weight"] = float(
+                    cfg.mpc_position_tracking_weight
+                )
+                jac_dump["mpc_use_dare_terminal_cost"] = bool(
+                    cfg.mpc_use_dare_terminal_cost
+                )
+                if cfg.controller_kind == "mpc_ltv_sqp_online":
+                    jac_dump["mpc_relinearise_every"] = int(cfg.mpc_relinearise_every)
+            jac_dump_path = output_dir / "frozen_jacobian.json"
+            with jac_dump_path.open("w", encoding="utf-8") as handle:
+                json.dump(jac_dump, handle, indent=1)
+            print(f"[path] frozen Jacobian (+schedule) -> {jac_dump_path}")
+        except Exception as exc:  # pragma: no cover -- diagnostics must never break the run
+            print(f"[path] WARNING: failed to dump frozen_jacobian.json: {exc!r}")
+
+        # 2026-09-17: building the solver (LTV schedule = one beam solve per
+        # reference sample, ~90-150s of largely single-threaded numeric work
+        # for a 264-sample plan) leaves getActualQ() returning the SAME
+        # cached packet indefinitely, no exception raised -- confirmed live
+        # (73% of polls were exact repeats right after one such build). A
+        # passive wait does not clear this; only a fresh receive-connection
+        # handshake does. Reconnect explicitly, then confirm freshness.
+        if reader.latest_joints(cfg.robot_max_age_s) is None:
+            print(
+                f"[path] joint reader stale after solver build "
+                f"(reads={reader.reads} stale_repeats={reader.stale_repeats}) "
+                f"-- reconnecting receive interface..."
+            )
+            reader.reconnect_receive()
+            _joint_wait_deadline = now_monotonic() + 2.0
+            while (
+                reader.latest_joints(cfg.robot_max_age_s) is None
+                and now_monotonic() < _joint_wait_deadline
+            ):
+                time.sleep(0.02)
+        print(
+            f"[path] joint-reader post-solver-build check: "
+            f"fresh={reader.latest_joints(cfg.robot_max_age_s) is not None} "
+            f"reads={reader.reads} read_failures={reader.read_failures} "
+            f"stale_repeats={reader.stale_repeats} last_error={reader.last_error!r}"
+        )
+        # 2026-09-17: the joint-reader reconnect above briefly stops/restarts
+        # its polling thread on the main thread -- confirmed live to leave
+        # the camera's last frame stale enough (>cfg.max_state_age_s) that
+        # the very first tick's camera.latest() check aborted immediately
+        # with stale_vision, right after a run that otherwise built cleanly.
+        # Camera runs its own independent thread and needs no reconnect,
+        # just a moment to publish a fresh frame.
+        _cam_wait_deadline = now_monotonic() + 2.0
+        while (
+            camera.latest(cfg.max_state_age_s)[0] is None
+            and now_monotonic() < _cam_wait_deadline
+        ):
+            time.sleep(0.02)
+
+        safety_check_every = max(1, int(round(cfg.control_hz)))
+        next_tick = now_monotonic()
+        terminal_since = None
+
+        while not stop_flag["stop"] and steps < cfg.max_control_steps:
+            now = now_monotonic()
+            if next_tick > now:
+                time.sleep(min(next_tick - now, dt))
+                continue
+            next_tick = max(next_tick + dt, now)
+
+            if not camera.healthy:
+                abort_reason = f"camera_unhealthy: {camera.last_error!r}"
+                break
+            if steps % safety_check_every == 0:
+                try:
+                    if reader.is_protective_stopped() or reader.safety_mode() not in (1, 2):
+                        abort_reason = "robot_protective_stop_or_unsafe"
+                        break
+                except Exception:
+                    pass
+
+            estimate, age = camera.latest(cfg.max_state_age_s)
+            if estimate is None:
+                abort_reason = f"stale_vision(age={age:.3f}s)"
+                break
+            if estimate.robot_joints is None:
+                abort_reason = "no_joints_on_estimate"
+                break
+
+            tip_raw = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
+            if tip_filter is not None:
+                estimate = replace_dc(
+                    estimate, tip_position_m=tip_filter.step(tip_raw, dt)
+                )
+
+            pose = reader.latest_pose(cfg.robot_max_age_s)
+            if pose is not None:
+                low = np.asarray(cfg.workspace_xyz_min_m)
+                high = np.asarray(cfg.workspace_xyz_max_m)
+                if np.any(pose[:3] < low) or np.any(pose[:3] > high):
+                    abort_reason = f"tcp_out_of_workspace({np.round(pose[:3], 3).tolist()})"
+                    break
+
+            result = solver(estimate, dt)
+            command = np.asarray(result.u0, dtype=float).reshape(7)
+            info = result.info
+            ref_index = int(info.get("reference_index", 0))
+            terminal_hold = bool(info.get("terminal_hold", False))
+
+            _command_gate = globals().get("_COMMAND_SAFETY_GATE")
+            if _command_gate is not None:
+                command, _gate_info = _command_gate(
+                    command, info.get("measured_joint_state"), info,
+                )
+                command = np.asarray(command, dtype=float).reshape(7)
+                info.update(_gate_info)
+
+            if not cfg.control_insertion:
+                command[6] = 0.0
+            if not np.all(np.isfinite(command)):
+                abort_reason = "nonfinite_command"
+                break
+            # 2026-09-18: process-isolated MPC adapters (mpc_worker_process.py)
+            # apply u=0 and hold q_cmd on an isolated deadline miss -- a
+            # legitimate, already-logged fallback, not an abort condition on
+            # its own. Several IN A ROW means the worker is genuinely stuck
+            # (crashed, deadlocked, or persistently over budget), not a one-
+            # off scheduling hiccup -- that's a real infrastructure failure,
+            # not something to keep silently holding through.
+            consecutive_misses = int(info.get("consecutive_deadline_misses", 0))
+            if consecutive_misses >= 5:
+                abort_reason = f"mpc_worker_persistent_failure(consecutive_misses={consecutive_misses})"
+                break
+            # Generic hook (2026-09-21): an adapter may set this to signal an
+            # abort condition it alone can see (e.g. an accumulator-state
+            # safety monitor independent of the optimization -- see
+            # ProcessIsolatedDelayAwareAdapter's insertion_offset_abort_m).
+            # No-op for every controller that doesn't set it.
+            adapter_abort = info.get("abort_reason")
+            if adapter_abort:
+                abort_reason = str(adapter_abort)
+                break
+
+            tip = np.asarray(estimate.tip_position_m, dtype=float).reshape(3)
+            # the inverse-Jacobian controller chases desired_position_m[ref_index + 1]
+            target_index = min(ref_index + 1, reference.sample_count - 1)
+            desired = np.asarray(reference.desired_position_m, dtype=float)[target_index]
+            error = desired - tip
+            if cfg.project_error_to_beam_plane:
+                b_z = np.asarray(mapper.T_R_B.rotation[:, 2], dtype=float)
+                error = error - float(np.dot(error, b_z)) * b_z
+            error_mm = 1.0e3 * float(np.linalg.norm(error))
+            if cfg.max_tracking_error_m > 0.0 and error_mm > 1.0e3 * cfg.max_tracking_error_m:
+                abort_reason = (
+                    f"tracking_error_exceeded({error_mm:.2f}mm > "
+                    f"{1.0e3 * cfg.max_tracking_error_m:.2f}mm)"
+                )
+                break
+            q = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
+
+            ref_state = np.asarray(reference.state, dtype=float)
+            ref_input = np.asarray(reference.input, dtype=float)
+            # The MPC command already contains the planned (feedforward) input
+            # in its cost; the resolved-rate command is pure correction.  In FF
+            # mode, subtract the planned input for MPC so we don't double-count.
+            is_mpc = cfg.controller_kind in (
+                "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online",
+            )
+            corr = command.copy()
+            if cfg.feedforward_joint_trajectory and is_mpc:
+                corr = command - ref_input[target_index]
+
+            ff_ins_rate = 0.0
+            if (
+                cfg.feedforward_joint_trajectory
+                and reference.sample_count > 1
+                and not terminal_hold
+            ):
+                # 2026-09-11 bug fix: target_index/prev_ix both freeze at the
+                # last reference sample during the terminal hold, so this used
+                # to keep re-computing the SAME (generally nonzero -- the
+                # planned trajectory can have residual insertion slope right
+                # before the hold starts) rate every tick for the whole hold,
+                # driving a real, unintended insertion drift (+0.3 to +1.7mm
+                # measured across FF runs -- see beam-lateral-authority-limit
+                # memory). A held target should not keep advancing insertion.
+                prev_ix = max(0, target_index - 1)
+                ff_ins_rate = float(
+                    (ref_state[target_index, 6] - ref_state[prev_ix, 6]) / dt
+                )
+
+            # 2026-09-17: captured for the r_seam audit metric (z_cmd vs the
+            # MPC's own z_meas+dt*u0 prediction) -- this is the RATE actually
+            # sent to the linear-advancer hardware, distinct from the tracked
+            # `insertion_m` state below (which is reference-anchored the same
+            # way q_target is; this is not -- see the seam-mismatch audit).
+            insertion_rate_cmd_m_s = (
+                float(corr[6]) if cfg.feedforward_joint_trajectory else float(command[6])
+            ) + ff_ins_rate
+            if advancer is not None:
+                advancer.submit_rate(insertion_rate_cmd_m_s, dt)
+            if cfg.accumulator_seam:
+                if ins_cmd is None:
+                    ins_cmd = float(insertion_m)
+                ins_cmd = float(np.clip(ins_cmd + float(corr[6]) * dt, 0.005, 0.20))
+                insertion_m = ins_cmd
+            elif cfg.feedforward_joint_trajectory:
+                ins_trim += float(corr[6]) * dt
+                insertion_m = float(np.clip(ref_state[target_index, 6] + ins_trim, 0.005, 0.20))
+            elif advancer is not None:
+                insertion_m = float(
+                    np.clip(insertion_m + float(command[6]) * dt, 0.005, 0.20)
+                )
+
+            qd = np.clip(
+                (corr[:6] if cfg.feedforward_joint_trajectory else command[:6]),
+                -cfg.joint_velocity_limit_rad_s,
+                cfg.joint_velocity_limit_rad_s,
+            )
+            delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
+            if cfg.accumulator_seam:
+                # controller-owned running command trajectory -- see the
+                # accumulator_seam field docstring. Seeded at the first
+                # measured joints so it starts exactly where the robot is;
+                # from then on it only ever advances by delta_q, never by
+                # re-reading q_meas, so it is immune to the ~beta=0.2
+                # servoJ realization gain the direct-apply seam fell victim
+                # to (that gain attenuates how far q_meas moves toward
+                # q_target, not what q_target itself is).
+                if q_cmd is None:
+                    q_cmd = q.copy()
+                q_cmd_prev = q_cmd.copy()
+                servo_err_log.append(float(np.linalg.norm(q - q_cmd_prev)))
+                q_cmd = q_cmd + delta_q
+                q_target = q_cmd
+            elif cfg.feedforward_joint_trajectory and not (
+                cfg.ff_trim_base_switch_at_hold and terminal_hold
+            ):
+                # servo the PLANNED joints + the controller correction as a trim
+                q_target = ref_state[target_index, :6] + cfg.feedforward_correction_scale * delta_q
+            else:
+                # fix #2 (or FF off): pure feedback off the measured joints --
+                # either FF was never on, or ff_trim_base_switch_at_hold kicked
+                # in because the planned reference has stopped advancing.
+                q_target = q + delta_q
+
+            t_servo = now_monotonic()
+            if not cfg.dry_run:
+                # condition "C" of the 2026-09-17 A/B/C seam-and-rate
+                # identification test: interpolate the accumulator's move
+                # from q_cmd_prev to q_target into servo_stream_hz/control_hz
+                # intermediate absolute targets instead of sending q_target
+                # once. Live-validated to cut mean/max command-tracking
+                # error ~4x versus sending once at 10Hz (see
+                # servoj-realization-gain memory). No-op (n_inner=1) unless
+                # accumulator_seam is on and servo_stream_hz > control_hz.
+                n_inner = 1
+                if cfg.accumulator_seam and cfg.servo_stream_hz > cfg.control_hz + 1e-9:
+                    n_inner = max(1, int(round(cfg.servo_stream_hz / cfg.control_hz)))
+                if n_inner > 1 and q_cmd_prev is not None:
+                    dt_inner = dt / n_inner
+                    q_start, q_end = q_cmd_prev[:6], q_target[:6]
+                    lookahead_inner = min(cfg.servo_lookahead_s, 2.5 * dt_inner)
+                    next_inner = t_servo
+                    for m in range(1, n_inner + 1):
+                        q_servo = q_start + (m / n_inner) * (q_end - q_start)
+                        robot.servo_j(
+                            q_servo,
+                            time_s=2.0 * dt_inner,
+                            lookahead_time=lookahead_inner,
+                            gain=cfg.servo_gain,
+                        )
+                        next_inner += dt_inner
+                        sleep_s = next_inner - now_monotonic()
+                        if sleep_s > 0:
+                            time.sleep(sleep_s)
+                else:
+                    robot.servo_j(
+                        q_target,
+                        time_s=2.0 * dt,
+                        lookahead_time=cfg.servo_lookahead_s,
+                        gain=cfg.servo_gain,
+                    )
+                if np.any(np.abs(delta_q) > 1e-9):
+                    started_moving = True
+            servo_ms = 1e3 * (now_monotonic() - t_servo)
+
+            steps += 1
+            t_rel = now_monotonic() - t_zero
+            tip_log.append(tip.copy())
+            des_log.append(desired.copy())
+            err_log.append(error_mm)
+            tsec_log.append(t_rel)
+
+            row = {
+                "step": steps,
+                "t_s": round(t_rel, 4),
+                "state_age_s": round(float(age), 4),
+                "ref_index": ref_index,
+                "target_index": int(target_index),
+                "progress_index": int(info.get("progress_index", ref_index)),
+                "terminal_hold": terminal_hold,
+                "infeasible": bool(result.infeasible),
+                "tip_mm": [round(float(v), 3) for v in 1e3 * tip],
+                "tip_raw_mm": [round(float(v), 3) for v in 1e3 * tip_raw],
+                "desired_mm": [round(float(v), 3) for v in 1e3 * desired],
+                "error_mm": [round(float(v), 3) for v in 1e3 * error],
+                "error_norm_mm": round(error_mm, 3),
+                "u0": [round(float(v), 6) for v in command],
+                "u0_correction": [round(float(v), 6) for v in corr],
+                "ff_insertion_rate_m_s": round(ff_ins_rate, 6),
+                "insertion_length_m": round(float(insertion_m), 5),
+                "q_meas_rad": [round(float(v), 6) for v in q],
+                "q_target_delta_rad": [round(float(v), 6) for v in delta_q],
+                # 2026-09-17: absolute applied joint target (not just the
+                # delta) -- needed for the r_seam audit metric, since in FF
+                # mode q_target is anchored to ref_state[target_index], not to
+                # q_meas, and reconstructing that anchor from this row alone
+                # would require the (potentially stale) plan file.
+                "q_target_rad": [round(float(v), 6) for v in q_target],
+                # e_servo_k = q_meas_k - q_cmd_k: execution-layer fidelity,
+                # distinct from p_des-p_meas beam tracking (error_mm above).
+                # accumulator_seam only; None otherwise (no q_cmd to compare).
+                "q_servo_error_rad": (
+                    [round(float(v), 6) for v in (q - q_cmd_prev)]
+                    if cfg.accumulator_seam and q_cmd_prev is not None
+                    else None
+                ),
+                "insertion_rate_cmd_m_s": round(float(insertion_rate_cmd_m_s), 6),
+                "servo_ms": round(servo_ms, 1),
+                "dry_run": cfg.dry_run,
+                # --- controller-internals diagnostics (2026-09-11) ---
+                "controller_kind": cfg.controller_kind,
+                "feedforward": bool(cfg.feedforward_joint_trajectory),
+                "solver_status": info.get("status"),
+                "solver_success": info.get("success"),
+                "solver_iterations": info.get("iterations"),
+                "solver_time_s": info.get("solve_time_s"),
+                "objective": info.get("objective"),
+                "primal_residual": info.get("primal_residual"),
+                "dual_residual": info.get("dual_residual"),
+                "planned_input": info.get("planned_input"),
+                "predicted_input_0": info.get("predicted_input_0"),
+                "predicted_state_0": info.get("predicted_state_0"),
+                "predicted_beam_position_0_m": info.get("predicted_beam_position_0_m"),
+                "predicted_beam_error_0_m": info.get("predicted_beam_error_0_m"),
+                "horizon_len": info.get("horizon_len"),
+                "jacobian_condition": round(float(jac_provider.last_condition), 2),
+            }
+            log_file.write(json.dumps(row) + "\n")
+            log_file.flush()
+            traj_file.write(
+                f"{steps},{t_rel:.4f},{ref_index},"
+                f"{tip[0]:.6f},{tip[1]:.6f},{tip[2]:.6f},"
+                f"{desired[0]:.6f},{desired[1]:.6f},{desired[2]:.6f},"
+                f"{error_mm:.3f},"
+                + ",".join(f"{v:.6f}" for v in q)
+                + f",{insertion_m:.6f},{int(terminal_hold)}\n"
+            )
+            traj_file.flush()
+
+            if steps % 10 == 0 or (terminal_hold and steps % 5 == 0):
+                print(
+                    f"[{steps:4d}] ref={ref_index:4d}/{reference.sample_count - 1} "
+                    f"|e|={error_mm:6.2f}mm "
+                    f"e=[{1e3*error[0]:+6.2f} {1e3*error[1]:+6.2f} {1e3*error[2]:+6.2f}] "
+                    f"|qd|={np.linalg.norm(command[:6]):.4f} "
+                    f"ins={1e3*insertion_m:5.1f}mm{' TERM' if terminal_hold else ''}"
+                )
+
+            if terminal_hold:
+                terminal_since = terminal_since or now_monotonic()
+                if now_monotonic() - terminal_since >= cfg.shape_end_hold_s:
+                    abort_reason = "path_complete"
+                    break
+        else:
+            abort_reason = abort_reason or "max_control_steps"
+    except Exception as exc:  # noqa: BLE001
+        abort_reason = f"exception: {exc!r}"
+        raise
+    finally:
+        signal.signal(signal.SIGINT, prev_handler)
+        if not cfg.dry_run:
+            try:
+                robot.servo_stop(2.0)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[path] servo_stop error: {exc!r}")
+        camera.stop()
+        if advancer is not None:
+            try:
+                advancer.submit_rate(0.0, dt)
+                advancer.stop()
+            except Exception:
+                pass
+        try:
+            reader.stop()
+        except Exception:
+            pass
+        try:
+            robot.close()
+        except Exception:
+            pass
+        log_file.close()
+        traj_file.close()
+        sys.stdout = real_stdout
+
+    _write_plot(cfg, output_dir, mapper, tip_log, des_log, err_log, tsec_log)
+
+    summary = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "config": asdict(cfg),
+        "stop_reason": abort_reason or ("stopped" if stop_flag["stop"] else "done"),
+        "control_steps": steps,
+        "started_moving": started_moving,
+        "reference_samples": None if reference is None else int(reference.sample_count),
+        "jacobian_condition": (
+            None if jac_provider is None else round(jac_provider.last_condition, 2)
+        ),
+        "final_error_mm": round(err_log[-1], 3) if err_log else None,
+        "max_error_mm": round(max(err_log), 3) if err_log else None,
+        # execution-layer fidelity e_servo=q_meas-q_cmd (accumulator_seam only,
+        # rad) -- keep separate from the beam-tracking error above.
+        "servo_error_rms_rad": (
+            round(float(np.sqrt(np.mean(np.square(servo_err_log)))), 6)
+            if servo_err_log else None
+        ),
+        "servo_error_max_rad": round(max(servo_err_log), 6) if servo_err_log else None,
+        "vision_detection_failures": mapper.detection_failures,
+    }
+    with (output_dir / "summary.json").open("w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2)
+
+    print("\n=== PATH-FOLLOW SUMMARY ===")
+    for key, value in summary.items():
+        if key == "config":
+            continue
+        print(f"  {key:24s}: {value}")
+    print(f"  log                     : {log_path}")
+    print(f"  csv                     : {output_dir / 'tip_trajectory.csv'}")
+    print(f"  plot                    : {output_dir / 'path_follow_plot.png'}")
+
+
+def _write_plot(
+    cfg: PathFollowConfig,
+    output_dir: Path,
+    mapper: Any,
+    tip_log: list,
+    des_log: list,
+    err_log: list,
+    tsec_log: list,
+) -> None:
+    if not tip_log:
+        return
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001
+        print(f"[path] plot skipped (matplotlib unavailable: {exc!r})")
+        return
+
+    tip = np.vstack(tip_log)
+    des = np.vstack(des_log)
+    u_axis = np.asarray(mapper.T_R_B.rotation[:, _AXIS_COLUMN[cfg.shape_axis_u]], dtype=float)
+    v_axis = np.asarray(mapper.T_R_B.rotation[:, _AXIS_COLUMN[cfg.shape_axis_v]], dtype=float)
+    origin = des[0]
+    tip_u = 1e3 * (tip - origin) @ u_axis
+    tip_v = 1e3 * (tip - origin) @ v_axis
+    des_u = 1e3 * (des - origin) @ u_axis
+    des_v = 1e3 * (des - origin) @ v_axis
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(11, 4.6))
+    ax0.plot(des_u, des_v, "-", color="tab:blue", lw=2, label="reference")
+    ax0.plot(tip_u, tip_v, "-", color="tab:red", lw=1.2, label="tip (measured)")
+    ax0.plot(tip_u[0], tip_v[0], "ko", ms=5, label="start")
+    ax0.set_xlabel(f"{cfg.shape_axis_u} (mm)")
+    ax0.set_ylabel(f"{cfg.shape_axis_v} (mm)")
+    ax0.set_aspect("equal", adjustable="datalim")
+    ax0.grid(alpha=0.3)
+    ax0.legend(fontsize=8)
+    ax0.set_title(f"{cfg.shape} in beam plane")
+
+    ax1.plot(tsec_log, err_log, "-", color="tab:red", lw=1.2)
+    ax1.set_xlabel("t (s)")
+    ax1.set_ylabel("tracking error |e| (mm)")
+    ax1.grid(alpha=0.3)
+    ax1.set_title("tip tracking error")
+
+    fig.tight_layout()
+    out = output_dir / "path_follow_plot.png"
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    print(f"[path] wrote {out}")
+
+
+if __name__ == "__main__":
+    main()

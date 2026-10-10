@@ -1,0 +1,2 @@
+{"run_index": 0, "condition": "B", "seed": 999, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.135635205719296, "t_unix": 1789741695.0177064}
+{"run_index": 1, "condition": "A", "seed": 999, "return_code": 0, "insertion_target_mm": 25.0, "insertion_final_mm": 25.176711988837646, "t_unix": 1789741758.2250755}

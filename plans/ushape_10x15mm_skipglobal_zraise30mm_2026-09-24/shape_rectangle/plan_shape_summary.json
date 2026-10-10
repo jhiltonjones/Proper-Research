@@ -1,0 +1,27 @@
+{
+  "shape": "rectangle",
+  "size_mm": 10.0,
+  "closed": false,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": true,
+  "planner_tip0_world": [
+    0.5005820547675611,
+    -0.6695089478050362,
+    0.013441556889184119
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 81,
+  "perimeter_mm": 38.734163426568784,
+  "time_param_samples": 209,
+  "time_param_duration_s": 20.8,
+  "time_param_dir": "plans/ushape_10x15mm_skipglobal_zraise30mm_2026-09-24/time_parameterized_configuration_path"
+}

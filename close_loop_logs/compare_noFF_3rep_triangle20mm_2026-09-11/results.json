@@ -1,0 +1,34 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_noFF_3rep_triangle20mm_2026-09-11/runs/lti_rep1_20260911T150431Z",
+    "stop_reason": "path_complete",
+    "steps": 214,
+    "n_track": 193,
+    "rms_track_mm": 4.852542122621243,
+    "mean_track_mm": 4.261549222797927,
+    "max_track_mm": 8.27,
+    "p95_track_mm": 7.629399999999998,
+    "mean_hold_mm": 2.881285714285714,
+    "final_mm": 0.565,
+    "duration_s": 44.1872
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 2,
+    "run_dir": "close_loop_logs/compare_noFF_3rep_triangle20mm_2026-09-11/runs/lti_rep2_20260911T150738Z",
+    "stop_reason": "path_complete",
+    "steps": 196,
+    "n_track": 184,
+    "rms_track_mm": 5.111325693241559,
+    "mean_track_mm": 4.513744565217391,
+    "max_track_mm": 9.118,
+    "p95_track_mm": 7.897199999999999,
+    "mean_hold_mm": 5.818499999999999,
+    "final_mm": 4.663,
+    "duration_s": 45.7132
+  }
+]

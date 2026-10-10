@@ -1,0 +1,63 @@
+{
+  "robot_ip": "192.168.56.101",
+  "insertion_mm": null,
+  "min_radius_mm": 211.0,
+  "z_limit_mm": 70.0,
+  "skip_beam_length_set": false,
+  "skip_arc": false,
+  "arc_radii_mm": [
+    211.0
+  ],
+  "arc_azimuths_deg": [
+    40.0,
+    55.0,
+    65.0,
+    75.0,
+    -40.0,
+    -55.0,
+    -65.0,
+    -75.0
+  ],
+  "skip_z": true,
+  "z_sweep_radius_mm": 250.0,
+  "z_offsets_mm": [
+    0,
+    30,
+    60,
+    -30,
+    -60
+  ],
+  "skip_dipole": true,
+  "dipole_radii_mm": [
+    250.0
+  ],
+  "dipole_positions_deg": [
+    0,
+    20
+  ],
+  "dipole_yaw_deg": [
+    0,
+    10,
+    20,
+    -10,
+    -20
+  ],
+  "dipole_pitch_deg": [
+    15,
+    -15
+  ],
+  "skip_combined": true,
+  "combined_radius_mm": 225.0,
+  "combined_azimuths_deg": [
+    -25,
+    0,
+    25
+  ],
+  "combined_yaw_deg": [
+    -15,
+    0,
+    15
+  ],
+  "out_dir": "calibration_2026-09-10/max_bend_confirm_2026-09-11",
+  "analyze_only": null
+}

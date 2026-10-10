@@ -1,0 +1,41 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_v2/runs/openloop_x1_rep1_20260910T142253Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.1918656321244312,
+    "mean_track_mm": 1.0610866141732285,
+    "max_track_mm": 2.299,
+    "p95_track_mm": 1.900199999999999,
+    "mean_hold_mm": 1.0076666666666667,
+    "final_mm": 1.03
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_v2/runs/openloop_x1_rep2_20260910T142352Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.342382243108934,
+    "mean_track_mm": 1.1789212598425198,
+    "max_track_mm": 2.83,
+    "p95_track_mm": 2.485999999999999,
+    "mean_hold_mm": 0.2797,
+    "final_mm": 0.276
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 3,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_v2/runs/openloop_x1_rep3_20260910T142452Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.4055624872312902,
+    "mean_track_mm": 1.227716535433071,
+    "max_track_mm": 2.79,
+    "p95_track_mm": 2.605899999999999,
+    "mean_hold_mm": 0.22776666666666665,
+    "final_mm": 0.239
+  }
+]

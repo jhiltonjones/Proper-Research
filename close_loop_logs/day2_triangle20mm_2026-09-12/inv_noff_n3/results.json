@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep1_20260912T102409Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 4.50931094744205,
+    "mean_track_mm": 3.862977477477477,
+    "max_track_mm": 9.432,
+    "p95_track_mm": 7.76295,
+    "mean_hold_mm": 0.4933333333333333,
+    "final_mm": 0.631,
+    "duration_s": 42.0046
+  },
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 2,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep2_20260912T102544Z",
+    "stop_reason": "path_complete",
+    "steps": 244,
+    "n_track": 222,
+    "rms_track_mm": 4.528453508172042,
+    "mean_track_mm": 3.788689189189189,
+    "max_track_mm": 9.752,
+    "p95_track_mm": 8.385449999999999,
+    "mean_hold_mm": 0.1705,
+    "final_mm": 0.128,
+    "duration_s": 51.6049
+  },
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 3,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/inv_noff_n3/runs/inv_rep3_20260912T102728Z",
+    "stop_reason": "path_complete",
+    "steps": 244,
+    "n_track": 222,
+    "rms_track_mm": 4.542921378711408,
+    "mean_track_mm": 3.798382882882883,
+    "max_track_mm": 9.993,
+    "p95_track_mm": 8.510649999999998,
+    "mean_hold_mm": 0.15840909090909092,
+    "final_mm": 0.14,
+    "duration_s": 42.3871
+  }
+]

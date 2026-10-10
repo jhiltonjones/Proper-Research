@@ -1,0 +1,303 @@
+================================================================================
+LAYER 5 — FLOW-ONLY CENTRELINE FOLLOWING
+Cheap observability analysis. Build the measurement model, prove or disprove
+feasibility, and STOP before any estimator or controller.
+================================================================================
+
+CONTEXT
+
+The catheter carries four flow sensors in a circumferential ring at the tip.
+Vision is withdrawn: the only exteroceptive signal is those four channels. The
+objective is to keep the catheter on the lumen centreline while advancing.
+
+The control ladder (A1 resolved-rate -> A2 LTI-MPC -> A3 LTV-MPC -> A4 SQP-MPC),
+the L1-L3 planner and the beam Jacobian are ALL REUSED UNCHANGED. This task adds
+an estimation front-end only. Do not modify any controller.
+
+Read FLOW_CENTERING_THEORY.md first. It contains the derivations, the predictions
+you are testing, and the numerical targets your implementation must reproduce.
+Everything below assumes it.
+
+flow_observability_reference.py is the ORACLE. It depends only on numpy and
+scipy.special, imports nothing from the project, and all of its self-tests pass.
+Every number in the theory document comes from it. Use it as the ground truth in
+--self-test rather than re-deriving; if your implementation and the oracle
+disagree, the oracle is right until proven otherwise.
+
+Two errors were already caught and fixed in the oracle. Do not reintroduce them:
+  - the quadrupole channel is NOT zero under Womersley (see 2.2 below)
+  - catheter size must be matched to the vessel; a 7 Fr device does not enter a
+    coronary artery, and pairing them produces a nonsense 59% blockage figure
+
+The headline claim is FEASIBILITY: a map over (lumen radius, bend angle, sensor
+noise) saying where flow-only centring is admissible. Not an estimator. Not a
+controller. A map.
+
+--------------------------------------------------------------------------------
+STEP 0 — AUDIT. DO NOT BUILD ANYTHING IN THIS STEP.
+--------------------------------------------------------------------------------
+
+Report findings and stop for review if any gate below fails.
+
+0.1  THE CRITICAL ONE — where do the four channels collapse to a scalar?
+     Trace the flow sensor data path end to end. Find:
+       - where the four raw channels enter the codebase (driver, log, replay, sim)
+       - the exact function/line where they are aggregated to one scalar
+       - whether per-channel raw values are RETAINED anywhere (logs, CSV columns,
+         buffers) or discarded at aggregation
+       - the sample rate, units, and any filtering already applied per channel
+       - whether channel-to-angular-position mapping is recorded, i.e. do we know
+         which physical sensor is at which phi_k
+     GATE: if raw per-channel data is not retained and cannot be retained without
+     a hardware or firmware change, STOP and report. The entire project depends
+     on this. Do not work around it by simulating channels and pretending.
+
+0.2  Lumen geometry. In scenario.py: how do LumenConfig.radius and LumenBend
+     parameterise the vessel? Extract:
+       - is radius constant or a function of arclength?
+       - how does a LumenBend angle map to a radius of curvature R_c? Derive R_c
+         explicitly; the Dean number needs it and an angle alone is not enough.
+       - the historical bend angles and radii actually used in past runs
+
+0.3  Centreline and tip pose. Where is the planned centreline stored after L1-L3,
+     and what accessor gives (a) the centreline point and tangent at arclength z,
+     (b) the measured/simulated tip position? The transverse projection P in the
+     theory doc needs the local frame; confirm one exists or note that it must be
+     built from the tangent.
+
+0.4  Jacobian provider conventions. Read controllers/beam_jacobian_providers.py.
+     Record: the provider interface, how provenance is tracked, the signature of
+     contact_and_contact_free() and compare_providers(). The new flow pipelines
+     must mirror this pattern exactly, including provenance.
+
+0.5  Analysis conventions. Read analysis/_stack_common.py and one analyse_layerN
+     script. Record: the report/metrics/PNG triple, PASS/WARN/FAIL/NOTE grading,
+     the budget = error/tolerance convention, and the --self-test pattern.
+
+0.6  Fluid parameters. Search for any existing density, viscosity, flow rate,
+     heart rate or waveform values. If absent, note that and use blood defaults
+     (rho = 1060 kg/m^3, mu = 3.5e-3 Pa.s, 72 bpm) FLAGGED AS ASSUMPTIONS.
+
+0.7  Sensor characterisation. Find anything recorded about the sensors: modality
+     (thermal, Doppler, pressure), transfer function, noise level, bandwidth,
+     calibration. GATE: if sigma_s is unknown, every feasibility number must be
+     reported parameterised by sigma_s/v_mean, never as a single figure.
+
+REPORT: what exists, what must be built, estimated cost of each item below, and
+any gate failures. Then continue only if 0.1 passed.
+
+--------------------------------------------------------------------------------
+STEP 1 — FLOW FIELD MODEL          proper_research/flow/flow_field.py
+--------------------------------------------------------------------------------
+
+Womersley oscillatory flow in a rigid tube plus a steady component.
+
+  u(y,t) = Re{ (iP/(rho w)) [1 - J0(beta y)/J0(beta)] e^{iwt} },  y = r/R
+  beta = alpha i^{3/2},   alpha = R sqrt(w rho / mu)
+
+Parameterise by (R, omega, rho, mu, waveform). Accept a waveform as a harmonic
+series so a real physiological trace can be supplied later; a single harmonic
+plus steady offset is the default.
+
+Expose, as complex phasors so phase is preserved:
+  - grad_phasor(alpha, y)   = beta J1(beta y) / J0(beta)
+  - vmean_phasor(alpha)     = 1 - 2 J1(beta) / (beta J0(beta))
+  - Gamma(alpha, a_over_R)  = |grad_phasor| / |vmean_phasor|
+
+MANDATORY SELF-TESTS — implement as --self-test, do not proceed if any fails:
+  T1  Gamma(alpha -> 0, a/R) == 4*a/R to relative error < 1e-8.
+      Reference value: at alpha=1e-3 the achieved error is 2.8e-10.
+  T2  Reproduce the Gamma/Gamma_P table in FLOW_CENTERING_THEORY.md section 4.2
+      to 3 decimal places (alpha = 1,2,3,4,5,7,10,15,20; a/R = 0.1,0.2,0.3,0.5).
+  T3  Mass conservation: integrating the profile over the cross-section returns
+      vmean_phasor to < 1e-10.
+
+Add the Dean correction as a SEPARATE, CLEARLY FLAGGED term with its own function
+and its own docstring stating it is a literature correlation and not derived.
+Do not blend it into the base profile. It must be switchable off.
+
+--------------------------------------------------------------------------------
+STEP 2 — SENSOR MODEL AND MEASUREMENT JACOBIAN
+         proper_research/flow/sensor_model.py, flow_jacobian.py, pipelines.py
+--------------------------------------------------------------------------------
+
+2.1  sensor_model.py: h(offset e, arclength z, phase t) -> 4 channel readings.
+     Ring geometry (a, phi_k) is a parameter, not a constant. Sensor k reads
+     u(|e + a u_k|, t). Use the EXACT expression, not the small-offset expansion
+     — the expansion is what you are testing, not what you assume.
+
+2.2  Expose the four channel combinations explicitly as named functions:
+       lateral_y   = s0 - s2
+       lateral_z   = s1 - s3
+       common_mode = mean(s)
+       quadrupole  = s0 - s1 + s2 - s3
+     The quadrupole channel is a model-validity diagnostic. Instrument it from
+     the start; it costs nothing and detects Dean flow, tilt and sensor faults.
+     CAUTION: it is zero to FIRST order only. To second order,
+       Q = [u''(a) - u'(a)/a](ey^2 - ez^2) + O(e^4)
+     and the bracket vanishes identically only for a parabolic profile. Under
+     Womersley an off-centre catheter produces a quadrupole signal with no
+     secondary flow present at all. Implement quadrupole_second_order() so this
+     term can be predicted and subtracted. See theory section 5.2.
+
+2.3  flow_jacobian.py: M = d(measurement)/d(offset) by central differences, using
+     the SAME differencing convention as the existing 3x7 beam Jacobian. Track
+     provenance exactly as beam_jacobian_providers.py does.
+     SELF-TESTS: differential M agrees with the analytic 8a/R to < 1e-6 in the
+     Poiseuille limit; quadrupole < 1e-14 for a PARABOLIC profile at any offset;
+     quadrupole matches quadrupole_second_order() to within 2% under Womersley.
+     Do not test the quadrupole against zero under Womersley -- it is not zero,
+     and a test that expects zero will fail correctly and waste your time.
+
+2.4  pipelines.py: mirror contact_and_contact_free(). Return two providers over
+     one flow model:
+       scalar_aggregate  — the current pipeline, collapses 4 -> 1
+       differential      — the proposed pipeline, 4 -> (y, z, common, quad)
+     Plus compare_sensor_pipelines(scalar, differential, offsets) returning
+     sigma_min, rank and condition number for each. This is the D1 gate and it
+     runs in milliseconds.
+
+2.5  Compose with the robot ONLY after 2.4 passes: H = M . P . J, where J is the
+     existing beam Jacobian, untouched. Confirm rank(H) <= min(rank M, rank J).
+     If rank M is deficient, say so and do not bother forming H.
+
+--------------------------------------------------------------------------------
+STEP 3 — CHEAP OBSERVABILITY SWEEPS. NO CLOSED LOOP. NO QP. NO BEAM SIM.
+--------------------------------------------------------------------------------
+
+Reuse the six-point geometry cross from the previous study: centre, radius-alone
+x2, angle-alone x2, corner. Radius and bend angle now carry second meanings —
+radius drives alpha and a/R, bend angle drives De — so the cross isolates
+discrimination gain from Dean bias exactly as it previously isolated contact
+severity from scheduling severity.
+
+For each of D1-D6: state the prediction BEFORE running, then report agreement or
+disagreement, then the mechanism. A disagreement is a result, not a failure —
+write it up as one.
+
+D1  SCALAR vs DIFFERENTIAL CONDITIONING
+    Sweep |e|/R from 0 to 0.4.
+    PREDICT: scalar sigma_min = 4|e|/R, falls linearly to zero at e=0, rank 1
+    (radial only, azimuth unobservable). Differential sigma_min = 8a/R, constant,
+    rank 2. Crossover at |e| = 2a.
+    This is the headline plot. It is the justification for changing the data path.
+
+D2  DISCRIMINATION GAIN vs WOMERSLEY NUMBER
+    PREDICT: Gamma/Gamma_P flat below alpha ~ 2, knee at 4-5, order of magnitude
+    down by alpha ~ 10, two orders by 15.
+    PREDICT: varies strongly along the RADIUS arm of the cross, FLAT along the
+    BEND-ANGLE arm, because alpha depends on R alone. The flatness is the
+    isolation check — if the angle arm is not flat, something is coupled that
+    should not be, and you must find out what before continuing.
+
+D3  DUTY CYCLE WITH A REAL WAVEFORM
+    Replace the single harmonic with a measured or literature physiological
+    waveform. Report harmonic content and pulsatility index used.
+    PREDICT: observability retained for most of the cycle when a steady component
+    is present; worst case near PI ~ 1-1.5.
+    PREDICT: the low-GAIN window is offset in phase from the low-FLOW window by
+    the separation in theory section 4.4 (17.9 deg at alpha=2, 100.4 deg at
+    alpha=5). Verify this explicitly. It matters: an estimator gated on measured
+    flow magnitude would gate at the wrong moments.
+    REPORT: duration of the low-gain window in ms. This is the coast time an
+    estimator will later have to survive, and it is the main input to the design
+    that follows this study.
+
+D4  DEAN BIAS vs BEND ANGLE
+    Compute De from the R_c derived in 0.2. Compute the apparent lateral offset
+    an axisymmetric-model estimator would report.
+    PREDICT: bias grows with De, directed toward the OUTER wall, FLAT along the
+    radius arm, strong along the bend-angle arm — the mirror image of D2.
+    REPORT: bias in units of R against the 0.10 R tolerance. State clearly that
+    the magnitude rests on a literature correlation, and quote the band.
+
+D5  QUADRUPOLE RESIDUAL AS A DEAN DETECTOR
+    PREDICT: exactly zero under a parabolic profile at any offset. Under
+    Womersley, non-zero even without secondary flow, equal to the second-order
+    term above, peaking near alpha ~ 5 (furthest from both parabolic and plug).
+    PREDICT: as a fraction of the differential signal, the confound is ~0.1% at
+    alpha=2, ~1.6% at alpha=5 for |e|=0.05R, rising to ~4.7% at |e|=0.15R.
+    METHOD: form the RESIDUAL — predict Q from the current offset and the known
+    profile, subtract, attribute only the remainder to Dean flow. A raw Q is not
+    a Dean measurement.
+    TEST: is the residual above sqrt(2)*sigma_s at realistic noise, and does it
+    grow with De? If yes, the array self-diagnoses its own model violation. If
+    no, say so plainly — a diagnostic that cannot be resolved above noise is not
+    a diagnostic.
+    NOTE the circularity: the correction needs an offset estimate, so this cannot
+    bootstrap the estimate it depends on. Report the offset range over which the
+    uncorrected Q is usable directly.
+
+D6  FEASIBILITY ENVELOPE — THE DELIVERABLE
+    Compose D2, D3, D4 into a map over (R, bend angle, sigma_s/v_mean), graded
+    PASS / MARGINAL / FAIL against de/R <= 0.10, with Dean bias ADDED to the
+    noise-driven resolution (it is a bias, it does not average out).
+      de/R = (1/sqrt2)(sigma_s/v_mean)/Gamma  +  dean_bias/R
+    PREDICT: boundary at R ~ 5-6 mm for a 7Fr catheter at 1-2% noise, set by
+    alpha. Solving de/R = 0.10 exactly should give 6.58 mm at 1% noise and
+    5.76 mm at 2%; a 5x noise improvement should move it by about 2 mm, and
+    doubling catheter radius by about 1 mm. The limit is the flow profile, not
+    the instrument.
+    Cross-check against theory section 6; investigate any disagreement over 20%.
+
+--------------------------------------------------------------------------------
+STEP 4 — VALIDITY AND HONESTY PASS
+--------------------------------------------------------------------------------
+
+4.1  Blockage. Report (a/R)^2 for every configuration. Above 10%, flag that the
+     undisturbed-profile model is being used outside its range. Note the sign
+     argument (eccentric annulus redistributes toward the wide gap, same sign as
+     the effect being exploited, so Gamma is likely conservative) and state that
+     the gain is uncalibrated there. Do NOT quote precise numbers in that regime
+     without saying this.
+
+4.2  Classify every number in the report as: exact / scaling argument / requires
+     calibration. Follow theory section 8. Any number resting on an assumed
+     sigma_s must be reported parameterised by sigma_s/v_mean.
+
+4.3  Cross-check the D1 sigma_min against the analytic 4|e|/R and 8a/R, and the
+     D2 gains against the section 4.2 table. Report the residuals.
+
+--------------------------------------------------------------------------------
+STEP 5 — WRITE-UP, THEN STOP
+--------------------------------------------------------------------------------
+
+Produce analysis/analyse_layer5_flow.py following the existing conventions
+exactly: <stem>_report.md, <stem>_metrics.json, a PNG, PASS/WARN/FAIL/NOTE
+grading, budget = error/tolerance, and a --self-test that runs against mocks with
+no project imports.
+
+For each of D1-D6, in this order and no other:
+  PREDICTION  (stated before the run)
+  METHOD
+  RESULT
+  AGREEMENT or DISAGREEMENT with the prediction
+  MECHANISM — why this happened, in terms of the flow physics and the rank
+              structure, not in terms of the numbers
+
+Then the feasibility map, stated as anatomy: which vessels admit flow-only
+centring, which are marginal, which do not, and what governs the boundary.
+
+=== HARD STOP ===
+
+Do NOT write an estimator. Do NOT write a controller. Do NOT run a closed loop.
+Do NOT modify any file under controllers/. The estimator design depends on the
+D3 coast time and the D4 bias magnitude, and choosing it before those numbers
+exist is guessing.
+
+If the analysis finishes early, spend the remaining effort on STEP 4, not on
+starting step 6. An honest validity section is worth more here than a premature
+filter.
+
+--------------------------------------------------------------------------------
+STANDING RULES
+--------------------------------------------------------------------------------
+
+- Every self-test in steps 1 and 2 must pass before the sweep that depends on it.
+  An unvalidated model is not evidence.
+- Report disagreements with the theory document prominently. The predictions are
+  derived from an idealised model and finding where it breaks is the point.
+- No result is quoted without its assumptions. Especially sigma_s.
+- Prefer numpy and scipy.special. No new heavy dependencies.
+- Keep the diff surface small: new files under flow/ and analysis/, nothing else
+  touched except a possible logging change from 0.1 to retain raw channels.

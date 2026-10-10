@@ -1,0 +1,27 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": true,
+  "planner_tip0_world": [
+    0.5005820547675611,
+    -0.6695089478050362,
+    0.013441556889184119
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 127,
+  "perimeter_mm": 60.176706864943554,
+  "time_param_samples": 288,
+  "time_param_duration_s": 28.700000000000003,
+  "time_param_dir": "plans/triangle_base25mm_skipglobal_zraise30mm_2026-09-24/time_parameterized_configuration_path"
+}

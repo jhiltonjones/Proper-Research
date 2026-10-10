@@ -1,0 +1,26 @@
+{
+  "run_name": "bends_p30_m60_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_-60",
+  "log_csv_path": "experiment2_sim_v/bends_p30_m60_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_-60/log.csv",
+  "plant_contact": true,
+  "jacobian_variant": "no_contact",
+  "controller_kind": "mpc",
+  "inverse_sequence_mode": "",
+  "inverse_kp": NaN,
+  "solver_mode": "sqp_full",
+  "rollout_steps": 10,
+  "Np": 15,
+  "N_sqp": 50,
+  "n_steps": 17,
+  "final_status": "primal infeasible",
+  "final_infeasible": 1,
+  "final_i_ref": 72,
+  "final_tip": [
+    0.7638944185612228,
+    -0.7120086426112437,
+    -0.1003830870599016
+  ],
+  "num_infeasible_steps": 1,
+  "mean_sqp_iters": 0.0,
+  "mean_jac_cond": 45978064295602.91,
+  "max_jac_cond": 408030188827908.56
+}

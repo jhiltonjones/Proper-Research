@@ -1,0 +1,45 @@
+{
+  "stop_reason": "exception:ValueError: Arc radius exceeds maximum_allowed_arc_radius_mm.",
+  "samples_logged": 0,
+  "jacobian_source": "analytic",
+  "p7_mapping": "UR pose6 -> build_measured_p8_from_pose6_and_length(z_offset once) -> quaternion_wxyz_to_rotvec -> p7",
+  "composite_inputs": {
+    "beam_diameter_m": 0.002,
+    "particle_mass_fraction": 0.8,
+    "particle_density_kg_m3": 7450.0,
+    "particle_specific_moment_A_m2_kg": 80.6,
+    "silicone_density_kg_m3": 1070.0,
+    "remanence_fraction": 1.0,
+    "effective_youngs_modulus_pa": 1000000.0,
+    "poisson_ratio": 0.49,
+    "inner_diameter_m": 0.0,
+    "magnetisation_axis_local": [
+      -1.0,
+      0.0,
+      0.0
+    ]
+  },
+  "composite_calculated": {
+    "area": 3.141592653589793e-06,
+    "composite_density": 3397.9113384484235,
+    "particle_volume_fraction": 0.36487638533674344,
+    "particle_mass_per_length": 0.008539882638735223,
+    "mass_per_length": 0.010674853298419027,
+    "moment_per_length": 0.6883145406820589,
+    "composite_magnetization": 219097.32310315434,
+    "equivalent_polarization": 0.2753258162728236
+  },
+  "initial_position_bias_m": null,
+  "initial_angle_bias_deg": null,
+  "one_step_prediction_rmse_mm": NaN,
+  "model_position_rmse_mm": NaN,
+  "jacobian_relative_difference_rmse": NaN,
+  "physical_verification_assumptions": [
+    "The sign and magnitude of z_offset_m in the existing p8 helper match the lab setup.",
+    "The raw forward model accepts p7=[xyz, rotation-vector, insertion].",
+    "The model callable returns tip XYZ and preferably tip tangent XYZ.",
+    "Source translation columns 0/1 correspond to the live robot XY command.",
+    "The configured composite properties and magnetisation-axis sign match the specimen.",
+    "LiveHardwareController.send_step uses the same p8 convention as the optimized runner."
+  ]
+}

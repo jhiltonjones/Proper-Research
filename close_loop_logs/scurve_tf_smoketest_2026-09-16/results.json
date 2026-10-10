@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_sqp_online",
+    "key": "tf",
+    "rep": 1,
+    "run_dir": "close_loop_logs/scurve_tf_smoketest_2026-09-16/runs/tf_rep1_20260916T094334Z",
+    "stop_reason": "path_complete",
+    "steps": 193,
+    "n_track": 171,
+    "rms_track_mm": 1.6192763472887786,
+    "mean_track_mm": 1.22687134502924,
+    "max_track_mm": 3.919,
+    "p95_track_mm": 3.4645,
+    "mean_hold_mm": 0.2946363636363636,
+    "final_mm": 0.281,
+    "duration_s": 40.6547
+  }
+]

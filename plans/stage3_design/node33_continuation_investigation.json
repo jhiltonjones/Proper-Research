@@ -1,0 +1,205 @@
+{
+  "baseline": {
+    "label": "baseline",
+    "elapsed_s": 18.717290892032906,
+    "feasible": true,
+    "q_rad": [
+      -0.7924419913036737,
+      -1.8165860774851763,
+      -1.8245403140826386,
+      -1.0494648318286572,
+      1.4848783168002067,
+      -1.2858520957139443
+    ],
+    "insertion_m": 0.031171244667576672,
+    "magnet_pose6": [
+      0.39243190436727127,
+      -0.7132046034323175,
+      -0.039626999928493,
+      2.619192673783691,
+      -1.565439447755916,
+      -0.0013410966696195917
+    ],
+    "position_error_m": 0.0012068638391830333,
+    "tangent_error_rad": 0.23857444273735426,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 43.02821421902627
+  },
+  "relaxed_full": {
+    "label": "relaxed_full",
+    "elapsed_s": 19.03219170216471,
+    "feasible": true,
+    "q_rad": [
+      -0.7960985412288976,
+      -1.8157362060230233,
+      -1.8230313069120678,
+      -1.0624736253613727,
+      1.4776978419302764,
+      -1.2867521035320937
+    ],
+    "insertion_m": 0.03237973400212559,
+    "magnet_pose6": [
+      0.383076122938309,
+      -0.7133500966190144,
+      -0.039328884430101685,
+      2.6136283851793545,
+      -1.5662971026127872,
+      -0.020123892270906083
+    ],
+    "position_error_m": 5.224872928606007e-08,
+    "tangent_error_rad": 0.23683286710453047,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 43.322365081170574
+  },
+  "relax_k67.17": {
+    "label": "relax_k67.17",
+    "elapsed_s": 21.463527644984424,
+    "feasible": true,
+    "q_rad": [
+      -0.7966606888867037,
+      -1.8149639773569664,
+      -1.8250534853571874,
+      -1.058647755701069,
+      1.4798638447020096,
+      -1.2867323972787583
+    ],
+    "insertion_m": 0.03237630318031897,
+    "magnet_pose6": [
+      0.3839382613127605,
+      -0.7131667305653794,
+      -0.03962699937333508,
+      2.6143622165010716,
+      -1.5679466834091669,
+      -0.015536909210911599
+    ],
+    "position_error_m": 3.28753384034001e-06,
+    "tangent_error_rad": 0.23696498448762054,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 45.98889522301033
+  },
+  "relax_k34.08": {
+    "label": "relax_k34.08",
+    "elapsed_s": 23.852291809860617,
+    "feasible": true,
+    "q_rad": [
+      -0.7949470423658512,
+      -1.8159778070213803,
+      -1.8237567397889358,
+      -1.0589401112527828,
+      1.4796681488481864,
+      -1.2863984246047742
+    ],
+    "insertion_m": 0.03236629904614209,
+    "magnet_pose6": [
+      0.3855563948803456,
+      -0.7130636558175502,
+      -0.03962702295860543,
+      2.615273055389222,
+      -1.5660440888142546,
+      -0.015479403389517353
+    ],
+    "position_error_m": 1.3009854457459623e-05,
+    "tangent_error_rad": 0.23723880829737096,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_9: Iteration limit reached; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 48.46188827813603
+  },
+  "relax_k17.54": {
+    "label": "relax_k17.54",
+    "elapsed_s": 18.505054997978732,
+    "feasible": true,
+    "q_rad": [
+      -0.7930677432916612,
+      -1.8173164871461778,
+      -1.822083501307506,
+      -1.058866263861657,
+      1.480063126717448,
+      -1.28675109473337
+    ],
+    "insertion_m": 0.032332053228731235,
+    "magnet_pose6": [
+      0.3878269090250161,
+      -0.7129757665513128,
+      -0.03962699991031843,
+      2.6172446562578973,
+      -1.5632877882906775,
+      -0.01461813875785277
+    ],
+    "position_error_m": 4.697672644490026e-05,
+    "tangent_error_rad": 0.23761967836756964,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 43.098806692054495
+  },
+  "relax_k9.27": {
+    "label": "relax_k9.27",
+    "elapsed_s": 14.491709291003644,
+    "feasible": true,
+    "q_rad": [
+      -0.7929548913763664,
+      -1.817200340174958,
+      -1.82240590299903,
+      -1.0577490430777303,
+      1.4806621447612953,
+      -1.28663355484995
+    ],
+    "insertion_m": 0.03222486264580591,
+    "magnet_pose6": [
+      0.38839925256255875,
+      -0.7129652782197794,
+      -0.03962699906579498,
+      2.6175209370728365,
+      -1.5635237496499268,
+      -0.013029302445544047
+    ],
+    "position_error_m": 0.0001542072045583159,
+    "tangent_error_rad": 0.23778313564318437,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 39.41235224693082
+  },
+  "relax_k5.14": {
+    "label": "relax_k5.14",
+    "elapsed_s": 11.063236695015803,
+    "feasible": true,
+    "q_rad": [
+      -0.7927313886543532,
+      -1.8170003895384959,
+      -1.823023561433946,
+      -1.0554484915448434,
+      1.481907796030945,
+      -1.2864282261186888
+    ],
+    "insertion_m": 0.03198185577960845,
+    "magnet_pose6": [
+      0.38959644217019584,
+      -0.712962532074306,
+      -0.039626999924200434,
+      2.618119996910312,
+      -1.5639755972740381,
+      -0.00974505345038852
+    ],
+    "position_error_m": 0.00039717340641493503,
+    "tangent_error_rad": 0.23812356922852146,
+    "contact_active": false,
+    "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=z_floor_or_base_only; fresh_postvalidated_and_committed",
+    "within_bounds": true,
+    "hung": false,
+    "wall_s": 35.95052211894654
+  }
+}

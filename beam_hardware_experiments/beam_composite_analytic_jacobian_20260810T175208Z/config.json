@@ -1,0 +1,162 @@
+{
+  "experiment": {
+    "mode": "arc_validation",
+    "send_commands": false,
+    "live_confirmation_phrase": "MOVE MAGNET",
+    "output_root": "beam_hardware_experiments",
+    "run_name": "beam_composite_analytic_jacobian",
+    "save_vision_overlays": true,
+    "robot_ip": "192.168.56.101",
+    "z_offset_m": 0.27,
+    "robot_speed_m_s": 0.03,
+    "robot_acceleration_m_s2": 0.1,
+    "workspace_xyz_min_m": [
+      0.2,
+      -1.5,
+      -0.3
+    ],
+    "workspace_xyz_max_m": [
+      1.2,
+      1.5,
+      1.5
+    ],
+    "controller_max_translation_m": 0.01,
+    "controller_max_rotation_rad": 0.2,
+    "advancer_port": "/dev/ttyACM0",
+    "advancer_baud": 115200,
+    "advancer_delay_us": 20,
+    "advancer_min_command_mm": 0.166,
+    "image_filename": "focused_image.jpg",
+    "roi_polygon_path": "/home/jack/Proper-Research/custom_area.json",
+    "manual_boundary_path": "/home/jack/Proper-Research/manual_vessel_boundaries.json",
+    "calibration_points_path": "/home/jack/Proper-Research/calibration_points.json",
+    "blue_roi_path": "blue_roi_box.json",
+    "green_roi_path": "green_roi_box.json",
+    "pivot_hint_px": [
+      309,
+      330
+    ],
+    "vision_samples_per_point": 1,
+    "settle_time_s": 1.0,
+    "pivot_pose6": [
+      0.84813282,
+      -0.68127317,
+      -0.1,
+      3.141592653589793,
+      0.001,
+      0.001
+    ],
+    "initial_beam_length_m": 0.027,
+    "use_vision_length_in_model": false,
+    "min_vision_length_m": 0.01,
+    "max_vision_length_m": 0.05,
+    "magnet_yaw_calibration_deg": -10.0,
+    "jacobian_variant": "contact",
+    "sensitivity_workers": 1,
+    "composite": {
+      "beam_diameter_m": 0.002,
+      "particle_mass_fraction": 0.8,
+      "particle_density_kg_m3": 7450.0,
+      "particle_specific_moment_A_m2_kg": 80.6,
+      "silicone_density_kg_m3": 1070.0,
+      "remanence_fraction": 1.0,
+      "effective_youngs_modulus_pa": 1000000.0,
+      "poisson_ratio": 0.49,
+      "inner_diameter_m": 0.0,
+      "magnetisation_axis_local": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "beam_contact_radius_m": 0.001,
+    "contact_k": 100000.0,
+    "contact_penetration_switch_m": 5e-05,
+    "contact_k_hard": 10000000000.0,
+    "contact_smooth_epsilon_m": 1e-05,
+    "contact_window": 3,
+    "jacobian_source": "analytic",
+    "analytic_jacobian_mode": "fast",
+    "analytic_eps_theta": 1e-06,
+    "analytic_eps_hess": 0.0001,
+    "finite_difference_step_mm": 0.25,
+    "controlled_output": "tip_position",
+    "controlled_tip_axes": [
+      0,
+      1
+    ],
+    "active_control_axes": [
+      0,
+      1
+    ],
+    "enable_jacobian_consistency_gate": true,
+    "maximum_analytic_condition_number": 10000.0,
+    "maximum_relative_jacobian_disagreement": 0.35,
+    "maximum_predicted_tip_displacement_mm": 2.0,
+    "proportional_gain": 0.35,
+    "damped_inverse_lambda": 0.05,
+    "maximum_magnet_step_mm": 1.0,
+    "maximum_axis_steps_mm": [
+      0.75,
+      0.75
+    ],
+    "target_tolerance_mm": 0.5,
+    "required_consecutive_hits": 2,
+    "maximum_iterations_per_target": 30,
+    "stall_window_iterations": 6,
+    "minimum_progress_over_stall_window_mm": 0.1,
+    "dt_s": 0.05,
+    "angle_plane_axes": [
+      0,
+      1
+    ],
+    "arc_center_robot_m": [
+      0.84813282,
+      -0.68127317,
+      -0.1
+    ],
+    "arc_plane_axes": [
+      0,
+      1
+    ],
+    "arc_radius_mm": null,
+    "arc_sweep_deg": 10.0,
+    "arc_number_of_points": 21,
+    "return_along_arc_to_start": true,
+    "maximum_allowed_arc_radius_mm": 250.0,
+    "target_point_frame": "beam_local_mm",
+    "target_points": [
+      [
+        -25.0,
+        3.0,
+        0.0
+      ]
+    ]
+  },
+  "composite_inputs": {
+    "beam_diameter_m": 0.002,
+    "particle_mass_fraction": 0.8,
+    "particle_density_kg_m3": 7450.0,
+    "particle_specific_moment_A_m2_kg": 80.6,
+    "silicone_density_kg_m3": 1070.0,
+    "remanence_fraction": 1.0,
+    "effective_youngs_modulus_pa": 1000000.0,
+    "poisson_ratio": 0.49,
+    "inner_diameter_m": 0.0,
+    "magnetisation_axis_local": [
+      -1.0,
+      0.0,
+      0.0
+    ]
+  },
+  "composite_calculated": {
+    "area": 3.141592653589793e-06,
+    "composite_density": 3397.9113384484235,
+    "particle_volume_fraction": 0.36487638533674344,
+    "particle_mass_per_length": 0.008539882638735223,
+    "mass_per_length": 0.010674853298419027,
+    "moment_per_length": 0.6883145406820589,
+    "composite_magnetization": 219097.32310315434,
+    "equivalent_polarization": 0.2753258162728236
+  }
+}

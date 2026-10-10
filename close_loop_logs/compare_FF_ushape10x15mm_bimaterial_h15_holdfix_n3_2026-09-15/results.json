@@ -1,0 +1,34 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_ushape10x15mm_bimaterial_h15_holdfix_n3_2026-09-15/runs/inv_rep1_20260915T160202Z",
+    "stop_reason": "path_complete",
+    "steps": 234,
+    "n_track": 212,
+    "rms_track_mm": 1.1485489040113444,
+    "mean_track_mm": 0.9832358490566039,
+    "max_track_mm": 2.567,
+    "p95_track_mm": 2.2448499999999996,
+    "mean_hold_mm": 6.96390909090909,
+    "final_mm": 8.819,
+    "duration_s": 40.9868
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_ushape10x15mm_bimaterial_h15_holdfix_n3_2026-09-15/runs/lti_rep1_20260915T160336Z",
+    "stop_reason": "path_complete",
+    "steps": 232,
+    "n_track": 211,
+    "rms_track_mm": 1.2895047269235944,
+    "mean_track_mm": 1.092478672985782,
+    "max_track_mm": 3.177,
+    "p95_track_mm": 2.651,
+    "mean_hold_mm": 6.319523809523808,
+    "final_mm": 9.15,
+    "duration_s": 41.0478
+  }
+]

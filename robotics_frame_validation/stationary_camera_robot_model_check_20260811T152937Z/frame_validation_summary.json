@@ -1,0 +1,608 @@
+{
+  "timestamp_utc": "2026-08-11T15:29:47.649326+00:00",
+  "image_timestamp_utc": "2026-08-11T15:29:44.359120+00:00",
+  "hardware_motion_commanded": false,
+  "hardware_execution_tested_in_development_workspace": false,
+  "frame_notation": "T_A_B maps coordinates from frame B into frame A",
+  "frames": {
+    "R": "UR robot base / forward-model world frame",
+    "TCP": "UR tool centre point returned by robot",
+    "M": "source-magnet centre and body-axis frame",
+    "B": "fixed beam base / model base frame",
+    "I": "pixel coordinates [u right, v down]; not an SE(3) frame"
+  },
+  "transform_chain": "T_R_M = T_R_TCP @ T_TCP_M",
+  "z_offset_handling": "No scalar z_offset is applied. The complete physical tool offset is represented once by T_TCP_M. EXPERIMENT_CONFIG.z_offset_m is ignored here.",
+  "T_R_B": [
+    [
+      0.9999995947153475,
+      0.0006366197446826218,
+      0.0006366195420402855,
+      0.84813282
+    ],
+    [
+      0.0006366195420402855,
+      -0.9999997973576231,
+      5.209521638644374e-07,
+      -0.68127317
+    ],
+    [
+      0.0006366197446826218,
+      -1.1566751142293798e-07,
+      -0.9999997973576231,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_R_TCP": [
+    [
+      0.8657032937818252,
+      0.5005571833215242,
+      0.0005597861390669505,
+      0.5017362198907387
+    ],
+    [
+      0.5005571071905767,
+      -0.8657034738960283,
+      0.00027879266639926046,
+      -0.8812755915443158
+    ],
+    [
+      0.0006241604770526152,
+      3.8853200832677205e-05,
+      -0.9999998044570451,
+      2.4198603711104993e-05
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_TCP_M": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "T_R_M": [
+    [
+      0.8657032937818252,
+      0.5005571833215242,
+      0.0005597861390669505,
+      0.5017362198907387
+    ],
+    [
+      0.5005571071905767,
+      -0.8657034738960283,
+      0.00027879266639926046,
+      -0.8812755915443158
+    ],
+    [
+      0.0006241604770526152,
+      3.8853200832677205e-05,
+      -0.9999998044570451,
+      2.4198603711104993e-05
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "robot_pose6_before": [
+    0.5017196670040157,
+    -0.8812756171676226,
+    1.4974272379023046e-05,
+    -3.0341611701547704,
+    -0.8140154896703818,
+    -0.0009418368162633891
+  ],
+  "robot_pose6_after": [
+    0.5017527727774617,
+    -0.8812755659210089,
+    3.342293504318694e-05,
+    -3.0341660081417268,
+    -0.8140807633306362,
+    -0.000983596884135806
+  ],
+  "robot_pose6_midpoint_used": [
+    0.5017362198907387,
+    -0.8812755915443158,
+    2.4198603711104993e-05,
+    -3.034163589389513,
+    -0.8140481264552797,
+    -0.0009627167785030744
+  ],
+  "camera_calibration": {
+    "mode": "basis_scale",
+    "origin_px": [
+      311.0,
+      275.0
+    ],
+    "H_Bxy_I": [
+      [
+        0.0,
+        0.0005356288925064883,
+        -0.1472979454392843
+      ],
+      [
+        0.0005356288925064883,
+        0.0,
+        -0.16658058556951788
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "metadata": {
+      "metres_per_pixel": 0.0005356288925064883,
+      "saved_axis_convention": "image_cartesian",
+      "positive_axis_signs": [
+        1.0,
+        1.0
+      ],
+      "raw_basis_px_from_B": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          -0.0
+        ]
+      ],
+      "fitted_basis_px_from_B": [
+        [
+          0.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "raw_axis_dot": 0.0,
+      "fitted_axis_dot": 0.0
+    }
+  },
+  "measurement": {
+    "markers_px": {
+      "base": [
+        309.70940170940173,
+        276.1709401709402
+      ],
+      "magnetised_start": null,
+      "tangent_start": [
+        311.9595015576324,
+        219.0529595015576
+      ],
+      "tip": [
+        312.3744292237443,
+        198.89497716894977
+      ]
+    },
+    "detected_base_B_m": [
+      [
+        311.0,
+        275.0
+      ]
+    ],
+    "tip_B_m": [
+      -0.04076404909317645,
+      0.0007361840029427025,
+      0.0
+    ],
+    "tip_R_m": [
+      0.807369256097139,
+      -0.682035305044026,
+      -2.5951283678499422e-05
+    ],
+    "tangent_B": [
+      -0.9997882210983118,
+      0.0205794303388906,
+      0.0
+    ],
+    "tangent_R": [
+      -0.999774714627802,
+      -0.0212159108880788,
+      -0.0006364873024237937
+    ],
+    "length_m": 0.042130883729699836,
+    "reconstruction_method": "marker_anchored_black_path"
+  },
+  "model": {
+    "p8_source_quaternion_state": [
+      0.5017362198907387,
+      -0.8812755915443158,
+      2.4198603711104993e-05,
+      -6.210626405677499e-05,
+      0.9658424524909456,
+      0.25912981147447695,
+      0.00030645438421818196,
+      0.042
+    ],
+    "p7_source_rotvec_state": [
+      0.5017362198907387,
+      -0.8812755915443158,
+      2.4198603711104993e-05,
+      -3.034163589389513,
+      -0.8140481264552798,
+      -0.0009627167785030746,
+      0.042
+    ],
+    "tip_B_m": [
+      -0.04130953940109516,
+      0.006724903032243046,
+      -1.437647956250589e-05
+    ],
+    "tip_R_m": [
+      0.8068275693947308,
+      -0.6880243701370375,
+      -1.1922769630058293e-05
+    ],
+    "tangent_B": [
+      -0.9870068544124917,
+      0.1606777873661609,
+      -0.00034349654041744744
+    ],
+    "tangent_R": [
+      -0.9869043824184028,
+      -0.1613061028366241,
+      -0.0002848701660453918
+    ],
+    "source_position_B_m": [
+      -0.3465237697647372,
+      0.1997818580974302,
+      -0.0002448256354275939
+    ],
+    "source_position_R_m": [
+      0.5017362198907387,
+      -0.8812755915443158,
+      2.4198603711104993e-05
+    ],
+    "source_axes_B_columns": [
+      [
+        0.8660220047147948,
+        0.5000058814390006,
+        -7.665622314228887e-05
+      ],
+      [
+        -0.5000058820188316,
+        0.8660219630495698,
+        -0.00027832057150631724
+      ],
+      [
+        -7.277594983297155e-05,
+        0.00027936030175376063,
+        0.999999958330741
+      ]
+    ],
+    "dipole_R": [
+      -0.7656304728226722,
+      -0.6432803506286188,
+      -0.000607931289404092
+    ],
+    "insertion_length_m": 0.042,
+    "metadata": {
+      "composite_inputs": {
+        "beam_diameter_m": 0.002,
+        "particle_mass_fraction": 0.8,
+        "particle_density_kg_m3": 7450.0,
+        "particle_specific_moment_A_m2_kg": 80.6,
+        "silicone_density_kg_m3": 1070.0,
+        "remanence_fraction": 1.0,
+        "effective_youngs_modulus_pa": 1000000.0,
+        "poisson_ratio": 0.49,
+        "inner_diameter_m": 0.0,
+        "magnetisation_axis_local": [
+          -1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "composite_calculated": {
+        "area": 3.141592653589793e-06,
+        "composite_density": 3397.9113384484235,
+        "particle_volume_fraction": 0.36487638533674344,
+        "particle_mass_per_length": 0.008539882638735223,
+        "mass_per_length": 0.010674853298419027,
+        "moment_per_length": 0.6883145406820589,
+        "composite_magnetization": 219097.32310315434,
+        "equivalent_polarization": 0.2753258162728236
+      },
+      "external_source_magnet_body_moment": [
+        -289.1641764782095,
+        50.98744616745241,
+        0.0
+      ],
+      "contact_enabled": true,
+      "model_type": "MagneticBeamForwardModelOptimized"
+    }
+  },
+  "metrics": {
+    "robot_translation_during_capture_mm": 0.03789918225722307,
+    "robot_rotation_during_capture_deg": 0.0029885589390603183,
+    "detected_base_error_mm": 415145.75753583224,
+    "tip_error_R_mm": [
+      0.5416867024082839,
+      5.9890650930115585,
+      -0.01402851404844113
+    ],
+    "tip_error_norm_mm": 6.013528246470779,
+    "centreline_rmse_mm": 3.3129577819056117,
+    "centreline_max_error_mm": 6.525896120070917,
+    "tangent_error_deg": 8.067066252733298,
+    "measured_length_mm": 42.13088372969984,
+    "model_length_mm": 42.00000000000006,
+    "camera_round_trip_error_px": 5.684341886080802e-14,
+    "source_position_B_mm": [
+      -346.5237697647372,
+      199.78185809743022,
+      -0.2448256354275939
+    ],
+    "source_out_of_beam_plane_mm": -0.2448256354275939
+  },
+  "checks": {
+    "robot_stationary_translation": {
+      "passed": true,
+      "value": 0.03789918225722307,
+      "limit": 0.25,
+      "units": "mm"
+    },
+    "robot_stationary_rotation": {
+      "passed": true,
+      "value": 0.0029885589390603183,
+      "limit": 0.1,
+      "units": "deg"
+    },
+    "detected_base_matches_fixed_origin": {
+      "passed": false,
+      "value": 415145.75753583224,
+      "limit": 3.0,
+      "units": "mm"
+    },
+    "tip_matches_model": {
+      "passed": true,
+      "value": 6.013528246470779,
+      "limit": 10.0,
+      "units": "mm"
+    },
+    "centreline_matches_model": {
+      "passed": true,
+      "value": 3.3129577819056117,
+      "limit": 10.0,
+      "units": "mm"
+    },
+    "tangent_matches_model": {
+      "passed": true,
+      "value": 8.067066252733298,
+      "limit": 15.0,
+      "units": "deg"
+    },
+    "camera_map_round_trip": {
+      "passed": true,
+      "value": 5.684341886080802e-14,
+      "limit": 1e-06,
+      "units": "px"
+    },
+    "all_passed": false
+  },
+  "validation_config": {
+    "use_live_hardware": true,
+    "capture_new_image": true,
+    "offline_robot_tcp_pose6": null,
+    "T_robot_beam_pose6": [
+      0.84813282,
+      -0.68127317,
+      0.0,
+      3.141592653589793,
+      0.001,
+      0.001
+    ],
+    "T_tcp_magnet_pose6": null,
+    "assume_tcp_is_magnet_frame": true,
+    "camera_calibration_mode": "basis_scale",
+    "saved_axis_convention": "image_cartesian",
+    "saved_axis_signs_for_positive_beam_xy": [
+      1.0,
+      1.0
+    ],
+    "known_calibration_distance_mm": 30.0,
+    "homography_pixel_to_beam_xy_m": null,
+    "marker_min_area_px2": 4.0,
+    "marker_max_area_px2": 40000.0,
+    "marker_saturation_min": 50,
+    "marker_value_min": 40,
+    "marker_red_hue1_high": 10,
+    "marker_red_hue2_low": 170,
+    "black_beam_threshold": 100,
+    "beam_search_tube_radius_px": 25,
+    "marker_bridge_radius_px": 8,
+    "fallback_samples_per_marker_segment": 40,
+    "use_measured_beam_length_for_model": false,
+    "source_magnet_dimensions_mm": [
+      20.0,
+      20.0,
+      20.0
+    ],
+    "source_axis_display_length_mm": 12.0,
+    "beam_axis_display_length_mm": 10.0,
+    "dipole_display_length_mm": 15.0,
+    "output_root": "robotics_frame_validation",
+    "run_name": "stationary_camera_robot_model_check",
+    "show_interactively": false,
+    "comparison_points": 120,
+    "strict_checks": false,
+    "maximum_robot_translation_during_capture_mm": 0.25,
+    "maximum_robot_rotation_during_capture_deg": 0.1,
+    "maximum_detected_base_error_mm": 3.0,
+    "maximum_tip_error_mm": 10.0,
+    "maximum_centerline_rmse_mm": 10.0,
+    "maximum_tangent_error_deg": 15.0,
+    "maximum_camera_round_trip_error_px": 1e-06
+  },
+  "experiment_config": {
+    "mode": "arc_validation",
+    "send_commands": false,
+    "live_confirmation_phrase": "MOVE MAGNET",
+    "output_root": "beam_hardware_experiments",
+    "run_name": "beam_composite_analytic_jacobian",
+    "save_vision_overlays": true,
+    "robot_ip": "192.168.56.101",
+    "z_offset_m": 0.27,
+    "robot_speed_m_s": 0.03,
+    "robot_acceleration_m_s2": 0.1,
+    "workspace_xyz_min_m": [
+      0.2,
+      -1.5,
+      -0.3
+    ],
+    "workspace_xyz_max_m": [
+      1.2,
+      1.5,
+      1.5
+    ],
+    "controller_max_translation_m": 0.01,
+    "controller_max_rotation_rad": 0.2,
+    "advancer_port": "/dev/ttyACM0",
+    "advancer_baud": 115200,
+    "advancer_delay_us": 20,
+    "advancer_min_command_mm": 0.166,
+    "image_filename": "focused_image.jpg",
+    "roi_polygon_path": "/home/jack/Proper-Research/custom_area.json",
+    "manual_boundary_path": "/home/jack/Proper-Research/manual_vessel_boundaries.json",
+    "calibration_points_path": "/home/jack/Proper-Research/calibration_points.json",
+    "blue_roi_path": "blue_roi_box.json",
+    "green_roi_path": "green_roi_box.json",
+    "pivot_hint_px": [
+      309,
+      330
+    ],
+    "vision_samples_per_point": 1,
+    "settle_time_s": 1.0,
+    "pivot_pose6": [
+      0.84813282,
+      -0.68127317,
+      0.0,
+      3.141592653589793,
+      0.001,
+      0.001
+    ],
+    "initial_beam_length_m": 0.042,
+    "use_vision_length_in_model": false,
+    "min_vision_length_m": 0.01,
+    "max_vision_length_m": 0.05,
+    "magnet_yaw_calibration_deg": -10.0,
+    "jacobian_variant": "contact",
+    "sensitivity_workers": 1,
+    "composite": {
+      "beam_diameter_m": 0.002,
+      "particle_mass_fraction": 0.8,
+      "particle_density_kg_m3": 7450.0,
+      "particle_specific_moment_A_m2_kg": 80.6,
+      "silicone_density_kg_m3": 1070.0,
+      "remanence_fraction": 1.0,
+      "effective_youngs_modulus_pa": 1000000.0,
+      "poisson_ratio": 0.49,
+      "inner_diameter_m": 0.0,
+      "magnetisation_axis_local": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "beam_contact_radius_m": 0.001,
+    "contact_k": 100000.0,
+    "contact_penetration_switch_m": 5e-05,
+    "contact_k_hard": 10000000000.0,
+    "contact_smooth_epsilon_m": 1e-05,
+    "contact_window": 3,
+    "jacobian_source": "analytic",
+    "analytic_jacobian_mode": "fast",
+    "analytic_eps_theta": 1e-06,
+    "analytic_eps_hess": 0.0001,
+    "finite_difference_step_mm": 0.25,
+    "controlled_output": "tip_position",
+    "controlled_tip_axes": [
+      0,
+      1
+    ],
+    "active_control_axes": [
+      0,
+      1
+    ],
+    "enable_jacobian_consistency_gate": true,
+    "maximum_analytic_condition_number": 10000.0,
+    "maximum_relative_jacobian_disagreement": 0.35,
+    "maximum_predicted_tip_displacement_mm": 2.0,
+    "proportional_gain": 0.35,
+    "damped_inverse_lambda": 0.05,
+    "maximum_magnet_step_mm": 1.0,
+    "maximum_axis_steps_mm": [
+      0.75,
+      0.75
+    ],
+    "target_tolerance_mm": 0.5,
+    "required_consecutive_hits": 2,
+    "maximum_iterations_per_target": 30,
+    "stall_window_iterations": 6,
+    "minimum_progress_over_stall_window_mm": 0.1,
+    "dt_s": 0.05,
+    "angle_plane_axes": [
+      0,
+      1
+    ],
+    "arc_center_robot_m": [
+      0.84813282,
+      -0.68127317,
+      -0.1
+    ],
+    "arc_plane_axes": [
+      0,
+      1
+    ],
+    "arc_radius_mm": null,
+    "arc_sweep_deg": 10.0,
+    "arc_number_of_points": 21,
+    "return_along_arc_to_start": true,
+    "maximum_allowed_arc_radius_mm": 250.0,
+    "target_point_frame": "beam_local_mm",
+    "target_points": [
+      [
+        -25.0,
+        3.0,
+        0.0
+      ]
+    ]
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "lumen": {
+    "length": 0.04,
+    "n_pts": 240,
+    "n_ref_pts": 100,
+    "ds_target": 0.001,
+    "radius": 0.004,
+    "bends": [
+      {
+        "bend_axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "bend_angle_rad": 0.5235987755982988,
+        "bend_start": 0.0,
+        "bend_end": 0.01
+      },
+      {
+        "bend_axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "bend_angle_rad": -1.0471975511965976,
+        "bend_start": 0.015,
+        "bend_end": 0.025
+      }
+    ]
+  },
+  "model": {
+    "plant_contact": true,
+    "jacobian_variant": "no_contact"
+  },
+  "controller": {
+    "controller_kind": "mpc",
+    "solver_mode": "sqp_full",
+    "N_sqp": 50,
+    "rollout_steps": 10,
+    "Np": 15,
+    "max_steps": 40,
+    "adaptive_rollout_enabled": false,
+    "inverse_sequence_mode": "rollout_ltv",
+    "inverse_kp": 0.3,
+    "inverse_desired_step_max_m": 0.004,
+    "inverse_extra_damping": 0.0
+  },
+  "run_root": "experiment2_sim_v",
+  "tag": "bends_+30_-60",
+  "seed": 0,
+  "run_name": "bends_p30_m60_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_-60",
+  "out_root": "experiment2_sim_v/bends_p30_m60_jac_no_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_-60",
+  "dt": 0.01,
+  "L0": 0.013,
+  "p0_ur": [
+    0.7981328220229531,
+    -0.7099273166922002,
+    -0.1
+  ],
+  "p0": [
+    0.6449629248348498,
+    -0.7656766000542843,
+    -0.10000000000000003,
+    0.023861660796284146,
+    0.9845273487365847,
+    0.1735987348276319,
+    0.0,
+    0.013
+  ],
+  "p_min": [
+    0.2,
+    -1.0,
+    -0.10000000000000003,
+    -Infinity,
+    -Infinity,
+    -Infinity,
+    -Infinity,
+    0.002
+  ],
+  "p_max": [
+    0.8,
+    1.5,
+    -0.10000000000000003,
+    Infinity,
+    Infinity,
+    Infinity,
+    Infinity,
+    0.05
+  ],
+  "u_max": [
+    0.5,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    5.235987755982988,
+    0.5
+  ]
+}

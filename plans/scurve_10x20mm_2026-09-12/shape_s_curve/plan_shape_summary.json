@@ -1,0 +1,27 @@
+{
+  "shape": "s_curve",
+  "size_mm": 10.0,
+  "closed": false,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.5005794864881917,
+    -0.669607395033303,
+    -0.01656004894946191
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 256,
+  "perimeter_mm": 45.94189358162386,
+  "time_param_samples": 174,
+  "time_param_duration_s": 17.3,
+  "time_param_dir": "plans/scurve_10x20mm_2026-09-12/time_parameterized_configuration_path"
+}

@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/rectangle_ltv_h1_2026-09-13/runs/ltv_rep1_20260913T113316Z,path_complete,285,264,1.7673596800414917,1.4111704545454546,4.763,3.8053499999999993,0.4164285714285715,0.196,53.4028

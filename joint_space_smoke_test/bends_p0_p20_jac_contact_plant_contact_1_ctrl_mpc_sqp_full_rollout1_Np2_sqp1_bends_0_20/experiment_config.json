@@ -1,0 +1,137 @@
+{
+  "lumen": {
+    "length": 0.04,
+    "n_pts": 240,
+    "n_ref_pts": 100,
+    "ds_target": 0.001,
+    "radius": 0.004,
+    "bends": [
+      {
+        "bend_axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "bend_angle_rad": 0.0,
+        "bend_start": 0.0,
+        "bend_end": 0.01
+      },
+      {
+        "bend_axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "bend_angle_rad": 0.3490658503988659,
+        "bend_start": 0.015,
+        "bend_end": 0.025
+      }
+    ]
+  },
+  "model": {
+    "plant_contact": true,
+    "jacobian_variant": "contact"
+  },
+  "controller": {
+    "controller_kind": "mpc",
+    "solver_mode": "sqp_full",
+    "N_sqp": 1,
+    "rollout_steps": 1,
+    "Np": 2,
+    "max_steps": 5,
+    "adaptive_rollout_enabled": false,
+    "inverse_sequence_mode": "rollout_ltv",
+    "inverse_kp": 0.3,
+    "inverse_desired_step_max_m": 0.004,
+    "inverse_extra_damping": 0.0
+  },
+  "run_root": "joint_space_smoke_test",
+  "tag": "bends_+0_+20",
+  "seed": 0,
+  "run_name": "bends_p0_p20_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout1_Np2_sqp1_bends_0_20",
+  "out_root": "joint_space_smoke_test/bends_p0_p20_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout1_Np2_sqp1_bends_0_20",
+  "dt": 0.01,
+  "L0": 0.013,
+  "p0_ur": [
+    0.7981328220229531,
+    -0.7099273166922002,
+    -0.1
+  ],
+  "p0": [
+    -0.7053522272099905,
+    -2.4834986424479992,
+    -1.7049649692504076,
+    -0.5239253686134997,
+    1.5707963251592245,
+    -2.2761485448981986,
+    0.013
+  ],
+  "p_min": [
+    -6.283185307179586,
+    -6.283185307179586,
+    -6.283185307179586,
+    -6.283185307179586,
+    -6.283185307179586,
+    -6.283185307179586,
+    0.0
+  ],
+  "p_max": [
+    6.283185307179586,
+    6.283185307179586,
+    6.283185307179586,
+    6.283185307179586,
+    6.283185307179586,
+    6.283185307179586,
+    0.05
+  ],
+  "u_max": [
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.1,
+    0.002
+  ],
+  "joint_space_setup": {
+    "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+    "control_layout": "qd1_qd2_qd3_qd4_qd5_qd6_insertion_rate",
+    "q0_rad": [
+      -0.7053522272099905,
+      -2.4834986424479992,
+      -1.7049649692504076,
+      -0.5239253686134997,
+      1.5707963251592245,
+      -2.2761485448981986
+    ],
+    "T_F_M": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.044
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "initial_magnet_position_error_m": 1.0226162111024541e-10,
+    "initial_magnet_orientation_error_rad": 9.252702045011957e-09,
+    "jacobian_discretisation": "B_k = dt * J_k"
+  }
+}

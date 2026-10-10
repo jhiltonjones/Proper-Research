@@ -1,0 +1,338 @@
+{
+  "radius_x1": {
+    "samples": 18,
+    "frobenius_relative": {
+      "max": 0.0023934230847247667,
+      "rms": 0.0018475345367377186,
+      "median": 0.0017813985539514477
+    },
+    "spectral_relative": {
+      "max": 0.002400000000000002,
+      "rms": 0.0018525796583433308,
+      "median": 0.001786246632787969
+    },
+    "largest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "smallest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "gain_ratio_smallest_singular_value": {
+      "max": 1.0,
+      "rms": 1.0,
+      "median": 1.0
+    },
+    "condition_contact": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "condition_contact_free": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "per_actuator_relative_max": [
+      0.0384615384615385,
+      0.0,
+      null,
+      null,
+      null,
+      null,
+      0.0
+    ],
+    "engagement": {
+      "gap_min_m": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_energy_J": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_force_norm_N": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contacting_node_fraction": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_active": {
+        "max": 0.0,
+        "rms": 0.0,
+        "median": 0.0
+      }
+    },
+    "anatomy": "radius_x1",
+    "elapsed_s": 0.0013851672410964966,
+    "contact_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c93380>"
+    },
+    "contact_free_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c93420>"
+    }
+  },
+  "radius_x0p7": {
+    "samples": 18,
+    "frobenius_relative": {
+      "max": 0.00751968838550051,
+      "rms": 0.0058049531586792415,
+      "median": 0.005597318394630238
+    },
+    "spectral_relative": {
+      "max": 0.00754285714285714,
+      "rms": 0.005822393211936181,
+      "median": 0.005613917988762174
+    },
+    "largest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "smallest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "gain_ratio_smallest_singular_value": {
+      "max": 1.0,
+      "rms": 1.0,
+      "median": 1.0
+    },
+    "condition_contact": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "condition_contact_free": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "per_actuator_relative_max": [
+      0.11167512690355326,
+      0.0,
+      null,
+      null,
+      null,
+      null,
+      0.0
+    ],
+    "engagement": {
+      "gap_min_m": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_energy_J": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_force_norm_N": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contacting_node_fraction": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_active": {
+        "max": 0.0,
+        "rms": 0.0,
+        "median": 0.0
+      }
+    },
+    "anatomy": "radius_x0p7",
+    "elapsed_s": 0.001251125242561102,
+    "contact_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c934c0>"
+    },
+    "contact_free_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c93560>"
+    }
+  },
+  "radius_x0p5": {
+    "samples": 18,
+    "frobenius_relative": {
+      "max": 0.014348830226675352,
+      "rms": 0.011077833079356824,
+      "median": 0.010682081313697401
+    },
+    "spectral_relative": {
+      "max": 0.014400000000000001,
+      "rms": 0.011115477950059984,
+      "median": 0.01071747979672779
+    },
+    "largest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "smallest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "gain_ratio_smallest_singular_value": {
+      "max": 1.0,
+      "rms": 1.0,
+      "median": 1.0
+    },
+    "condition_contact": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "condition_contact_free": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "per_actuator_relative_max": [
+      0.19354838709677422,
+      0.0,
+      null,
+      null,
+      null,
+      null,
+      0.0
+    ],
+    "engagement": {
+      "gap_min_m": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_energy_J": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_force_norm_N": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contacting_node_fraction": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_active": {
+        "max": 0.0,
+        "rms": 0.0,
+        "median": 0.0
+      }
+    },
+    "anatomy": "radius_x0p5",
+    "elapsed_s": 0.0012237080372869968,
+    "contact_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c93600>"
+    },
+    "contact_free_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c936a0>"
+    }
+  },
+  "radius_x0p35": {
+    "samples": 18,
+    "frobenius_relative": {
+      "max": 0.02457803678770333,
+      "rms": 0.018978220341055365,
+      "median": 0.01830172700289982
+    },
+    "spectral_relative": {
+      "max": 0.02468571428571429,
+      "rms": 0.019055105057245683,
+      "median": 0.01837282250867621
+    },
+    "largest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "smallest_principal_angle_deg": {
+      "max": 0.0,
+      "rms": 0.0,
+      "median": 0.0
+    },
+    "gain_ratio_smallest_singular_value": {
+      "max": 1.0,
+      "rms": 1.0,
+      "median": 1.0
+    },
+    "condition_contact": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "condition_contact_free": {
+      "max": 24.98260561582229,
+      "rms": 24.948166673260477,
+      "median": 24.944593125429225
+    },
+    "per_actuator_relative_max": [
+      0.29149797570850206,
+      0.0,
+      null,
+      null,
+      null,
+      null,
+      0.0
+    ],
+    "engagement": {
+      "gap_min_m": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_energy_J": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_force_norm_N": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contacting_node_fraction": {
+        "max": null,
+        "rms": null,
+        "median": null
+      },
+      "contact_active": {
+        "max": 0.0,
+        "rms": 0.0,
+        "median": 0.0
+      }
+    },
+    "anatomy": "radius_x0p35",
+    "elapsed_s": 0.0014982912689447403,
+    "contact_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c93740>"
+    },
+    "contact_free_provider": {
+      "name": "undeclared",
+      "source": "<function run_self_test.<locals>.make_context.<locals>.<lambda> at 0x102c937e0>"
+    }
+  }
+}

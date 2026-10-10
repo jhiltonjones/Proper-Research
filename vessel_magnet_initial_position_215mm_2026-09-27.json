@@ -1,0 +1,30 @@
+{
+  "description": "2026-09-27 UPDATED: start position retreated to 215mm from beam base (from the earlier 210.43mm live-jogged pose), while the SAFETY FLOOR stays fixed at 210.43mm (the originally validated closest-safe approach). This gives the offline planner real slack (was riding the floor with ~0mm margin from node 0, confirmed via instrumented diagnostic) instead of starting exactly on the constraint boundary.",
+  "joints_rad": [
+    -0.7841480544926808,
+    -1.947994592159243,
+    -1.6977865262467042,
+    -1.0958959539942525,
+    1.564585350837443,
+    -1.9843897968579263
+  ],
+  "magnet_pose6_R": [
+    0.31133949,
+    -0.65191377,
+    0.01328917,
+    -3.07774931,
+    0.57528249,
+    0.04521943
+  ],
+  "beam_base_pivot_xyz_R_raised30mm": [
+    0.525575,
+    -0.670028,
+    0.013433
+  ],
+  "distance_magnet_to_beam_base_m": 0.215,
+  "distance_magnet_to_beam_base_mm": 215.0,
+  "exclusion_floor_m": 0.21043,
+  "exclusion_floor_mm": 210.43,
+  "derivation": "IK solution for the point 215mm from beam base along the same base->magnet direction as the original 210.43mm live-jogged position, same orientation. Physically moved to and verified 2026-09-27 (reset_to_plan_initial_safe, path-safety check passed, worst gap 211.7mm along the move).",
+  "supersedes": "vessel_magnet_initial_position_2026-09-27.json (the version where start position == exclusion floor == 210.43mm)"
+}

@@ -1,0 +1,268 @@
+from proper_research.advancer_unit.advancer_unit_cmd import AdvancerUnit
+import numpy as np
+from scipy.spatial.transform import Rotation as Rot
+from beam_direction_magnetisation.quarternions.quarternions_functions import quat_wxyz_to_rotvec
+import time
+from robot_class import URRtde
+def pose8_quat_to_pose7_rotvec(p8):
+    p8 = np.asarray(p8, float).ravel()
+    t = p8[0:3]
+    q = p8[3:7]
+    L = p8[7]
+    rvec = quat_wxyz_to_rotvec(q)
+    return np.array([t[0], t[1], t[2], rvec[0], rvec[1], rvec[2], L], float)
+
+def p8_to_ur_pose6_and_L(p8):
+    p7 = pose8_quat_to_pose7_rotvec(p8)
+    return p7[:6].copy(), float(p7[6])
+
+def u0_to_advancer_mm(u0, dt):
+    return float(u0[6]) * float(dt) * 1000.0
+
+def within_workspace(pose6, xyz_min=None, xyz_max=None):
+    xyz = np.asarray(pose6[:3], float)
+    if xyz_min is not None and np.any(xyz < np.asarray(xyz_min, float)):
+        return False
+    if xyz_max is not None and np.any(xyz > np.asarray(xyz_max, float)):
+        return False
+    return True
+
+def max_step_ok(prev_pose6, next_pose6, max_trans_m=np.inf, max_rot_rad=np.inf):
+    if prev_pose6 is None:
+        return True
+    dp = np.linalg.norm(np.asarray(next_pose6[:3]) - np.asarray(prev_pose6[:3]))
+    dr = np.linalg.norm(np.asarray(next_pose6[3:6]) - np.asarray(prev_pose6[3:6]))
+    return (dp <= max_trans_m) and (dr <= max_rot_rad)
+class LiveHardwareController:
+    def __init__(
+        self,
+        robot_ip,
+        dry_run=True,
+        use_advancer=True,
+        advancer_port="/dev/ttyACM0",
+        advancer_baud=115200,
+        advancer_delay_us=20,
+        advancer_min_cmd_mm=0.166,
+        xyz_min=(0.20, -1.50, -0.30),
+        xyz_max=(1.20, +1.50, +1.50),
+        max_trans_m=0.01,
+        max_rot_rad=0.2,
+        z_offset=0.0,
+        use_moveL_params=False,
+        v=0.10,
+        a=0.30,
+        rtde_frequency=125.0,
+    ):
+        self.robot_ip = robot_ip
+        self.dry_run = bool(dry_run)
+        self.use_advancer = bool(use_advancer)
+        self.advancer_delay_us = int(advancer_delay_us)
+        self.advancer_min_cmd_mm = float(advancer_min_cmd_mm)
+        self.xyz_min = xyz_min
+        self.xyz_max = xyz_max
+        self.max_trans_m = float(max_trans_m)
+        self.max_rot_rad = float(max_rot_rad)
+        self.z_offset = float(z_offset)
+        self.use_moveL_params = bool(use_moveL_params)
+        self.v = float(v)
+        self.a = float(a)
+        self.rtde_frequency = float(rtde_frequency)
+        self.adv = None
+        self.robo = None
+        self.prev_pose6 = None
+        self.dl_residual_mm = 0.0
+
+        if self.use_advancer and not self.dry_run:
+            self.adv = AdvancerUnit(port=advancer_port, baudrate=advancer_baud)
+
+        if not self.dry_run:
+            self.robo = URRtde(self.robot_ip, frequency=rtde_frequency)
+            self.robo.disconnect()
+
+    def get_robot_pose_once(self):
+        if self.dry_run:
+            return None
+        self.open_robot()
+        try:
+            return self.robo.get_pose()
+        finally:
+            self.close_robot()
+
+    def send_step(self, p_now, u0, dt):
+        print(f"[DBG] Pose recieved {p_now}")
+        ur_pose6_next, _ = p8_to_ur_pose6_and_L(p_now)
+        ur_pose6_send = ur_pose6_next.copy()
+        ur_pose6_send[2] += self.z_offset
+
+        print("[DBG] entering send_step")
+        print("[DBG] dry_run =", self.dry_run)
+        print("[DBG] use_moveL_params =", self.use_moveL_params)
+        print("[DBG] robo is None =", self.robo is None)
+
+        if not within_workspace(ur_pose6_send, self.xyz_min, self.xyz_max):
+            raise RuntimeError(f"UR pose out of workspace: {ur_pose6_send}")
+
+        dL_mm = u0_to_advancer_mm(u0, dt)
+        self.dl_residual_mm += dL_mm
+
+        adv_cmd_mm = 0.0
+        if abs(self.dl_residual_mm) >= self.advancer_min_cmd_mm:
+            n_quanta = int(np.trunc(self.dl_residual_mm / self.advancer_min_cmd_mm))
+            adv_cmd_mm = n_quanta * self.advancer_min_cmd_mm
+            self.dl_residual_mm -= adv_cmd_mm
+
+        print("[LIVE CMD]", ur_pose6_send.tolist())
+
+        if not self.dry_run:
+            try:
+                print("[DBG] before open_robot")
+                self.open_robot(warmup=True)
+                print("[DBG] after open_robot")
+
+                if self.use_advancer and self.adv is not None and abs(adv_cmd_mm) > 0.0:
+                    if adv_cmd_mm > 0:
+                        self.adv.forward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
+                    else:
+                        self.adv.backward(abs(adv_cmd_mm), delay_us=self.advancer_delay_us)
+
+                print("[DBG] before moveL")
+                if self.use_moveL_params:
+                    out = self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                else:
+                    out = self.robo.moveL(ur_pose6_send.tolist())
+
+                print("[DBG] after moveL, return =", out)
+
+                if out is False:
+                    print("[DBG] moveL returned False, rebuilding RTDE once and retrying...")
+                    self.close_robot()
+                    time.sleep(0.25)
+
+                    self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+                    time.sleep(0.25)
+
+                    # warm after rebuild
+                    _ = self.robo.get_pose()
+                    time.sleep(0.10)
+
+                    if self.use_moveL_params:
+                        out = self.robo.moveL(ur_pose6_send.tolist(), speed=self.v, accel=self.a)
+                    else:
+                        out = self.robo.moveL(ur_pose6_send.tolist())
+
+                    print("[DBG] retry moveL return =", out)
+
+                    if out is False:
+                        raise RuntimeError(f"URRtde.moveL returned False for pose {ur_pose6_send.tolist()}")
+
+            except Exception as e:
+                print("[DBG] moveL exception:", repr(e))
+                raise
+            finally:
+                print("[DBG] before close_robot")
+                self.close_robot()
+                print("[DBG] after close_robot")
+
+        self.prev_pose6 = ur_pose6_send.copy()
+        print("[DBG] send_step finished")
+    def open_robot(self, warmup=True):
+        if self.dry_run:
+            return
+
+        if self.robo is None:
+            self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+        else:
+            ok = self.robo.ensure_connected()
+            if not ok:
+                raise RuntimeError("Failed to reconnect RTDE interfaces")
+
+        if warmup:
+            # Give RTDE control side a moment after reconnect
+            time.sleep(0.20)
+
+            # Touch receive side once; this often helps confirm the session is live
+            try:
+                _ = self.robo.get_pose()
+            except Exception as e:
+                raise RuntimeError(f"Robot reconnected but pose read failed: {e}")
+
+            # Small extra pause before issuing motion
+            time.sleep(0.10)
+    def get_robot_joints_once(self):
+        if self.dry_run:
+            return None
+        self.open_robot()
+        try:
+            # If your wrapper uses a different name, change this line.
+            return np.asarray(self.robo.get_joints(), dtype=float)
+        finally:
+            self.close_robot()
+
+    def send_joints(self, joints_rad, speed=None, accel=None):
+        """
+        Send a joint target in radians using moveJ.
+
+        joints_rad: iterable of length 6
+        speed, accel: optional joint-space motion parameters
+        """
+        joints_rad = np.asarray(joints_rad, dtype=float).reshape(6,)
+
+        v = self.v if speed is None else float(speed)
+        a = self.a if accel is None else float(accel)
+
+        print("[LIVE JOINT CMD rad]", joints_rad.tolist())
+        print("[LIVE JOINT CMD deg]", np.degrees(joints_rad).tolist())
+
+        if self.dry_run:
+            return
+
+        try:
+            self.open_robot(warmup=True)
+
+            # If your wrapper uses different keywords, adapt here.
+            if self.use_moveL_params:
+                out = self.robo.moveJ(joints_rad.tolist(), speed=v, accel=a)
+            else:
+                out = self.robo.moveJ(joints_rad.tolist())
+
+            print("[DBG] after moveJ, return =", out)
+
+            if out is False:
+                print("[DBG] moveJ returned False, rebuilding RTDE once and retrying...")
+                self.close_robot()
+                time.sleep(0.25)
+
+                self.robo = URRtde(self.robot_ip, frequency=self.rtde_frequency)
+                time.sleep(0.25)
+
+                _ = self.robo.get_pose()
+                time.sleep(0.10)
+
+                if self.use_moveL_params:
+                    out = self.robo.moveJ(joints_rad.tolist(), speed=v, accel=a)
+                else:
+                    out = self.robo.moveJ(joints_rad.tolist())
+
+                print("[DBG] retry moveJ return =", out)
+
+                if out is False:
+                    raise RuntimeError(f"URRtde.moveJ returned False for joints {joints_rad.tolist()}")
+
+        except Exception as e:
+            print("[DBG] moveJ exception:", repr(e))
+            raise
+        finally:
+            self.close_robot()
+    def close_robot(self):
+        if self.dry_run:
+            return
+        if self.robo is not None:
+            self.robo.disconnect()
+    def shutdown(self):
+        if self.robo is not None:
+            self.robo.shutdown()
+            self.robo = None
+
+        if self.adv is not None:
+            self.adv.shutdown()
+        

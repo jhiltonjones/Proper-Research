@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/vessel_ltv_ffrd0_n1_2026-09-14/runs/ltv_rep1_20260914T091855Z,path_complete,254,232,2.3754050044876194,2.014228448275862,4.386,3.75925,0.5903636363636363,0.433,46.2666

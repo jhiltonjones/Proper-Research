@@ -1,0 +1,12 @@
+{
+  "solver_mode": "sqp_full",
+  "steps_compared": 20,
+  "sensitivity_workers": 1,
+  "legacy_median_ms": 12534.336416050792,
+  "optimized_median_ms": 8192.88437499199,
+  "median_speedup": 1.529905200946162,
+  "maximum_tip_difference_m": 7.793425555427727e-05,
+  "maximum_u0_difference_inf": 0.3594369563625113,
+  "legacy_infeasible_steps": 0,
+  "optimized_infeasible_steps": 0
+}

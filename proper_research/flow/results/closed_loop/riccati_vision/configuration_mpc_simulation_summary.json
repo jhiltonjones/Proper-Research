@@ -1,0 +1,38 @@
+{
+  "controller": "riccati_vision",
+  "description": "DARE inverse Jacobian, perfect tip feedback (upper bound)",
+  "samples": 776,
+  "max_beam_position_error_mm": 0.6664439432963436,
+  "rms_beam_position_error_mm": 0.14105016116123809,
+  "p95_beam_position_error_mm": 0.35774335549531155,
+  "final_beam_position_error_mm": 0.01125883767770352,
+  "max_beam_tangent_error_deg": 24.014110869231992,
+  "beam_feasible_fraction": 1.0,
+  "sample_period_s": 0.009999999999999898,
+  "position_tolerance_m": 0.0015,
+  "mpc_configuration": {
+    "sample_period_s": 0.009999999999999898,
+    "velocity_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.16000000000000003
+    ],
+    "acceleration_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.016
+    ]
+  },
+  "simulation_configuration": {
+    "position_tolerance_m": 0.0015,
+    "tangent_tolerance_rad": 1.5707963267948966
+  }
+}

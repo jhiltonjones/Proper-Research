@@ -1,4 +1,13 @@
-# How to plan a shape offline and compare controllers online
+# How to plan a shape or vessel path offline, simulate it, and run it online
+
+The offline-planning half of this doc (sections 1-2) covers both shapes and
+the vessel; the live/online half (sections 3-5) covers the generic
+shape-only comparison tools this doc has always documented -- for the
+vessel, or for the fuller package-specific harnesses, follow section 3's
+pointers instead. See `proper_research/hardware/online/vessel_stage_a/
+HOWTO_VESSEL_PLANNING.md` for the vessel's own step-by-step equivalent of
+this whole doc (digitizing the lumen, building the plan, then running
+online), which this doc's section 2 feeds into.
 
 All commands assume repo root (`/home/jack/Proper-Research`) and use the venv interpreter
 directly: `/home/jack/Proper-Research/.venv/bin/python3`. The bimaterial beam model
@@ -8,14 +17,28 @@ directly: `/home/jack/Proper-Research/.venv/bin/python3`. The bimaterial beam mo
 below already uses it.
 
 ## 0. Before any live (online) run — always
+
+Robot and camera health checks live in `proper_research.hardware.online.
+stage_a_common` (shared by every shape's and the vessel's run scripts), and
+each package's own `common.py` wraps the camera check with that rig's own
+beam-base height. Run them directly from either package -- the rectangle
+one here works for any unraised-rig shape plan:
 ```bash
-PYTHONPATH=/home/jack/Proper-Research .venv/bin/python3 /home/jack/.claude/jobs/3710eca5/tmp/robot_check.py
-PYTHONPATH=/home/jack/Proper-Research .venv/bin/python3 /home/jack/.claude/jobs/3710eca5/tmp/camera_check2.py
+.venv/bin/python3 -c "from proper_research.hardware.online.stage_a_common import check_robot_safe; check_robot_safe()"
+.venv/bin/python3 -c "from proper_research.hardware.online.rectangle_stage_a.common import check_camera_healthy; check_camera_healthy()"
 ```
-Check: `protective_stopped: False`, `safety_mode: 1`, magnet-to-base distance comfortably
-above the 211mm floor, and the camera check reports valid tip estimates on most/all frames.
-Offline planning (`plan_shape_path.py` / `plan_vessel_path.py`) never touches the robot — no
-check needed before those.
+For the vessel's raised rig, use `vessel_stage_a.common.check_camera_healthy`
+instead of `rectangle_stage_a.common`'s. Check: `protective_stopped: False`,
+`safety_mode: 1`, magnet-to-base distance comfortably above the 211mm floor,
+and the camera check reports valid tip estimates on most/all frames (it
+raises `RuntimeError` instead of printing if it doesn't).
+
+Every hardware run script in `rectangle_stage_a`/`vessel_stage_a` also calls
+its package's `common.preflight()` itself before starting (health checks +
+reset to the plan's own start pose) -- don't pass `--skip-preflight` unless
+you already just ran one against the SAME plan and know the robot hasn't
+moved since. Offline planning (`plan_shape_path.py` / `plan_vessel_path.py`)
+never touches the robot — no check needed before those.
 
 ## 1. Offline planning — shapes
 Base pattern:
@@ -72,7 +95,46 @@ currently `0.025` (25mm). Do not change it to values below ~25mm without testing
 was confirmed to fail the Layer 1 chain-rule Jacobian validation (93.8% relative error vs. the
 9% ceiling) while 25mm passes cleanly on the identical vessel config. Root cause not found.
 
+## 2b. Simulate before hardware (optional, shapes only today)
+
+`proper_research/simulation/simulations/simulate_time_parameterized_configuration_mpc.py`
+runs a closed-loop MPC simulation (no robot/camera) against a plan. It's the
+cheapest way to sanity-check a new plan or a gain change before spending
+robot time:
+```bash
+python -u -m proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc \
+    --horizon 15
+```
+**Known gap:** its `--reference` flag is defined but never read -- it always
+simulates against `build_planning_context()`'s own current plan (a shapes
+planning context), not an arbitrary `--plan-dir` you pass. There is no
+vessel-context equivalent anywhere under `proper_research/simulation/` today
+-- simulate-before-hardware currently only works for shapes, not the vessel.
+`--self-test` runs a deterministic controller-only check with no plan needed
+at all, useful just to confirm the MPC machinery itself still imports and
+solves.
+
 ## 3. Live open-loop test
+
+Two separate ways to run things live exist in this codebase -- know which
+one you're using:
+
+- **This doc's `open_loop_playback.py` / `compare_controllers_live.py`
+  (below)**: generic, shape-only, quick multi-controller comparison tools.
+  They assume an unraised rig (`proper_research.rig_calibration.BEAM_BASE_XYZ_M`
+  directly) and have none of the vessel's magnet-exclusion/raised-pivot
+  machinery -- **do not use these for a vessel plan.**
+- **`rectangle_stage_a`'s and `vessel_stage_a`'s own dedicated run scripts**
+  (`run_open_loop_c.py`/`run_open_loop_vessel.py`,
+  `run_inv_2dof_trim.py`/`run_inverse_jacobian_online_vessel.py`,
+  `run_mpc_ltv.py`/`run_mpc_delay_aware_vessel.py`, and more) -- the fuller,
+  validated, package-specific harnesses with each rig's own safety
+  machinery and execution-layer-C tuning baked in. See
+  `proper_research/hardware/online/rectangle_stage_a/README.md` and
+  `proper_research/hardware/online/vessel_stage_a/HOWTO_CLOSED_LOOP_MPC.md`
+  / `HOWTO_INVERSE_JACOBIAN.md` / `HOWTO_VESSEL_PLANNING.md` for those --
+  **this is almost always what you want**, and the only option for a vessel
+  plan.
 ```bash
 PYTHONPATH=/home/jack/Proper-Research nohup .venv/bin/python3 -m proper_research.hardware.online.open_loop_playback \
   --plan-dir <output-dir>/<shape_or_vessel_subdir>/time_parameterized_configuration_path \
@@ -118,7 +180,8 @@ hold=... final=... mm` line per completed rep; a final aggregate table plus `sum
 occasionally happens mid-run (RTDE reconnect fragility, not a real fault) — the script retries
 automatically (`rc=4`, 30s settle, retry) and has always recovered so far this session. If a
 run instead shows a catastrophically large error (order 1cm+) immediately after a reconnect,
-stop and run `robot_check.py` before trusting the result or continuing.
+stop and run the `check_robot_safe()` check from section 0 before trusting the result or
+continuing.
 
 ## 5. Reading results
 - `close_loop_logs/<run-name>/summary.json` — mean±std per controller (`rms_track_mm`,

@@ -253,17 +253,42 @@ python -m proper_research.hardware.online.rectangle_stage_a.q_ablation \
 with `--out-dir`, writes `error_vs_time.png`, `servo_error_vs_time.png`
 (only for accumulator-seam runs), and `tip_trajectory.png`.
 
+## The delay-aware controller family (post-dates the numbers above)
+
+A later generation of controllers, each compensating for the real
+realization delay (a decision at tick k first becomes physical at k+3,
+d=2 samples, not the naive k+1) instead of ignoring it. These share
+execution layer C and `common.preflight()` with everything above; they are
+NOT reflected in this doc's live-validated-numbers tables since they
+postdate them.
+
+| script | what it is |
+|---|---|
+| `run_mpc_delay_baseline.py` | Condition A of the 2026-09-18 old-MPC-vs-delay-aware-MPC A/B: `mpc_ltv_offline`, V_f=0, N=15 |
+| `run_mpc_delay_aware.py` | Condition B of the same A/B: `DelayAwareBeamOutputTrackingMPC`, frozen at `delay_samples=2, beta_d=1.0, V_f=0` |
+| `run_delay_aware_ab.py` | Orchestrates the paired A/B above as randomized-order blocks; also resets physical insertion via vision-closed-loop advancer control before every run (required, not optional -- see its own docstring) |
+| `run_mpc_delay_aware_insertion_anchor.py` / `_nullq_r700.py` / `_qn_zero.py` | Frozen ablation variants of the delay-aware MPC condition -- do not edit; each isolates exactly one change for a specific recorded result |
+| `run_inv_2dof_delay_aware.py` | Delay-aware INV-2DOF: identical to `run_inv_2dof_trim.py` except the nominal channel/task correction previews to realization stage r=k+3 instead of k+1 -- paired against `run_inv_2dof_trim.py` on the SAME schedule index convention difference, nothing else |
+| `run_inv_2dof_map_trim.py` | INV-2DOF-trim plus a learned path-indexed feedforward map (see this file's own docstring for the identification chain that produced the map); otherwise identical to `run_inv_2dof_trim.py` at its frozen kp=0.6, kn=0 point |
+| `run_inv_7dof_delay_aware.py` | Same delay-aware preview as `run_inv_2dof_delay_aware.py`, but feedback allocation is a normalized-DLS pinv over all 7 actuators (joints + insertion) instead of a 6-column joint-only pinv -- removes the "MPC has 7 feedback actuators, inverse only has 6" confound |
+
+Each needs the genuine per-sample LTV schedule (same `--schedule-cache`
+mechanism as `run_mpc_ltv.py`); see each script's own `Usage` docstring for
+the exact invocation and any extra required file (e.g. `run_inv_2dof_map_trim.py`'s `--dmap-path`).
+
 ## Files
 
 | file | what it is |
 |---|---|
-| `common.py` | plan-state loading, pre-flight reset, robot/camera health checks -- shared by every run script |
+| `common.py` | plan-state loading, pre-flight reset, robot/camera health checks -- a thin, rectangle-specific wrapper over the shared `proper_research.hardware.online.stage_a_common` module (also used by `vessel_stage_a`) |
 | `run_open_loop_c.py` | `u=u_ref` exactly, execution layer C, no correction -- run first on any new plan |
 | `run_inv_2dof_trim.py` | tuned INV (default kp=0.6, kn=0), execution layer C |
 | `run_mpc_ltv.py` | `mpc_ltv_offline`, default Q/Qp/R/Rd/N, genuine per-sample-relinearised schedule, execution layer C |
 | `q_ablation.py` | offline (no robot): does removing MPC's state/posture cost fix its saturation? (no -- see above) |
 | `plot_comparison.py` | offline (no robot): metrics table + overlay plots across any set of runs |
 | `run_all.py` | chains the above as subprocesses |
+| *(the delay-aware family)* | see the section above |
+| `archive/` | one-off stress-test/reliability-check scripts, not part of the regular run sequence -- see each file's own docstring |
 
 The controller itself lives in
 `proper_research/controllers/inverse_jacobian_2dof_trim.py` (read its module

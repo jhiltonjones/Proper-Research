@@ -15,6 +15,10 @@ analyze what comes out -- from a five-second sanity check up to the
 mechanistic replay techniques used in the 2026-09-30 contact-vs-no-contact
 ablation study.
 
+For the naive-controller comparator against this MPC (same offline Jacobian
+schedule, one-step resolved-rate feedback instead of a QP), see
+`HOWTO_INVERSE_JACOBIAN.md` in this same directory.
+
 ## 0. What this controller is
 
 - Runs in a **separate process** from the one holding the RTDE/camera

@@ -283,6 +283,13 @@ same directory for the full closed-loop controller workflow
 monitors (including the magnet-exclusion constraint now wired directly
 into the QP), and how to read the run's output.
 
+## 6b. (Optional) Run the closed-loop inverse-Jacobian controller instead
+
+The naive-controller comparator against the MPC run above -- see
+`HOWTO_INVERSE_JACOBIAN.md` in this same directory for prerequisites (it
+reuses the MPC run's own `--schedule-cache`, it does not build one), CLI
+flags, and the three magnet-protection modes (`clip`/`hold`/`selective`).
+
 ## 7. (Optional) Validate the model against real hardware
 
 `checkpoint_beam_shape_campaign.py` and
@@ -304,7 +311,13 @@ and want to check the model still tracks reality before trusting it.
 | `build_vessel_plan.py` | Run the full offline planner (Layer 1→2→3) |
 | `run_open_loop_vessel.py` | Live open-loop feedforward sanity check |
 | `checkpoint_beam_shape_campaign.py` | Static-checkpoint predicted-vs-measured beam-shape data collection |
-| `plot_checkpoint_beam_shape_campaign.py` | Turn checkpoint data into comparison figures |
-| `stop_and_perturb.py` | Earlier stop-and-perturb tip-only model validation campaign |
 | `run_mpc_delay_aware_vessel.py` | Closed-loop MPC controller |
+| `run_inverse_jacobian_online_vessel.py` | Closed-loop inverse-Jacobian controller (current -- contact model + magnet-protection modes), see `HOWTO_INVERSE_JACOBIAN.md` |
+| `run_inverse_jacobian_vessel.py` | Closed-loop inverse-Jacobian controller (older, no-contact only), see `HOWTO_INVERSE_JACOBIAN.md` |
+
+One-off diagnostic/plotting scripts (`analyze_*`, `measure_jcam_*`,
+`validate_*`, `plot_checkpoint_beam_shape_campaign.py`,
+`stop_and_perturb.py`, and others) have been moved into `archive/` -- each
+answers a specific dated question, see its own docstring; none of them are
+part of the regular plan-then-run workflow above.
 | `common.py` | Shared preflight/health-check/safe-reset helpers |

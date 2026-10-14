@@ -1,0 +1,123 @@
+{
+  "generated_at": "2026-10-14T04:17:38.572039Z",
+  "plan_dir": "plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_2026-10-12/time_parameterized_configuration_path",
+  "path_csv_hash": "72140e0bd3518126",
+  "schedule_file": "plans/stage3_design/mpc_schedules/vessel_c_schedule_phi30_L30_newwall_floor240_2026-10-12.npy",
+  "schedule_hash": "7ab26b980e509d74",
+  "lumen_file": "vessel_lumen_robot_frame_2026-10-06_zcorrected.json",
+  "initial_poses_insertion_start_mm": 30.44,
+  "initial_poses_init_dt": 0.01,
+  "start_position_json": "vessel_magnet_initial_position_2026-10-12_floor240.json",
+  "D": [
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.0002
+  ],
+  "units": "s_q,DeltaL in meters internally (grid stored in mm); J in SI (m per rad / m per m)",
+  "tiles": [
+    {
+      "name": "tick366",
+      "file": "contact_jacobian_map_tick366.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "tick278",
+      "file": "contact_jacobian_map_tick278.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_1",
+      "file": "contact_jacobian_map_auto_1.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_2",
+      "file": "contact_jacobian_map_auto_2.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_3",
+      "file": "contact_jacobian_map_auto_3.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_4",
+      "file": "contact_jacobian_map_auto_4.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_5",
+      "file": "contact_jacobian_map_auto_5.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_6",
+      "file": "contact_jacobian_map_auto_6.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_7",
+      "file": "contact_jacobian_map_auto_7.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_8",
+      "file": "contact_jacobian_map_auto_8.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_9",
+      "file": "contact_jacobian_map_auto_9.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_10",
+      "file": "contact_jacobian_map_auto_10.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_11",
+      "file": "contact_jacobian_map_auto_11.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_12",
+      "file": "contact_jacobian_map_auto_12.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_13",
+      "file": "contact_jacobian_map_auto_13.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_14",
+      "file": "contact_jacobian_map_auto_14.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_15",
+      "file": "contact_jacobian_map_auto_15.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_16",
+      "file": "contact_jacobian_map_auto_16.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "auto_17",
+      "file": "contact_jacobian_map_auto_17.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "coarse",
+      "file": "contact_jacobian_map_coarse.npz",
+      "max_interp_error": 0.7358735620701086
+    }
+  ]
+}

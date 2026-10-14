@@ -1,0 +1,19 @@
+{
+    "description": "Derived 2026-10-08 from vessel_magnet_initial_position_2026-09-29.json: magnet_pose6_R pushed radially outward (same direction and orientation from the canonical BEAM_BASE_XYZ_M pivot, same method as common.resolve_start_pose_at_radius) from 398.71mm to exactly 285.0mm, to clear a new exclusion_floor_mm of 255.0 with the same ~30mm margin this project's online 255mm-floor runs already use (--start-radius-override-mm 285). joints_rad from the source file is NOT updated (build_vessel_plan.py does not read joints_rad from this file) and should not be trusted as the IK solution for this new magnet_pose6_R.",
+    "joints_rad": null,
+    "magnet_pose6_R": [
+        0.3882797112707149,
+        -0.6841932941021868,
+        -0.023142895340744936,
+        -3.07797523,
+        0.57528182,
+        0.04487956
+    ],
+    "beam_base_pivot_xyz_R": [
+        0.670575,
+        -0.719727,
+        -0.039627
+    ],
+    "distance_magnet_to_beam_base_mm": 285.0,
+    "exclusion_floor_mm": 255.0
+}

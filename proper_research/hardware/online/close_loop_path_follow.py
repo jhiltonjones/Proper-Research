@@ -1869,6 +1869,14 @@ def main() -> None:
                 "controller_kind": cfg.controller_kind,
                 "feedforward": bool(cfg.feedforward_joint_trajectory),
                 "solver_status": info.get("status"),
+                # 2026-10-14 speed-fix investigation: "solver_status" above
+                # is only the coarse "did the worker reply at all" flag
+                # ("ok"/"deadline_miss") -- it can never show OSQP's own
+                # nuanced status (e.g. "run time limit reached"), which is
+                # why that string never appeared in earlier runs even with
+                # solver_time_limit_s active. qp_status is the real one,
+                # now forwarded through process_isolated_adapter.py.
+                "qp_status": info.get("qp_status"),
                 "solver_success": info.get("success"),
                 "solver_iterations": info.get("iterations"),
                 "solver_time_s": info.get("solve_time_s"),

@@ -1,0 +1,89 @@
+PRIMARY (34)
+
+Open-loop (H1)
+- close_loop_logs/myrun/openloop_contact_2026-10-07_20261007T113710Z
+- close_loop_logs/myrun/openloop_contact_2026-10-07_20261007T114131Z
+- close_loop_logs/myrun/openloop_nocontact_2026-10-07_20261007T114533Z
+- close_loop_logs/myrun/openloop_nocontact_2026-10-07_20261007T114830Z
+
+Closed-loop factorial, 210mm
+- MPC-$J_C$: mpc_closedloop_contact_floor210_baseline_v2_20261007T180726Z, _v3_20261007T181008Z, _v4_20261008T120734Z
+- MPC-$J_{NC}$: mpc_closedloop_nocontact_2026-10-07_v3_20261007T164416Z, _v4_20261007T164656Z, _v5_20261007T165131Z
+- InvJac-$J_C$: vessel_invjac_hold_contact_20261007T182146Z, _v2_20261007T182415Z, _v3_20261007T182617Z
+- InvJac-$J_{NC}$: vessel_invjac_hold_nocontact_20261007T163456Z, _v2_20261007T163825Z, _v3_20261007T164050Z
+
+Closed-loop factorial, 255mm
+- MPC-$J_{NC}$: mpc_closedloop_nocontact_floor255_20261007T183458Z, _v2_20261007T183732Z, _v3_20261007T183945Z
+- InvJac-$J_C$: vessel_invjac_hold_contact_floor255_v2_20261007T191543Z, _v3_20261007T191818Z, _20261007T192005Z
+- InvJac-$J_{NC}$: vessel_invjac_hold_nocontact_floor255_20261007T184540Z, _v2_20261007T185104Z, _v3_20261007T192254Z
+- MPC-$J_C$ (matched, headline): mpc_closedloop_contact_floor255_matched_v1_20261008T114346Z, _v2_20261008T114639Z, _v3_20261008T115053Z
+
+H5 frozen-Jacobian ablations, 210mm
+- idx0: mpc_closedloop_contact_frozen_20261007T174323Z, _v2_20261007T174612Z, _v3_20261007T174850Z
+- idx100: mpc_closedloop_contact_frozen_precontact_idx100_20261008T123031Z, _v2_20261008T123334Z, _v3_20261008T123618Z
+
+(all paths above are relative to close_loop_logs/myrun/)
+
+SECONDARY — ablations (9)
+
+- Gain ablation (g=1.0): vessel_invjac_hold_nocontact_g1p0_20261007T171824Z, _v2_20261007T172059Z, _v3_20261007T172310Z
+- H3b selective, contact: vessel_invjac_selective_contact_repaired_jac_20261008T142826Z, _v2_20261008T143054Z, _v3_20261008T143329Z
+- H3b selective, no-contact: vessel_invjac_clip_nocontact_floor255_20261008T151002Z, _v2_20261008T151244Z, _v3_20261008T151506Z
+
+SUPERSEDED, kept in record (6)
+
+- Original unmatched 255mm MPC-$J_C$: mpc_closedloop_contact_floor240_increased_20261007T175937Z, _v2_20261007T181452Z, _v3_20261007T181729Z
+- First matched-rerun attempt: mpc_closedloop_contact_floor250_matched_20261008T112830Z, _v2_20261008T113123Z, _v3_20261008T113417Z
+
+EXCLUDED (1)
+
+- mpc_closedloop_contact_floor210_baseline_20261007T180429Z (diagnosed bug)
+
+All 50 are under /home/jack/Proper-Research/close_loop_logs/myrun/.
+Here's the complete picture of the H4 Jacobian-accuracy computation, across all its passes:
+
+H4's underlying runs (16 runs, 2 reps per condition — guided-sampling pass, 1636 ticks)
+
+This is the dataset the final report's H4 section is actually built on:
+
+condition: 210mm MPC-$J_C$
+rep1: mpc_closedloop_contact_floor210_baseline_v2_20261007T180726Z
+rep2: ..._v3_20261007T181008Z
+────────────────────────────────────────
+condition: 210mm MPC-$J_{NC}$
+rep1: mpc_closedloop_nocontact_2026-10-07_v3_20261007T164416Z
+rep2: ..._v4_20261007T164656Z
+────────────────────────────────────────
+condition: 210mm InvJac-$J_C$
+rep1: vessel_invjac_hold_contact_20261007T182146Z
+rep2: ..._v2_20261007T182415Z
+────────────────────────────────────────
+condition: 210mm InvJac-$J_{NC}$
+rep1: vessel_invjac_hold_nocontact_20261007T163456Z
+rep2: ..._v2_20261007T163825Z
+────────────────────────────────────────
+condition: 255mm MPC-$J_C$
+rep1: mpc_closedloop_contact_floor255_matched_v1_20261008T114346Z
+rep2: ..._v2_20261008T114639Z
+────────────────────────────────────────
+condition: 255mm MPC-$J_{NC}$
+rep1: mpc_closedloop_nocontact_floor255_20261007T183458Z
+rep2: ..._v2_20261007T183732Z
+────────────────────────────────────────
+condition: 255mm InvJac-$J_C$
+rep1: vessel_invjac_hold_contact_floor255_v2_20261007T191543Z
+rep2: ..._v3_20261007T191818Z
+────────────────────────────────────────
+condition: 255mm InvJac-$J_{NC}$
+rep1: vessel_invjac_hold_nocontact_floor255_20261008T184540Z
+rep2: ..._v2_20261007T185104Z
+
+(all under close_loop_logs/myrun/; only 2 of each condition's 3 reps were sampled — this was deliberate from the original guided-sampling design, not a dropped rep)
+
+The three computation passes (superseded → final), all in plans/stage3_design/full_stage3_analysis/
+
+1. Original H4 pass (superseded) — tables/h4_jacobian_accuracy_per_sample.csv (360 rows = 8 conditions × 45 evenly-spaced ticks, 1 rep per condition only), tables/h4_jacobian_accuracy_summary.csv, figures/h4_jacobian_accuracy.png. This used the flawed "live no-contact Jacobian" framing — kept for the record but not relied on in the final report.
+2. Guided-sampling pass (h4_v2) — tables/h4_v2_jacobian_accuracy_per_sample.csv (1636 rows, the 16 runs above), oversampling onset/transition/constraint-active/pre-failure regions. Includes the staleness-vs-missing-contact decomposition and Frobenius cross-term columns.
+3. Final, corrected pass — tables/h4_actual_ground_truth.csv (the raw $J_C^{state}$ recompute, reusing h4_v2's exact tick selection) merged into tables/h4_final_mismatch_vs_Cstate.csv and summarized in tables/h4_final_summary.csv, with figures/h4_final_mismatch_vs_Cstate_255mm.png. This is the version in STAGE3_FINAL_REPORT.md §6 — the one with the corrected terminology and the three-question structure (Q1/Q2/Q3, command-weighted error, gain ratio, direction angle).
+
+All of these files are already in your main checkout at the same relative path under plans/stage3_design/full_stage3_analysis/.

@@ -206,6 +206,16 @@ def main() -> None:
                          "no-decrease floor) -- InverseConfigurationPlannerConfig."
                          "enforce_magnet_z_fixed. Use when the physical setup requires the "
                          "magnet to stay on a single Z plane throughout.")
+    p.add_argument("--magnet-z-max-rise-mm", type=float, default=None,
+                    help="cap how far ABOVE its start-state Z the source magnet may rise "
+                         "for the whole plan, while still allowing the default no-decrease "
+                         "floor below -- InverseConfigurationPlannerConfig.magnet_z_max_rise_m. "
+                         "A looser middle ground between the default (unbounded rise) and "
+                         "--lock-magnet-z (zero rise). Ignored if --lock-magnet-z is also "
+                         "passed (that already pins Z exactly). Only enforced by Layer 1's "
+                         "solve -- if Layer 1 can't fully converge and the script falls back "
+                         "to Layer 2 (see 'Layer 1 incomplete' in the printed output), this "
+                         "cap is NOT currently threaded into that fallback optimiser.")
     p.add_argument("--target-path-json", type=Path, default=None,
                     help="track a CUSTOM path instead of the raw --lumen-file centreline -- "
                          "e.g. the output of design_stage3_tracked_path.py "
@@ -239,6 +249,11 @@ def main() -> None:
           f"({exclusion_floor_m * 1e3:.2f}mm)")
     print(f"[build] insertion_max_m = {insertion_max_m:.4f} ({args.insertion_max_mm:.1f}mm)")
     print(f"[build] insertion_start_m = {insertion_start_m:.4f} ({args.insertion_start_mm:.2f}mm)")
+    if args.lock_magnet_z:
+        print("[build] magnet Z locked exactly at start value (--lock-magnet-z)")
+    elif args.magnet_z_max_rise_mm is not None:
+        print(f"[build] magnet Z capped to start_z + {args.magnet_z_max_rise_mm:.2f}mm "
+              f"(no-decrease floor still applies below), Layer-1 only")
 
     from proper_research.planning.vessel_context import build_vessel_planning_context
     from proper_research.planning.planning_context import make_inverse_config
@@ -324,6 +339,8 @@ def main() -> None:
         shared["finite_difference_validation_at_start"] = False
     if args.lock_magnet_z:
         shared["enforce_magnet_z_fixed"] = True
+    if args.magnet_z_max_rise_mm is not None:
+        shared["magnet_z_max_rise_m"] = args.magnet_z_max_rise_mm / 1000.0
     if args.multistart_joint_perturbation_rad is not None:
         shared["multistart_joint_perturbation_rad"] = args.multistart_joint_perturbation_rad
 

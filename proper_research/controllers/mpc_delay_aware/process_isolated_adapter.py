@@ -468,6 +468,16 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             # controller path -- all values already computed above/in resp,
             # nothing new here changes `command`/`success`/control flow.
             "iterations": None if resp is None else resp.get("qp_iterations"),
+            # 2026-10-14 speed-fix investigation: the worker already computes
+            # OSQP's own nuanced status (e.g. "run time limit reached" when
+            # solver_time_limit_s/accept_time_limit_solution engage) and
+            # sends it as qp_status, but nothing downstream of this adapter
+            # ever read it -- the top-level "status" above is only the
+            # coarse "did the worker reply at all" flag. Logging-only
+            # addition: forwards qp_status through so it can finally reach
+            # path_follow.jsonl (see close_loop_path_follow.py's row dict).
+            # Does not change `command`/`success`/control flow.
+            "qp_status": None if resp is None else resp.get("qp_status"),
             "objective": None if resp is None else resp.get("qp_objective"),
             "primal_residual": None if resp is None else resp.get("qp_primal_residual"),
             "dual_residual": None if resp is None else resp.get("qp_dual_residual"),

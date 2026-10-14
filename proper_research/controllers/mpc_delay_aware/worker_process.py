@@ -115,7 +115,10 @@ def _worker_main(
     magnet_exclusion_kwargs: Optional[dict] = None,
     magnet_workspace_kwargs: Optional[dict] = None,
     magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+    magnet_workspace_clearance_kwargs: Optional[dict] = None,
+    tcp_workspace_kwargs: Optional[dict] = None,
     right_shift_m: float = 0.0,
+    jacobian_source_kwargs: Optional[dict] = None,
 ) -> None:
     """Entry point for Process B. Constructs its OWN MPC instances (old +
     new, so one worker can answer requests for either condition -- the
@@ -252,6 +255,8 @@ def _worker_main(
             magnet_exclusion=magnet_exclusion_kwargs,
             magnet_workspace=magnet_workspace_kwargs,
             magnet_exclusion_clearance=magnet_exclusion_clearance_kwargs,
+            magnet_workspace_clearance=magnet_workspace_clearance_kwargs,
+            tcp_workspace=tcp_workspace_kwargs,
         )
         print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
               f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
@@ -264,11 +269,73 @@ def _worker_main(
             print(f"[worker] magnet z-workspace constraint wired INTO the QP "
                   f"(z in [{magnet_workspace_kwargs['z_min_m']*1e3:.1f}, "
                   f"{magnet_workspace_kwargs['z_max_m']*1e3:.1f}]mm)")
+        if tcp_workspace_kwargs is not None:
+            _tcp_min, _tcp_max = tcp_workspace_kwargs["xyz_min"], tcp_workspace_kwargs["xyz_max"]
+            print(f"[worker] TCP Cartesian-workspace constraint wired INTO the QP "
+                  f"(x in [{_tcp_min[0]*1e3:.1f},{_tcp_max[0]*1e3:.1f}]mm, "
+                  f"y in [{_tcp_min[1]*1e3:.1f},{_tcp_max[1]*1e3:.1f}]mm, "
+                  f"z in [{_tcp_min[2]*1e3:.1f},{_tcp_max[2]*1e3:.1f}]mm)")
         if magnet_exclusion_clearance_kwargs is not None:
             print(f"[worker] magnet-exclusion CLEARANCE COST wired INTO the QP "
                   f"(gain={magnet_exclusion_clearance_kwargs['gain']:.3g}, "
                   f"soft_radius={magnet_exclusion_clearance_kwargs['soft_radius_m']*1e3:.1f}mm, "
                   f"active only below soft_radius, separate from the hard exclusion radius above)")
+        if magnet_workspace_clearance_kwargs is not None:
+            print(f"[worker] magnet z-workspace CLEARANCE COST wired INTO the QP "
+                  f"(gain={magnet_workspace_clearance_kwargs['gain']:.3g}, "
+                  f"soft_margin={magnet_workspace_clearance_kwargs['soft_margin_m']*1e3:.1f}mm, "
+                  f"active only within soft_margin of either z bound, separate from the hard "
+                  f"z-workspace bound above)")
+
+    # --- smooth validity-gated J1/J3 contact-Jacobian hybrid (2026-10-14,
+    # offline-validated in this plan's history: substantially improves the
+    # local model at ticks 278/366-style contact-specific transients,
+    # blends smoothly back to the plain schedule J1 outside its validated
+    # (s_q,DeltaL) region -- see contact_jacobian_hybrid.py module
+    # docstring). Only constructed/active for exact_qn0_controller, the
+    # class the live vessel controller actually uses. `nominal_
+    # reference_positions_m` DOES matter here -- it feeds the PRIMARY
+    # beam-position-tracking cost via _beam_prediction_terms_exec, which
+    # ExactQNZeroTaskNullspaceDelayAwareMPC still calls; only the SEPARATE
+    # state-tracking/posture nullspace term is zeroed by Q_N=0 (see that
+    # class's _dynamic_qp_terms_exec) -- so both reference_position_
+    # jacobians AND nominal_reference_positions_m must be patched
+    # consistently per tick, not just the former. ---
+    jacobian_hybrid_model = None
+    s_of_ref_for_hybrid = None
+    pristine_schedule_J1 = None
+    pristine_nominal_J1 = None
+    if jacobian_source_kwargs is not None and exact_qn0_controller is not None:
+        from proper_research.controllers.contact_jacobian_hybrid import (
+            ContactJacobianHybridModel, HybridMapConfig,
+        )
+
+        _hybrid_D = np.concatenate([
+            np.asarray(exact_qn0_mpc_config.velocity_limit[:6], dtype=float) * float(exact_qn0_mpc_config.sample_period_s),
+            [np.asarray(exact_qn0_mpc_config.velocity_limit[6], dtype=float) * float(exact_qn0_mpc_config.sample_period_s)],
+        ])
+        jacobian_hybrid_model = ContactJacobianHybridModel(
+            HybridMapConfig(map_dir=jacobian_source_kwargs["map_dir"]), D=_hybrid_D,
+        )
+        # s_of_ref: map each of this run's 527-ish reference-index rows to
+        # the hybrid model's own physical path coordinate s, via nearest-
+        # configuration match -- same validated convention used throughout
+        # this map's offline construction (never conflate the reference's
+        # own time-resampled index space with the hybrid model's native,
+        # geometric s_m_arr space).
+        ref_states_q = np.asarray(reference.state[:, :6], dtype=float)
+        s_of_ref_for_hybrid = np.zeros(ref_states_q.shape[0])
+        for _k in range(ref_states_q.shape[0]):
+            _dists = np.linalg.norm(
+                (jacobian_hybrid_model.states_arr[:, :6] - ref_states_q[_k][None, :])
+                / jacobian_hybrid_model.D_Q[None, :],
+                axis=1,
+            )
+            s_of_ref_for_hybrid[_k] = jacobian_hybrid_model.s_m_arr[int(np.argmin(_dists))]
+        print(f"[worker] contact-Jacobian J1/J3 hybrid ENABLED "
+              f"(map_dir={jacobian_source_kwargs['map_dir']}, "
+              f"r_a={jacobian_hybrid_model.r_a:.3f} r_b={jacobian_hybrid_model.r_b:.3f}, "
+              f"{len(jacobian_hybrid_model.tiles)} tiles loaded)")
 
     def _apply_frame_transform(controller, R_fit: np.ndarray, t_fit: np.ndarray) -> None:
         """Planner(P)->live-robot(R) frame-mismatch fix (2026-09-21): p_des
@@ -411,6 +478,15 @@ def _worker_main(
             if exact_qn0_controller is not None:
                 _apply_frame_transform(exact_qn0_controller, R_fit, t_fit)
                 _apply_right_shift(exact_qn0_controller, right_shift_m)
+                if jacobian_hybrid_model is not None:
+                    # pristine "J1" baseline for the hybrid blend MUST be
+                    # captured AFTER frame/right-shift corrections, not at
+                    # construction time -- _apply_frame_transform rewrites
+                    # nominal_reference_positions_m in place (reference_
+                    # position_jacobians itself is untouched by either, but
+                    # captured here too for symmetry/clarity).
+                    pristine_schedule_J1 = exact_qn0_controller.reference_position_jacobians.copy()
+                    pristine_nominal_J1 = exact_qn0_controller.nominal_reference_positions_m.copy()
             frame_ready = True
             print(f"[worker] frame transform applied: |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm "
                   f"det(R_fit)={det:+.6f} -- p_des/p_nominal now frame-consistent, frame_ready=True")
@@ -459,6 +535,18 @@ def _worker_main(
                         "kind='exact_qn0' requested but worker was not started with "
                         "enable_exact_qn_zero=True"
                     )
+                if jacobian_hybrid_model is not None:
+                    _z_meas = np.asarray(req["z_meas"], dtype=float)
+                    _control_index = int(req["control_index"])
+                    _window_idx = exact_qn0_controller._reference_indices(_control_index, future=True)
+                    _J_h, _nom_h, _hyb_diag = jacobian_hybrid_model.horizon_jacobians_and_nominals(
+                        q_meas=_z_meas[:6], L_meas=float(_z_meas[6]),
+                        sched_J_window=pristine_schedule_J1[_window_idx],
+                        sched_nominal_window=pristine_nominal_J1[_window_idx],
+                        s_ref_window=s_of_ref_for_hybrid[_window_idx],
+                    )
+                    exact_qn0_controller.reference_position_jacobians[_window_idx] = _J_h
+                    exact_qn0_controller.nominal_reference_positions_m[_window_idx] = _nom_h
                 step = exact_qn0_controller.solve_delay_aware(
                     z_meas=np.asarray(req["z_meas"], dtype=float),
                     q_cmd=np.asarray(req["q_cmd"], dtype=float),
@@ -541,7 +629,10 @@ class MPCWorkerHandle:
         magnet_exclusion_kwargs: Optional[dict] = None,
         magnet_workspace_kwargs: Optional[dict] = None,
         magnet_exclusion_clearance_kwargs: Optional[dict] = None,
+        magnet_workspace_clearance_kwargs: Optional[dict] = None,
+        tcp_workspace_kwargs: Optional[dict] = None,
         right_shift_m: float = 0.0,
+        jacobian_source_kwargs: Optional[dict] = None,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -560,7 +651,10 @@ class MPCWorkerHandle:
                 magnet_exclusion_kwargs=magnet_exclusion_kwargs,
                 magnet_workspace_kwargs=magnet_workspace_kwargs,
                 magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+                magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
+                tcp_workspace_kwargs=tcp_workspace_kwargs,
                 right_shift_m=right_shift_m,
+                jacobian_source_kwargs=jacobian_source_kwargs,
             ),
         )
         self._proc.start()

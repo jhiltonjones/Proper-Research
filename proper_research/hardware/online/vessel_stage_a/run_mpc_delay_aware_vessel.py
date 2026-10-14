@@ -209,6 +209,17 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
 from proper_research.planning.planning_context import make_robot_config
 
 _MAGNET_RISE_LIMIT_M = 0.04  # tightened 2026-09-23 after the live near-miss (was 0.08)
+
+# cfg.workspace_xyz_min_m/max_m's actual values, hoisted to module level
+# (2026-10-14) so the new in-QP TCP-workspace constraint (built earlier in
+# main(), before `cfg` itself exists) and the post-hoc tcp_out_of_workspace
+# monitor (cfg.workspace_xyz_min_m/max_m, set later in main()) always read
+# the exact SAME box -- see that later assignment site, further down this
+# file, for the full historical-incident comment explaining these specific
+# numbers. Edit the box HERE (the single source of truth); the later site
+# just assigns `cfg.workspace_xyz_min_m = _WORKSPACE_XYZ_MIN_M` unchanged.
+_WORKSPACE_XYZ_MIN_M = (0.270, -0.750, 0.170)
+_WORKSPACE_XYZ_MAX_M = (0.660, -0.530, 0.500)
 # NOT a bare JointSpaceRobotConfig() -- its tcp_to_magnet_pose6 default
 # (None) falls back to ur_magnet_ik_jacobian_validation.CONFIG's STALE
 # 0.47m tool offset (see that class's own docstring warning). Caught live
@@ -305,9 +316,12 @@ def spawn_and_warm_worker(
     magnet_exclusion_kwargs: dict | None = None,
     magnet_workspace_kwargs: dict | None = None,
     magnet_exclusion_clearance_kwargs: dict | None = None,
+    magnet_workspace_clearance_kwargs: dict | None = None,
+    tcp_workspace_kwargs: dict | None = None,
     solver_time_limit_s: float = 0.0,
     zero_input_reference_in_r: bool = False,
     right_shift_m: float = 0.0,
+    jacobian_source_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -379,7 +393,10 @@ def spawn_and_warm_worker(
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+        magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
         right_shift_m=right_shift_m,
+        jacobian_source_kwargs=jacobian_source_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -387,7 +404,8 @@ def spawn_and_warm_worker(
           f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), contact={_CONTACT}, "
           f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm, "
           f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}, "
-          f"magnet-workspace-in-qp={'ON' if magnet_workspace_kwargs is not None else 'OFF'}")
+          f"magnet-workspace-in-qp={'ON' if magnet_workspace_kwargs is not None else 'OFF'}, "
+          f"magnet-workspace-clearance-cost={'ON' if magnet_workspace_clearance_kwargs is not None else 'OFF'}")
     if right_shift_m:
         print(f"[vessel-mpc] LIVE TRACKING TARGET right-shift: {right_shift_m*1e3:.2f}mm "
               f"(plan/schedule/wall-model NOT rebuilt -- only the controller's own "
@@ -743,6 +761,54 @@ def main() -> None:
                          "with 2.0mm as an experimental value, not a final safety argument -- "
                          "the real number should come from the negative tail of "
                          "max(0, d_cmd-d_meas) over repeated runs, not one trajectory.")
+    p.add_argument("--magnet-exclusion-live-relinearize", action="store_true",
+                    help="2026-10-12: the magnet-exclusion analogue of "
+                         "--magnet-workspace-live-relinearize -- re-anchor the exclusion "
+                         "constraint's (distance, normal, Jacobian) linearization to the CURRENT "
+                         "actual commanded magnet position every solve (re-resolving the closest "
+                         "lumen_C_m point against that live position too), instead of the offline "
+                         "plan's nominal trajectory fixed at schedule-build time. Same root cause "
+                         "as the z-workspace fix: this constraint shares the IDENTICAL "
+                         "linearize-around-offline-nominal-q pattern, so under "
+                         "--zero-input-reference-in-r's accumulated drift it has the SAME failure "
+                         "mode (confirmed live: a no-contact floor240 run tripped "
+                         "magnet_exclusion_violated at gap=234.9mm against a 235.0mm floor despite "
+                         "the hard constraint being active). Strongly recommended whenever "
+                         "--zero-input-reference-in-r is also passed.")
+    p.add_argument("--magnet-workspace-robust-margin-mm", type=float, default=0.0,
+                    help="2026-10-12: the z-workspace analogue of "
+                         "--magnet-exclusion-robust-margin-mm -- tightens ONLY the QP's own "
+                         "hard magnet z-workspace bounds inward by this amount from the post-hoc "
+                         "monitor's [floor,rise] bounds; the post-hoc monitor (--magnet-rise-"
+                         "limit-mm/--magnet-floor-margin-mm) is UNCHANGED by this. Added after a "
+                         "live floor240 run tripped magnet_z_out_of_bounds despite the QP's "
+                         "z-workspace constraint being active (on by default) -- the QP constraint "
+                         "was wired to the EXACT SAME unmargined bounds as the post-hoc monitor "
+                         "(zero headroom), unlike the exclusion radius which already had this "
+                         "margin mechanism. Same root cause as the exclusion margin: q_cmd "
+                         "diverges from the physically MEASURED state by a real amount, so a QP "
+                         "solve that keeps z(q_cmd) inside the raw bounds can still produce a "
+                         "measured z outside them. Start with 2.0mm as an experimental value, "
+                         "matching --magnet-exclusion-robust-margin-mm's own starting point.")
+    p.add_argument("--magnet-workspace-live-relinearize", action="store_true",
+                    help="2026-10-12: re-anchor the z-workspace hard constraint's linearization "
+                         "point to the CURRENT actual commanded joints every solve, instead of "
+                         "the offline plan's nominal joint trajectory (q_nom) fixed at schedule-"
+                         "build time. Root cause this fixes: confirmed live (floor240, "
+                         "--zero-input-reference-in-r) that after ~10deg of accumulated joint "
+                         "drift from q_nom -- the whole point of --zero-input-reference-in-r is "
+                         "to allow exactly this -- the STALE (q_nom, Jacobian-at-q_nom) anchor's "
+                         "first-order z-estimate was already wrong by 5.5mm with ZERO further "
+                         "motion (direct FK comparison, not inferred). The hard constraint was "
+                         "being satisfied EXACTLY against its own (by-then-inaccurate) linear "
+                         "model while the TRUE z blew past the bound by several mm/tick -- no "
+                         "amount of --magnet-workspace-robust-margin-mm can fix a stale "
+                         "linearization point, only a bigger one can. With this flag, the Taylor "
+                         "expansion only needs to stay valid over the horizon's own small "
+                         "intra-horizon drift (~1.5s), not the drift accumulated since the plan's "
+                         "own start. Strongly recommended whenever --zero-input-reference-in-r is "
+                         "also passed; a no-op cost increase (one extra FK+Jacobian call per "
+                         "solve) otherwise.")
     p.add_argument("--magnet-exclusion-clearance-gain", type=float, default=0.0,
                     help="2026-09-30: weight for a SEPARATE, soft per-horizon-stage clearance "
                          "cost -- gain*(soft_radius - d_j)^2, active only where this tick's own "
@@ -761,6 +827,48 @@ def main() -> None:
                          "radius (post-hoc floor + --magnet-exclusion-robust-margin-mm), or the "
                          "controller will refuse to build with a ValueError (empty/inverted "
                          "avoidance band).")
+    p.add_argument("--magnet-workspace-clearance-gain", type=float, default=0.0,
+                    help="2026-10-12: the z-workspace analogue of "
+                         "--magnet-exclusion-clearance-gain -- weight for a SEPARATE, soft "
+                         "per-horizon-stage clearance cost penalizing approach to EITHER the "
+                         "z-ceiling or z-floor, active only where this tick's own linearized z "
+                         "estimate falls within --magnet-workspace-soft-margin-mm of either hard "
+                         "bound. Does NOT touch the hard z-workspace bound itself. Added after a "
+                         "live floor240 --zero-input-reference-in-r run rode the hard z ceiling "
+                         "for its ENTIRE run (magnet z climbed smoothly and monotonically from "
+                         "tick 0, no oscillation) -- widening the hard bound's own margin "
+                         "(--magnet-workspace-robust-margin-mm) cannot fix this since the drift "
+                         "is systematic, not noise; it only buys a few extra ticks before the "
+                         "same climb consumes the larger margin too. 0.0 (default) = disabled. "
+                         "Requires the in-QP magnet z-workspace constraint to be enabled (not "
+                         "--disable-magnet-exclusion-in-qp).")
+    p.add_argument("--magnet-workspace-soft-margin-mm", type=float, default=10.0,
+                    help="see --magnet-workspace-clearance-gain. Must satisfy "
+                         "2*soft_margin_mm < (QP z_max - QP z_min), or the controller will "
+                         "refuse to build with a ValueError (floor/ceiling soft bands would "
+                         "overlap/invert).")
+    p.add_argument("--jacobian-source", choices=["schedule", "hybrid_j1j3"], default="schedule",
+                    help="2026-10-14: 'schedule' (default) is today's exact behavior -- the "
+                         "exact_qn0 controller tracks via the precomputed, reference-index-"
+                         "conditioned Jacobian schedule, unchanged. 'hybrid_j1j3' activates the "
+                         "offline-validated smooth validity-gated J1/J3 hybrid: inside its "
+                         "validated (s_q,DeltaL) neighbourhood (see --contact-jacobian-map-dir), "
+                         "the measured-state-conditioned 2D contact-Jacobian map materially "
+                         "improves the local model at contact-specific transients (found "
+                         "offline to rotate the command by over 60 degrees back toward the "
+                         "full-model oracle at known problem ticks); outside that region it "
+                         "smoothly blends back to the exact same 'schedule' behavior (cubic "
+                         "smoothstep, zero-slope at both ends -- no command-jump risk). Requires "
+                         "--contact-jacobian-map-dir; fails loudly at worker startup if that "
+                         "map is missing or incomplete -- there is deliberately no silent "
+                         "fallback to 'schedule' for a Jacobian-source switch requested "
+                         "explicitly.")
+    p.add_argument("--contact-jacobian-map-dir", type=str, default=None,
+                    help="directory containing the frozen contact-Jacobian hybrid map "
+                         "(manifest + tile .npz files + residual_decomp_thresholds.json), e.g. "
+                         "plans/stage3_design/contact_jacobian_maps/floor240_2026-10-12 -- "
+                         "required when --jacobian-source=hybrid_j1j3, ignored otherwise. No "
+                         "default: this must name the map built for THIS plan, never assumed.")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
                     help="disable BOTH linearized magnet safety constraints wired directly into "
@@ -770,6 +878,28 @@ def main() -> None:
                          "--magnet-floor-margin-mm) stay on regardless of this flag; see "
                          "delay_aware_mpc.py's _configure_magnet_exclusion/_configure_magnet_"
                          "workspace docstrings for why these were added")
+    p.add_argument("--disable-tcp-workspace-in-qp", action="store_true",
+                    help="disable the linearized TCP Cartesian-workspace constraint wired "
+                         "directly into the QP (2026-10-14): keeps the robot's TCP within "
+                         "_WORKSPACE_XYZ_MIN_M/_WORKSPACE_XYZ_MAX_M (the SAME box close_loop_"
+                         "path_follow.py's post-hoc tcp_out_of_workspace monitor already checks "
+                         "-- that monitor stays on regardless of this flag). SEPARATE from "
+                         "--disable-magnet-exclusion-in-qp: different frame (literal UR robot-"
+                         "base frame, not the beam-centric one), different point (TCP, not "
+                         "magnet). See delay_aware_mpc.py's _configure_tcp_workspace docstring.")
+    p.add_argument("--tcp-workspace-robust-margin-mm", type=float, default=15.0,
+                    help="inward safety margin (mm) subtracted from _WORKSPACE_XYZ_MIN_M/MAX_M "
+                         "before becoming the QP's own hard bound, so the optimizer always acts "
+                         "before the post-hoc monitor would ever fire. Default 15mm, deliberately "
+                         "larger than --magnet-exclusion-robust-margin-mm's typical few mm: an "
+                         "offline check against real hardware abort poses (2026-10-14) found this "
+                         "constraint's FK agrees with the real robot's TCP pose to only a few mm "
+                         "(not the ~0.11mm the same DH achieves elsewhere), so the margin must "
+                         "absorb that, not assume sub-mm accuracy.")
+    p.add_argument("--tcp-workspace-live-relinearize", action="store_true",
+                    help="re-anchor the TCP-workspace constraint's linearization to the current "
+                         "commanded joints every solve, not the offline plan's nominal trajectory "
+                         "-- same rationale as --magnet-workspace-live-relinearize.")
     args = p.parse_args()
 
     _BEAM_BASE_EXCLUSION_RADIUS_M = args.beam_base_exclusion_floor_mm / 1000.0
@@ -856,6 +986,27 @@ def main() -> None:
           f"(rise_limit={args.magnet_rise_limit_mm:.1f}mm, floor_margin="
           f"{_MAGNET_Z_FLOOR_MARGIN_M*1e3:.1f}mm)")
 
+    # 2026-10-12: same pattern as _MAGNET_EXCLUSION_RADIUS_QP_M above -- tighten
+    # ONLY the QP's own z-workspace bounds, inward from the post-hoc monitor's
+    # _MAGNET_Z_BOUNDS_M, which stays untouched (still the ground-truth check
+    # against the raw [floor,rise] bounds on measured state).
+    _MAGNET_WORKSPACE_ROBUST_MARGIN_M = args.magnet_workspace_robust_margin_mm * 1e-3
+    _MAGNET_Z_BOUNDS_QP_M = (
+        _MAGNET_Z_BOUNDS_M[0] + _MAGNET_WORKSPACE_ROBUST_MARGIN_M,
+        _MAGNET_Z_BOUNDS_M[1] - _MAGNET_WORKSPACE_ROBUST_MARGIN_M,
+    )
+    if _MAGNET_Z_BOUNDS_QP_M[0] >= _MAGNET_Z_BOUNDS_QP_M[1]:
+        raise ValueError(
+            f"--magnet-workspace-robust-margin-mm {args.magnet_workspace_robust_margin_mm:.1f}mm "
+            f"is too large: it would invert the QP's own z-workspace bounds "
+            f"(post-hoc bounds=[{_MAGNET_Z_BOUNDS_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_M[1]*1e3:.1f}]mm)."
+        )
+    print(f"[vessel-mpc] magnet z-workspace QP hard-constraint bounds: "
+          f"[{_MAGNET_Z_BOUNDS_QP_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_QP_M[1]*1e3:.1f}]mm "
+          f"(post-hoc bounds [{_MAGNET_Z_BOUNDS_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_M[1]*1e3:.1f}]mm "
+          f"+/- {args.magnet_workspace_robust_margin_mm:.1f}mm robust margin) -- "
+          f"the post-hoc monitor above is UNCHANGED by this margin")
+
     magnet_exclusion_kwargs = None
     magnet_workspace_kwargs = None
     _MAGNET_CONSTRAINTS_IN_QP = not args.disable_magnet_exclusion_in_qp
@@ -872,6 +1023,13 @@ def main() -> None:
             position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
             lumen_C_m=_MAGNET_EXCLUSION_LUMEN_C_M, radius_m=_MAGNET_EXCLUSION_RADIUS_QP_M,
         )
+        if args.magnet_exclusion_live_relinearize:
+            magnet_exclusion_kwargs["live_relinearize"] = True
+            magnet_exclusion_kwargs["dh"] = _robot_kin.dh
+            magnet_exclusion_kwargs["T_F_M"] = _robot_kin.T_F_M
+            print("[vessel-mpc] magnet-exclusion constraint will RE-ANCHOR its linearization "
+                  "to the current commanded magnet position every solve (--magnet-exclusion-"
+                  "live-relinearize), not the offline plan's nominal trajectory")
         print(f"[vessel-mpc] magnet-exclusion constraint will be wired INTO the QP "
               f"(radius={_MAGNET_EXCLUSION_RADIUS_QP_M*1e3:.1f}mm = post-hoc floor "
               f"{_MAGNET_EXCLUSION_RADIUS_M*1e3:.1f}mm + robust margin "
@@ -879,15 +1037,78 @@ def main() -> None:
               f"--disable-magnet-exclusion-in-qp to turn this off")
         magnet_workspace_kwargs = dict(
             position_jacobians=mag_jacobians, nominal_positions_m=mag_positions,
-            z_min_m=_MAGNET_Z_BOUNDS_M[0], z_max_m=_MAGNET_Z_BOUNDS_M[1],
+            z_min_m=_MAGNET_Z_BOUNDS_QP_M[0], z_max_m=_MAGNET_Z_BOUNDS_QP_M[1],
         )
+        if args.magnet_workspace_live_relinearize:
+            magnet_workspace_kwargs["live_relinearize"] = True
+            magnet_workspace_kwargs["dh"] = _robot_kin.dh
+            magnet_workspace_kwargs["T_F_M"] = _robot_kin.T_F_M
+            print("[vessel-mpc] magnet z-workspace constraint will RE-ANCHOR its linearization "
+                  "to the current commanded joints every solve (--magnet-workspace-live-"
+                  "relinearize), not the offline plan's nominal trajectory")
         print(f"[vessel-mpc] magnet z-workspace constraint will be wired INTO the QP "
-              f"(z in [{_MAGNET_Z_BOUNDS_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_M[1]*1e3:.1f}]mm, "
-              f"same bounds as the post-hoc monitor) -- pass --disable-magnet-exclusion-in-qp "
-              f"to turn this off too")
+              f"(z in [{_MAGNET_Z_BOUNDS_QP_M[0]*1e3:.1f},{_MAGNET_Z_BOUNDS_QP_M[1]*1e3:.1f}]mm "
+              f"= post-hoc bounds +/- {args.magnet_workspace_robust_margin_mm:.1f}mm robust "
+              f"margin) -- pass --disable-magnet-exclusion-in-qp to turn this off too")
     else:
         print("[vessel-mpc] --disable-magnet-exclusion-in-qp set: magnet exclusion and "
               "z-workspace bounds stay ONLY post-hoc monitors, not visible to the optimizer")
+
+    # 2026-10-14: proactive, in-optimizer counterpart to close_loop_path_
+    # follow.py's post-hoc tcp_out_of_workspace monitor (cfg.workspace_
+    # xyz_min_m/max_m above). SEPARATE mechanism/frame from the magnet-
+    # exclusion/z-workspace block above -- see delay_aware_mpc.py's
+    # _configure_tcp_workspace docstring: this one uses the literal UR
+    # robot-base frame "R" that getActualTCPPose() reports in
+    # (urik.corrected_dh_from_config(urik.CONFIG) + the flange-to-TCP
+    # offset), not the beam-centric _robot_kin used above. The offline
+    # FK-vs-real-abort-pose check done before wiring this in agreed to a
+    # few mm (not the ~0.11mm this DH gets elsewhere), so the default
+    # margin here is deliberately larger than magnet-exclusion's.
+    tcp_workspace_kwargs = None
+    if not args.disable_tcp_workspace_in_qp:
+        _tcp_dh = urik.corrected_dh_from_config(urik.CONFIG)
+        _tcp_T_F_TCP = urik.pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_pose6)
+        _reference_for_tcp = _reference_for_schedule if magnet_exclusion_kwargs is not None or magnet_workspace_kwargs is not None else load_configuration_reference(
+            args.plan_dir, require_planned_beam_feasible=False,
+        )
+        _tcp_ref_states_q = np.asarray(_reference_for_tcp.state[:, :6], dtype=float)
+        _tcp_S = _tcp_ref_states_q.shape[0]
+        tcp_jacobians = np.zeros((_tcp_S, 3, 6))
+        tcp_positions = np.zeros((_tcp_S, 3))
+        for _i in range(_tcp_S):
+            _res = urik.forward_kinematics(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)
+            tcp_positions[_i] = _res.T_R_target[:3, 3]
+            tcp_jacobians[_i] = urik.geometric_jacobian(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)[:3, :6]
+        _tcp_margin_m = args.tcp_workspace_robust_margin_mm * 1e-3
+        _tcp_xyz_min = np.asarray(_WORKSPACE_XYZ_MIN_M, dtype=float) + _tcp_margin_m
+        _tcp_xyz_max = np.asarray(_WORKSPACE_XYZ_MAX_M, dtype=float) - _tcp_margin_m
+        if np.any(_tcp_xyz_min >= _tcp_xyz_max):
+            raise ValueError(
+                f"--tcp-workspace-robust-margin-mm {args.tcp_workspace_robust_margin_mm:.1f}mm "
+                f"is too large: it would invert the QP's own TCP-workspace bounds "
+                f"(post-hoc bounds min={_WORKSPACE_XYZ_MIN_M}, max={_WORKSPACE_XYZ_MAX_M})."
+            )
+        tcp_workspace_kwargs = dict(
+            position_jacobians=tcp_jacobians, nominal_positions_m=tcp_positions,
+            xyz_min=_tcp_xyz_min, xyz_max=_tcp_xyz_max,
+        )
+        if args.tcp_workspace_live_relinearize:
+            tcp_workspace_kwargs["live_relinearize"] = True
+            tcp_workspace_kwargs["dh"] = _tcp_dh
+            tcp_workspace_kwargs["T_F_TCP"] = _tcp_T_F_TCP
+            print("[vessel-mpc] TCP workspace constraint will RE-ANCHOR its linearization "
+                  "to the current commanded joints every solve (--tcp-workspace-live-"
+                  "relinearize), not the offline plan's nominal trajectory")
+        print(f"[vessel-mpc] TCP Cartesian-workspace constraint will be wired INTO the QP "
+              f"(x in [{_tcp_xyz_min[0]*1e3:.1f},{_tcp_xyz_max[0]*1e3:.1f}]mm, "
+              f"y in [{_tcp_xyz_min[1]*1e3:.1f},{_tcp_xyz_max[1]*1e3:.1f}]mm, "
+              f"z in [{_tcp_xyz_min[2]*1e3:.1f},{_tcp_xyz_max[2]*1e3:.1f}]mm "
+              f"= post-hoc bounds +/- {args.tcp_workspace_robust_margin_mm:.1f}mm robust "
+              f"margin) -- pass --disable-tcp-workspace-in-qp to turn this off")
+    else:
+        print("[vessel-mpc] --disable-tcp-workspace-in-qp set: tcp_out_of_workspace stays "
+              "ONLY a post-hoc monitor, not visible to the optimizer")
 
     magnet_exclusion_clearance_kwargs = None
     if magnet_exclusion_kwargs is not None and args.magnet_exclusion_clearance_gain > 0.0:
@@ -900,6 +1121,35 @@ def main() -> None:
               f"{args.magnet_exclusion_soft_radius_mm:.1f}mm) -- separate from, and does not "
               f"weaken, the hard constraint above; active only below soft_radius")
 
+    magnet_workspace_clearance_kwargs = None
+    if magnet_workspace_kwargs is not None and args.magnet_workspace_clearance_gain > 0.0:
+        soft_margin_m = args.magnet_workspace_soft_margin_mm * 1e-3
+        magnet_workspace_clearance_kwargs = dict(
+            gain=args.magnet_workspace_clearance_gain, soft_margin_m=soft_margin_m,
+        )
+        print(f"[vessel-mpc] magnet z-workspace CLEARANCE COST wired INTO the QP "
+              f"(gain={args.magnet_workspace_clearance_gain:.3g}, soft_margin="
+              f"{args.magnet_workspace_soft_margin_mm:.1f}mm) -- separate from, and does not "
+              f"weaken, the hard z-workspace constraint above; active within soft_margin of "
+              f"either z bound")
+
+    jacobian_source_kwargs = None
+    if args.jacobian_source == "hybrid_j1j3":
+        if not args.contact_jacobian_map_dir:
+            raise SystemExit(
+                "--jacobian-source hybrid_j1j3 requires --contact-jacobian-map-dir "
+                "(no default -- the map must name the plan it was built for)."
+            )
+        map_dir_abs = args.contact_jacobian_map_dir
+        if not os.path.isabs(map_dir_abs):
+            map_dir_abs = os.path.join("/home/jack/Proper-Research", map_dir_abs)
+        if not os.path.isdir(map_dir_abs):
+            raise SystemExit(f"--contact-jacobian-map-dir does not exist: {map_dir_abs}")
+        jacobian_source_kwargs = dict(map_dir=map_dir_abs)
+        print(f"[vessel-mpc] contact-Jacobian J1/J3 HYBRID requested "
+              f"(map_dir={map_dir_abs}) -- worker will fail loudly at startup if this "
+              f"map is missing or incomplete (no silent fallback to 'schedule').")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -911,9 +1161,12 @@ def main() -> None:
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
+        magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
         solver_time_limit_s=args.solver_time_limit_s,
         zero_input_reference_in_r=args.zero_input_reference_in_r,
         right_shift_m=args.right_shift_mm * 1.0e-3,
+        jacobian_source_kwargs=jacobian_source_kwargs,
     )
     print(f"[vessel-mpc] R-term v_ref: "
           f"{'ZEROED (v^T R v)' if args.zero_input_reference_in_r else 'offline plan (v-v_ref)^T R (v-v_ref)'}")
@@ -1015,8 +1268,25 @@ def main() -> None:
     # (not just to the one observed trip point), matching this file's own
     # established practice of real headroom over re-deriving to the exact
     # new edge.
-    cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
-    cfg.workspace_xyz_max_m = (0.656, -0.2, 0.433)
+    #
+    # 2026-10-12: SAME recurring failure mode, floor240 plans. The old box
+    # above was never re-derived for this plan family. Measured union of 3
+    # floor240 open-loop runs (contact+no-contact) gave a tight flange band
+    # (x 0.332-0.607, y -0.761..-0.543, z 0.395-0.407) -- but the live
+    # closed-loop run (with --magnet-workspace-robust-margin-mm 2.0, which
+    # fixed the EARLIER magnet_z_out_of_bounds trip at tick 39) then pushed
+    # measurably past that open-loop range before this box itself tripped
+    # tcp_out_of_workspace([0.313,-0.793,0.433]) at tick 29 -- truncated
+    # union across both closed-loop attempts: x 0.311-0.400, y -0.826..-0.691,
+    # z 0.407-0.451, i.e. z alone already exceeded the old 0.433 ceiling, and
+    # BOTH runs were cut short right there, so the real required extent is
+    # unknown and likely larger still. Re-derived with the same generous-
+    # margin practice as above: y_min widened well past the already-close
+    # -0.826mm observation, z_max widened well past the observed-but-
+    # truncated 0.4508m, since this box's whole history is "the next fix
+    # unlocks more MPC excursion the box after it then needs to absorb."
+    cfg.workspace_xyz_min_m = _WORKSPACE_XYZ_MIN_M
+    cfg.workspace_xyz_max_m = _WORKSPACE_XYZ_MAX_M
 
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True

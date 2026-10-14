@@ -107,6 +107,8 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         magnet_exclusion: dict | None = None,
         magnet_workspace: dict | None = None,
         magnet_exclusion_clearance: dict | None = None,
+        magnet_workspace_clearance: dict | None = None,
+        tcp_workspace: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -129,11 +131,13 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         n_joints = self.n - 1  # 6
 
         self._magnet_excl_radius: float | None = None
+        self._magnet_excl_live_relinearize: bool = False
         if magnet_exclusion is not None:
             self._configure_magnet_exclusion(**magnet_exclusion)
 
         self._magnet_ws_z_min: float | None = None
         self._magnet_ws_z_max: float | None = None
+        self._magnet_ws_live_relinearize: bool = False
         if magnet_workspace is not None:
             self._configure_magnet_workspace(**magnet_workspace)
 
@@ -149,6 +153,41 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_clear_soft_radius: float | None = None
         if magnet_exclusion_clearance is not None:
             self._configure_magnet_exclusion_clearance(**magnet_exclusion_clearance)
+
+        # 2026-10-12: z-workspace analogue of the exclusion clearance cost
+        # above, added SEPARATELY from (and never replacing) the hard
+        # magnet_workspace constraint -- same rationale: the hard bound only
+        # answers "is the commanded z feasible," it gives the optimizer no
+        # reason to prefer staying away from the edge before the hard bound
+        # binds. Root cause this closes: a live floor240 run with
+        # --zero-input-reference-in-r (which removes the R-cost's pull
+        # toward the offline plan's own v_ref -- the only thing that had
+        # been discouraging a redundant null-space direction from climbing
+        # in z) rode the hard z ceiling, margined or not, for its entire
+        # run -- magnet z climbed smoothly and monotonically from tick 0
+        # (no oscillation, ~1.3mm/tick), so no amount of HARD-bound margin
+        # alone can fix this: it only buys a few extra ticks before the
+        # same monotonic climb consumes that margin too. Requires
+        # magnet_workspace to already be configured (reuses its (z_nom,
+        # jacobians, z_min, z_max) schedule unchanged -- this term never
+        # derives its own geometry).
+        self._magnet_ws_clear_gain: float | None = None
+        self._magnet_ws_clear_soft_margin: float | None = None
+        if magnet_workspace_clearance is not None:
+            self._configure_magnet_workspace_clearance(**magnet_workspace_clearance)
+
+        # 2026-10-14: proactive, in-optimizer counterpart to close_loop_
+        # path_follow.py's post-hoc tcp_out_of_workspace monitor -- see
+        # _configure_tcp_workspace's own docstring for why this is a
+        # SEPARATE mechanism from magnet_workspace above (different
+        # frame: the literal UR robot-base frame "R" that
+        # getActualTCPPose() reports in, not the beam-centric frame
+        # magnet_workspace uses) and does not modify it.
+        self._tcp_ws_min: Array | None = None
+        self._tcp_ws_max: Array | None = None
+        self._tcp_ws_live_relinearize: bool = False
+        if tcp_workspace is not None:
+            self._configure_tcp_workspace(**tcp_workspace)
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -175,7 +214,11 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             # `_setup_osqp()` (sparsity from H alone) is wrong here and
             # `_setup_variable_hessian_osqp()` (includes the dense runtime
             # G.T@Qpbar@G term) is required.
-            if self._magnet_excl_radius is not None or self._magnet_ws_z_min is not None:
+            if (
+                self._magnet_excl_radius is not None
+                or self._magnet_ws_z_min is not None
+                or self._tcp_ws_min is not None
+            ):
                 self._setup_osqp_with_magnet_exclusion()
             else:
                 self._setup_variable_hessian_osqp()
@@ -190,6 +233,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
     def _configure_magnet_exclusion(
         self, *, position_jacobians: Any, nominal_positions_m: Any,
         lumen_C_m: Any, radius_m: float,
+        live_relinearize: bool = False, dh: Any = None, T_F_M: Any = None,
     ) -> None:
         """Add a linearized "magnet stays >= radius_m from the nearest point
         in lumen_C_m" inequality to every horizon stage of the QP, so the
@@ -260,6 +304,29 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_excl_normal = normal
         self._magnet_excl_radius = radius
         self._magnet_excl_min_nominal_margin_m = float(np.min(d_nom - radius))
+        self._magnet_excl_lumen = lumen
+
+        # 2026-10-12: same fix as _configure_magnet_workspace's own
+        # live_relinearize -- see that method's docstring for the full
+        # root-cause story (confirmed live on the z-workspace constraint;
+        # this constraint shares the IDENTICAL linearize-around-offline-
+        # nominal-q pattern, so it has the SAME failure mode under
+        # --zero-input-reference-in-r's accumulated drift). When enabled,
+        # re-anchors (d_nom, normal, c) to the CURRENT actual commanded
+        # magnet position/Jacobian every solve, re-resolving the closest
+        # lumen_C_m point against that live position too (not the stale
+        # offline-nominal one) -- rather than the fixed per-reference-index
+        # schedule computed once at construction time.
+        self._magnet_excl_live_relinearize = bool(live_relinearize)
+        if self._magnet_excl_live_relinearize:
+            if dh is None or T_F_M is None:
+                raise ValueError(
+                    "magnet_exclusion['live_relinearize']=True requires both "
+                    "'dh' and 'T_F_M' (the robot's own kinematic parameters, "
+                    "needed to compute a fresh FK/Jacobian anchor every solve)."
+                )
+            self._magnet_excl_dh = dh
+            self._magnet_excl_T_F_M = np.asarray(T_F_M, dtype=float)
 
         # Placeholder magnet rows: force full sparsity in every column so a
         # later OSQP Ax-update can write ANY real coefficient (including an
@@ -278,13 +345,15 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         can push real row values in via `update(Ax=...)`.
 
         Dummy-row count is derived from `self.A.shape[0] - base row count`
-        rather than assumed -- `self.A` may carry ZERO, ONE (exclusion
-        only, workspace only) or TWO (both) extra N-row blocks by this
-        point, appended in `_configure_magnet_exclusion`/`_configure_
-        magnet_workspace` (called, if at all, before this setup runs --
-        see `__init__`), so hardcoding one block's worth of dummy rows
-        here would silently under/over-size `l`/`u` whenever both (or
-        neither, in a future refactor) are active at once."""
+        rather than assumed -- `self.A` may carry ZERO, ONE, or more
+        extra N-row blocks by this point (exclusion: 1 block; magnet
+        workspace: 1 block; tcp_workspace: 3 blocks, one per axis),
+        appended in `_configure_magnet_exclusion`/`_configure_magnet_
+        workspace`/`_configure_tcp_workspace` (called, if at all,
+        before this setup runs -- see `__init__`), so hardcoding one
+        block's worth of dummy rows here would silently under/over-
+        size `l`/`u` whenever more than one of these mechanisms (or
+        none, in a future refactor) are active at once."""
         import osqp as _osqp
 
         self._p_pattern = sp.triu(
@@ -339,14 +408,29 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
     ) -> tuple[Array, Array]:
         if self._magnet_excl_radius is None:
             return np.empty(0, dtype=float), np.empty(0, dtype=float)
-        indices = self._reference_indices(control_index, future=True)
-        J = self._magnet_excl_jacobians[indices]                       # (N,3,6)
-        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
-        d_nom = self._magnet_excl_d_nom[indices]                        # (N,)
-        normal = self._magnet_excl_normal[indices]                      # (N,3)
         free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
 
-        c = np.einsum("nj,njk->nk", normal, J)                          # (N,6): n_j^T J_j
+        if self._magnet_excl_live_relinearize:
+            from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+            q_now = free_cmd[0]
+            pos_live = urik.forward_kinematics(q_now, self._magnet_excl_dh, self._magnet_excl_T_F_M).T_R_target[:3, 3]
+            jac_live = urik.geometric_jacobian(q_now, self._magnet_excl_dh, self._magnet_excl_T_F_M)[:3, :6]
+            diffs_live = pos_live[None, :] - self._magnet_excl_lumen      # (K,3)
+            dists_live = np.linalg.norm(diffs_live, axis=1)               # (K,)
+            closest_live = int(np.argmin(dists_live))
+            d_live = float(dists_live[closest_live])
+            normal_live = diffs_live[closest_live] / max(d_live, 1.0e-9)
+            c_live = normal_live @ jac_live                              # (6,)
+            q_nom = np.tile(q_now, (self.N, 1))
+            d_nom = np.full(self.N, d_live, dtype=float)
+            c = np.tile(c_live, (self.N, 1))                             # (N,6)
+        else:
+            indices = self._reference_indices(control_index, future=True)
+            J = self._magnet_excl_jacobians[indices]                       # (N,3,6)
+            q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+            d_nom = self._magnet_excl_d_nom[indices]                        # (N,)
+            normal = self._magnet_excl_normal[indices]                      # (N,3)
+            c = np.einsum("nj,njk->nk", normal, J)                          # (N,6): n_j^T J_j
         rows = np.zeros((self.N, self.nu), dtype=float)
         lower = np.empty(self.N, dtype=float)
         for j in range(self.N):
@@ -436,6 +520,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
     def _configure_magnet_workspace(
         self, *, position_jacobians: Any, nominal_positions_m: Any,
         z_min_m: float, z_max_m: float,
+        live_relinearize: bool = False, dh: Any = None, T_F_M: Any = None,
     ) -> None:
         """Add a linearized "magnet z stays within [z_min_m, z_max_m]"
         two-sided inequality to every horizon stage of the QP -- the
@@ -491,6 +576,34 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_ws_z_min = z_min
         self._magnet_ws_z_max = z_max
 
+        # 2026-10-12: optional re-anchoring of the linearization point from
+        # the OFFLINE PLAN's nominal joint trajectory (q_nom[j]/z_nom[j]
+        # above, fixed at schedule-build time) to the CURRENT actual
+        # commanded state, recomputed fresh every solve. Root cause this
+        # closes: under --zero-input-reference-in-r, the whole point is to
+        # let the redundant DOF drift away from q_nom -- confirmed live
+        # (floor240 run, 2026-10-12) that after ~10deg of accumulated joint
+        # drift from q_nom, the first-order estimate using the STALE (q_nom,
+        # Jacobian-at-q_nom) anchor was already wrong by 5.5mm with ZERO
+        # further motion (verified by direct FK comparison, not guessed) --
+        # the hard constraint was being satisfied exactly against its own
+        # (by-then-inaccurate) linear model, while the TRUE z blew past the
+        # bound by several mm per tick. Re-anchoring to the current state
+        # each solve keeps the Taylor expansion valid over only the (much
+        # smaller) intra-horizon drift, not the full accumulated drift
+        # since the plan's own start. None (default for dh/T_F_M, or
+        # live_relinearize=False) preserves the exact original behaviour.
+        self._magnet_ws_live_relinearize = bool(live_relinearize)
+        if self._magnet_ws_live_relinearize:
+            if dh is None or T_F_M is None:
+                raise ValueError(
+                    "magnet_workspace['live_relinearize']=True requires both "
+                    "'dh' and 'T_F_M' (the robot's own kinematic parameters, "
+                    "needed to compute a fresh FK/Jacobian anchor every solve)."
+                )
+            self._magnet_ws_dh = dh
+            self._magnet_ws_T_F_M = np.asarray(T_F_M, dtype=float)
+
         placeholder = np.full((self.N, self.nu), 1.0e-30, dtype=float)
         self._magnet_ws_row_start = self.A.shape[0]
         self.A = np.vstack((self.A, placeholder))
@@ -501,10 +614,28 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         if self._magnet_ws_z_min is None:
             return np.empty(0, dtype=float), np.empty(0, dtype=float)
         indices = self._reference_indices(control_index, future=True)
-        c = self._magnet_ws_jacobians[indices]                          # (N,6)
-        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
-        z_nom = self._magnet_ws_nominal_z[indices]                       # (N,)
         free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+
+        if self._magnet_ws_live_relinearize:
+            # Re-anchor ALL stages to a SINGLE fresh (z, Jacobian) pair
+            # evaluated at the CURRENT actual commanded joints (free_cmd[0]),
+            # not the offline plan's nominal q_nom -- see
+            # _configure_magnet_workspace's docstring for why. One extra
+            # FK + Jacobian call per solve (not per horizon stage); the
+            # Taylor expansion only has to stay valid over the horizon's own
+            # (much smaller) intra-horizon drift, not the drift accumulated
+            # since the plan's own start.
+            from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+            q_now = free_cmd[0]
+            z_live = float(urik.forward_kinematics(q_now, self._magnet_ws_dh, self._magnet_ws_T_F_M).T_R_target[2, 3])
+            c_live = urik.geometric_jacobian(q_now, self._magnet_ws_dh, self._magnet_ws_T_F_M)[2, :6]
+            c = np.tile(c_live, (self.N, 1))                            # (N,6)
+            z_nom = np.full(self.N, z_live, dtype=float)
+            q_nom = np.tile(q_now, (self.N, 1))                         # (N,6)
+        else:
+            c = self._magnet_ws_jacobians[indices]                          # (N,6)
+            q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+            z_nom = self._magnet_ws_nominal_z[indices]                       # (N,)
 
         rows = np.zeros((self.N, self.nu), dtype=float)
         lower = np.empty(self.N, dtype=float)
@@ -519,6 +650,202 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         return lower, upper
 
     # ------------------------------------------------------------------
+    # TCP Cartesian workspace box, wired directly into the QP (2026-10-14)
+    # -- proactive counterpart to close_loop_path_follow.py's post-hoc
+    # tcp_out_of_workspace monitor. SEPARATE from _configure_magnet_
+    # workspace above: that one bounds the MAGNET's z in a beam-centric
+    # frame (_resolve_robot_kinematics(make_robot_config())'s dh/T_F_M);
+    # this one bounds the TCP's full (x,y,z) in the literal UR robot-base
+    # frame "R" that close_loop_path_follow.py's reader.latest_pose()
+    # (= getActualTCPPose()) reports in. Do not conflate the two frames
+    # or reuse one mechanism's dh/offset for the other.
+    # ------------------------------------------------------------------
+    def _configure_tcp_workspace(
+        self, *, position_jacobians: Any, nominal_positions_m: Any,
+        xyz_min: Any, xyz_max: Any,
+        live_relinearize: bool = False, dh: Any = None, T_F_TCP: Any = None,
+    ) -> None:
+        """Add a linearized, two-sided "TCP stays within [xyz_min, xyz_max]"
+        inequality -- one row per axis per horizon stage (3*N extra rows
+        total) -- to every horizon stage of the QP.
+
+        `position_jacobians`/`nominal_positions_m` must be built OFFLINE
+        using `urik.corrected_dh_from_config(urik.CONFIG)` (the DH this
+        project has already validated against the robot's real FK -- see
+        `ur_magnet_ik_jacobian_validation.py`) and the FLANGE-TO-TCP
+        offset (`pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_
+        pose6)`), NOT `_resolve_robot_kinematics(make_robot_config())`
+        (the wrong, beam-centric frame -- using it here would silently
+        constrain a different point than the one `tcp_out_of_workspace`
+        actually checks, which is worse than no constraint at all since
+        it would look protective without being so).
+
+        Accuracy caveat, found by direct comparison against real
+        hardware abort poses before this was wired in (2026-10-14): this
+        FK agreed with the logged `tcp_out_of_workspace([...])` pose to a
+        few mm, not the ~0.11mm this DH is validated to elsewhere --
+        likely `CONFIG.offline_active_T_flange_tcp_pose6` defaulting to
+        identity (no real flange-to-TCP translation applied) plus
+        `pose`/`q_meas` not being read perfectly atomically on hardware.
+        Callers MUST pass `xyz_min`/`xyz_max` with a safety margin large
+        enough to absorb this (several mm, not sub-mm) inward from
+        whatever the post-hoc monitor's own bounds are -- see this
+        mechanism's caller in `run_mpc_delay_aware_vessel.py` for the
+        actual margin used.
+
+        Same linearization recipe as `_configure_magnet_workspace`, just
+        three rows (x,y,z) per horizon stage instead of one.
+        """
+        jacobians = np.asarray(position_jacobians, dtype=float)
+        positions = np.asarray(nominal_positions_m, dtype=float)
+        n_joints = self.n - 1
+        expected_j = (self.reference.sample_count, 3, n_joints)
+        expected_p = (self.reference.sample_count, 3)
+        if jacobians.shape != expected_j or not np.all(np.isfinite(jacobians)):
+            raise ValueError(
+                "tcp_workspace['position_jacobians'] must have shape "
+                f"{expected_j}; received {jacobians.shape}."
+            )
+        if positions.shape != expected_p or not np.all(np.isfinite(positions)):
+            raise ValueError(
+                "tcp_workspace['nominal_positions_m'] must have shape "
+                f"{expected_p}; received {positions.shape}."
+            )
+        xyz_min = np.asarray(xyz_min, dtype=float).reshape(3)
+        xyz_max = np.asarray(xyz_max, dtype=float).reshape(3)
+        if not np.all(xyz_min < xyz_max):
+            raise ValueError(
+                "tcp_workspace['xyz_min']/['xyz_max'] must satisfy min < max on every axis."
+            )
+
+        self._tcp_ws_jacobians = jacobians.copy()   # (S,3,6)
+        self._tcp_ws_nominal = positions.copy()      # (S,3)
+        self._tcp_ws_min = xyz_min
+        self._tcp_ws_max = xyz_max
+
+        self._tcp_ws_live_relinearize = bool(live_relinearize)
+        if self._tcp_ws_live_relinearize:
+            if dh is None or T_F_TCP is None:
+                raise ValueError(
+                    "tcp_workspace['live_relinearize']=True requires both 'dh' "
+                    "and 'T_F_TCP' (the robot's own calibrated kinematics and "
+                    "flange-to-TCP offset, needed to compute a fresh FK/"
+                    "Jacobian anchor every solve)."
+                )
+            self._tcp_ws_dh = dh
+            self._tcp_ws_T_F_TCP = np.asarray(T_F_TCP, dtype=float)
+
+        placeholder = np.full((3 * self.N, self.nu), 1.0e-30, dtype=float)
+        self._tcp_ws_row_start = self.A.shape[0]
+        self.A = np.vstack((self.A, placeholder))
+
+    def _tcp_workspace_bounds(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        if self._tcp_ws_min is None:
+            return np.empty(0, dtype=float), np.empty(0, dtype=float)
+        indices = self._reference_indices(control_index, future=True)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+
+        if self._tcp_ws_live_relinearize:
+            from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+            q_now = free_cmd[0]
+            p_live = urik.forward_kinematics(q_now, self._tcp_ws_dh, self._tcp_ws_T_F_TCP).T_R_target[:3, 3]
+            J_live = urik.geometric_jacobian(q_now, self._tcp_ws_dh, self._tcp_ws_T_F_TCP)[:3, :6]
+            c = np.tile(J_live[None, :, :], (self.N, 1, 1))              # (N,3,6)
+            p_nom = np.tile(p_live[None, :], (self.N, 1))                # (N,3)
+            q_nom = np.tile(q_now, (self.N, 1))                          # (N,6)
+        else:
+            c = self._tcp_ws_jacobians[indices]                          # (N,3,6)
+            q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+            p_nom = self._tcp_ws_nominal[indices]                        # (N,3)
+
+        rows = np.zeros((3 * self.N, self.nu), dtype=float)
+        lower = np.empty(3 * self.N, dtype=float)
+        upper = np.empty(3 * self.N, dtype=float)
+        for axis in range(3):
+            for j in range(self.N):
+                stage_rows = slice(j * self.n, j * self.n + 6)
+                row_idx = axis * self.N + j
+                rows[row_idx, :] = c[j, axis, :] @ self.Sc[stage_rows, :]
+                offset = (
+                    p_nom[j, axis] - c[j, axis, :] @ q_nom[j] + c[j, axis, :] @ free_cmd[j]
+                )
+                lower[row_idx] = self._tcp_ws_min[axis] - offset
+                upper[row_idx] = self._tcp_ws_max[axis] - offset
+        self.A[self._tcp_ws_row_start:self._tcp_ws_row_start + 3 * self.N, :] = rows
+        return lower, upper
+
+    def _configure_magnet_workspace_clearance(
+        self, *, gain: float, soft_margin_m: float,
+    ) -> None:
+        if self._magnet_ws_z_min is None:
+            raise ValueError(
+                "magnet_workspace_clearance requires magnet_workspace to be "
+                "configured too (this term reuses its (z_nom, jacobians, "
+                "z_min, z_max) schedule unchanged; it never derives its own "
+                "geometry)."
+            )
+        gain = float(gain)
+        soft_margin = float(soft_margin_m)
+        if gain < 0.0 or not np.isfinite(gain):
+            raise ValueError("magnet_workspace_clearance['gain'] must be finite and >= 0.")
+        if soft_margin <= 0.0 or not np.isfinite(soft_margin):
+            raise ValueError("magnet_workspace_clearance['soft_margin_m'] must be finite and > 0.")
+        if 2.0 * soft_margin >= (self._magnet_ws_z_max - self._magnet_ws_z_min):
+            raise ValueError(
+                f"magnet_workspace_clearance['soft_margin_m']={soft_margin} is too large: "
+                f"the floor and ceiling soft bands would overlap/invert given hard bounds "
+                f"[{self._magnet_ws_z_min},{self._magnet_ws_z_max}]."
+            )
+        self._magnet_ws_clear_gain = gain
+        self._magnet_ws_clear_soft_margin = soft_margin
+
+    def _magnet_workspace_clearance_qp_terms(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        """Soft, two-sided clearance cost around the z-workspace hard bound
+        -- see this class's docstring note above `_magnet_ws_clear_gain`'s
+        init for why. Mirrors `_magnet_exclusion_clearance_qp_terms`'s own
+        derivation exactly, just with "distance from ceiling" (z_max - z)
+        and "distance from floor" (z - z_min) in place of the single
+        wall-distance quantity there -- each only incurs a cost when its
+        own distance drops below `soft_margin_m`.
+        """
+        zero = (np.zeros((self.nu, self.nu), dtype=float), np.zeros(self.nu, dtype=float))
+        if not self._magnet_ws_clear_gain:
+            return zero
+        indices = self._reference_indices(control_index, future=True)
+        c = self._magnet_ws_jacobians[indices]                          # (N,6)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices][:, :6]  # (N,6)
+        z_nom = self._magnet_ws_nominal_z[indices]                       # (N,)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]     # (N,6)
+
+        hessian = np.zeros((self.nu, self.nu), dtype=float)
+        linear = np.zeros(self.nu, dtype=float)
+        margin = self._magnet_ws_clear_soft_margin
+        gain = self._magnet_ws_clear_gain
+        for j in range(self.N):
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            a = c[j] @ self.Sc[stage_rows, :]                            # (nu,): d(z_j)/du
+            z_hat = z_nom[j] - c[j] @ q_nom[j] + c[j] @ free_cmd[j]
+
+            d_ceil = self._magnet_ws_z_max - z_hat  # distance below ceiling at u=0
+            if d_ceil < margin:
+                b_ceil = margin - d_ceil  # > 0
+                # cost = gain*(margin - (z_max - z_j(u)))^2 = gain*(b_ceil + a@u)^2
+                hessian += 2.0 * gain * np.outer(a, a)
+                linear += 2.0 * gain * b_ceil * a
+
+            d_floor = z_hat - self._magnet_ws_z_min  # distance above floor at u=0
+            if d_floor < margin:
+                b_floor = margin - d_floor  # > 0
+                # cost = gain*(margin - (z_j(u) - z_min))^2 = gain*(b_floor - a@u)^2
+                hessian += 2.0 * gain * np.outer(a, a)
+                linear += -2.0 * gain * b_floor * a
+        return hessian, linear
+
+    # ------------------------------------------------------------------
     # overridden prediction-dependent pieces
     # ------------------------------------------------------------------
     def _constraint_bounds_exec(
@@ -529,11 +856,13 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         prediction. Velocity/rate terms are untouched (still act on the
         decision v and previous_input exactly as before). Appends the
         magnet-exclusion rows (see `_magnet_exclusion_bounds`) when
-        `magnet_exclusion` was configured at construction, and magnet
+        `magnet_exclusion` was configured at construction, magnet
         z-workspace rows (see `_magnet_workspace_bounds`) when
-        `magnet_workspace` was configured; both are no-ops (0-length
-        concatenation) otherwise, so every existing caller that never
-        passes either is completely unaffected."""
+        `magnet_workspace` was configured, and TCP Cartesian-workspace
+        rows (see `_tcp_workspace_bounds`) when `tcp_workspace` was
+        configured; all are no-ops (0-length concatenation) otherwise,
+        so every existing caller that never passes any of them is
+        completely unaffected."""
         previous_input = _finite_vector(previous_input, self.m, "previous_input")
         input_lower = np.tile(-self.velocity_limit, self.N)
         input_upper = np.tile(self.velocity_limit, self.N)
@@ -551,9 +880,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         ws_lower, ws_upper = self._magnet_workspace_bounds(
             x_exec=x_exec, control_index=control_index,
         )
+        tcp_lower, tcp_upper = self._tcp_workspace_bounds(
+            x_exec=x_exec, control_index=control_index,
+        )
         return (
-            np.concatenate((input_lower, state_lower, increment_lower, magnet_lower, ws_lower)),
-            np.concatenate((input_upper, state_upper, increment_upper, magnet_upper, ws_upper)),
+            np.concatenate((input_lower, state_lower, increment_lower, magnet_lower, ws_lower, tcp_lower)),
+            np.concatenate((input_upper, state_upper, increment_upper, magnet_upper, ws_upper, tcp_upper)),
         )
 
     def _linear_cost_exec(
@@ -615,6 +947,12 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             )
             hessian = hessian + clear_hessian
             linear = linear + clear_linear
+        if self._magnet_ws_clear_gain:
+            ws_clear_hessian, ws_clear_linear = self._magnet_workspace_clearance_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + ws_clear_hessian
+            linear = linear + ws_clear_linear
         hessian = 0.5 * (hessian + hessian.T)
         return hessian, linear, {
             "G": G, "constant_error": constant_error,

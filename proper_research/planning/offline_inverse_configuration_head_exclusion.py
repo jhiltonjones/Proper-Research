@@ -333,6 +333,13 @@ class InverseConfigurationPlannerConfig:
     # not just "never decrease". Requested so the offline configuration's
     # own redundant-DOF resolution cannot drift the magnet in Z at all.
     enforce_magnet_z_fixed: bool = False
+    # 2026-10-12: a looser middle ground between the no-decrease floor above
+    # (unbounded rise) and enforce_magnet_z_fixed (zero rise) -- caps how far
+    # above its start-state Z the magnet may rise, while still allowing the
+    # no-decrease floor to apply below. Ignored when enforce_magnet_z_fixed
+    # is set (that already pins Z exactly, a stricter constraint). None
+    # (default) preserves the original unbounded-rise behaviour exactly.
+    magnet_z_max_rise_m: float | None = None
     # Magnet world-Z may never drop below its value at the plan's initial
     # state (state0) -- "may only rise in Z, never lower" per the documented
     # physical rule. Not a user-set target; computed from state0 at build time.
@@ -2161,18 +2168,25 @@ def solve_offline_inverse_configuration(
     z_ceiling_constraint = None
     base_exclusion_constraint = None
     if (config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed
+            or config.magnet_z_max_rise_m is not None
             or config.magnet_beam_base_exclusion_radius_m is not None):
         position_provider = _MagnetPositionProvider(
             adapter=adapter, state_min=lower, state_max=upper, config=config,
         )
-        if config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed:
+        if (config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed
+                or config.magnet_z_max_rise_m is not None):
             z0_m = float(position_provider.position(state0)[2])
+        if config.enforce_magnet_z_no_decrease or config.enforce_magnet_z_fixed:
             z_floor_constraint = _MagnetZFloorConstraint(
                 provider=position_provider, z_floor_m=z0_m,
             )
         if config.enforce_magnet_z_fixed:
             z_ceiling_constraint = _MagnetZCeilingConstraint(
                 provider=position_provider, z_ceiling_m=z0_m,
+            )
+        elif config.magnet_z_max_rise_m is not None:
+            z_ceiling_constraint = _MagnetZCeilingConstraint(
+                provider=position_provider, z_ceiling_m=z0_m + config.magnet_z_max_rise_m,
             )
         if config.magnet_beam_base_exclusion_radius_m is not None:
             if beam_base_m is not None:

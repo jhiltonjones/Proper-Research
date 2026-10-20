@@ -536,6 +536,17 @@ _JACOBIAN_PROVIDER_OVERRIDE = None
 # _JACOBIAN_PROVIDER_OVERRIDE above.
 _MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
 
+# 2026-10-15: a comparison harness may set this to a dict of
+# InverseJacobianBeamController's new magnetic force/torque actuation-
+# preference kwargs (force_preference_gradient_fn, force_preference_gain --
+# see build_magnetic_force_preference_gradient_fn in
+# inverse_jacobian_controller.py). Same override pattern as
+# _MAGNET_CONSTRAINT_CLIP_OVERRIDE just above, and the same restriction:
+# only applied for controller_kind in ("naive_inverse_jacobian",
+# "naive_inverse_jacobian_ltv"); None (default) leaves every caller
+# unaffected.
+_FORCE_PREFERENCE_OVERRIDE = None
+
 # 2026-10-07: a comparison harness may set this to a callable
 # (command, measured_state, info) -> (possibly-modified command, gate_info
 # dict). Applied right after the controller's raw command is read, before
@@ -1456,6 +1467,15 @@ def main() -> None:
             print(f"[path] {cfg.controller_kind}: magnet-exclusion/z-workspace hard-"
                   f"constraint clip ENABLED (external override)")
 
+        force_pref_kwargs = {}
+        _force_pref_override = globals().get("_FORCE_PREFERENCE_OVERRIDE")
+        if _force_pref_override is not None and cfg.controller_kind in (
+            "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
+        ):
+            force_pref_kwargs = dict(_force_pref_override)
+            print(f"[path] {cfg.controller_kind}: magnetic force/torque preference "
+                  f"ENABLED (external override, soft nullspace tie-breaker only)")
+
         solver = build_offline_solver(
             cfg.controller_kind,
             reference=reference,
@@ -1479,6 +1499,7 @@ def main() -> None:
             relinearise_every=int(cfg.mpc_relinearise_every),
             **dmap_kwargs,
             **magnet_clip_kwargs,
+            **force_pref_kwargs,
             trim_kp=cfg.trim_kp,
             trim_kn=cfg.trim_kn,
             trim_damping=cfg.trim_damping,

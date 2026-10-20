@@ -318,6 +318,8 @@ def spawn_and_warm_worker(
     magnet_exclusion_clearance_kwargs: dict | None = None,
     magnet_workspace_clearance_kwargs: dict | None = None,
     tcp_workspace_kwargs: dict | None = None,
+    magnetic_force_preference_kwargs: dict | None = None,
+    dipole_alignment_preference_kwargs: dict | None = None,
     solver_time_limit_s: float = 0.0,
     zero_input_reference_in_r: bool = False,
     right_shift_m: float = 0.0,
@@ -395,6 +397,8 @@ def spawn_and_warm_worker(
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
         right_shift_m=right_shift_m,
         jacobian_source_kwargs=jacobian_source_kwargs,
     )
@@ -847,6 +851,45 @@ def main() -> None:
                          "2*soft_margin_mm < (QP z_max - QP z_min), or the controller will "
                          "refuse to build with a ValueError (floor/ceiling soft bands would "
                          "overlap/invert).")
+    p.add_argument("--magnetic-force-preference-schedule", type=str, default=None,
+                    help="path to the .npz written by compute_magnetic_force_preference_"
+                         "schedule.py for THIS plan (force_jacobians/torque_jacobians/"
+                         "nominal_force_N/nominal_torque_Nm). None (default) = disabled, "
+                         "exact existing behaviour. When given, also requires --lambda-force "
+                         "and/or --lambda-torque > 0 to actually do anything -- see "
+                         "delay_aware_mpc.py's _configure_magnetic_force_preference docstring: "
+                         "a SOFT tie-breaker added to the QP cost, never a constraint, never "
+                         "overriding the primary beam-tip-tracking term.")
+    p.add_argument("--force-desired-n", type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                    metavar=("FX", "FY", "FZ"),
+                    help="desired resultant magnetic force on the beam (Newtons, robot frame "
+                         "R) the soft preference pulls toward. Choose this in the direction "
+                         "that HELPS the task -- see this feature's design note: maximizing "
+                         "force magnitude alone can favor a force that pushes the beam the "
+                         "wrong way.")
+    p.add_argument("--torque-desired-nm", type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                    metavar=("TX", "TY", "TZ"),
+                    help="desired resultant magnetic torque on the beam (N*m, robot frame R).")
+    p.add_argument("--lambda-force", type=float, default=0.0,
+                    help="weight on the force term of the soft preference. 0.0 (default) "
+                         "disables the force term specifically (independent of --lambda-torque).")
+    p.add_argument("--lambda-torque", type=float, default=0.0,
+                    help="weight on the torque term of the soft preference. 0.0 (default) "
+                         "disables the torque term specifically (independent of --lambda-force).")
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="2026-10-19: enable the dipole-to-point alignment term wired INTO the "
+                         "QP cost, live-relinearized every solve (no schedule file, unlike "
+                         "--magnetic-force-preference-schedule above) -- see controllers."
+                         "dipole_alignment's module docstring for why this is the preferred "
+                         "mechanism for 'point the magnet somewhere': minimizing torque (m x B) "
+                         "can be satisfied by moving the magnet FARTHER away just as well as by "
+                         "genuine alignment; this term's residual is a difference of two UNIT "
+                         "vectors, so it is blind to distance by construction. 0.0 (default) "
+                         "disables it exactly.")
+    p.add_argument("--dipole-alignment-target-point-m", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"), help="defaults to BEAM_BASE_XYZ_M if unset.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the target. -1.0: away from it.")
     p.add_argument("--jacobian-source", choices=["schedule", "hybrid_j1j3"], default="schedule",
                     help="2026-10-14: 'schedule' (default) is today's exact behavior -- the "
                          "exact_qn0 controller tracks via the precomputed, reference-index-"
@@ -1133,6 +1176,59 @@ def main() -> None:
               f"weaken, the hard z-workspace constraint above; active within soft_margin of "
               f"either z bound")
 
+    magnetic_force_preference_kwargs = None
+    if args.magnetic_force_preference_schedule is not None:
+        if args.lambda_force <= 0.0 and args.lambda_torque <= 0.0:
+            raise SystemExit(
+                "--magnetic-force-preference-schedule was given but both --lambda-force "
+                "and --lambda-torque are 0.0 -- the preference would have no effect; pass "
+                "at least one positive lambda, or drop the schedule flag."
+            )
+        _force_pref_npz = np.load(args.magnetic_force_preference_schedule)
+        magnetic_force_preference_kwargs = dict(
+            force_jacobians=np.asarray(_force_pref_npz["force_jacobians"], dtype=float),
+            torque_jacobians=np.asarray(_force_pref_npz["torque_jacobians"], dtype=float),
+            nominal_force_N=np.asarray(_force_pref_npz["nominal_force_N"], dtype=float),
+            nominal_torque_Nm=np.asarray(_force_pref_npz["nominal_torque_Nm"], dtype=float),
+            force_desired_N=np.asarray(args.force_desired_n, dtype=float),
+            torque_desired_Nm=np.asarray(args.torque_desired_nm, dtype=float),
+            lambda_force=float(args.lambda_force), lambda_torque=float(args.lambda_torque),
+        )
+        print(f"[vessel-mpc] magnetic force/torque PREFERENCE requested "
+              f"(schedule={args.magnetic_force_preference_schedule}, "
+              f"F_des={args.force_desired_n}N, tau_des={args.torque_desired_nm}Nm, "
+              f"lambda_force={args.lambda_force:.3g}, lambda_torque={args.lambda_torque:.3g}) "
+              f"-- soft tie-breaker only, wired INTO the QP cost")
+
+    dipole_alignment_preference_kwargs = None
+    if args.dipole_alignment_weight > 0.0:
+        # m_body (the source magnet's own calibrated dipole moment, body frame) is NOT a
+        # cheap constant -- confirmed live it differs from parameters.default_magnet_params()
+        # (that one is stale/uncalibrated) -- so build the real model bundle once, here, at
+        # startup (same ~10-30s one-time cost build_c_schedule_floor240.py pays), not per tick.
+        _dipole_target = (
+            np.asarray(BEAM_BASE_XYZ_M, dtype=float) if args.dipole_alignment_target_point_m is None
+            else np.asarray(args.dipole_alignment_target_point_m, dtype=float)
+        )
+        print("[vessel-mpc] building model bundle once to read the calibrated source-magnet "
+              "dipole moment (m_body) for --dipole-alignment-weight ...")
+        _, _dipole_bundle, _dipole_controller_pack, _, _, _, _ = build_vessel_planning_context(
+            lumen_file=args.lumen_file, insertion_max_m=args.insertion_max_mm * 1.0e-3,
+            jacobian_mode="fast", plant_contact=args.contact,
+        )
+        _dipole_m_body = np.asarray(
+            _dipole_controller_pack["plant_diagnostic_joint_adapter"].model.m_body, dtype=float,
+        ).reshape(3)
+        dipole_alignment_preference_kwargs = dict(
+            dh=_robot_kin.dh, T_F_M=_robot_kin.T_F_M, m_body=_dipole_m_body,
+            target_point_m=_dipole_target, weight=float(args.dipole_alignment_weight),
+            sign=float(args.dipole_alignment_sign),
+        )
+        print(f"[vessel-mpc] dipole-to-point alignment PREFERENCE requested "
+              f"(target_point_m={_dipole_target.tolist()}, weight={args.dipole_alignment_weight:.3g}, "
+              f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
+              f"live-relinearized every solve, wired INTO the QP cost, no schedule file")
+
     jacobian_source_kwargs = None
     if args.jacobian_source == "hybrid_j1j3":
         if not args.contact_jacobian_map_dir:
@@ -1163,6 +1259,8 @@ def main() -> None:
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
         solver_time_limit_s=args.solver_time_limit_s,
         zero_input_reference_in_r=args.zero_input_reference_in_r,
         right_shift_m=args.right_shift_mm * 1.0e-3,

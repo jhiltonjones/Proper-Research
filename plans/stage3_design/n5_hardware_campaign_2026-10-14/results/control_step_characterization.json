@@ -1,0 +1,431 @@
+[
+  {
+    "condition": "NEW",
+    "rep": 1,
+    "T_run_s": 54.6186,
+    "n_ticks": 495,
+    "mean_tick_dt_ms": 110.56396761133604,
+    "median_tick_dt_ms": 110.19999999999897,
+    "mean_solver_time_ms": 9.334150974572909,
+    "median_solver_time_ms": 9.016211610287428,
+    "mean_solver_iterations": 148.23030303030302,
+    "mean_servo_ms": 100.05636363636363,
+    "mean_ds_ref_dt_m_s": 0.0013748289997701588,
+    "mean_ds_tip_dt_m_s": 0.0013788298851219205,
+    "realization_ratio": 0.9332847642491241,
+    "qp_status_fraction": {
+      "solved": 0.997979797979798,
+      "solved inaccurate": 0.00202020202020202
+    },
+    "qp_status_counts": {
+      "solved": 494,
+      "solved inaccurate": 1
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0647773279352226,
+    "control_steps": 495,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NEW",
+    "rep": 2,
+    "T_run_s": 54.664500000000004,
+    "n_ticks": 494,
+    "mean_tick_dt_ms": 110.88133874239352,
+    "median_tick_dt_ms": 110.4000000000056,
+    "mean_solver_time_ms": 9.696245715700785,
+    "median_solver_time_ms": 9.282193146646023,
+    "mean_solver_iterations": 166.28744939271255,
+    "mean_servo_ms": 100.0578947368421,
+    "mean_ds_ref_dt_m_s": 0.0013751807347412914,
+    "mean_ds_tip_dt_m_s": 0.0013803214857943122,
+    "realization_ratio": 0.9443616636080793,
+    "qp_status_fraction": {
+      "solved": 0.9979757085020243,
+      "run time limit reached": 0.0020242914979757085
+    },
+    "qp_status_counts": {
+      "solved": 493,
+      "run time limit reached": 1
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0669371196754565,
+    "control_steps": 494,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NEW",
+    "rep": 3,
+    "T_run_s": 54.735200000000006,
+    "n_ticks": 495,
+    "mean_tick_dt_ms": 110.80000000000001,
+    "median_tick_dt_ms": 110.29999999999518,
+    "mean_solver_time_ms": 9.573851958519281,
+    "median_solver_time_ms": 8.998115081340075,
+    "mean_solver_iterations": 156.07070707070707,
+    "mean_servo_ms": 100.05757575757576,
+    "mean_ds_ref_dt_m_s": 0.001372062506450807,
+    "mean_ds_tip_dt_m_s": 0.0013756761988981449,
+    "realization_ratio": 0.9382777568717262,
+    "qp_status_fraction": {
+      "solved": 0.9959595959595959,
+      "run time limit reached": 0.00404040404040404
+    },
+    "qp_status_counts": {
+      "solved": 493,
+      "run time limit reached": 2
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0647773279352226,
+    "control_steps": 495,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NEW",
+    "rep": 4,
+    "T_run_s": 54.650800000000004,
+    "n_ticks": 494,
+    "mean_tick_dt_ms": 110.85354969574038,
+    "median_tick_dt_ms": 109.79999999999279,
+    "mean_solver_time_ms": 9.602911159516829,
+    "median_solver_time_ms": 8.613588055595756,
+    "mean_solver_iterations": 155.3684210526316,
+    "mean_servo_ms": 100.05627530364373,
+    "mean_ds_ref_dt_m_s": 0.0013736765561589911,
+    "mean_ds_tip_dt_m_s": 0.0013806525188618567,
+    "realization_ratio": 0.9314302893185767,
+    "qp_status_fraction": {
+      "solved": 0.9858299595141701,
+      "solved inaccurate": 0.012145748987854251,
+      "run time limit reached": 0.0020242914979757085
+    },
+    "qp_status_counts": {
+      "solved": 487,
+      "solved inaccurate": 6,
+      "run time limit reached": 1
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0669371196754565,
+    "control_steps": 494,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NEW",
+    "rep": 5,
+    "T_run_s": 54.5439,
+    "n_ticks": 494,
+    "mean_tick_dt_ms": 110.6367139959432,
+    "median_tick_dt_ms": 110.4000000000056,
+    "mean_solver_time_ms": 9.442541720006268,
+    "median_solver_time_ms": 9.166405303403735,
+    "mean_solver_iterations": 155.55263157894737,
+    "mean_servo_ms": 100.0506072874494,
+    "mean_ds_ref_dt_m_s": 0.0013778462186282816,
+    "mean_ds_tip_dt_m_s": 0.0013838343920023089,
+    "realization_ratio": 0.941779920750757,
+    "qp_status_fraction": {
+      "solved": 0.9898785425101214,
+      "run time limit reached": 0.004048582995951417,
+      "solved inaccurate": 0.006072874493927126
+    },
+    "qp_status_counts": {
+      "solved": 489,
+      "run time limit reached": 2,
+      "solved inaccurate": 3
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0669371196754565,
+    "control_steps": 494,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "OLD-C",
+    "rep": 1,
+    "T_run_s": 54.707800000000006,
+    "n_ticks": 497,
+    "mean_tick_dt_ms": 110.29798387096776,
+    "median_tick_dt_ms": 108.99999999999643,
+    "mean_solver_time_ms": 9.024599649506795,
+    "median_solver_time_ms": 7.665807846933603,
+    "mean_solver_iterations": 161.83098591549296,
+    "mean_servo_ms": 100.05231388329979,
+    "mean_ds_ref_dt_m_s": 0.0013735690966213622,
+    "mean_ds_tip_dt_m_s": 0.0013801357583373562,
+    "realization_ratio": 0.9711339183251698,
+    "qp_status_fraction": {
+      "solved": 0.9738430583501007,
+      "solved inaccurate": 0.018108651911468814,
+      "run time limit reached": 0.008048289738430584
+    },
+    "qp_status_counts": {
+      "solved": 484,
+      "solved inaccurate": 9,
+      "run time limit reached": 4
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.060483870967742,
+    "control_steps": 497,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "OLD-C",
+    "rep": 2,
+    "T_run_s": 54.6512,
+    "n_ticks": 497,
+    "mean_tick_dt_ms": 110.18387096774194,
+    "median_tick_dt_ms": 109.15000000000674,
+    "mean_solver_time_ms": 8.928497331273148,
+    "median_solver_time_ms": 7.907656952738762,
+    "mean_solver_iterations": 157.72635814889335,
+    "mean_servo_ms": 100.04828973843058,
+    "mean_ds_ref_dt_m_s": 0.0013724306519605704,
+    "mean_ds_tip_dt_m_s": 0.001375910883846229,
+    "realization_ratio": 0.9570478999992887,
+    "qp_status_fraction": {
+      "solved": 0.9859154929577465,
+      "run time limit reached": 0.004024144869215292,
+      "solved inaccurate": 0.01006036217303823
+    },
+    "qp_status_counts": {
+      "solved": 490,
+      "run time limit reached": 2,
+      "solved inaccurate": 5
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.060483870967742,
+    "control_steps": 497,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "OLD-C",
+    "rep": 3,
+    "T_run_s": 54.667699999999996,
+    "n_ticks": 498,
+    "mean_tick_dt_ms": 109.99537223340039,
+    "median_tick_dt_ms": 109.00000000000176,
+    "mean_solver_time_ms": 8.764129198421854,
+    "median_solver_time_ms": 7.84467882476747,
+    "mean_solver_iterations": 164.64859437751005,
+    "mean_servo_ms": 100.0437751004016,
+    "mean_ds_ref_dt_m_s": 0.0013738428598628252,
+    "mean_ds_tip_dt_m_s": 0.0013796912340562695,
+    "realization_ratio": 0.9604589661207925,
+    "qp_status_fraction": {
+      "solved": 0.9839357429718876,
+      "solved inaccurate": 0.012048192771084338,
+      "run time limit reached": 0.004016064257028112
+    },
+    "qp_status_counts": {
+      "solved": 490,
+      "solved inaccurate": 6,
+      "run time limit reached": 2
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0583501006036218,
+    "control_steps": 498,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "OLD-C",
+    "rep": 4,
+    "T_run_s": 54.6818,
+    "n_ticks": 496,
+    "mean_tick_dt_ms": 110.46828282828284,
+    "median_tick_dt_ms": 109.10000000000508,
+    "mean_solver_time_ms": 9.225529777224086,
+    "median_solver_time_ms": 7.945797173306346,
+    "mean_solver_iterations": 171.84475806451613,
+    "mean_servo_ms": 100.04576612903226,
+    "mean_ds_ref_dt_m_s": 0.001374888838132228,
+    "mean_ds_tip_dt_m_s": 0.0013778404177526749,
+    "realization_ratio": 0.9452627976704219,
+    "qp_status_fraction": {
+      "solved": 0.9818548387096774,
+      "solved inaccurate": 0.014112903225806451,
+      "run time limit reached": 0.004032258064516129
+    },
+    "qp_status_counts": {
+      "solved": 487,
+      "solved inaccurate": 7,
+      "run time limit reached": 2
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0626262626262626,
+    "control_steps": 496,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "OLD-C",
+    "rep": 5,
+    "T_run_s": 54.645900000000005,
+    "n_ticks": 495,
+    "mean_tick_dt_ms": 110.61923076923078,
+    "median_tick_dt_ms": 109.40000000000083,
+    "mean_solver_time_ms": 9.42238678290236,
+    "median_solver_time_ms": 8.20270087569952,
+    "mean_solver_iterations": 175.85656565656566,
+    "mean_servo_ms": 100.05050505050505,
+    "mean_ds_ref_dt_m_s": 0.0013753866642039869,
+    "mean_ds_tip_dt_m_s": 0.0013825411857970027,
+    "realization_ratio": 0.9393853577876868,
+    "qp_status_fraction": {
+      "solved": 0.9777777777777777,
+      "run time limit reached": 0.010101010101010102,
+      "solved inaccurate": 0.012121212121212121
+    },
+    "qp_status_counts": {
+      "solved": 484,
+      "run time limit reached": 5,
+      "solved inaccurate": 6
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0647773279352226,
+    "control_steps": 495,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NC",
+    "rep": 1,
+    "T_run_s": 43.33970000000001,
+    "n_ticks": 389,
+    "mean_tick_dt_ms": 111.70025773195879,
+    "median_tick_dt_ms": 109.09999999999798,
+    "mean_solver_time_ms": 10.489399883666273,
+    "median_solver_time_ms": 7.8839389607310295,
+    "mean_solver_iterations": 218.2956298200514,
+    "mean_servo_ms": 100.05655526992288,
+    "mean_ds_ref_dt_m_s": 0.001742630921376815,
+    "mean_ds_tip_dt_m_s": 0.0016885943195330143,
+    "realization_ratio": 0.9325649531618834,
+    "qp_status_fraction": {
+      "solved": 0.8894601542416453,
+      "solved inaccurate": 0.02056555269922879,
+      "run time limit reached": 0.08997429305912596
+    },
+    "qp_status_counts": {
+      "solved": 346,
+      "solved inaccurate": 8,
+      "run time limit reached": 35
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0670103092783505,
+    "control_steps": 389,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NC",
+    "rep": 2,
+    "T_run_s": 43.4839,
+    "n_ticks": 389,
+    "mean_tick_dt_ms": 112.07190721649485,
+    "median_tick_dt_ms": 109.14999999999964,
+    "mean_solver_time_ms": 10.842585476512774,
+    "median_solver_time_ms": 7.902102079242468,
+    "mean_solver_iterations": 232.05398457583547,
+    "mean_servo_ms": 100.06118251928021,
+    "mean_ds_ref_dt_m_s": 0.0017378275813062624,
+    "mean_ds_tip_dt_m_s": 0.0016939114506438519,
+    "realization_ratio": 0.9153061588008213,
+    "qp_status_fraction": {
+      "solved": 0.8791773778920309,
+      "solved inaccurate": 0.017994858611825194,
+      "run time limit reached": 0.10282776349614396
+    },
+    "qp_status_counts": {
+      "solved": 342,
+      "solved inaccurate": 7,
+      "run time limit reached": 40
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.0670103092783505,
+    "control_steps": 389,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NC",
+    "rep": 3,
+    "T_run_s": 43.328500000000005,
+    "n_ticks": 387,
+    "mean_tick_dt_ms": 112.25000000000001,
+    "median_tick_dt_ms": 108.99999999999999,
+    "mean_solver_time_ms": 11.054741733681015,
+    "median_solver_time_ms": 7.807034067809582,
+    "mean_solver_iterations": 237.2248062015504,
+    "mean_servo_ms": 100.05658914728683,
+    "mean_ds_ref_dt_m_s": 0.0017443035327704547,
+    "mean_ds_tip_dt_m_s": 0.00168927332963185,
+    "realization_ratio": 0.912297106890375,
+    "qp_status_fraction": {
+      "solved": 0.8914728682170543,
+      "solved inaccurate": 0.020671834625323,
+      "run time limit reached": 0.08785529715762273
+    },
+    "qp_status_counts": {
+      "solved": 345,
+      "solved inaccurate": 8,
+      "run time limit reached": 34
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.072538860103627,
+    "control_steps": 387,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NC",
+    "rep": 4,
+    "T_run_s": 43.4665,
+    "n_ticks": 390,
+    "mean_tick_dt_ms": 111.73907455012855,
+    "median_tick_dt_ms": 108.49999999999937,
+    "mean_solver_time_ms": 10.536893164643493,
+    "median_solver_time_ms": 7.3122261092066765,
+    "mean_solver_iterations": 227.07692307692307,
+    "mean_servo_ms": 100.05948717948718,
+    "mean_ds_ref_dt_m_s": 0.0017402991253825332,
+    "mean_ds_tip_dt_m_s": 0.00168583120069531,
+    "realization_ratio": 0.9240145219588339,
+    "qp_status_fraction": {
+      "solved": 0.8769230769230769,
+      "run time limit reached": 0.08461538461538462,
+      "solved inaccurate": 0.038461538461538464
+    },
+    "qp_status_counts": {
+      "solved": 342,
+      "run time limit reached": 33,
+      "solved inaccurate": 15
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.06426735218509,
+    "control_steps": 390,
+    "stop_reason": "path_complete"
+  },
+  {
+    "condition": "NC",
+    "rep": 5,
+    "T_run_s": 43.3583,
+    "n_ticks": 387,
+    "mean_tick_dt_ms": 112.32720207253887,
+    "median_tick_dt_ms": 109.49999999999704,
+    "mean_solver_time_ms": 11.099635799071278,
+    "median_solver_time_ms": 8.213976863771677,
+    "mean_solver_iterations": 232.7312661498708,
+    "mean_servo_ms": 100.06149870801035,
+    "mean_ds_ref_dt_m_s": 0.0017424836453899196,
+    "mean_ds_tip_dt_m_s": 0.0016955394886683348,
+    "realization_ratio": 0.9150038204974537,
+    "qp_status_fraction": {
+      "solved": 0.8940568475452196,
+      "run time limit reached": 0.082687338501292,
+      "solved inaccurate": 0.023255813953488372
+    },
+    "qp_status_counts": {
+      "solved": 346,
+      "run time limit reached": 32,
+      "solved inaccurate": 9
+    },
+    "n_deadline_miss": 0,
+    "delta_ref_index_mean": 1.072538860103627,
+    "control_steps": 387,
+    "stop_reason": "path_complete"
+  }
+]

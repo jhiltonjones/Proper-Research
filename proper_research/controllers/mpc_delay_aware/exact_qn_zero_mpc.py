@@ -77,6 +77,27 @@ class ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC)
             )
             hessian = hessian + clear_hessian
             linear = linear + clear_linear
+        # 2026-10-15: same duplication requirement as magnet_clear_gain just
+        # above -- this override rebuilds hessian/linear from scratch and
+        # does not call super(), so the parent class's magnetic_force_
+        # preference hook (delay_aware_mpc.py) would silently be skipped
+        # for this class -- the one the live vessel controller actually
+        # uses -- without this.
+        if getattr(self, "_force_pref_lambda_F", 0.0) or getattr(self, "_force_pref_lambda_tau", 0.0):
+            force_pref_hessian, force_pref_linear = self._magnetic_force_preference_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + force_pref_hessian
+            linear = linear + force_pref_linear
+        # 2026-10-19: same duplication requirement as force_pref/magnet_
+        # clear above -- the dipole-to-point alignment preference
+        # (delay_aware_mpc.py) would silently be skipped here otherwise.
+        if getattr(self, "_dipole_align_weight", 0.0):
+            dipole_hessian, dipole_linear = self._dipole_alignment_preference_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + dipole_hessian
+            linear = linear + dipole_linear
         hessian = 0.5 * (hessian + hessian.T)
         hessian = hessian + float(self.config.hessian_regularization) * np.eye(self.nu)
         zeros_proj = np.zeros((self.N, n, n), dtype=float)

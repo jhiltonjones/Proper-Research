@@ -117,6 +117,8 @@ def _worker_main(
     magnet_exclusion_clearance_kwargs: Optional[dict] = None,
     magnet_workspace_clearance_kwargs: Optional[dict] = None,
     tcp_workspace_kwargs: Optional[dict] = None,
+    magnetic_force_preference_kwargs: Optional[dict] = None,
+    dipole_alignment_preference_kwargs: Optional[dict] = None,
     right_shift_m: float = 0.0,
     jacobian_source_kwargs: Optional[dict] = None,
 ) -> None:
@@ -257,6 +259,8 @@ def _worker_main(
             magnet_exclusion_clearance=magnet_exclusion_clearance_kwargs,
             magnet_workspace_clearance=magnet_workspace_clearance_kwargs,
             tcp_workspace=tcp_workspace_kwargs,
+            magnetic_force_preference=magnetic_force_preference_kwargs,
+            dipole_alignment_preference=dipole_alignment_preference_kwargs,
         )
         print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
               f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
@@ -286,6 +290,18 @@ def _worker_main(
                   f"soft_margin={magnet_workspace_clearance_kwargs['soft_margin_m']*1e3:.1f}mm, "
                   f"active only within soft_margin of either z bound, separate from the hard "
                   f"z-workspace bound above)")
+        if magnetic_force_preference_kwargs is not None:
+            print(f"[worker] magnetic force/torque PREFERENCE wired INTO the QP "
+                  f"(lambda_force={magnetic_force_preference_kwargs['lambda_force']:.3g}, "
+                  f"lambda_torque={magnetic_force_preference_kwargs['lambda_torque']:.3g}, "
+                  "soft tie-breaker only -- never relaxes the task-tracking cost or any "
+                  "hard constraint above)")
+        if dipole_alignment_preference_kwargs is not None:
+            print(f"[worker] dipole-to-point alignment PREFERENCE wired INTO the QP "
+                  f"(weight={dipole_alignment_preference_kwargs['weight']:.3g}, "
+                  f"sign={dipole_alignment_preference_kwargs['sign']:+.0f}, "
+                  "purely kinematic, live-relinearized every solve, distance-blind by "
+                  "construction -- see controllers.dipole_alignment)")
 
     # --- smooth validity-gated J1/J3 contact-Jacobian hybrid (2026-10-14,
     # offline-validated in this plan's history: substantially improves the
@@ -631,6 +647,8 @@ class MPCWorkerHandle:
         magnet_exclusion_clearance_kwargs: Optional[dict] = None,
         magnet_workspace_clearance_kwargs: Optional[dict] = None,
         tcp_workspace_kwargs: Optional[dict] = None,
+        magnetic_force_preference_kwargs: Optional[dict] = None,
+        dipole_alignment_preference_kwargs: Optional[dict] = None,
         right_shift_m: float = 0.0,
         jacobian_source_kwargs: Optional[dict] = None,
     ) -> None:
@@ -653,6 +671,8 @@ class MPCWorkerHandle:
                 magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
                 magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
                 tcp_workspace_kwargs=tcp_workspace_kwargs,
+                magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
+                dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
                 right_shift_m=right_shift_m,
                 jacobian_source_kwargs=jacobian_source_kwargs,
             ),

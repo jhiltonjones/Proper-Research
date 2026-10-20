@@ -104,6 +104,14 @@ class InverseJacobianStep:
     magnet_exclusion_margin_m: float = float("nan")
     magnet_z_margin_m: float = float("nan")
     magnet_abort_reason: str | None = None
+    # 2026-10-15: same pattern as the magnet-exclusion/z-workspace clip above,
+    # for the GENERAL TCP xyz box (run_mpc_delay_aware_vessel.py's
+    # _configure_tcp_workspace in-QP constraint's naive-controller analogue --
+    # previously this controller had NO protection for this box at all, only
+    # the post-hoc tcp_out_of_workspace abort monitor every controller shares).
+    tcp_clip_active: bool = False
+    tcp_workspace_margin_m: float = float("nan")
+    tcp_abort_reason: str | None = None
 
 
 def project_joint_velocity_for_halfspace(
@@ -138,6 +146,81 @@ def project_joint_velocity_for_halfspace(
     projected = np.clip(projected, -velocity_limit_joint6, velocity_limit_joint6)
     slack_after = float(g_row @ projected) - rhs
     return projected, True, slack_before, slack_after
+
+
+def build_magnetic_force_preference_gradient_fn(
+    *, reference_state: Array, force_jacobians: Array, torque_jacobians: Array,
+    nominal_force_N: Array, nominal_torque_Nm: Array,
+    force_desired_N: Array, torque_desired_Nm: Array,
+    lambda_force: float, lambda_torque: float,
+    weight_force: Array | None = None, weight_torque: Array | None = None,
+) -> Callable[[Array, int], Array]:
+    """Build this controller's analogue of `delay_aware_mpc.py`'s
+    `_configure_magnetic_force_preference`/`_magnetic_force_preference_qp_
+    terms`: a per-tick callable returning d(cost)/d[q1..q6,L] (7,) for the
+    SAME soft force/torque tie-breaking cost
+
+        cost = lambda_force*(F_hat-F_des)^T W_F (F_hat-F_des)
+             + lambda_torque*(tau_hat-tau_des)^T W_tau (tau_hat-tau_des)
+
+    linearized about each reference sample's own nominal state
+    (``reference_state``, (S,7) -- the same array ``self.reference.state``
+    already is) exactly like the MPC's schedule. ``force_jacobians``/
+    ``torque_jacobians``: (S,3,7) d(F_total)/d[q,L] and d(tau_total)/d[q,L]
+    at each sample's nominal state; ``nominal_force_N``/``nominal_torque_
+    Nm``: (S,3) the resultant wrench there -- see
+    ``simulation.magnetic_beam.force_preference`` for how to build these
+    offline from the beam model.
+
+    Unlike the MPC, which folds this into a QP cost term the solver
+    optimizes over a whole horizon, this controller has no optimizer to
+    hand the quadratic to: ``InverseJacobianBeamController.solve`` instead
+    does one step of GRADIENT DESCENT on it, projected into the task
+    nullspace exactly like the existing posture-regulation pull -- the
+    classical gradient-projection method for resolving redundancy with a
+    secondary objective, evaluated at the MEASURED state (not a command
+    stack -- this controller has no delay/command-vs-physical distinction
+    to anchor to; see its own module docstring on why it has "no preview,
+    no constraints beyond clipping").
+    """
+    reference_state = np.asarray(reference_state, dtype=float)
+    force_jacobians = np.asarray(force_jacobians, dtype=float)
+    torque_jacobians = np.asarray(torque_jacobians, dtype=float)
+    nominal_force_N = np.asarray(nominal_force_N, dtype=float)
+    nominal_torque_Nm = np.asarray(nominal_torque_Nm, dtype=float)
+    sample_count = reference_state.shape[0]
+    for name, arr, shape in (
+        ("force_jacobians", force_jacobians, (sample_count, 3, 7)),
+        ("torque_jacobians", torque_jacobians, (sample_count, 3, 7)),
+        ("nominal_force_N", nominal_force_N, (sample_count, 3)),
+        ("nominal_torque_Nm", nominal_torque_Nm, (sample_count, 3)),
+    ):
+        if arr.shape != shape or not np.all(np.isfinite(arr)):
+            raise ValueError(f"{name} must have shape {shape}; received {arr.shape}.")
+
+    force_desired = np.asarray(force_desired_N, dtype=float).reshape(3)
+    torque_desired = np.asarray(torque_desired_Nm, dtype=float).reshape(3)
+    weight_force_m = np.eye(3) if weight_force is None else np.asarray(weight_force, dtype=float).reshape(3, 3)
+    weight_torque_m = np.eye(3) if weight_torque is None else np.asarray(weight_torque, dtype=float).reshape(3, 3)
+    lambda_force_f = float(lambda_force)
+    lambda_torque_f = float(lambda_torque)
+
+    def gradient_fn(state: Array, index: int) -> Array:
+        state = np.asarray(state, dtype=float).reshape(7)
+        idx = int(np.clip(index, 0, sample_count - 1))
+        delta_q = state - reference_state[idx]
+        grad = np.zeros(7, dtype=float)
+        if lambda_force_f:
+            c_F = force_jacobians[idx]
+            F_hat = nominal_force_N[idx] + c_F @ delta_q
+            grad += 2.0 * lambda_force_f * (c_F.T @ (weight_force_m @ (F_hat - force_desired)))
+        if lambda_torque_f:
+            c_tau = torque_jacobians[idx]
+            tau_hat = nominal_torque_Nm[idx] + c_tau @ delta_q
+            grad += 2.0 * lambda_torque_f * (c_tau.T @ (weight_torque_m @ (tau_hat - torque_desired)))
+        return grad
+
+    return gradient_fn
 
 
 def make_magnet_exclusion_hold_gate(
@@ -484,6 +567,13 @@ class InverseJacobianBeamController:
         magnet_exclusion_radius_m: float | None = None,
         magnet_z_bounds_m: tuple[float, float] | None = None,
         magnet_constraint_violation_abort_m: float = 2.0e-3,
+        force_preference_gradient_fn: Callable[[Array, int], Array] | None = None,
+        force_preference_gain: float = 0.0,
+        tcp_position_fn: Callable[[Array], Array] | None = None,
+        tcp_position_jacobian_fn: Callable[[Array], Array] | None = None,
+        tcp_workspace_xyz_min_m: Any | None = None,
+        tcp_workspace_xyz_max_m: Any | None = None,
+        tcp_constraint_violation_abort_m: float = 2.0e-3,
     ) -> None:
         self.reference = reference
         # The controller records what it was handed. Ask any instance
@@ -582,6 +672,48 @@ class InverseJacobianBeamController:
         if self.magnet_z_bounds_m is not None and self.magnet_z_bounds_m[0] >= self.magnet_z_bounds_m[1]:
             raise ValueError("magnet_z_bounds_m must be (z_min, z_max) with z_min < z_max.")
 
+        # 2026-10-15: soft "actuation preference" tie-breaker -- the
+        # resolved-rate analogue of delay_aware_mpc.py's magnetic_force_
+        # preference QP term, done as one step of gradient descent
+        # projected into the task nullspace (see `solve`'s own comment at
+        # the nullspace_velocity line). NOT a constraint: it only reshapes
+        # how the 4 redundant DOF get used, never fights the tip-tracking
+        # task term (same nullspace projector already regulating posture).
+        self.force_preference_gradient_fn = force_preference_gradient_fn
+        self.force_preference_gain = float(force_preference_gain)
+        if self.force_preference_gain < 0.0 or not np.isfinite(self.force_preference_gain):
+            raise ValueError("force_preference_gain must be finite and >= 0.")
+
+        # 2026-10-15: optional anticipatory hard-constraint clip for the
+        # GENERAL TCP xyz workspace box -- same closed-form half-space-
+        # projection design as the magnet-exclusion/z-workspace clip above,
+        # just for run_mpc_delay_aware_vessel.py's _configure_tcp_workspace
+        # in-QP constraint's naive-controller analogue. All default None/
+        # disabled: zero behaviour change for every existing caller.
+        # tcp_position_fn/tcp_position_jacobian_fn: same convention as
+        # magnet_position_fn/magnet_position_jacobian_fn (measured 7-vector
+        # state in, TCP xyz (3,) / TCP position Jacobian (3,7) out --
+        # insertion column always zero).
+        self.tcp_position_fn = tcp_position_fn
+        self.tcp_position_jacobian_fn = tcp_position_jacobian_fn
+        self.tcp_workspace_xyz_min_m = (
+            None if tcp_workspace_xyz_min_m is None
+            else np.asarray(tcp_workspace_xyz_min_m, dtype=float).reshape(3)
+        )
+        self.tcp_workspace_xyz_max_m = (
+            None if tcp_workspace_xyz_max_m is None
+            else np.asarray(tcp_workspace_xyz_max_m, dtype=float).reshape(3)
+        )
+        self.tcp_constraint_violation_abort_m = float(tcp_constraint_violation_abort_m)
+        self._tcp_clip_enabled = (
+            self.tcp_position_fn is not None
+            and self.tcp_position_jacobian_fn is not None
+            and self.tcp_workspace_xyz_min_m is not None
+            and self.tcp_workspace_xyz_max_m is not None
+        )
+        if self._tcp_clip_enabled and np.any(self.tcp_workspace_xyz_min_m >= self.tcp_workspace_xyz_max_m):
+            raise ValueError("tcp_workspace_xyz_min_m must be < tcp_workspace_xyz_max_m, elementwise.")
+
     def describe(self) -> dict[str, Any]:
         return {
             "controller": self.name,
@@ -601,6 +733,8 @@ class InverseJacobianBeamController:
             "feedforward_full": self.feedforward_full,
             "selective_damping_gain": self.selective_damping_gain,
             "selective_damping_floor": self.selective_damping_floor,
+            "force_preference_enabled": self.force_preference_gradient_fn is not None,
+            "force_preference_gain": self.force_preference_gain,
         }
 
     def reset(self) -> None:
@@ -647,9 +781,19 @@ class InverseJacobianBeamController:
 
         task_velocity = pseudo @ (self.position_gain * (desired - measured) / self.dt)
         projector = np.eye(7) - pseudo @ jacobian
-        nullspace_velocity = projector @ (
-            self.nullspace_gain * (reference_state - state) / self.dt
-        )
+        nullspace_target = self.nullspace_gain * (reference_state - state) / self.dt
+        if self.force_preference_gradient_fn is not None and self.force_preference_gain:
+            # Gradient-projection secondary objective: descend the soft
+            # force/torque preference cost (see build_magnetic_force_
+            # preference_gradient_fn) WITHIN the same nullspace the
+            # posture-regulation term above already uses, so this never
+            # fights the tip-tracking task term, only reshapes which of
+            # the 4 redundant directions the posture pull gets spent on.
+            force_pref_grad = np.asarray(
+                self.force_preference_gradient_fn(state, index), dtype=float
+            ).reshape(7)
+            nullspace_target = nullspace_target - self.force_preference_gain * force_pref_grad
+        nullspace_velocity = projector @ nullspace_target
         command = task_velocity + nullspace_velocity
         if self.feedforward_full:
             # Full 2DOF feedforward: add the reference input UNPROJECTED.
@@ -679,6 +823,14 @@ class InverseJacobianBeamController:
                 magnet_z_margin_m, magnet_abort_reason,
             ) = self._clip_magnet_constraints(command, state)
 
+        tcp_clip_active = False
+        tcp_workspace_margin_m = float("nan")
+        tcp_abort_reason = None
+        if self._tcp_clip_enabled:
+            (
+                command, tcp_clip_active, tcp_workspace_margin_m, tcp_abort_reason,
+            ) = self._clip_tcp_workspace(command, state)
+
         elapsed = time.perf_counter() - started
 
         predicted_state = state + self.dt * command
@@ -707,6 +859,9 @@ class InverseJacobianBeamController:
             magnet_exclusion_margin_m=magnet_exclusion_margin_m,
             magnet_z_margin_m=magnet_z_margin_m,
             magnet_abort_reason=magnet_abort_reason,
+            tcp_clip_active=tcp_clip_active,
+            tcp_workspace_margin_m=tcp_workspace_margin_m,
+            tcp_abort_reason=tcp_abort_reason,
         )
 
     def _selective_damped_pseudo_inverse(self, jacobian: Array) -> Array:
@@ -756,17 +911,27 @@ class InverseJacobianBeamController:
         within one tick's velocity budget are NOT guaranteed to be jointly
         satisfied -- an intentional limitation matching this controller's
         whole "no preview, no constraints beyond clipping" design, not an
-        oversight. If the clip still leaves a real (not just linearization-
-        noise-level) violation after projection, magnet_abort_reason is
-        set so the caller's generic info["abort_reason"] hook (see
-        controller_adapters.OfflineJointControllerAdapter.__call__) can
-        stop the run -- the same anticipatory-clip-plus-reactive-monitor
-        layering every other hard constraint in this project uses.
+        oversight.
+
+        2026-10-15: no longer sets an abort reason, by design -- same
+        rationale as ``_clip_tcp_workspace``'s own 2026-10-15 note. Found
+        live: with nullspace_gain=0 the task-driven command can persist
+        toward a boundary across many ticks; stopping on "this exact tick's
+        one-tick-ahead prediction says it can't fully satisfy this" just
+        relocates the stop to whichever constraint's margin runs out next
+        (confirmed: TCP -> magnet-z -> magnet-exclusion-radius, in turn,
+        across successive fixes). Always does its best-effort velocity-
+        limited projection and returns it, every tick, never giving up on
+        its own account. The independent, measured-state safety monitor
+        (``make_magnet_independent_safety_monitor``, unconditional, reads
+        the ACTUAL position) is the real backstop and is unaffected by
+        this -- it still stops the run if the TRUE bounds are ever really
+        crossed; this method only controlled a predictive, GATE-margin
+        shortfall, never the hardware's actual protection.
         """
         joint_cmd = command[:6].copy()
         vlim6 = self.velocity_limit[:6]
         clipped_any = False
-        abort_reason = None
 
         p_mag = np.asarray(self.magnet_position_fn(state), dtype=float).reshape(3)
         J_mag = np.asarray(self.magnet_position_jacobian_fn(state), dtype=float).reshape(3, 7)[:, :6]
@@ -786,11 +951,6 @@ class InverseJacobianBeamController:
             )
             clipped_any = clipped_any or was_clipped
             excl_margin = d_nom - self.magnet_exclusion_radius_m
-            if slack_after < -self.magnet_constraint_violation_abort_m / max(self.dt, 1.0e-9):
-                abort_reason = (
-                    f"inverse_jacobian_magnet_exclusion_unclippable("
-                    f"d_nom={d_nom*1e3:.2f}mm radius={self.magnet_exclusion_radius_m*1e3:.2f}mm)"
-                )
 
         z_margin = float("nan")
         if self.magnet_z_bounds_m is not None:
@@ -807,17 +967,76 @@ class InverseJacobianBeamController:
             )
             clipped_any = clipped_any or c1 or c2
             z_margin = min(z_nom - z_min, z_max - z_nom)
-            tol = self.magnet_constraint_violation_abort_m / max(self.dt, 1.0e-9)
-            if slack_after_min < -tol or slack_after_max < -tol:
-                reason = (
-                    f"inverse_jacobian_magnet_zworkspace_unclippable("
-                    f"z={z_nom*1e3:.1f}mm bounds=[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
-                )
-                abort_reason = abort_reason or reason
 
         command = command.copy()
         command[:6] = joint_cmd
-        return command, clipped_any, excl_margin, z_margin, abort_reason
+        return command, clipped_any, excl_margin, z_margin, None
+
+    def _clip_tcp_workspace(
+        self, command: Array, state: Array,
+    ) -> tuple[Array, bool, float, str | None]:
+        """Anticipatory half-space projection for the GENERAL TCP xyz
+        workspace box -- same design as ``_clip_magnet_constraints``'s
+        z-bound handling, just applied to all three axes (6 half-spaces:
+        x>=min, x<=max, y>=min, y<=max, z>=min, z<=max), sequentially.
+
+        This is the resolved-rate analogue of ``delay_aware_mpc.py``'s
+        ``_configure_tcp_workspace`` in-QP constraint: same first-order
+        position/Jacobian linearization, enforced as a closed-form
+        projection each tick instead of a QP inequality. Sequential, not a
+        joint QP across all 6 half-spaces -- conflicting constraints within
+        one tick's velocity budget are not guaranteed to be jointly
+        satisfied, same limitation ``_clip_magnet_constraints`` already
+        documents.
+
+        2026-10-15: unlike ``_clip_magnet_constraints``, this method NEVER
+        sets an abort reason, by design. Found live: with nullspace_gain=0
+        (no posture anchor) the task-driven command can persistently push
+        toward a boundary across many ticks, not just momentarily overshoot
+        one -- aborting on "can't fully satisfy this exact tick's one-tick-
+        ahead prediction" just relocates the stop to whichever constraint's
+        margin runs out first (confirmed live: raising the TCP margin alone
+        moved the failure to an unrelated magnet-z violation at nearly the
+        same tick, not through to path completion). The user explicitly
+        wants nullspace_gain left at 0 for a clean baseline comparison, and
+        the output clipped to the robot rather than the run stopped. This
+        method therefore always does its best-effort velocity-limited
+        projection and returns it, every tick, with no concept of "give up"
+        -- same philosophy as ``make_magnet_exclusion_selective_clip_gate``
+        (not guaranteed to fully resolve a violation, logs a diagnostic
+        instead of aborting). The real safety backstop is unaffected: the
+        post-hoc ``tcp_out_of_workspace`` monitor (zero tolerance, reads the
+        ACTUAL measured pose) still stops the run if the TRUE box is ever
+        really crossed -- this method only controls whether a GATE-margin
+        shortfall on the predictive side is fatal, not whether the hardware
+        is protected.
+        """
+        joint_cmd = command[:6].copy()
+        vlim6 = self.velocity_limit[:6]
+        clipped_any = False
+
+        p_tcp = np.asarray(self.tcp_position_fn(state), dtype=float).reshape(3)
+        J_tcp = np.asarray(self.tcp_position_jacobian_fn(state), dtype=float).reshape(3, 7)[:, :6]
+
+        margins = np.empty(3)
+        for axis in range(3):
+            lo, hi = self.tcp_workspace_xyz_min_m[axis], self.tcp_workspace_xyz_max_m[axis]
+            p_nom = float(p_tcp[axis])
+            g = J_tcp[axis, :]
+            # p >= lo
+            joint_cmd, c_lo, _, slack_after_lo = project_joint_velocity_for_halfspace(
+                joint_cmd, g, (lo - p_nom) / self.dt, vlim6,
+            )
+            # p <= hi  <=>  (-g) . x >= (p_nom - hi)/dt
+            joint_cmd, c_hi, _, slack_after_hi = project_joint_velocity_for_halfspace(
+                joint_cmd, -g, (p_nom - hi) / self.dt, vlim6,
+            )
+            clipped_any = clipped_any or c_lo or c_hi
+            margins[axis] = min(p_nom - lo, hi - p_nom)
+
+        command = command.copy()
+        command[:6] = joint_cmd
+        return command, clipped_any, float(margins.min()), None
 
     def _clip(self, command: Array, state: Array, previous: Array) -> Array:
         command = np.clip(command, -self.velocity_limit, self.velocity_limit)
@@ -854,6 +1073,13 @@ def build_inverse_jacobian_controller(
     magnet_exclusion_radius_m: float | None = None,
     magnet_z_bounds_m: tuple[float, float] | None = None,
     magnet_constraint_violation_abort_m: float = 2.0e-3,
+    force_preference_gradient_fn: Callable[[Array, int], Array] | None = None,
+    force_preference_gain: float = 0.0,
+    tcp_position_fn: Callable[[Array], Array] | None = None,
+    tcp_position_jacobian_fn: Callable[[Array], Array] | None = None,
+    tcp_workspace_xyz_min_m: Any | None = None,
+    tcp_workspace_xyz_max_m: Any | None = None,
+    tcp_constraint_violation_abort_m: float = 2.0e-3,
 ) -> InverseJacobianBeamController:
     """Build it from the same ``ConfigurationMPCConfig`` the MPCs use.
 
@@ -890,6 +1116,13 @@ def build_inverse_jacobian_controller(
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
         magnet_z_bounds_m=magnet_z_bounds_m,
         magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
+        force_preference_gradient_fn=force_preference_gradient_fn,
+        force_preference_gain=force_preference_gain,
+        tcp_position_fn=tcp_position_fn,
+        tcp_position_jacobian_fn=tcp_position_jacobian_fn,
+        tcp_workspace_xyz_min_m=tcp_workspace_xyz_min_m,
+        tcp_workspace_xyz_max_m=tcp_workspace_xyz_max_m,
+        tcp_constraint_violation_abort_m=tcp_constraint_violation_abort_m,
     )
 
 
@@ -898,6 +1131,7 @@ __all__ = [
     "InverseJacobianStep",
     "build_inverse_jacobian_controller",
     "project_joint_velocity_for_halfspace",
+    "build_magnetic_force_preference_gradient_fn",
     "make_magnet_exclusion_hold_gate",
     "make_magnet_exclusion_selective_clip_gate",
     "make_magnet_independent_safety_monitor",

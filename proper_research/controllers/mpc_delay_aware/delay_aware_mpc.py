@@ -109,6 +109,8 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         magnet_exclusion_clearance: dict | None = None,
         magnet_workspace_clearance: dict | None = None,
         tcp_workspace: dict | None = None,
+        magnetic_force_preference: dict | None = None,
+        dipole_alignment_preference: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -188,6 +190,30 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._tcp_ws_live_relinearize: bool = False
         if tcp_workspace is not None:
             self._configure_tcp_workspace(**tcp_workspace)
+
+        # 2026-10-15: soft "actuation preference" tie-breaker -- NOT a hard
+        # constraint, NEVER rules out a configuration the task cost would
+        # otherwise pick. Reuses the SAME command-stack (Ec, Sc) anchoring as
+        # magnet_exclusion/magnet_workspace/tcp_workspace above (all three
+        # reason about "where the magnet rigidly on the end effector is
+        # being told to go right now"), not the delayed physical stack
+        # (Ep, Sp) the beam-tip-tracking cost uses -- see
+        # `_configure_magnetic_force_preference`'s own docstring for why.
+        self._force_pref_lambda_F: float = 0.0
+        self._force_pref_lambda_tau: float = 0.0
+        if magnetic_force_preference is not None:
+            self._configure_magnetic_force_preference(**magnetic_force_preference)
+
+        # 2026-10-19: see this class's _configure_dipole_alignment_
+        # preference docstring for why this REPLACES magnetic_force_
+        # preference for "make the magnet point somewhere" purposes --
+        # minimizing torque (m x B) can be satisfied by moving the magnet
+        # FARTHER away (B -> 0) just as well as by genuine alignment;
+        # this term is blind to distance by construction (both terms in
+        # its residual are unit vectors), so it cannot be gamed that way.
+        self._dipole_align_weight: float = 0.0
+        if dipole_alignment_preference is not None:
+            self._configure_dipole_alignment_preference(**dipole_alignment_preference)
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -846,6 +872,191 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         return hessian, linear
 
     # ------------------------------------------------------------------
+    # magnetic force/torque actuation preference (2026-10-15): a SOFT
+    # tie-breaker, not a constraint -- see module-level design note in
+    # `simulation/magnetic_beam/force_preference.py`. For a rigid point
+    # dipole, aligning the moment with the local field drives TORQUE toward
+    # zero while FORCE depends on the field gradient too -- the two are not
+    # generally maximized by the same configuration, so this term tracks
+    # F_des and tau_des SEPARATELY (with independent weights) rather than
+    # folding them into one "alignment" score. The task cost (beam-tip
+    # tracking) remains the primary objective; this only breaks ties among
+    # configurations the task cost is otherwise indifferent between.
+    # ------------------------------------------------------------------
+    def _configure_magnetic_force_preference(
+        self, *, force_jacobians: Any, torque_jacobians: Any,
+        nominal_force_N: Any, nominal_torque_Nm: Any,
+        force_desired_N: Any, torque_desired_Nm: Any,
+        lambda_force: float, lambda_torque: float,
+        weight_force: Any = None, weight_torque: Any = None,
+    ) -> None:
+        """Linearized F_mag(q,L)/tau_mag(q,L) schedule, one row-set per
+        reference sample -- same fixed-schedule-with-command-stack-
+        reanchoring architecture as `_configure_magnet_exclusion`/
+        `_configure_magnet_workspace`/`_configure_tcp_workspace` above, just
+        with the resultant magnetic wrench on the whole beam (see
+        `simulation.magnetic_beam.force_preference.total_magnetic_wrench`)
+        in place of a position. `force_jacobians`/`torque_jacobians`:
+        (S,3,7) d(F_total)/d[q1..q6,L] and d(tau_total)/d[q1..q6,L] at each
+        reference sample's own nominal state (built OFFLINE, e.g. via
+        `simulation.magnetic_beam.force_preference.
+        magnetic_wrench_joint_jacobian` -- a finite-difference Jacobian of
+        the beam model's own resultant wrench, NOT yet chain-rule-validated
+        against an analytic derivative the way this project's tip-position
+        Jacobians are; appropriate for a soft tie-breaker, not a safety
+        constraint). `nominal_force_N`/`nominal_torque_Nm`: (S,3) the
+        resultant wrench AT that same nominal state. Anchored every solve to
+        the actual COMMANDED state via (Ec, Sc) -- deliberately NOT the
+        delayed physical prediction (Ep, Sp) the beam-tip-tracking cost
+        uses: the magnet's pose equals what is commanded (the robot
+        realizes joint commands with negligible lag relative to this
+        control rate, exactly why magnet_exclusion/workspace/tcp_workspace
+        all use the command stack too), and the wrench model itself is a
+        QUASISTATIC equilibrium at a given q -- it has no separate notion of
+        "the beam's actual, still-lagging shape" to linearize about, so
+        there is no more-correct alternative anchor available here.
+        """
+        force_jacobians = np.asarray(force_jacobians, dtype=float)
+        torque_jacobians = np.asarray(torque_jacobians, dtype=float)
+        nominal_force_N = np.asarray(nominal_force_N, dtype=float)
+        nominal_torque_Nm = np.asarray(nominal_torque_Nm, dtype=float)
+        expected_j = (self.reference.sample_count, 3, self.n)
+        expected_f = (self.reference.sample_count, 3)
+        for name, arr, expected in (
+            ("force_jacobians", force_jacobians, expected_j),
+            ("torque_jacobians", torque_jacobians, expected_j),
+            ("nominal_force_N", nominal_force_N, expected_f),
+            ("nominal_torque_Nm", nominal_torque_Nm, expected_f),
+        ):
+            if arr.shape != expected or not np.all(np.isfinite(arr)):
+                raise ValueError(
+                    f"magnetic_force_preference[{name!r}] must have shape "
+                    f"{expected}; received {arr.shape}."
+                )
+        lambda_force = float(lambda_force)
+        lambda_torque = float(lambda_torque)
+        if lambda_force < 0.0 or not np.isfinite(lambda_force):
+            raise ValueError("magnetic_force_preference['lambda_force'] must be finite and >= 0.")
+        if lambda_torque < 0.0 or not np.isfinite(lambda_torque):
+            raise ValueError("magnetic_force_preference['lambda_torque'] must be finite and >= 0.")
+
+        self._force_pref_force_jacobians = force_jacobians
+        self._force_pref_torque_jacobians = torque_jacobians
+        self._force_pref_nominal_force = nominal_force_N
+        self._force_pref_nominal_torque = nominal_torque_Nm
+        self._force_pref_F_des = np.asarray(force_desired_N, dtype=float).reshape(3)
+        self._force_pref_tau_des = np.asarray(torque_desired_Nm, dtype=float).reshape(3)
+        self._force_pref_lambda_F = lambda_force
+        self._force_pref_lambda_tau = lambda_torque
+        self._force_pref_W_F = (
+            np.eye(3) if weight_force is None else np.asarray(weight_force, dtype=float).reshape(3, 3)
+        )
+        self._force_pref_W_tau = (
+            np.eye(3) if weight_torque is None else np.asarray(weight_torque, dtype=float).reshape(3, 3)
+        )
+
+    def _magnetic_force_preference_qp_terms(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        """cost_j = lambda_F*(F_hat_j-F_des)^T W_F (F_hat_j-F_des)
+                   + lambda_tau*(tau_hat_j-tau_des)^T W_tau (tau_hat_j-tau_des),
+        summed over the horizon, where F_hat_j/tau_hat_j are the first-order
+        wrench estimate at this stage's own COMMANDED state. Derivation
+        mirrors `_magnet_exclusion_clearance_qp_terms`'s own (linear-in-u
+        residual -> quadratic QP terms), just with a (3,3) weight matrix
+        and two residuals (force, torque) instead of one scalar distance.
+        """
+        zero = (np.zeros((self.nu, self.nu), dtype=float), np.zeros(self.nu, dtype=float))
+        if not self._force_pref_lambda_F and not self._force_pref_lambda_tau:
+            return zero
+        indices = self._reference_indices(control_index, future=True)
+        q_nom = np.asarray(self.reference.state, dtype=float)[indices]        # (N,7)
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)                  # (N,7)
+        c_F_all = self._force_pref_force_jacobians[indices]                   # (N,3,7)
+        nom_F_all = self._force_pref_nominal_force[indices]                    # (N,3)
+        c_tau_all = self._force_pref_torque_jacobians[indices]                # (N,3,7)
+        nom_tau_all = self._force_pref_nominal_torque[indices]                 # (N,3)
+
+        hessian = np.zeros((self.nu, self.nu), dtype=float)
+        linear = np.zeros(self.nu, dtype=float)
+        for j in range(self.N):
+            stage_rows = slice(j * self.n, (j + 1) * self.n)
+            delta_q = free_cmd[j] - q_nom[j]
+            if self._force_pref_lambda_F:
+                c_F = c_F_all[j]                                               # (3,7)
+                A = c_F @ self.Sc[stage_rows, :]                               # (3,nu)
+                const = nom_F_all[j] + c_F @ delta_q - self._force_pref_F_des
+                WA = self._force_pref_W_F @ A
+                hessian += 2.0 * self._force_pref_lambda_F * (A.T @ WA)
+                linear += 2.0 * self._force_pref_lambda_F * (A.T @ (self._force_pref_W_F @ const))
+            if self._force_pref_lambda_tau:
+                c_tau = c_tau_all[j]                                          # (3,7)
+                A = c_tau @ self.Sc[stage_rows, :]                             # (3,nu)
+                const = nom_tau_all[j] + c_tau @ delta_q - self._force_pref_tau_des
+                WA = self._force_pref_W_tau @ A
+                hessian += 2.0 * self._force_pref_lambda_tau * (A.T @ WA)
+                linear += 2.0 * self._force_pref_lambda_tau * (A.T @ (self._force_pref_W_tau @ const))
+        return hessian, linear
+
+    # ------------------------------------------------------------------
+    # dipole-to-point alignment preference (2026-10-19): a SOFT tie-
+    # breaker like magnetic_force_preference above, but purely KINEMATIC
+    # (see controllers.dipole_alignment's module docstring) -- cheap
+    # enough to relinearize fresh EVERY SOLVE, unconditionally, no
+    # schedule file at all. One (r_src, R_src)-based (3,6) Jacobian is
+    # computed at the CURRENT commanded joints (free_cmd[0]) and reused
+    # across the whole horizon, exactly the same live-relinearize pattern
+    # `_configure_tcp_workspace`/`_configure_magnet_workspace` already use
+    # for their own hard constraints -- the only difference here is this
+    # is a cost, not a constraint, so there is no separate "schedule vs
+    # live" choice to make: live is simply always cheap enough.
+    # ------------------------------------------------------------------
+    def _configure_dipole_alignment_preference(
+        self, *, dh: Any, T_F_M: Any, m_body: Any, target_point_m: Any,
+        weight: float, sign: float = 1.0,
+    ) -> None:
+        weight = float(weight)
+        if weight < 0.0 or not np.isfinite(weight):
+            raise ValueError("dipole_alignment_preference['weight'] must be finite and >= 0.")
+        if abs(float(sign)) != 1.0:
+            raise ValueError("dipole_alignment_preference['sign'] must be exactly +1.0 or -1.0.")
+        self._dipole_align_dh = dh
+        self._dipole_align_T_F_M = np.asarray(T_F_M, dtype=float)
+        self._dipole_align_m_body = np.asarray(m_body, dtype=float).reshape(3)
+        self._dipole_align_target_point_m = np.asarray(target_point_m, dtype=float).reshape(3)
+        self._dipole_align_weight = weight
+        self._dipole_align_sign = float(sign)
+
+    def _dipole_alignment_preference_qp_terms(
+        self, *, x_exec: Array, control_index: int,
+    ) -> tuple[Array, Array]:
+        zero = (np.zeros((self.nu, self.nu), dtype=float), np.zeros(self.nu, dtype=float))
+        if not self._dipole_align_weight:
+            return zero
+        from proper_research.controllers.dipole_alignment import (
+            dipole_alignment_residual_and_jacobian_from_q,
+        )
+
+        free_cmd = (self.Ec @ x_exec).reshape(self.N, self.n)[:, :6]          # (N,6)
+        q_now = free_cmd[0]
+        e_now, c = dipole_alignment_residual_and_jacobian_from_q(
+            q_now, self._dipole_align_dh, self._dipole_align_T_F_M,
+            self._dipole_align_m_body, self._dipole_align_target_point_m,
+            sign=self._dipole_align_sign,
+        )  # e_now: (3,), c: (3,6), both evaluated once at q_now, reused every stage
+
+        hessian = np.zeros((self.nu, self.nu), dtype=float)
+        linear = np.zeros(self.nu, dtype=float)
+        weight = self._dipole_align_weight
+        for j in range(self.N):
+            stage_rows = slice(j * self.n, j * self.n + 6)
+            A = c @ self.Sc[stage_rows, :]                                    # (3,nu)
+            const = e_now + c @ (free_cmd[j] - q_now)                         # (3,)
+            hessian += 2.0 * weight * (A.T @ A)
+            linear += 2.0 * weight * (A.T @ const)
+        return hessian, linear
+
+    # ------------------------------------------------------------------
     # overridden prediction-dependent pieces
     # ------------------------------------------------------------------
     def _constraint_bounds_exec(
@@ -953,6 +1164,18 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             )
             hessian = hessian + ws_clear_hessian
             linear = linear + ws_clear_linear
+        if self._force_pref_lambda_F or self._force_pref_lambda_tau:
+            force_pref_hessian, force_pref_linear = self._magnetic_force_preference_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + force_pref_hessian
+            linear = linear + force_pref_linear
+        if self._dipole_align_weight:
+            dipole_hessian, dipole_linear = self._dipole_alignment_preference_qp_terms(
+                x_exec=x_exec, control_index=control_index,
+            )
+            hessian = hessian + dipole_hessian
+            linear = linear + dipole_linear
         hessian = 0.5 * (hessian + hessian.T)
         return hessian, linear, {
             "G": G, "constant_error": constant_error,

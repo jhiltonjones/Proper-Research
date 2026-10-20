@@ -216,6 +216,41 @@ def main() -> None:
                          "solve -- if Layer 1 can't fully converge and the script falls back "
                          "to Layer 2 (see 'Layer 1 incomplete' in the printed output), this "
                          "cap is NOT currently threaded into that fallback optimiser.")
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="2026-10-19: enable the dipole-to-point alignment term -- encourage "
+                         "the source magnet's own dipole moment to point toward (or away from, "
+                         "see --dipole-alignment-sign) --dipole-alignment-target-point-m. Unlike "
+                         "--force-torque-preference-*, this is a REAL residual term INSIDE the "
+                         "per-node solver's own objective/gradient (see InverseConfigurationPlanner"
+                         "Config.dipole_alignment_weight's docstring for why the force/torque "
+                         "tie-breaker was too weak to visibly reshape anything), so it actually "
+                         "changes which redundant-DOF solution gets chosen at every node, not just "
+                         "which of a couple of near-identical candidates. Purely kinematic (no "
+                         "beam solve) -- cheap at any weight. 0.0 (default) disables it exactly.")
+    p.add_argument("--dipole-alignment-target-point-m", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"),
+                    help="required if --dipole-alignment-weight > 0. e.g. the beam base pivot "
+                         "point -- pass rig_calibration.beam_base_pose6()[:3]'s value, or let "
+                         "this script default to it when --dipole-alignment-weight > 0 and this "
+                         "is left unset.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the target point. "
+                         "-1.0: dipole points AWAY from it.")
+    p.add_argument("--force-torque-preference-force-desired-n", type=float, nargs=3, default=None,
+                    metavar=("FX", "FY", "FZ"),
+                    help="enable the soft magnetic force/torque actuation-preference tie-"
+                         "breaker among already-feasible nodes (see "
+                         "InverseConfigurationPlannerConfig.force_torque_preference's "
+                         "docstring) -- requires controller_pack['plant_diagnostic_joint_"
+                         "adapter'].model to be set. None (default) = disabled, exact "
+                         "existing behaviour (first feasible candidate wins, no extra beam "
+                         "solves). When given, also pass at least one positive "
+                         "--force-torque-preference-lambda-force/-lambda-torque, or this "
+                         "has no effect.")
+    p.add_argument("--force-torque-preference-torque-desired-nm", type=float, nargs=3,
+                    default=(0.0, 0.0, 0.0), metavar=("TX", "TY", "TZ"))
+    p.add_argument("--force-torque-preference-lambda-force", type=float, default=0.0)
+    p.add_argument("--force-torque-preference-lambda-torque", type=float, default=0.0)
     p.add_argument("--target-path-json", type=Path, default=None,
                     help="track a CUSTOM path instead of the raw --lumen-file centreline -- "
                          "e.g. the output of design_stage3_tracked_path.py "
@@ -335,6 +370,18 @@ def main() -> None:
         # it must be relaxed for a DELIBERATE --no-contact-plant comparison
         # run, which is exactly a contact-blind solve by design.
         shared["require_contact_model"] = False
+    if args.dipole_alignment_weight > 0.0:
+        target_point = (
+            np.asarray(BEAM_BASE_XYZ_M, dtype=float) if args.dipole_alignment_target_point_m is None
+            else np.asarray(args.dipole_alignment_target_point_m, dtype=float)
+        )
+        shared["dipole_alignment_weight"] = args.dipole_alignment_weight
+        shared["dipole_alignment_target_point_m"] = target_point
+        shared["dipole_alignment_sign"] = args.dipole_alignment_sign
+        print(f"[layer1] dipole-to-point alignment term ENABLED (REAL residual, not a tie-breaker): "
+              f"weight={args.dipole_alignment_weight:.3g}, target_point_m={target_point.tolist()}, "
+              f"sign={args.dipole_alignment_sign:+.0f} "
+              f"({'toward' if args.dipole_alignment_sign > 0 else 'away from'} target)")
     if args.skip_chain_rule_validation_at_start:
         shared["finite_difference_validation_at_start"] = False
     if args.lock_magnet_z:
@@ -343,6 +390,29 @@ def main() -> None:
         shared["magnet_z_max_rise_m"] = args.magnet_z_max_rise_mm / 1000.0
     if args.multistart_joint_perturbation_rad is not None:
         shared["multistart_joint_perturbation_rad"] = args.multistart_joint_perturbation_rad
+    if args.force_torque_preference_force_desired_n is not None:
+        if (
+            args.force_torque_preference_lambda_force <= 0.0
+            and args.force_torque_preference_lambda_torque <= 0.0
+        ):
+            raise SystemExit(
+                "--force-torque-preference-force-desired-n was given but both "
+                "--force-torque-preference-lambda-force/-lambda-torque are 0.0 -- the "
+                "preference would have no effect; pass at least one positive lambda, or "
+                "drop the --force-torque-preference-force-desired-n flag."
+            )
+        shared["force_torque_preference"] = dict(
+            force_desired_N=tuple(args.force_torque_preference_force_desired_n),
+            torque_desired_Nm=tuple(args.force_torque_preference_torque_desired_nm),
+            lambda_force=args.force_torque_preference_lambda_force,
+            lambda_torque=args.force_torque_preference_lambda_torque,
+        )
+        print(f"[layer1] magnetic force/torque PREFERENCE tie-breaker ENABLED "
+              f"(F_des={args.force_torque_preference_force_desired_n}N, "
+              f"tau_des={args.force_torque_preference_torque_desired_nm}Nm, "
+              f"lambda_force={args.force_torque_preference_lambda_force:.3g}, "
+              f"lambda_torque={args.force_torque_preference_lambda_torque:.3g}) -- chooses "
+              f"AMONG already-feasible candidates only, never relaxes feasibility")
 
     planner_config = InverseConfigurationPlannerConfig(**shared)
     print(f"[layer1] tangent tolerance = {args.tangent_tolerance_deg:.0f}deg, "

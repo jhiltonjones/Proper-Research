@@ -103,6 +103,14 @@ from proper_research.hardware.online.vessel_stage_a.build_vessel_plan import BEA
 from proper_research.simulation.simulations.initial_conditions import make_initial_poses
 from pathlib import Path
 
+# 2026-10-15: TCP workspace box now sourced live from run_mpc_delay_aware_vessel.py's
+# own module-level constants instead of a hardcoded duplicate here -- that script is
+# the single source of truth (the user edits it directly when tuning the box), and a
+# second hardcoded copy here silently went stale the moment that happened. Importing
+# the module (not just its constants) is safe: it is guarded by `if __name__ ==
+# "__main__"`, so no hardware connection or argparse is triggered just by importing it.
+from proper_research.hardware.online.vessel_stage_a import run_mpc_delay_aware_vessel as _mpc_runner
+
 # --- fix 5 (same bug documented in run_mpc_delay_aware_vessel.py and
 # run_open_loop_vessel.py): the generic planner<->robot frame-registration
 # step silently picks up an unrelated stale shape_centreline.npz. The
@@ -142,6 +150,35 @@ def _magnet_position_jacobian_fn(state7: np.ndarray) -> np.ndarray:
     q6 = np.asarray(state7, dtype=float)[:6]
     J = np.zeros((3, 7), dtype=float)
     J[:, :6] = urik.geometric_jacobian(q6, _robot_kin.dh, _robot_kin.T_F_M)[:3, :]
+    return J
+
+
+# 2026-10-15: TCP-workspace clip helpers -- SEPARATE frame/DH from the magnet
+# ones above, same distinction run_mpc_delay_aware_vessel.py's
+# _configure_tcp_workspace documents: this is the literal UR robot-base frame
+# "R" that getActualTCPPose() reports in (urik.corrected_dh_from_config(urik.
+# CONFIG) + the flange-to-TCP offset), not the beam-centric _robot_kin used
+# for the magnet above.
+_tcp_dh = urik.corrected_dh_from_config(urik.CONFIG)
+_tcp_T_F_TCP = urik.pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_pose6)
+
+
+def _tcp_position_fn(state7: np.ndarray) -> np.ndarray:
+    """TCP xyz (robot-base frame R) from the controller's own 7-vector state
+    [q1..q6,L] -- same convention as InverseJacobianBeamController's new
+    tcp_position_fn parameter (the TCP never depends on L, only the 6
+    joints)."""
+    q6 = np.asarray(state7, dtype=float)[:6]
+    return np.asarray(urik.forward_kinematics(q6, _tcp_dh, _tcp_T_F_TCP).T_R_target[:3, 3], dtype=float)
+
+
+def _tcp_position_jacobian_fn(state7: np.ndarray) -> np.ndarray:
+    """(3,7) TCP position Jacobian w.r.t. [q1..q6,L] -- insertion column
+    always zero, same convention as run_mpc_delay_aware_vessel.py's
+    tcp_workspace_kwargs builder."""
+    q6 = np.asarray(state7, dtype=float)[:6]
+    J = np.zeros((3, 7), dtype=float)
+    J[:, :6] = urik.geometric_jacobian(q6, _tcp_dh, _tcp_T_F_TCP)[:3, :]
     return J
 
 
@@ -270,6 +307,46 @@ def main() -> None:
     p.add_argument("--nullspace-gain", type=float, default=0.0)
     p.add_argument("--selective-damping-gain", type=float, default=0.0)
 
+    p.add_argument("--magnetic-force-preference-schedule", type=str, default=None,
+                    help="path to the .npz written by compute_magnetic_force_preference_"
+                         "schedule.py for THIS plan. None (default) = disabled, exact "
+                         "existing behaviour. When given, also requires --force-preference-"
+                         "gain > 0 to actually move the command -- see build_magnetic_force_"
+                         "preference_gradient_fn's docstring: resolved into the SAME task "
+                         "nullspace the posture-regulation pull already uses, never fighting "
+                         "the tip-tracking task term.")
+    p.add_argument("--force-desired-n", type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                    metavar=("FX", "FY", "FZ"),
+                    help="desired resultant magnetic force on the beam (Newtons, robot frame "
+                         "R) the soft preference pulls toward.")
+    p.add_argument("--torque-desired-nm", type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                    metavar=("TX", "TY", "TZ"),
+                    help="desired resultant magnetic torque on the beam (N*m, robot frame R).")
+    p.add_argument("--lambda-force", type=float, default=0.0,
+                    help="weight on the force term of the soft preference (0.0 disables it).")
+    p.add_argument("--lambda-torque", type=float, default=0.0,
+                    help="weight on the torque term of the soft preference (0.0 disables it).")
+    p.add_argument("--force-preference-gain", type=float, default=0.0,
+                    help="nullspace gradient-descent step size for the force/torque "
+                         "preference (0.0 = disabled regardless of the lambdas above).")
+
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="2026-10-19: enable the dipole-to-point alignment nullspace term -- "
+                         "see controllers.dipole_alignment's module docstring for why this is "
+                         "preferred over the torque-based preference above for 'point the "
+                         "magnet somewhere': minimizing torque can be satisfied by distance "
+                         "alone, this term cannot (its residual is a difference of two unit "
+                         "vectors). Purely kinematic, computed fresh every tick -- no schedule "
+                         "file needed, unlike --magnetic-force-preference-schedule. Mutually "
+                         "exclusive with the --magnetic-force-preference-schedule/-lambda-* "
+                         "flags above (both use the SAME nullspace-descent slot in the "
+                         "controller; only one preference can be active per run). 0.0 "
+                         "(default) disables it exactly.")
+    p.add_argument("--dipole-alignment-target-point-m", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"), help="defaults to BEAM_BASE_XYZ_M if unset.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the target. -1.0: away from it.")
+
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
     p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=210.0,
                     help="magnet-to-beam-base exclusion floor -- both the anticipatory "
@@ -355,6 +432,35 @@ def main() -> None:
                          "tracking error ever exceeds this -- same PathFollowConfig."
                          "max_tracking_error_m field every other vessel script uses. "
                          "0 disables.")
+    p.add_argument("--tcp-protection-margin-mm", type=float, default=15.0,
+                    help="2026-10-15: same margin concept as --magnet-protection-margin-mm, "
+                         "for the TCP-workspace clip. Default is larger (15mm vs magnet's "
+                         "3mm) because the observed drift rate here is faster: confirmed "
+                         "live, mpc_closedloop_invjac_contact_floor240_v1 (zero margin) "
+                         "crossed the true y-boundary within 7 ticks at ~3-6mm/tick near "
+                         "the end (nullspace_gain=0, nothing pulling the redundant DOF "
+                         "back), overshooting the true floor by ~2mm before the post-hoc "
+                         "tcp_out_of_workspace monitor caught it one tick later -- the "
+                         "clip's one-tick-ahead linear prediction only starts resisting "
+                         "once already within one tick's displacement of the TRUE "
+                         "boundary, which at this drift rate is too late. Does NOT change "
+                         "the TRUE box itself (tcp_out_of_workspace keeps checking the "
+                         "real one, unchanged) -- only shrinks what the clip targets.")
+    p.add_argument("--tcp-true-box-relax-mm", type=float, default=0.0,
+                    help="2026-10-15: widens the ACTUAL TCP workspace box (both what "
+                         "tcp_out_of_workspace checks AND what the clip's own margin is "
+                         "computed relative to) by this amount on every side, LOCAL to "
+                         "this script only -- does NOT modify run_mpc_delay_aware_vessel."
+                         "py's _WORKSPACE_XYZ_MIN_M/_MAX_M, so MPC runs are unaffected. "
+                         "Exists because nullspace_gain=0 gives this controller's "
+                         "redundant DOF no restoring force, so it can persistently drift "
+                         "toward a boundary rather than just momentarily overshoot one -- "
+                         "confirmed live across TCP-y, magnet-z and magnet-exclusion-"
+                         "radius each in turn. --tcp-protection-margin-mm alone cannot fix "
+                         "this (it only changes when the clip starts reacting, not how "
+                         "much room the drift has to work with); this flag gives the "
+                         "drift more room directly. 0.0 (default) = unchanged, exactly "
+                         "the real box used elsewhere today.")
     p.add_argument("--skip-preflight", action="store_true")
     args = p.parse_args()
 
@@ -375,6 +481,78 @@ def main() -> None:
     print(f"[inv-jac-online] loaded Jacobian schedule {schedule.shape} from "
           f"{args.schedule_cache} ({'contact' if args.contact else 'no_contact'} -- "
           f"verify this matches the schedule file you actually built)")
+
+    pf._FORCE_PREFERENCE_OVERRIDE = None
+    if args.magnetic_force_preference_schedule is not None:
+        if args.force_preference_gain <= 0.0 or (args.lambda_force <= 0.0 and args.lambda_torque <= 0.0):
+            raise SystemExit(
+                "--magnetic-force-preference-schedule was given but --force-preference-gain "
+                "and/or both lambdas are 0.0 -- the preference would have no effect; pass "
+                "positive --force-preference-gain and at least one positive lambda, or drop "
+                "the schedule flag."
+            )
+        from proper_research.controllers.inverse_jacobian_controller import (
+            build_magnetic_force_preference_gradient_fn,
+        )
+
+        _force_pref_npz = np.load(args.magnetic_force_preference_schedule)
+        _force_pref_reference_state = np.asarray(ref_npz["state_reference"], dtype=float)
+        if _force_pref_npz["force_jacobians"].shape[0] != _force_pref_reference_state.shape[0]:
+            raise ValueError(
+                f"--magnetic-force-preference-schedule {args.magnetic_force_preference_schedule!r} "
+                f"has {_force_pref_npz['force_jacobians'].shape[0]} samples but --plan-dir "
+                f"{args.plan_dir!r}'s reference has {_force_pref_reference_state.shape[0]} -- "
+                "these don't match the same plan."
+            )
+        grad_fn = build_magnetic_force_preference_gradient_fn(
+            reference_state=_force_pref_reference_state,
+            force_jacobians=np.asarray(_force_pref_npz["force_jacobians"], dtype=float),
+            torque_jacobians=np.asarray(_force_pref_npz["torque_jacobians"], dtype=float),
+            nominal_force_N=np.asarray(_force_pref_npz["nominal_force_N"], dtype=float),
+            nominal_torque_Nm=np.asarray(_force_pref_npz["nominal_torque_Nm"], dtype=float),
+            force_desired_N=np.asarray(args.force_desired_n, dtype=float),
+            torque_desired_Nm=np.asarray(args.torque_desired_nm, dtype=float),
+            lambda_force=float(args.lambda_force), lambda_torque=float(args.lambda_torque),
+        )
+        pf._FORCE_PREFERENCE_OVERRIDE = dict(
+            force_preference_gradient_fn=grad_fn,
+            force_preference_gain=float(args.force_preference_gain),
+        )
+        print(f"[inv-jac-online] magnetic force/torque PREFERENCE requested "
+              f"(schedule={args.magnetic_force_preference_schedule}, "
+              f"F_des={args.force_desired_n}N, tau_des={args.torque_desired_nm}Nm, "
+              f"lambda_force={args.lambda_force:.3g}, lambda_torque={args.lambda_torque:.3g}, "
+              f"force_preference_gain={args.force_preference_gain:.3g}) -- soft nullspace "
+              f"tie-breaker only")
+    elif args.dipole_alignment_weight > 0.0:
+        from proper_research.controllers.dipole_alignment import build_gradient_fn_live
+        from proper_research.planning.vessel_context import build_vessel_planning_context
+
+        _dipole_target = (
+            np.asarray(BEAM_BASE_XYZ_M, dtype=float) if args.dipole_alignment_target_point_m is None
+            else np.asarray(args.dipole_alignment_target_point_m, dtype=float)
+        )
+        print("[inv-jac-online] building model bundle once to read the calibrated "
+              "source-magnet dipole moment (m_body) for --dipole-alignment-weight ...")
+        _, _dipole_bundle, _dipole_controller_pack, _, _, _, _ = build_vessel_planning_context(
+            lumen_file=args.lumen_file, insertion_max_m=args.insertion_max_mm * 1.0e-3,
+            jacobian_mode="fast", plant_contact=args.contact,
+        )
+        _dipole_m_body = np.asarray(
+            _dipole_controller_pack["plant_diagnostic_joint_adapter"].model.m_body, dtype=float,
+        ).reshape(3)
+        grad_fn = build_gradient_fn_live(
+            dh=_robot_kin.dh, T_F_M=_robot_kin.T_F_M, m_body=_dipole_m_body,
+            target_point_m=_dipole_target, sign=float(args.dipole_alignment_sign),
+        )
+        pf._FORCE_PREFERENCE_OVERRIDE = dict(
+            force_preference_gradient_fn=grad_fn,
+            force_preference_gain=float(args.dipole_alignment_weight),
+        )
+        print(f"[inv-jac-online] dipole-to-point alignment PREFERENCE requested "
+              f"(target_point_m={_dipole_target.tolist()}, weight={args.dipole_alignment_weight:.3g}, "
+              f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
+              f"computed fresh every tick, no schedule file, soft nullspace term only")
 
     q0, l0 = common.load_plan_initial_state(args.plan_dir)
     magnet_z_start = float(_magnet_transform_fn(q0)[2])
@@ -408,10 +586,48 @@ def main() -> None:
               f"gate z-bounds=[{gate_z_bounds_m[0]*1e3:.1f},{gate_z_bounds_m[1]*1e3:.1f}]mm "
               f"(true [{magnet_z_bounds_m[0]*1e3:.1f},{magnet_z_bounds_m[1]*1e3:.1f}]mm unchanged)")
 
-    pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
+    # 2026-10-15: TCP-workspace anticipatory clip -- ALWAYS enabled, independent
+    # of --magnet-protection (a genuinely separate constraint from the magnet-
+    # exclusion/z-workspace ones that flag selects between). Previously this
+    # controller had NO protection for the general TCP box at all (confirmed
+    # live: mpc_closedloop_invjac_contact_floor240_v1 left the box within 7
+    # ticks). Sourced live from run_mpc_delay_aware_vessel.py's own
+    # _WORKSPACE_XYZ_MIN_M/_MAX_M constants -- see this script's import of
+    # that module above.
+    _tcp_relax_m = args.tcp_true_box_relax_mm * 1.0e-3
+    _tcp_true_xyz_min = np.asarray(_mpc_runner._WORKSPACE_XYZ_MIN_M, dtype=float) - _tcp_relax_m
+    _tcp_true_xyz_max = np.asarray(_mpc_runner._WORKSPACE_XYZ_MAX_M, dtype=float) + _tcp_relax_m
+    if args.tcp_true_box_relax_mm > 0:
+        print(f"[inv-jac-online] TCP true box RELAXED by {args.tcp_true_box_relax_mm:.1f}mm/side "
+              f"(LOCAL to this script -- run_mpc_delay_aware_vessel.py's own box is unchanged): "
+              f"min={_tcp_true_xyz_min.tolist()} max={_tcp_true_xyz_max.tolist()} "
+              f"(real box was min={_mpc_runner._WORKSPACE_XYZ_MIN_M} max={_mpc_runner._WORKSPACE_XYZ_MAX_M})")
+
+    _tcp_margin_m = args.tcp_protection_margin_mm * 1.0e-3
+    _tcp_gate_xyz_min = _tcp_true_xyz_min + _tcp_margin_m
+    _tcp_gate_xyz_max = _tcp_true_xyz_max - _tcp_margin_m
+    if np.any(_tcp_gate_xyz_min >= _tcp_gate_xyz_max):
+        raise ValueError(
+            f"--tcp-protection-margin-mm {args.tcp_protection_margin_mm:.1f}mm is too large: "
+            f"it would invert the clip's own TCP-workspace bounds (box after relax: "
+            f"min={_tcp_true_xyz_min.tolist()}, max={_tcp_true_xyz_max.tolist()})."
+        )
+    _tcp_clip_kwargs = dict(
+        tcp_position_fn=_tcp_position_fn,
+        tcp_position_jacobian_fn=_tcp_position_jacobian_fn,
+        tcp_workspace_xyz_min_m=_tcp_gate_xyz_min,
+        tcp_workspace_xyz_max_m=_tcp_gate_xyz_max,
+    )
+    print(f"[inv-jac-online] TCP-workspace clip: ALWAYS ACTIVE (independent of "
+          f"--magnet-protection), gate bounds min={_tcp_gate_xyz_min.tolist()} "
+          f"max={_tcp_gate_xyz_max.tolist()} (true bounds after relax min={_tcp_true_xyz_min.tolist()} "
+          f"max={_tcp_true_xyz_max.tolist()}, --tcp-protection-margin-mm={args.tcp_protection_margin_mm:.1f}mm)")
+
+    pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = dict(_tcp_clip_kwargs)
     pf._COMMAND_SAFETY_GATE = None
     if args.magnet_protection == "clip":
         pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = dict(
+            _tcp_clip_kwargs,
             magnet_position_fn=_magnet_position_fn,
             magnet_position_jacobian_fn=_magnet_position_jacobian_fn,
             magnet_exclusion_lumen_C_m=beam_base_pivot_xyz,
@@ -536,12 +752,23 @@ def main() -> None:
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
 
     # Same validated TCP workspace box run_mpc_delay_aware_vessel.py derived
-    # and fixed for this exact plan (2026-10-07: planned z 0.3867-0.3908m,
-    # live MPC correction observed climbing toward the old 0.393m ceiling --
-    # see that script's own 2026-10-07 comment for the full derivation).
-    # Reused here, not re-derived -- this is the SAME vessel plan family.
-    cfg.workspace_xyz_min_m = (0.277, -0.832, 0.170)
-    cfg.workspace_xyz_max_m = (0.656, -0.2, 0.433)
+    # (2026-10-07: planned z 0.3867-0.3908m, live MPC correction observed
+    # climbing toward the old 0.393m ceiling -- see that script's own
+    # 2026-10-07 comment for the full derivation). Read LIVE from that
+    # script's own module-level constants (2026-10-15) instead of a second
+    # hardcoded copy here, so this box can never silently drift out of sync
+    # with the one the MPC runner actually uses/the user tunes directly.
+    # Uses _tcp_true_xyz_min/max (the --tcp-true-box-relax-mm-widened box
+    # computed above, identical to the real box when relax=0.0) so this
+    # post-hoc monitor stays consistent with what the clip itself targets.
+    # dataclasses.asdict(cfg) (used when writing summary.json) does not
+    # convert numpy arrays -- must be plain tuples, matching workspace_xyz_
+    # min_m/max_m's own `tuple[float, float, float]` field type, or the run
+    # crashes at the very end on json.dump(TypeError: ndarray not JSON
+    # serializable), discovered live (2026-10-20) only after a full run
+    # otherwise completed cleanly.
+    cfg.workspace_xyz_min_m = tuple(float(v) for v in _tcp_true_xyz_min)
+    cfg.workspace_xyz_max_m = tuple(float(v) for v in _tcp_true_xyz_max)
 
     cfg.output_root = args.out_dir
     cfg.run_name = args.run_name

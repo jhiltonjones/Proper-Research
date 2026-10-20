@@ -288,8 +288,14 @@ class OfflineJointControllerAdapter:
             # follow.py's own comment on this same key) -- no-op (None) for
             # any step object that doesn't set it; InverseJacobianStep's
             # magnet_abort_reason is the first non-MPC user, for the
-            # magnet-exclusion/z-workspace hard-constraint clip.
-            "abort_reason": getattr(step, "magnet_abort_reason", None),
+            # magnet-exclusion/z-workspace hard-constraint clip. 2026-10-15:
+            # OR'd with tcp_abort_reason (the TCP-workspace clip's own
+            # unclippable-violation hook) -- at most one of the two should
+            # ever be set on a given tick, but OR handles either/both safely.
+            "abort_reason": (
+                getattr(step, "magnet_abort_reason", None)
+                or getattr(step, "tcp_abort_reason", None)
+            ),
         }
         return SolveResult(u0=command, infeasible=infeasible, info=info)
 
@@ -377,6 +383,13 @@ def build_offline_solver(
     magnet_exclusion_radius_m: Optional[float] = None,
     magnet_z_bounds_m: Optional[tuple] = None,
     magnet_constraint_violation_abort_m: float = 2.0e-3,
+    force_preference_gradient_fn: Optional[Any] = None,
+    force_preference_gain: float = 0.0,
+    tcp_position_fn: Optional[Any] = None,
+    tcp_position_jacobian_fn: Optional[Any] = None,
+    tcp_workspace_xyz_min_m: Any = None,
+    tcp_workspace_xyz_max_m: Any = None,
+    tcp_constraint_violation_abort_m: float = 2.0e-3,
 ) -> OfflineJointControllerAdapter:
     """Build one of the five offline controllers and wrap it for the runner.
 
@@ -455,6 +468,13 @@ def build_offline_solver(
             magnet_exclusion_radius_m=magnet_exclusion_radius_m,
             magnet_z_bounds_m=magnet_z_bounds_m,
             magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
+            force_preference_gradient_fn=force_preference_gradient_fn,
+            force_preference_gain=force_preference_gain,
+            tcp_position_fn=tcp_position_fn,
+            tcp_position_jacobian_fn=tcp_position_jacobian_fn,
+            tcp_workspace_xyz_min_m=tcp_workspace_xyz_min_m,
+            tcp_workspace_xyz_max_m=tcp_workspace_xyz_max_m,
+            tcp_constraint_violation_abort_m=tcp_constraint_violation_abort_m,
         )
     elif kind == "naive_inverse_jacobian_ltv":
         from proper_research.controllers.inverse_jacobian_controller import (
@@ -486,6 +506,13 @@ def build_offline_solver(
             magnet_exclusion_radius_m=magnet_exclusion_radius_m,
             magnet_z_bounds_m=magnet_z_bounds_m,
             magnet_constraint_violation_abort_m=magnet_constraint_violation_abort_m,
+            force_preference_gradient_fn=force_preference_gradient_fn,
+            force_preference_gain=force_preference_gain,
+            tcp_position_fn=tcp_position_fn,
+            tcp_position_jacobian_fn=tcp_position_jacobian_fn,
+            tcp_workspace_xyz_min_m=tcp_workspace_xyz_min_m,
+            tcp_workspace_xyz_max_m=tcp_workspace_xyz_max_m,
+            tcp_constraint_violation_abort_m=tcp_constraint_violation_abort_m,
         )
     elif kind == "inv_2dof_trim":
         # 2026-09-17: see inverse_jacobian_2dof_trim.py's module docstring

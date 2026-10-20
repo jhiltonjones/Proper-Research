@@ -57,6 +57,10 @@ import numpy as np
 from scipy.optimize import Bounds, minimize, least_squares
 from scipy.spatial.transform import Rotation as Rot
 
+from proper_research.controllers.dipole_alignment import (
+    dipole_alignment_residual_and_jacobian,
+)
+
 
 class NodeSolveTimeoutError(TimeoutError):
     """Raised when a single per-guess node solve exceeds node_timeout_s.
@@ -379,6 +383,35 @@ class InverseConfigurationPlannerConfig:
     # controllers never track desired_tangent.
     tangent_error_selection_weight: float = 1.0
 
+    # 2026-10-15: optional SOFT tie-breaker among already-feasible nodes --
+    # see `_force_torque_preference_score`'s docstring. None (default)
+    # preserves the exact existing behaviour (return on the FIRST feasible
+    # candidate, no extra beam solves). A dict enables it; required keys:
+    # force_desired_N (3,), torque_desired_Nm (3,), lambda_force (float
+    # >=0), lambda_torque (float >=0); optional: weight_force (3,3),
+    # weight_torque (3,3), about_point_m (3,). Never relaxes
+    # position_tolerance_m/tangent_tolerance_rad/exclusion feasibility --
+    # it only chooses AMONG configurations that already satisfy them.
+    #
+    # 2026-10-19: found live that the tie-breaker above is too weak to
+    # matter in practice -- it only ever chooses among the 1-2 near-
+    # identical candidates one node's multistart guesses happen to
+    # produce, so the chosen path's dipole-to-beam-base angle was within
+    # ~1 deg of a plan built with NO preference at all, over the whole
+    # path. `dipole_alignment_weight` below is a REAL term INSIDE the
+    # solver's own residual/objective instead (see `_NodeObjective.
+    # residual`), so it actually reshapes which redundant-DOF solution
+    # the solver converges to, not just which of a couple it picks
+    # afterward. 0.0 (default) disables it exactly (zero contribution,
+    # same "*0" pattern `tangent_residual` already uses above). Purely
+    # kinematic (see `controllers.dipole_alignment`) -- no beam solve, no
+    # approximation caveat, safe to use at real weight.
+    dipole_alignment_weight: float = 0.0
+    dipole_alignment_target_point_m: Any | None = None
+    dipole_alignment_sign: float = 1.0
+
+    force_torque_preference: dict | None = None
+
     def validate(self) -> None:
         positive_scalars = {
             "position_tolerance_m": self.position_tolerance_m,
@@ -475,6 +508,33 @@ class InverseConfigurationPlannerConfig:
             value = float(getattr(self, name))
             if not np.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} must be finite and non-negative.")
+
+        if self.dipole_alignment_weight < 0.0 or not np.isfinite(self.dipole_alignment_weight):
+            raise ValueError("dipole_alignment_weight must be finite and >= 0.")
+        if self.dipole_alignment_weight > 0.0:
+            if self.dipole_alignment_target_point_m is None:
+                raise ValueError(
+                    "dipole_alignment_weight > 0 requires dipole_alignment_target_point_m."
+                )
+            target = np.asarray(self.dipole_alignment_target_point_m, dtype=float).reshape(-1)
+            if target.size != 3 or not np.all(np.isfinite(target)):
+                raise ValueError("dipole_alignment_target_point_m must be 3 finite values.")
+        if abs(self.dipole_alignment_sign) != 1.0:
+            raise ValueError("dipole_alignment_sign must be exactly +1.0 or -1.0.")
+
+        if self.force_torque_preference is not None:
+            pref = self.force_torque_preference
+            for key in ("force_desired_N", "torque_desired_Nm", "lambda_force", "lambda_torque"):
+                if key not in pref:
+                    raise ValueError(f"force_torque_preference is missing required key {key!r}.")
+            for key in ("lambda_force", "lambda_torque"):
+                value = float(pref[key])
+                if not np.isfinite(value) or value < 0.0:
+                    raise ValueError(f"force_torque_preference[{key!r}] must be finite and >= 0.")
+            for key in ("force_desired_N", "torque_desired_Nm"):
+                arr = np.asarray(pref[key], dtype=float).reshape(-1)
+                if arr.size != 3 or not np.all(np.isfinite(arr)):
+                    raise ValueError(f"force_torque_preference[{key!r}] must be 3 finite values.")
 
 
 @dataclass
@@ -1247,6 +1307,26 @@ class _NodeObjective:
             np.asarray(config.joint_centre_weight, dtype=float)
         )
 
+        # 2026-10-19: dipole-to-point alignment -- a REAL residual term
+        # (see InverseConfigurationPlannerConfig.dipole_alignment_weight's
+        # docstring for why this replaces the force_torque_preference
+        # tie-breaker below for this purpose). weight 0.0 (default) makes
+        # dipole_alignment_weight_sqrt exactly 0.0, so the residual/
+        # Jacobian blocks below are always computed (same "*0" pattern
+        # tangent_residual already uses) but contribute exactly nothing.
+        self.dipole_alignment_weight_sqrt = float(np.sqrt(config.dipole_alignment_weight))
+        self.dipole_alignment_target_point_m = (
+            None if config.dipole_alignment_target_point_m is None
+            else np.asarray(config.dipole_alignment_target_point_m, dtype=float).reshape(3)
+        )
+        self.dipole_alignment_sign = float(config.dipole_alignment_sign)
+        self.dipole_m_body = getattr(getattr(adapter, "model", None), "m_body", None)
+        if self.dipole_alignment_weight_sqrt > 0.0 and self.dipole_m_body is None:
+            raise ValueError(
+                "dipole_alignment_weight > 0 requires adapter.model.m_body "
+                "(the source magnet's own dipole moment, body frame)."
+            )
+
         span = self.state_max - self.state_min
         self.state_centre = 0.5 * (self.state_max + self.state_min)
         self.state_half_range = np.where(span > 1.0e-12, 0.5 * span, 1.0)
@@ -1313,6 +1393,24 @@ class _NodeObjective:
             self._jacobian = matrix.copy()
         return np.asarray(self._jacobian, dtype=float).copy()
 
+    def _dipole_alignment_residual(self, state: Array) -> Array:
+        if self.dipole_alignment_weight_sqrt == 0.0:
+            return np.zeros(3, dtype=float)
+        raw = dipole_alignment_residual_and_jacobian(
+            self.adapter, state, self.dipole_m_body, self.dipole_alignment_target_point_m,
+            sign=self.dipole_alignment_sign,
+        )[0]
+        return self.dipole_alignment_weight_sqrt * raw
+
+    def _dipole_alignment_jacobian(self, state: Array) -> Array:
+        if self.dipole_alignment_weight_sqrt == 0.0:
+            return np.zeros((3, 7), dtype=float)
+        raw = dipole_alignment_residual_and_jacobian(
+            self.adapter, state, self.dipole_m_body, self.dipole_alignment_target_point_m,
+            sign=self.dipole_alignment_sign,
+        )[1]
+        return self.dipole_alignment_weight_sqrt * raw
+
     def residual(self, state: Any) -> Array:
         state = _finite_vector(state, 7, "residual state")
         output = self.output(state)
@@ -1329,12 +1427,14 @@ class _NodeObjective:
         centre_residual = self.centre_sqrt * (
             (state - self.state_centre) / self.state_half_range
         )
+        alignment_residual = self._dipole_alignment_residual(state)
         residual = np.concatenate(
             (
                 position_residual,
                 tangent_residual,
                 continuity_residual,
                 centre_residual,
+                alignment_residual,
             )
         )
         if not np.all(np.isfinite(residual)):
@@ -1351,8 +1451,9 @@ class _NodeObjective:
         ) / self.tangent_scale
         J_continuity = np.diag(self.continuity_sqrt / self.step_scale)
         J_centre = np.diag(self.centre_sqrt / self.state_half_range)
+        J_alignment = self._dipole_alignment_jacobian(state)
         result = np.vstack(
-            (J_position, J_tangent, J_continuity, J_centre)
+            (J_position, J_tangent, J_continuity, J_centre, J_alignment)
         )
         if not np.all(np.isfinite(result)):
             raise FloatingPointError("Inverse objective Jacobian is non-finite.")
@@ -1382,6 +1483,63 @@ class _NodeObjective:
         if gradient.shape != (7,) or not np.all(np.isfinite(gradient)):
             raise FloatingPointError("Inverse scalar-objective gradient is invalid.")
         return gradient
+
+
+def _force_torque_preference_score(adapter: Any, state: Array, pref: dict) -> float:
+    """Soft tie-break score (lower is better) for the resultant magnetic
+    wrench at ``state`` -- see `InverseConfigurationPlannerConfig.
+    force_torque_preference`'s own docstring. NEVER used inside the per-
+    node SLSQP/least-squares objective itself (that stays exactly as
+    validated); only used in `_solve_one_node` to choose AMONG candidates
+    that have ALREADY passed the existing feasibility checks, exactly a
+    tie-breaker.
+
+    Deliberately does ONE extra, side-effect-free (``commit=False``,
+    ``reuse_cache=False``) beam solve at this candidate's own state rather
+    than trying to reuse `adapter`'s cached physical solve: that cache is
+    only updated on a `commit=True` call (see `_NodeObjective.
+    refresh_output`), and this function may be asked to score several
+    feasible candidates before any of them is committed -- reusing a
+    `commit=False` adapter cache here would risk silently scoring the
+    WRONG candidate's wrench if call order ever changed. The extra cost
+    (one quasistatic beam solve per feasible candidate considered) is
+    bounded by `maximum_multistart_attempts` and only paid when this
+    feature is explicitly enabled.
+    """
+    from proper_research.simulation.magnetic_beam.force_preference import (
+        total_magnetic_wrench,
+    )
+
+    model = getattr(adapter, "model", None)
+    if model is None:
+        raise ValueError(
+            "force_torque_preference requires the inverse-configuration "
+            "adapter to expose a `.model` (a MagneticBeamForwardModel "
+            "instance) -- got adapter.model=None."
+        )
+    state = _finite_vector(state, 7, "force-preference state")
+    T_R_M = adapter.magnet_transform(state)
+    p7 = np.concatenate(
+        (T_R_M[:3, 3], Rot.from_matrix(T_R_M[:3, :3]).as_rotvec(), [state[6]])
+    )
+    wrench = total_magnetic_wrench(
+        model, p7, about_point_m=pref.get("about_point_m"), reuse_cache=False,
+    )
+    F_des = np.asarray(pref["force_desired_N"], dtype=float).reshape(3)
+    tau_des = np.asarray(pref["torque_desired_Nm"], dtype=float).reshape(3)
+    weight_force = pref.get("weight_force")
+    weight_torque = pref.get("weight_torque")
+    W_F = np.eye(3) if weight_force is None else np.asarray(weight_force, dtype=float).reshape(3, 3)
+    W_tau = np.eye(3) if weight_torque is None else np.asarray(weight_torque, dtype=float).reshape(3, 3)
+    resid_F = wrench.force_N - F_des
+    resid_tau = wrench.torque_Nm - tau_des
+    score = (
+        float(pref["lambda_force"]) * float(resid_F @ W_F @ resid_F)
+        + float(pref["lambda_torque"]) * float(resid_tau @ W_tau @ resid_tau)
+    )
+    if not np.isfinite(score):
+        raise FloatingPointError("force_torque_preference score is non-finite.")
+    return score
 
 
 def _strictly_feasible_initial_guess(
@@ -1704,6 +1862,64 @@ def _build_node_result(
     )
 
 
+def _commit_feasible_candidate(
+    *, candidate: InverseNodeResult, node_index: int, s_m: float,
+    previous_state: Array, desired_position: Array, desired_tangent: Array,
+    adapter: Any, objective: "_NodeObjective",
+    exclusion_constraint: "_MagnetLumenExclusionConstraint | None",
+    config: InverseConfigurationPlannerConfig, state_min: Array, state_max: Array,
+) -> InverseNodeResult:
+    """Advance the beam continuation for exactly ONE accepted candidate --
+    factored out of `_solve_one_node` unchanged (2026-10-15) so that
+    function can defer which feasible candidate gets committed (needed for
+    `force_torque_preference`'s tie-break among several) without
+    duplicating this commit-and-postvalidate logic. Behaviour for the
+    caller is bit-identical to the inline version this replaced.
+    """
+    precommit_position = candidate.tip_position_m.copy()
+    accepted_state = np.concatenate(
+        (candidate.q_rad, np.array([candidate.insertion_m]))
+    )
+    objective.refresh_output(accepted_state, commit=True)
+    committed_candidate = _build_node_result(
+        node_index=node_index,
+        s_m=s_m,
+        state=accepted_state,
+        previous_state=previous_state,
+        desired_position=desired_position,
+        desired_tangent=desired_tangent,
+        adapter=adapter,
+        objective=objective,
+        exclusion_constraint=exclusion_constraint,
+        config=config,
+        state_min=state_min,
+        state_max=state_max,
+        solver_success=candidate.solver_success,
+        termination_reason=(
+            candidate.termination_reason
+            + "; fresh_postvalidated_and_committed"
+        ),
+        function_evaluations=candidate.function_evaluations,
+        objective_value=candidate.objective_value,
+        attempt_count=candidate.attempt_count,
+    )
+    commit_drift = float(
+        np.linalg.norm(
+            committed_candidate.tip_position_m - precommit_position
+        )
+    )
+    if not committed_candidate.feasible:
+        raise RuntimeError(
+            "A candidate passed commit=False post-validation but "
+            "became infeasible when the same state was committed; "
+            f"node={node_index}, s={s_m:.6f} m, "
+            f"commit_tip_drift={1.0e3 * commit_drift:.6f} mm. "
+            "The forward equilibrium is not repeatable from the "
+            "frozen node baseline."
+        )
+    return committed_candidate
+
+
 def _solve_one_node(
     *,
     node_index: int,
@@ -1750,6 +1966,7 @@ def _solve_one_node(
     )
 
     candidates: list[InverseNodeResult] = []
+    feasible_pending: list[InverseNodeResult] = []
     for attempt_index, guess in enumerate(guesses, start=1):
         try:
             if exclusion_constraint is None:
@@ -1872,52 +2089,48 @@ def _solve_one_node(
 
         candidates.append(candidate)
         if candidate.feasible:
-            # Advance the beam continuation only after a candidate has passed
-            # an independent physical post-validation.  Previously no
-            # accepted inverse node was ever committed, so start_step() kept
-            # freezing an obsolete beam equilibrium.
-            precommit_position = candidate.tip_position_m.copy()
-            accepted_state = np.concatenate(
-                (candidate.q_rad, np.array([candidate.insertion_m]))
-            )
-            objective.refresh_output(accepted_state, commit=True)
-            committed_candidate = _build_node_result(
-                node_index=node_index,
-                s_m=s_m,
-                state=accepted_state,
-                previous_state=previous_state,
-                desired_position=desired_position,
-                desired_tangent=desired_tangent,
-                adapter=adapter,
-                objective=objective,
-                exclusion_constraint=exclusion_constraint,
-                config=config,
-                state_min=state_min,
-                state_max=state_max,
-                solver_success=candidate.solver_success,
-                termination_reason=(
-                    candidate.termination_reason
-                    + "; fresh_postvalidated_and_committed"
-                ),
-                function_evaluations=candidate.function_evaluations,
-                objective_value=candidate.objective_value,
-                attempt_count=candidate.attempt_count,
-            )
-            commit_drift = float(
-                np.linalg.norm(
-                    committed_candidate.tip_position_m - precommit_position
+            if config.force_torque_preference is None:
+                # Original behaviour, bit-for-bit: commit and return on the
+                # FIRST feasible candidate, never trying further guesses.
+                return _commit_feasible_candidate(
+                    candidate=candidate, node_index=node_index, s_m=s_m,
+                    previous_state=previous_state, desired_position=desired_position,
+                    desired_tangent=desired_tangent, adapter=adapter, objective=objective,
+                    exclusion_constraint=exclusion_constraint, config=config,
+                    state_min=state_min, state_max=state_max,
                 )
-            )
-            if not committed_candidate.feasible:
-                raise RuntimeError(
-                    "A candidate passed commit=False post-validation but "
-                    "became infeasible when the same state was committed; "
-                    f"node={node_index}, s={s_m:.6f} m, "
-                    f"commit_tip_drift={1.0e3 * commit_drift:.6f} mm. "
-                    "The forward equilibrium is not repeatable from the "
-                    "frozen node baseline."
-                )
-            return committed_candidate
+            # force_torque_preference is set: defer committing ANY candidate
+            # (committing mutates the adapter/model's beam-continuation
+            # cache -- see `_NodeObjective.refresh_output` -- and only the
+            # EVENTUAL winner's commit may be allowed to happen) and keep
+            # trying the remaining guesses so there is something to break
+            # ties among. `candidate` here is itself a commit=False result
+            # (see `objective.refresh_output(state, commit=False)` above),
+            # so collecting it has no side effect on the shared model cache.
+            feasible_pending.append(candidate)
+
+    if feasible_pending:
+        # Tie-break AMONG already-feasible candidates only -- this never
+        # relaxes feasibility, it only chooses which feasible configuration
+        # to commit. Each `_force_torque_preference_score` call is one
+        # extra, side-effect-free beam solve (see that function's own
+        # docstring for why commit=False/reuse_cache=False there, not a
+        # reuse of this loop's own cache).
+        best = min(
+            feasible_pending,
+            key=lambda item: _force_torque_preference_score(
+                adapter,
+                np.concatenate((item.q_rad, np.array([item.insertion_m]))),
+                config.force_torque_preference,
+            ),
+        )
+        return _commit_feasible_candidate(
+            candidate=best, node_index=node_index, s_m=s_m,
+            previous_state=previous_state, desired_position=desired_position,
+            desired_tangent=desired_tangent, adapter=adapter, objective=objective,
+            exclusion_constraint=exclusion_constraint, config=config,
+            state_min=state_min, state_max=state_max,
+        )
 
     if not candidates:
         raise RuntimeError(

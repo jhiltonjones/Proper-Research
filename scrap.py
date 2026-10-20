@@ -42,7 +42,8 @@ if __name__ == "__main__":
         curr_ppose_add = robo.get_pose()
         print(curr_ppose_add)
         # curr_ppose_add[0] -= 0.5
-        robo.go_home_joint()
+        tcp_pos[2] +=0.02
+        # robo.go_home_joint()
         robo.moveL(tcp_pos)
 
         # TCP_TARGET[0]-=.1

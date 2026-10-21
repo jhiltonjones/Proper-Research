@@ -48,6 +48,18 @@ from proper_research.hardware.online.stage_a_common import (
     load_plan_initial_state,
     reset_to_plan_initial,
     check_robot_safe,
+    # 2026-10-21: this rig's main control loop (close_loop_path_follow.main(),
+    # via run_open_loop_c.py et al.) was constructing its own StateStreamConfig
+    # from the UNPATCHED default (marker_min_count=3), while this module's own
+    # camera-health-check PivotConfig.build_scfg lambda below already uses the
+    # recalibrated rig's real marker_min_count=2 (the physical rig's middle
+    # marker was permanently removed 2026-09-29) -- a split between preflight
+    # and the real loop that the vessel_stage_a scripts never had, since they
+    # always call patch_state_stream_config_for_recalibrated_rig(pf) at import
+    # time. Found live: "RuntimeError: no fresh tip+joints within
+    # warmup_timeout_s (vis_fail=364, \"RuntimeError('Expected at least 3 red
+    # markers, found 2')\")" on a fresh triangle-shape open-loop run.
+    patch_state_stream_config_for_recalibrated_rig,
 )
 from proper_research.hardware.online import stage_a_common as _shared
 

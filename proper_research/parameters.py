@@ -89,7 +89,20 @@ def default_beam_params():
 def default_magnet_params():
     mu_0 = 4e-7 * np.pi
     # Source magnet (2026-09-10): N52 cylinder, 100 mm diameter x 100 mm length.
-    B_r = 1.44
+    # B_r=1.44 was the original nameplate-derived value. Re-calibrated
+    # 2026-10-19 against the floor240_dipolealign_native open-loop hardware
+    # run (contact-mechanism-analysis session): grid-searched B_r in
+    # [0.70,1.44]T against measured tip positions at several real
+    # configurations (holding effective_youngs_modulus=1.6MPa, the existing
+    # value, fixed) -- found a clean, repeated interior minimum at
+    # B_r=0.80T (not a boundary artifact; RMSE rose on both sides, e.g.
+    # 5.14mm at 0.80T vs 5.47mm at the old 1.44T on one test run). Confirmed
+    # again independently on a region-C real hardware point (residual
+    # 4.31mm at B_r=1.44T vs 1.43mm at B_r=0.80T with a correctly-solved
+    # insertion length). See plans/stage3_design/n5_hardware_campaign_2026-10-14/
+    # and the calibrate_model_against_openloop_run.py / retract_and_compare.py
+    # tooling built that session for the full methodology.
+    B_r = 0.80
     r_epm = 0.05
     p_epm = 0.10
     m_hat = (1.0, 0.0, 0.0)

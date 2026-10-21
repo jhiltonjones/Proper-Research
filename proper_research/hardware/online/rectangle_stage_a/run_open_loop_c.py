@@ -34,6 +34,15 @@ import proper_research.hardware.online.close_loop_path_follow as pf
 
 from . import common
 
+# Must run before close_loop_path_follow.main() ever instantiates its own
+# StateStreamConfig (it does, independently of this module's PivotConfig/
+# check_camera_healthy preflight path) -- see common.py's import-site comment
+# for the live failure this fixes (marker_min_count mismatch: unpatched
+# default requires 3 red markers, this rig's post-2026-09-29 physical setup
+# only has 2). Same call vessel_stage_a's run_open_loop_vessel.py/run_mpc_
+# delay_aware_vessel.py/run_inverse_jacobian_vessel.py already make.
+common.patch_state_stream_config_for_recalibrated_rig(pf)
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])

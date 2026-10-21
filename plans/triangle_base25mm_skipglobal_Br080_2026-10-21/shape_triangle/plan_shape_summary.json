@@ -1,0 +1,27 @@
+{
+  "shape": "triangle",
+  "size_mm": 25.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": true,
+  "planner_tip0_world": [
+    0.6455764472869691,
+    -0.7195138430853452,
+    -0.016663250864950747
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 151,
+  "perimeter_mm": 72.93850310250421,
+  "time_param_samples": 400,
+  "time_param_duration_s": 39.900000000000006,
+  "time_param_dir": "plans/triangle_base25mm_skipglobal_Br080_2026-10-21/time_parameterized_configuration_path"
+}

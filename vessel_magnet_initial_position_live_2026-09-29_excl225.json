@@ -1,0 +1,37 @@
+{
+  "description": "Live-captured robot start position, z-raised to match live magnet z (2026-09-29). -- exclusion_floor_mm raised to 225.0mm 2026-09-30 (offline replan after repeated magnet-exclusion trips at 210/213/225mm runtime floors all traced to the SAME offline-plan proximity point, not linearization error).",
+  "joints_rad": [
+    -0.8161709944354456,
+    -1.9427944622435511,
+    -1.6840646266937256,
+    -1.0534792703441163,
+    1.5239391326904297,
+    -2.017611328755514
+  ],
+  "magnet_pose6_R": [
+    0.29540486482043415,
+    -0.7016101931574247,
+    0.025477008750641572,
+    3.0313465321652218,
+    -0.5660856523112858,
+    -0.004582174601097943
+  ],
+  "tcp_pose6_R": [
+    0.4535575400256262,
+    -0.7438709949949895,
+    0.3732239795697806,
+    3.0313465321652218,
+    -0.5660856523112858,
+    -0.004582174601097943
+  ],
+  "beam_base_pivot_xyz_R_raised": [
+    0.525575,
+    -0.670028,
+    0.025477008750641572
+  ],
+  "z_raise_mm": 42.044008750641574,
+  "distance_magnet_to_beam_base_mm": 232.32676568405222,
+  "exclusion_floor_mm": 225.0,
+  "safety_mode_at_read": 1,
+  "protective_stopped_at_read": false
+}

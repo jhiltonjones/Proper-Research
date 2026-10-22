@@ -1,0 +1,7 @@
+numpy>=1.26
+scipy>=1.11
+matplotlib>=3.8
+pandas>=2.1
+# Local/private project dependencies, install from your own source repositories:
+# beam_direction_magnetisation
+# proper_research

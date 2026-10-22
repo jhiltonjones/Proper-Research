@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_sqp_online,tf,1,close_loop_logs/scurve_tf_fixed_smoketest_retry_2026-09-16/runs/tf_rep1_20260916T111729Z,stale_vision(age=0.655s),3,3,0.068,0.068,0.068,0.068,nan,0.068,9.3427

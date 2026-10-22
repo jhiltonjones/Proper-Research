@@ -1,0 +1,15 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_vessel_test1_2026-09-14_v2/runs/openloop_x1_rep1_20260914T090450Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.7652150130992577,
+    "mean_track_mm": 2.635175965665236,
+    "max_track_mm": 4.405,
+    "p95_track_mm": 3.876,
+    "mean_hold_mm": 2.900533333333333,
+    "final_mm": 2.817
+  }
+]

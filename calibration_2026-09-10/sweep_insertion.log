@@ -1,0 +1,16 @@
+  park           [start] cam_len  32.9mm cam_in +12.13 cam_out +0.00 | mod_len  32.5 mod_in +19.50 mod_out -0.06 | adv_disp +0.00 (30fr)
+  ret_30         [retract] cam_len  30.1mm cam_in +12.93 cam_out +0.00 | mod_len  29.7 mod_in +18.46 mod_out -0.04 | adv_disp -2.99 (30fr)
+  ret_27         [retract] cam_len  27.0mm cam_in +12.05 cam_out +0.00 | mod_len  26.7 mod_in +17.11 mod_out -0.05 | adv_disp -5.98 (30fr)
+  ret_24         [retract] cam_len  23.6mm cam_in +11.98 cam_out +0.00 | mod_len  23.4 mod_in +15.33 mod_out -0.04 | adv_disp -8.96 (30fr)
+  ret_21         [retract] cam_len  20.5mm cam_in +12.57 cam_out +0.00 | mod_len  20.4 mod_in +13.33 mod_out -0.04 | adv_disp -11.95 (30fr)
+  ret_18         [retract] cam_len  17.6mm cam_in +11.90 cam_out +0.00 | mod_len  17.5 mod_in +11.16 mod_out -0.03 | adv_disp -14.44 (30fr)
+  adv_21         [advance] cam_len  20.8mm cam_in +12.51 cam_out +0.00 | mod_len  20.7 mod_in +13.51 mod_out -0.04 | adv_disp -11.62 (30fr)
+  adv_24         [advance] cam_len  24.3mm cam_in +11.22 cam_out +0.00 | mod_len  24.1 mod_in +15.73 mod_out -0.04 | adv_disp -8.63 (30fr)
+  adv_27         [advance] cam_len  27.4mm cam_in +11.52 cam_out +0.00 | mod_len  27.1 mod_in +17.32 mod_out -0.05 | adv_disp -5.64 (30fr)
+  adv_30         [advance] cam_len  30.4mm cam_in +11.73 cam_out +0.00 | mod_len  30.0 mod_in +18.58 mod_out -0.05 | adv_disp -2.66 (30fr)
+  adv_33         [advance] cam_len  33.2mm cam_in +13.48 cam_out +0.00 | mod_len  32.8 mod_in +19.58 mod_out -0.05 | adv_disp +0.33 (30fr)
+  adv_36         [advance] cam_len  36.0mm cam_in +14.63 cam_out +0.00 | mod_len  35.5 mod_in +20.41 mod_out -0.06 | adv_disp +3.32 (30fr)
+  return_335     [return] cam_len  33.8mm cam_in +16.00 cam_out +0.00 | mod_len  33.3 mod_in +19.76 mod_out -0.05 | adv_disp +1.00 (30fr)
+returned to ref joints
+
+saved 13 stops -> /home/jack/.claude/jobs/3710eca5/tmp/sweep_insertion_data.json

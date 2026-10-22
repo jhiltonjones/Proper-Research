@@ -1,0 +1,10 @@
+20260921T115513Z: INV-6 E_chosen(+3) RMS=2.5099mm mean(dE_chosen)=-0.0584mm   INV-7 E_chosen(+3) RMS=2.5249mm mean(dE_chosen)=-0.0503mm
+20260921T120110Z: INV-6 E_chosen(+3) RMS=2.2421mm mean(dE_chosen)=-0.0886mm   INV-7 E_chosen(+3) RMS=2.2551mm mean(dE_chosen)=-0.0771mm
+20260921T120359Z: INV-6 E_chosen(+3) RMS=2.4563mm mean(dE_chosen)=-0.0420mm   INV-7 E_chosen(+3) RMS=2.4744mm mean(dE_chosen)=-0.0409mm
+20260921T120740Z: INV-6 E_chosen(+3) RMS=2.0989mm mean(dE_chosen)=-0.0569mm   INV-7 E_chosen(+3) RMS=2.1189mm mean(dE_chosen)=-0.0530mm
+20260921T121049Z: INV-6 E_chosen(+3) RMS=2.3671mm mean(dE_chosen)=-0.1226mm   INV-7 E_chosen(+3) RMS=2.3925mm mean(dE_chosen)=-0.1208mm
+
+INV-6  E_chosen(+3) RMS (||e_hat3||): mean=2.3349  sd=0.1488  values=[np.float64(2.5099), np.float64(2.2421), np.float64(2.4563), np.float64(2.0989), np.float64(2.3671)]
+INV-6  mean(dE_chosen): mean=-0.0737  sd=0.0288  values=[np.float64(-0.0584), np.float64(-0.0886), np.float64(-0.042), np.float64(-0.0569), np.float64(-0.1226)]
+INV-7  E_chosen(+3) RMS (||e_hat3||): mean=2.3532  sd=0.1485  values=[np.float64(2.5249), np.float64(2.2551), np.float64(2.4744), np.float64(2.1189), np.float64(2.3925)]
+INV-7  mean(dE_chosen): mean=-0.0684  sd=0.0288  values=[np.float64(-0.0503), np.float64(-0.0771), np.float64(-0.0409), np.float64(-0.053), np.float64(-0.1208)]

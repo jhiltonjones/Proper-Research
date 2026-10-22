@@ -1,0 +1,12 @@
+20260921T112405Z: MPC-full RMS=0.3722mm  MPC-noLfb RMS=0.4093mm  |t_fit|=2.0mm
+20260921T112843Z: MPC-full RMS=0.3397mm  MPC-noLfb RMS=0.3880mm  |t_fit|=1.2mm
+20260921T114154Z: MPC-full RMS=0.3818mm  MPC-noLfb RMS=0.4213mm  |t_fit|=1.7mm
+20260921T114458Z: MPC-full RMS=0.4049mm  MPC-noLfb RMS=0.4385mm  |t_fit|=1.7mm
+20260921T114842Z: MPC-full RMS=0.3777mm  MPC-noLfb RMS=0.4179mm  |t_fit|=1.7mm
+
+MPC-full   RMS: mean=0.3753  sd=0.0210  values=[np.float64(0.3722), np.float64(0.3397), np.float64(0.3818), np.float64(0.4049), np.float64(0.3777)]
+MPC-noLfb  RMS: mean=0.4150  sd=0.0165  values=[np.float64(0.4093), np.float64(0.388), np.float64(0.4213), np.float64(0.4385), np.float64(0.4179)]
+
+Delta_insertion       = E_noLfb - E_full = +0.0397mm
+Delta_remaining-law   = E_INV - E_noLfb  = +0.7984mm
+chain: 0.375 -> 0.415 -> 1.213

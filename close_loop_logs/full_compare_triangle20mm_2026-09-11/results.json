@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/full_compare_triangle20mm_2026-09-11/runs/inv_rep1_20260911T165828Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 1.9900967788500108,
+    "mean_track_mm": 1.568072072072072,
+    "max_track_mm": 3.966,
+    "p95_track_mm": 3.6443999999999996,
+    "mean_hold_mm": 0.9546666666666666,
+    "final_mm": 1.068,
+    "duration_s": 41.4927
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/full_compare_triangle20mm_2026-09-11/runs/lti_rep1_20260911T170006Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 221,
+    "rms_track_mm": 2.7809598964568614,
+    "mean_track_mm": 2.476823529411765,
+    "max_track_mm": 4.51,
+    "p95_track_mm": 4.057,
+    "mean_hold_mm": 0.8137272727272727,
+    "final_mm": 0.841,
+    "duration_s": 45.7695
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/full_compare_triangle20mm_2026-09-11/runs/ltv_rep1_20260911T170145Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 2.2794203862599143,
+    "mean_track_mm": 2.0556756756756758,
+    "max_track_mm": 3.865,
+    "p95_track_mm": 3.29665,
+    "mean_hold_mm": 0.5766666666666667,
+    "final_mm": 0.584,
+    "duration_s": 45.7481
+  }
+]

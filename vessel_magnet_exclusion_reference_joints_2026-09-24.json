@@ -1,0 +1,18 @@
+{
+  "description": "Live joint state saved 2026-09-24, manually jogged by the user to the closest safe radial approach of the source magnet to the beam base for this vessel shape -- SUPERSEDES the 2026-09-22 reference. Verified in-lab (safety_mode=1, not protective-stopped). Diagnosed as the likely cause of the weak/undetectable Jacobian signal in the 2026-09-24 stop-and-perturb campaign: this position sits at 183.7mm from the lumen centreline / 228.5mm from the beam base, vs. the 2026-09-22 reference's 314.2mm -- the old offline plan kept the magnet almost twice as far from the beam as necessary, well inside its real steering authority range. Used as --magnet-exclusion-reference-joints for proper_research.planning.plan_vessel_path, defining the minimum magnet-to-tip-path exclusion radius so the offline planner does not reject configurations that are physically fine.",
+  "joints_rad": [
+    -0.7699182669269007,
+    -1.9270769558348597,
+    -1.7088128328323364,
+    -1.1213144224933167,
+    1.5201890468597412,
+    -1.9054988066302698
+  ],
+  "magnet_xyz_R_m": [0.29982392, -0.63885052, 0.02666815],
+  "gap_to_lumen_centreline_mm": 183.68050933815454,
+  "dist_to_beam_base_raised_mm": 228.5096144621858,
+  "safety_mode_at_read": 1,
+  "protective_stopped_at_read": false,
+  "robot_ip_source": "common.ROBOT_IP (vessel_stage_a)",
+  "supersedes": "vessel_magnet_exclusion_reference_joints_2026-09-22.json"
+}

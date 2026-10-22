@@ -1,0 +1,54 @@
+{
+  "openloop_x2": {
+    "rms_track_mm": {
+      "mean": 1.5444675606180684,
+      "std": 0.0
+    },
+    "mean_track_mm": {
+      "mean": 1.4088244274809159,
+      "std": 0.0
+    },
+    "max_track_mm": {
+      "mean": 2.956,
+      "std": 0.0
+    },
+    "p95_track_mm": {
+      "mean": 2.7104999999999997,
+      "std": 0.0
+    },
+    "mean_hold_mm": {
+      "mean": 0.2887333333333333,
+      "std": 0.0
+    },
+    "final_mm": {
+      "mean": 0.279,
+      "std": 0.0
+    }
+  },
+  "openloop_x3": {
+    "rms_track_mm": {
+      "mean": 1.5713581960051857,
+      "std": 0.0
+    },
+    "mean_track_mm": {
+      "mean": 1.4216335877862594,
+      "std": 0.0
+    },
+    "max_track_mm": {
+      "mean": 3.021,
+      "std": 0.0
+    },
+    "p95_track_mm": {
+      "mean": 2.7085,
+      "std": 0.0
+    },
+    "mean_hold_mm": {
+      "mean": 0.11599999999999999,
+      "std": 0.0
+    },
+    "final_mm": {
+      "mean": 0.101,
+      "std": 0.0
+    }
+  }
+}

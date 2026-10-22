@@ -1,0 +1,38 @@
+{
+  "controller": "feedforward_only",
+  "description": "feedforward only (no feedback) -- the uncorrected mismatch",
+  "samples": 776,
+  "max_beam_position_error_mm": 2.0036090154553,
+  "rms_beam_position_error_mm": 1.780936109643612,
+  "p95_beam_position_error_mm": 2.0012415620743673,
+  "final_beam_position_error_mm": 1.9661599161797487,
+  "max_beam_tangent_error_deg": 29.966180557363693,
+  "beam_feasible_fraction": 0.21520618556701032,
+  "sample_period_s": 0.009999999999999898,
+  "position_tolerance_m": 0.0015,
+  "mpc_configuration": {
+    "sample_period_s": 0.009999999999999898,
+    "velocity_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.16000000000000003
+    ],
+    "acceleration_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.016
+    ]
+  },
+  "simulation_configuration": {
+    "position_tolerance_m": 0.0015,
+    "tangent_tolerance_rad": 1.5707963267948966
+  }
+}

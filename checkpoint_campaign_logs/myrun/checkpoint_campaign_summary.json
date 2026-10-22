@@ -1,0 +1,78 @@
+{
+  "per_checkpoint": [
+    {
+      "label": "low_ins_27mm",
+      "target_L_mm": 27.0,
+      "L_chord_mm": 27.318015893098455,
+      "resid_c_base_mm": 0.13483610206524438,
+      "resid_c_tip_mm": 1.4710699399025629,
+      "resid_c_mean_mm": 1.7636068845539796,
+      "resid_nc_base_mm": 0.13483610206524438,
+      "resid_nc_tip_mm": 1.471100173788504,
+      "resid_nc_mean_mm": 1.7636291155644515
+    },
+    {
+      "label": "lowmid_ins_33mm",
+      "target_L_mm": 33.0,
+      "L_chord_mm": 32.889219215992654,
+      "resid_c_base_mm": 0.21412585399687867,
+      "resid_c_tip_mm": 1.5433521756615427,
+      "resid_c_mean_mm": 1.6556412146756745,
+      "resid_nc_base_mm": 0.21412585399687867,
+      "resid_nc_tip_mm": 1.5439875216723278,
+      "resid_nc_mean_mm": 1.655776331674866
+    },
+    {
+      "label": "mid_ins_40mm",
+      "target_L_mm": 40.0,
+      "L_chord_mm": 39.79318960221959,
+      "resid_c_base_mm": 0.17418260152128043,
+      "resid_c_tip_mm": 2.039919262486864,
+      "resid_c_mean_mm": 1.2742640517469341,
+      "resid_nc_base_mm": 0.17418260152128043,
+      "resid_nc_tip_mm": 13.380182190368814,
+      "resid_nc_mean_mm": 6.880192903917971
+    },
+    {
+      "label": "midhigh_ins_47mm",
+      "target_L_mm": 47.0,
+      "L_chord_mm": 47.12425249629467,
+      "resid_c_base_mm": 0.16225480627940492,
+      "resid_c_tip_mm": 3.801828981792846,
+      "resid_c_mean_mm": 1.9805465779667641,
+      "resid_nc_base_mm": 0.16225480627940492,
+      "resid_nc_tip_mm": 10.523335408162264,
+      "resid_nc_mean_mm": 5.538623514692176
+    },
+    {
+      "label": "high_ins_54mm",
+      "target_L_mm": 54.0,
+      "L_chord_mm": 54.15567056114308,
+      "resid_c_base_mm": 0.2475453627716851,
+      "resid_c_tip_mm": 5.183533940924536,
+      "resid_c_mean_mm": 2.652718771290621,
+      "resid_nc_base_mm": 0.2475453627716851,
+      "resid_nc_tip_mm": 8.343126078146653,
+      "resid_nc_mean_mm": 4.519368138697598
+    },
+    {
+      "label": "mid_ins_40mm_ALT_POSE",
+      "target_L_mm": 40.0,
+      "L_chord_mm": 40.500136842412275,
+      "resid_c_base_mm": 0.21905755542954886,
+      "resid_c_tip_mm": 2.229700149922136,
+      "resid_c_mean_mm": 1.365973196462848,
+      "resid_nc_base_mm": 0.21905755542954886,
+      "resid_nc_tip_mm": 12.020657859369917,
+      "resid_nc_mean_mm": 6.093519567586049
+    }
+  ],
+  "mean_residual_mm": {
+    "contact": 1.7821251161161369,
+    "no_contact": 4.408518262022185
+  },
+  "mean_tip_residual_mm": {
+    "contact": 2.7115674084484147,
+    "no_contact": 7.880398205251414
+  }
+}

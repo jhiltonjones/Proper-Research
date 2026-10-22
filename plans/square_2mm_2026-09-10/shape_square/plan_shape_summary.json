@@ -1,0 +1,27 @@
+{
+  "shape": "square",
+  "size_mm": 2.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.4915750000000001,
+    -0.6700279993753606,
+    -0.016566997954844186
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 25,
+  "perimeter_mm": 7.282324817947766,
+  "time_param_samples": 37,
+  "time_param_duration_s": 3.6,
+  "time_param_dir": "/home/jack/.claude/jobs/3710eca5/tmp/plan_sq2mm/time_parameterized_configuration_path"
+}

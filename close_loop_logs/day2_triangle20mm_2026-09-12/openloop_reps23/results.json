@@ -1,0 +1,28 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/openloop_reps23/runs/openloop_x1_rep1_20260912T102142Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.190553258100925,
+    "mean_track_mm": 1.9501441441441443,
+    "max_track_mm": 3.799,
+    "p95_track_mm": 3.47795,
+    "mean_hold_mm": 0.8646666666666667,
+    "final_mm": 0.794
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/openloop_reps23/runs/openloop_x1_rep2_20260912T102252Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.1688392617350054,
+    "mean_track_mm": 1.9403108108108107,
+    "max_track_mm": 3.483,
+    "p95_track_mm": 3.2447,
+    "mean_hold_mm": 0.32500000000000007,
+    "final_mm": 0.267
+  }
+]

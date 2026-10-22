@@ -1,0 +1,28 @@
+{
+  "openloop_x1": {
+    "rms_track_mm": {
+      "mean": 1.0299894755152263,
+      "std": 0.0
+    },
+    "mean_track_mm": {
+      "mean": 0.8749590163934426,
+      "std": 0.0
+    },
+    "max_track_mm": {
+      "mean": 2.162,
+      "std": 0.0
+    },
+    "p95_track_mm": {
+      "mean": 1.8971499999999997,
+      "std": 0.0
+    },
+    "mean_hold_mm": {
+      "mean": 0.38226666666666664,
+      "std": 0.0
+    },
+    "final_mm": {
+      "mean": 0.286,
+      "std": 0.0
+    }
+  }
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_ltv_ff_h15_dare_confirm_n3/runs/ltv_rep1_20260912T100948Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 1.565520003986817,
+    "mean_track_mm": 1.370981981981982,
+    "max_track_mm": 2.876,
+    "p95_track_mm": 2.5194,
+    "mean_hold_mm": 0.24085714285714285,
+    "final_mm": 0.241,
+    "duration_s": 49.9547
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 2,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_ltv_ff_h15_dare_confirm_n3/runs/ltv_rep2_20260912T101136Z",
+    "stop_reason": "path_complete",
+    "steps": 244,
+    "n_track": 222,
+    "rms_track_mm": 1.5611120329045187,
+    "mean_track_mm": 1.343869369369369,
+    "max_track_mm": 2.985,
+    "p95_track_mm": 2.7026,
+    "mean_hold_mm": 0.4381818181818181,
+    "final_mm": 0.497,
+    "duration_s": 42.1323
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 3,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_ltv_ff_h15_dare_confirm_n3/runs/ltv_rep3_20260912T101311Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 221,
+    "rms_track_mm": 1.6432241056954044,
+    "mean_track_mm": 1.4074434389140271,
+    "max_track_mm": 3.067,
+    "p95_track_mm": 2.781,
+    "mean_hold_mm": 0.3823636363636364,
+    "final_mm": 0.615,
+    "duration_s": 45.9459
+  }
+]

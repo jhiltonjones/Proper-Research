@@ -1,0 +1,26 @@
+{
+  "run_name": "bends_p0_p20_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_20",
+  "log_csv_path": "joint_space_smoke_test/bends_p0_p20_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_0_20/log.csv",
+  "plant_contact": true,
+  "jacobian_variant": "contact",
+  "controller_kind": "mpc",
+  "inverse_sequence_mode": "",
+  "inverse_kp": NaN,
+  "solver_mode": "sqp_full",
+  "rollout_steps": 10,
+  "Np": 15,
+  "N_sqp": 50,
+  "n_steps": 25,
+  "final_status": "solved",
+  "final_infeasible": 0,
+  "final_i_ref": 93,
+  "final_tip": [
+    0.7592664973186182,
+    -0.7168061728285899,
+    -0.10002498148900063
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": 9.52,
+  "mean_jac_cond": 45.205489940140026,
+  "max_jac_cond": 92.27375408544725
+}

@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/scurve_FF_n3_2026-09-13_lti_rep1_redo/runs/lti_rep1_20260913T122034Z,path_complete,194,173,2.4155962774690938,1.8998497109826589,5.258,4.9058,0.5851904761904763,0.608,36.2463

@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/triangle_noclip_check_2026-09-16/mpc_ltv/runs/ltv_rep1_20260916T192639Z,path_complete,243,222,4.12107594244797,3.3485990990990993,8.771,7.86335,0.2979047619047619,0.307,53.0363

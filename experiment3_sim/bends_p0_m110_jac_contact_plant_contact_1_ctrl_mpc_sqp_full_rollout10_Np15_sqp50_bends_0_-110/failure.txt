@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 526, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 208, in run_experiment
+    stats = run_simulation(
+            ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/runner.py", line 1496, in run_simulation
+    p_post, x_post, info, policy_eval = _solve_mpc_once_with_policy_metadata(
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/runner.py", line 827, in _solve_mpc_once_with_policy_metadata
+    p_post, x_post, info = mpc.step(
+                           ^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation_controller/controller.py", line 2234, in step
+    "controller_motion_state", operational_state,
+                               ^^^^^^^^^^^^^^^^^
+NameError: name 'operational_state' is not defined

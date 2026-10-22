@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/triangle_noclip_check_2026-09-16/mpc_ltv/runs/ltv_rep1_20260916T192639Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 222,
+    "rms_track_mm": 4.12107594244797,
+    "mean_track_mm": 3.3485990990990993,
+    "max_track_mm": 8.771,
+    "p95_track_mm": 7.86335,
+    "mean_hold_mm": 0.2979047619047619,
+    "final_mm": 0.307,
+    "duration_s": 53.0363
+  }
+]

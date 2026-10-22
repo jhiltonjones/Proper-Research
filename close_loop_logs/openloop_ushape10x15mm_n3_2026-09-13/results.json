@@ -1,0 +1,41 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_ushape10x15mm_n3_2026-09-13/runs/openloop_x1_rep1_20260913T123410Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.34318895400657,
+    "mean_track_mm": 2.128474178403756,
+    "max_track_mm": 3.919,
+    "p95_track_mm": 3.7187999999999994,
+    "mean_hold_mm": 3.3736,
+    "final_mm": 3.474
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "close_loop_logs/openloop_ushape10x15mm_n3_2026-09-13/runs/openloop_x1_rep2_20260913T123524Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.550552320742523,
+    "mean_track_mm": 2.345845070422535,
+    "max_track_mm": 4.308,
+    "p95_track_mm": 4.071599999999998,
+    "mean_hold_mm": 3.952,
+    "final_mm": 3.991
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 3,
+    "run_dir": "close_loop_logs/openloop_ushape10x15mm_n3_2026-09-13/runs/openloop_x1_rep3_20260913T123639Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.3899326232473523,
+    "mean_track_mm": 2.2036150234741787,
+    "max_track_mm": 3.997,
+    "p95_track_mm": 3.7465999999999995,
+    "mean_hold_mm": 3.752933333333333,
+    "final_mm": 3.868
+  }
+]

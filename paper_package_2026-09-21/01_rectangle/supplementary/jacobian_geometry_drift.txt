@@ -1,0 +1,11 @@
+=== schedule deviation from frozen (index 0), summary over 265 samples ===
+RAW:        ||J_y,q(k)-J_y,q(0)||  mean=0.0566  max=0.0904
+RAW:        |J_x,L(k)-J_x,L(0)|    mean=0.0975  max=0.4008
+RAW ratio mean(J_yq_dev)/mean(J_xL_dev) = 0.58  (misleading -- unit mismatch, joints vs insertion)
+Su-NORM:    ||Ju_y,q(k)-Ju_y,q(0)|| mean=0.00283  max=0.00452
+Su-NORM:    |Ju_x,L(k)-Ju_x,L(0)|   mean=0.00049  max=0.00200
+Su-NORM ratio mean(Ju_yq_dev)/mean(Ju_xL_dev) = 5.81  (the physically meaningful one)
+
+corr(||J_y,q(k)-J_y,q(0)||, |e_y|_INV7-FJ - |e_y|_MPC-FJ) = +0.547
+corr(|J_x,L(k)-J_x,L(0)|,  |e_y|_INV7-FJ - |e_y|_MPC-FJ) = +0.765
+saved jacobian_geometry.png

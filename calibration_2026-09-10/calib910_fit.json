@@ -1,0 +1,9 @@
+{
+ "E_pa": 1000000.0,
+ "E_scale": 1.0,
+ "beam_moment_scale": 1.0,
+ "magnet_axial_offset_m": 0.0,
+ "prebend_deg": -0.9514014420965116,
+ "in_plane_rms_deg": 8.93028804874981,
+ "out_of_plane_onaxis_rms_deg": 11.772463625810586
+}

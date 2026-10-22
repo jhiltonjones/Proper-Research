@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/compare_noFF_R0_triangle20mm_2026-09-11/runs/lti_rep1_20260911T143122Z,path_complete,190,180,5.162822009327844,4.537555555555556,8.591,8.019399999999997,6.8839,5.833,49.4319

@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s,steps,n_track
+mpc_lti,lti,1,close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_notrack_dare/runs/lti_rep1_20260912T094502Z,rc4,nan,nan,nan,nan,nan,nan,nan,0,0

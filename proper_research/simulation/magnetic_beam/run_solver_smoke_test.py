@@ -1,0 +1,817 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+import numpy as np
+
+PACKAGE_NAME = __package__ or (
+    f"proper_research.simulation.{Path(__file__).resolve().parent.name}"
+)
+
+_config = importlib.import_module(f"{PACKAGE_NAME}.config")
+_contact = importlib.import_module(f"{PACKAGE_NAME}.contact")
+_problem = importlib.import_module(f"{PACKAGE_NAME}.problem")
+_forward_model = importlib.import_module(f"{PACKAGE_NAME}.forward_model")
+_diagnostics = importlib.import_module(f"{PACKAGE_NAME}.diagnostics")
+_lumen_geometry = importlib.import_module(f"{PACKAGE_NAME}.lumen_geometry")
+
+BeamModelConfig = _config.BeamModelConfig
+ContactConfig = _config.ContactConfig
+ContactParams = _contact.ContactParams
+LumenQuery = _contact.LumenQuery
+BaseFrameConfig = _problem.BaseFrameConfig
+MagneticBeamForwardModel = _forward_model.MagneticBeamForwardModel
+summarise_solve_result = _diagnostics.summarise_solve_result
+LumenBend = _lumen_geometry.LumenBend
+LumenConfig = _lumen_geometry.LumenConfig
+build_lumen_query = _lumen_geometry.build_lumen_query
+
+run_plot_initial = np.array(
+    [
+        -0.06,
+        0.13,
+        0.0,
+        np.pi/ np.sqrt(2.0),
+        0.0,
+        np.pi / np.sqrt(2.0),
+        0.02,
+    ],
+    dtype=float,
+)
+def rotation_matrices_z(rot_vec, angle):
+    rot_mat = np.array([
+        [np.cos(angle), -np.sin(angle), 0],
+        [np.sin(angle), np.cos(angle), 0],
+        [0,0,1]
+    ])
+    return rot_mat @ rot_vec
+run_plot_initial[3:6] = rotation_matrices_z(run_plot_initial[3:6], 90)
+RUN_PLOT_P7 = run_plot_initial
+BENCHMARK_P7 = RUN_PLOT_P7.copy()
+
+
+
+def build_benchmark_model(
+    *,
+    contact_enabled: bool = True,
+) -> MagneticBeamForwardModel:
+    return build_run_plot_model(contact_enabled=contact_enabled)
+
+
+def make_run_plot_lumen_config() -> LumenConfig:
+    """Return the exact lumen shape used by ``run_plot.py``."""
+    return LumenConfig(
+        length=0.06,
+        n_pts=240,
+        n_ref_pts=100,
+        radius=0.006,
+        bends=(
+            LumenBend(
+                bend_axis=(0.0, 0.0, 1.0),
+                bend_angle_rad=np.deg2rad(0.0),
+                bend_start=0.0,
+                bend_end=0.015,
+            ),
+            LumenBend(
+                bend_axis=(0.0, 0.0, 1.0),
+                bend_angle_rad=np.deg2rad(-100.0),
+                bend_start=0.015,
+                bend_end=0.025,
+            ),
+        ),
+    )
+
+
+def make_run_plot_p7() -> np.ndarray:
+    """
+    Return the exact final source pose used by ``run_plot.py``.
+
+    The rotation vector [pi, 0, 0] has had its axis rotated 45 degrees about
+    world y, reproducing ``R_y(45 deg) @ [pi, 0, 0]``.
+    """
+    return RUN_PLOT_P7.copy()
+def make_test_lumen(
+    *,
+    lumen_cfg: LumenConfig | None = None,
+    p0_ur_lumen: np.ndarray | None = None,
+    q0_ur_lumen: np.ndarray | None = None,
+) -> LumenQuery:
+    """
+    Build a configurable lumen from its world pose and shape configuration.
+
+    The default remains a straight, constant-radius lumen along world -x.
+    """
+    if lumen_cfg is None:
+        lumen_cfg = LumenConfig(
+            length=0.12,
+            n_pts=160,
+            n_ref_pts=80,
+            radius=0.010,
+        )
+    if p0_ur_lumen is None:
+        p0_ur_lumen = np.zeros(3)
+    if q0_ur_lumen is None:
+        q0_ur_lumen = np.array([1.0, 0.0, 0.0, 0.0])
+
+    return build_lumen_query(
+        p0_ur_lumen=p0_ur_lumen,
+        q0_ur_lumen=q0_ur_lumen,
+        lumen_cfg=lumen_cfg,
+    )
+
+
+def make_curved_test_lumen_config() -> LumenConfig:
+    """
+    Example 3D lumen with two smooth turns and a local narrowing.
+
+    Remove the second bend for a planar lumen. Reverse an angle to create an
+    S-bend. Change the second axis to obtain a different out-of-plane turn.
+    """
+    return LumenConfig(
+        length=0.12,
+        n_pts=240,
+        n_ref_pts=100,
+        radius=0.010,
+        bends=(
+            LumenBend(
+                bend_axis=(0.0, 0.0, 1.0),
+                bend_angle_rad=np.deg2rad(35.0),
+                bend_start=0.020,
+                bend_end=0.065,
+            ),
+            LumenBend(
+                bend_axis=(0.0, 1.0, 0.0),
+                bend_angle_rad=np.deg2rad(-20.0),
+                bend_start=0.060,
+                bend_end=0.105,
+            ),
+        ),
+        radius_profile=(
+            (0.000, 0.010),
+            (0.045, 0.010),
+            (0.070, 0.007),
+            (0.090, 0.007),
+            (0.120, 0.010),
+        ),
+    )
+
+
+def calculate_composite_beam_properties(
+    *,
+    beam_diameter: float,
+    particle_mass_fraction: float,
+    particle_density: float,
+    particle_specific_moment: float,
+    silicone_density: float,
+    remanence_fraction: float,
+) -> dict[str, float]:
+    """
+    Convert constituent data into density and distributed magnetic moment.
+
+    ``particle_specific_moment`` is in A m^2/kg, numerically equal to emu/g.
+    ``remanence_fraction`` converts a saturation-specific moment into the
+    programmed remanent fraction. Use one only when 80.6 emu/g is itself a
+    measured remanent value.
+    """
+    diameter = float(beam_diameter)
+    w_particle = float(particle_mass_fraction)
+    rho_particle = float(particle_density)
+    rho_silicone = float(silicone_density)
+    sigma_particle = float(particle_specific_moment)
+    eta_remanence = float(remanence_fraction)
+
+    if diameter <= 0:
+        raise ValueError("beam_diameter must be positive.")
+    if not 0.0 < w_particle < 1.0:
+        raise ValueError("particle_mass_fraction must lie strictly between 0 and 1.")
+    if rho_particle <= 0 or rho_silicone <= 0:
+        raise ValueError("Constituent densities must be positive.")
+    if sigma_particle < 0:
+        raise ValueError("particle_specific_moment must be non-negative.")
+    if not 0.0 <= eta_remanence <= 1.0:
+        raise ValueError("remanence_fraction must lie between 0 and 1.")
+
+    specific_volume = (
+        w_particle / rho_particle
+        + (1.0 - w_particle) / rho_silicone
+    )
+    composite_density = 1.0 / specific_volume
+    particle_volume_fraction = (
+        (w_particle / rho_particle) / specific_volume
+    )
+
+    area = 0.25 * np.pi * diameter**2
+    particle_mass_per_length = w_particle * composite_density * area
+    moment_per_length = (
+        eta_remanence
+        * sigma_particle
+        * particle_mass_per_length
+    )
+    composite_magnetization = moment_per_length / area
+
+    return {
+        "area": float(area),
+        "composite_density": float(composite_density),
+        "particle_volume_fraction": float(particle_volume_fraction),
+        "particle_mass_per_length": float(particle_mass_per_length),
+        "mass_per_length": float(composite_density * area),
+        "moment_per_length": float(moment_per_length),
+        "composite_magnetization": float(composite_magnetization),
+        "equivalent_polarization": float(
+            4.0 * np.pi * 1e-7 * composite_magnetization
+        ),
+    }
+
+
+def make_uniform_axial_m_local_factory(
+    *,
+    moment_per_length: float,
+    local_axis: np.ndarray | tuple[float, float, float] = (-1.0, 0.0, 0.0),
+):
+    """
+    Build a length-aware factory for a uniformly magnetized composite beam.
+
+    The returned ``m_local_fun`` supplies magnetic dipole moment per unit beam
+    length in A m. The energy routine performs the arclength integration, so it
+    must not be multiplied by segment length here.
+    """
+    moment_per_length = float(moment_per_length)
+    local_axis = np.asarray(local_axis, float).reshape(3)
+    axis_norm = float(np.linalg.norm(local_axis))
+
+    if moment_per_length < 0:
+        raise ValueError("moment_per_length must be non-negative.")
+    if axis_norm < 1e-12:
+        raise ValueError("local_axis must be nonzero.")
+
+    local_axis = local_axis / axis_norm
+
+    def m_local_factory(
+        *,
+        L_model: float,
+        wire_len: float,
+        tip_len: float,
+    ):
+        # The complete modelled beam is the magnetic composite. These arguments
+        # are retained so the same factory interface also supports tip-only or
+        # piecewise magnetization profiles later.
+        del L_model, wire_len, tip_len
+
+        def m_local_fun(s_mid, unused_parameter):
+            del unused_parameter
+            n_segments = np.asarray(s_mid, float).reshape(-1).size
+            return (
+                moment_per_length
+                * np.repeat(local_axis[:, None], n_segments, axis=1)
+            )
+
+        return m_local_fun
+
+    return m_local_factory
+
+
+def make_wire_tip_axial_m_local_factory(
+    *,
+    moment_per_length: float,
+    local_axis: np.ndarray | tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    overlap_length: float = 0.0,
+):
+    """Two-zone magnetisation: zero along the bare wire, full ``moment_per_
+    length`` along the magnetic composite tip, linearly ramped across
+    ``overlap_length`` centred on the wire/tip boundary.
+
+    2026-09-15: the ``wire_len``/``tip_len`` split ``m_local_factory``
+    accepts was already threaded through the whole solver stack (see
+    ``kinematics.effective_lengths``, ``L_tip_full`` default 0.04m already
+    matching the real beam's measured 40mm composite tip) but every
+    magnetisation factory before this one discarded it and returned a
+    uniform moment over the WHOLE modelled length. That mismatch -- treating
+    bare, non-magnetic nitinol wire as if it were magnetic composite once
+    insertion exceeds the tip's own length -- is the leading candidate
+    explanation for why a uniform-material fit needed E to grow with
+    insertion length (see CompositeBeamConfig.effective_youngs_modulus_pa's
+    docstring in beam_hardware_experiment_v2.py). User-confirmed construction
+    2026-09-15: 0.2mm nitinol wire core, 40mm PDMS+iron-particle composite
+    tip, ~5mm bonded overlap at the boundary.
+    """
+    moment_per_length = float(moment_per_length)
+    local_axis = np.asarray(local_axis, float).reshape(3)
+    axis_norm = float(np.linalg.norm(local_axis))
+    overlap_length = float(overlap_length)
+
+    if moment_per_length < 0:
+        raise ValueError("moment_per_length must be non-negative.")
+    if axis_norm < 1e-12:
+        raise ValueError("local_axis must be nonzero.")
+    if overlap_length < 0:
+        raise ValueError("overlap_length must be non-negative.")
+
+    local_axis = local_axis / axis_norm
+
+    def m_local_factory(*, L_model: float, wire_len: float, tip_len: float):
+        del L_model, tip_len
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+
+        def m_local_fun(s_mid, unused_parameter):
+            del unused_parameter
+            s = np.asarray(s_mid, float).reshape(-1)
+            if half_overlap > 0.0:
+                frac = (s - (wire_len - half_overlap)) / overlap_length
+                frac = np.clip(frac, 0.0, 1.0)
+            else:
+                frac = (s >= wire_len).astype(float)
+            m_mag = moment_per_length * frac
+            return np.outer(local_axis, m_mag)
+
+        return m_local_fun
+
+    return m_local_factory
+
+
+def make_bimaterial_Kinv_fun(
+    *,
+    tip_youngs_modulus: float,
+    tip_poisson_ratio: float,
+    tip_outer_diameter: float,
+    wire_youngs_modulus: float,
+    wire_poisson_ratio: float,
+    wire_outer_diameter: float,
+    tip_inner_diameter: float = 0.0,
+    overlap_length: float = 0.0,
+):
+    """Two-zone Cosserat compliance: bare-wire section (thin, stiff nitinol),
+    magnetic composite tip section (thick, soft PDMS+particle), blended
+    linearly IN STIFFNESS (EI/GJ, not compliance) across ``overlap_length``
+    centred on the wire/tip boundary -- a smooth mechanical transition is
+    more physical than a step change at a co-molded bonded joint.
+
+    See ``make_wire_tip_axial_m_local_factory``'s docstring for why this
+    two-zone split exists -- same rationale, applied to elastic stiffness
+    instead of magnetisation. Both zones' geometry/material come from the
+    user-confirmed construction (2026-09-15): 0.2mm nitinol wire, 40mm PDMS+
+    iron-particle composite tip (2mm diameter), ~5mm overlap.
+    """
+
+    def _EI_GJ(E, nu, d_outer, d_inner):
+        E = float(E); nu = float(nu); d_outer = float(d_outer); d_inner = float(d_inner)
+        if E <= 0:
+            raise ValueError("youngs_modulus must be positive.")
+        if not -1.0 < nu < 0.5:
+            raise ValueError("poisson_ratio must lie between -1 and 0.5.")
+        if d_outer <= 0:
+            raise ValueError("outer_diameter must be positive.")
+        if d_inner < 0 or d_inner >= d_outer:
+            raise ValueError(
+                "inner_diameter must be non-negative and smaller than outer_diameter."
+            )
+        G = E / (2.0 * (1.0 + nu))
+        I = np.pi * (d_outer**4 - d_inner**4) / 64.0
+        J = np.pi * (d_outer**4 - d_inner**4) / 32.0
+        return E * I, G * J
+
+    EI_tip, GJ_tip = _EI_GJ(tip_youngs_modulus, tip_poisson_ratio, tip_outer_diameter, tip_inner_diameter)
+    EI_wire, GJ_wire = _EI_GJ(wire_youngs_modulus, wire_poisson_ratio, wire_outer_diameter, 0.0)
+    overlap_length = float(overlap_length)
+
+    def Kinv_fun(smid, wire_len):
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+        s = np.asarray(smid, float).reshape(-1)
+        if half_overlap > 0.0:
+            frac_tip = (s - (wire_len - half_overlap)) / overlap_length
+            frac_tip = np.clip(frac_tip, 0.0, 1.0)
+        else:
+            frac_tip = (s >= wire_len).astype(float)
+        EI = EI_wire + frac_tip * (EI_tip - EI_wire)
+        GJ = GJ_wire + frac_tip * (GJ_tip - GJ_wire)
+        n = s.size
+        Kinv = np.zeros((3, 3, n))
+        Kinv[0, 0, :] = 1.0 / GJ
+        Kinv[1, 1, :] = 1.0 / EI
+        Kinv[2, 2, :] = 1.0 / EI
+        return Kinv
+
+    return Kinv_fun
+
+
+def make_wire_tip_gravity_force_density_fun(
+    *,
+    wire_force_density: np.ndarray | tuple[float, float, float],
+    tip_force_density: np.ndarray | tuple[float, float, float],
+    overlap_length: float = 0.0,
+):
+    """Two-zone gravity force density (N/m): bare-wire weight below the wire/
+    tip boundary, magnetic-composite weight above it, linearly ramped across
+    ``overlap_length`` -- same wire/tip split and rationale as
+    ``make_bimaterial_Kinv_fun``/``make_wire_tip_axial_m_local_factory``, but
+    evaluated AT THE NODES (not segment midpoints), matching
+    ``energy.gravity_energy_from_centerline``'s trapezoidal-integration
+    convention against ``s`` directly.
+
+    Typical use: ``force_density = -rho*A*g`` (world -Z) for each section,
+    using each section's own density and cross-section -- e.g. for the
+    2026-09-15 user-confirmed construction, the composite tip's weight/length
+    is ~53x the bare 0.2mm nitinol wire's (thin cross-section dominates over
+    nitinol's higher volumetric density), so the tip's weight dominates
+    sag except at insertions well past the 40mm tip length.
+
+    Returns a callable ``gravity_force_density_fun(s, wire_len) -> (3, len(s))``
+    directly usable as ``energy_from_u``'s/``energy_gradient_u``'s
+    ``gravity_force_density`` argument.
+    """
+    wire_fg = np.asarray(wire_force_density, float).reshape(3)
+    tip_fg = np.asarray(tip_force_density, float).reshape(3)
+    overlap_length = float(overlap_length)
+
+    def gravity_force_density_fun(s, wire_len):
+        s = np.asarray(s, float).reshape(-1)
+        wire_len = float(wire_len)
+        half_overlap = 0.5 * overlap_length
+        if half_overlap > 0.0:
+            frac_tip = (s - (wire_len - half_overlap)) / overlap_length
+            frac_tip = np.clip(frac_tip, 0.0, 1.0)
+        else:
+            frac_tip = (s >= wire_len).astype(float)
+        return wire_fg[:, None] + frac_tip[None, :] * (tip_fg - wire_fg)[:, None]
+
+    return gravity_force_density_fun
+
+
+def make_induced_axial_transverse_m_local_factory(
+    *,
+    chi_axial: float,
+    chi_transverse: float,
+    local_axis: np.ndarray | tuple[float, float, float] = (-1.0, 0.0, 0.0),
+    m_sat_A_m: float | None = None,
+):
+    """Build an INDUCED (field-following) magnetisation factory.
+
+    2026-09-11: replaces the fixed/permanent axial assumption
+    (``make_uniform_axial_m_local_factory``) with the physically appropriate
+    model for a soft-magnetic composite (the beam is 2 mm dia. PDMS with
+    integrated iron particles -- an induced, not permanent, magnet).  At each
+    point along the rod::
+
+        m_local(s) = chi_axial * B_ax(s) * e1  +  chi_transverse * B_tr(s)
+
+    where ``e1`` is the rod's own local axial direction, ``B_ax`` is the local
+    field's component along ``e1``, and ``B_tr`` is the remaining (transverse)
+    field vector.  ``chi_axial >> chi_transverse`` is expected from the rod's
+    strong shape anisotropy (demagnetising factor along a thin, long rod
+    strongly favours axial magnetisation), but chi_transverse is NOT zero the
+    way the fixed-axial model implicitly assumed -- that assumption is what
+    made the model ~3x too insensitive to source-DIPOLE ROTATION in the
+    2026-09-11 calibration sweep (translation, which mostly samples the axial
+    field, was only ~15-20% off).
+
+    ``chi_axial``/``chi_transverse`` have units of A m^2 per (A m^2 field-per-
+    length) i.e. [moment-per-length / field] = [A m / T]; fit them against
+    hardware data (see ``beam_magnet_calibration_sweep.py``'s saved sweeps) --
+    there are no first-principles defaults here.
+
+    ``m_sat_A_m`` (optional): a smooth per-length saturation cap via
+    ``tanh``, so a very strong near-field state (deep in the solver's line
+    search, not necessarily physical) cannot produce an unbounded moment.
+    """
+    chi_axial = float(chi_axial)
+    chi_transverse = float(chi_transverse)
+    local_axis = np.asarray(local_axis, float).reshape(3)
+    axis_norm = float(np.linalg.norm(local_axis))
+    if axis_norm < 1e-12:
+        raise ValueError("local_axis must be nonzero.")
+    local_axis = local_axis / axis_norm
+    if m_sat_A_m is not None and float(m_sat_A_m) <= 0:
+        raise ValueError("m_sat_A_m must be positive if given.")
+    m_sat = float(m_sat_A_m) if m_sat_A_m is not None else None
+
+    def m_local_factory(*, L_model: float, wire_len: float, tip_len: float):
+        del L_model, wire_len, tip_len
+
+        def m_local_fun(s_mid, unused_parameter, *, B_local_mid=None, R_mid=None):
+            del unused_parameter, R_mid
+            n_segments = np.asarray(s_mid, float).reshape(-1).size
+            if B_local_mid is None:
+                # No field supplied (e.g. a caller still on the legacy 2-arg
+                # convention) -> no induced response; explicit zero is safer
+                # than silently guessing a fixed moment.
+                return np.zeros((3, n_segments), dtype=float)
+            B_local_mid = np.asarray(B_local_mid, float).reshape(3, n_segments)
+            B_ax_scalar = local_axis @ B_local_mid                      # (n,)
+            B_ax_vec = np.outer(local_axis, B_ax_scalar)                # (3, n)
+            B_tr_vec = B_local_mid - B_ax_vec                           # (3, n)
+            m = chi_axial * B_ax_vec + chi_transverse * B_tr_vec
+            if m_sat is not None:
+                mag = np.linalg.norm(m, axis=0)
+                safe_mag = np.maximum(mag, 1e-18)
+                scale = np.where(mag > 1e-18, np.tanh(safe_mag / m_sat) * m_sat / safe_mag, 1.0)
+                m = m * scale[None, :]
+            return m
+
+        return m_local_fun
+
+    return m_local_factory
+
+
+def make_Kinv_fun(
+    *,
+    youngs_modulus: float,
+    poisson_ratio: float,
+    outer_diameter: float,
+    inner_diameter: float = 0.0,
+):
+    """Build the constant Cosserat compliance profile from beam mechanics."""
+    E = float(youngs_modulus)
+    nu = float(poisson_ratio)
+    d_outer = float(outer_diameter)
+    d_inner = float(inner_diameter)
+
+    if E <= 0:
+        raise ValueError("youngs_modulus must be positive.")
+    if not -1.0 < nu < 0.5:
+        raise ValueError("poisson_ratio must lie between -1 and 0.5.")
+    if d_outer <= 0:
+        raise ValueError("outer_diameter must be positive.")
+    if d_inner < 0 or d_inner >= d_outer:
+        raise ValueError(
+            "inner_diameter must be non-negative and smaller than outer_diameter."
+        )
+
+    G = E / (2.0 * (1.0 + nu))
+    I = np.pi * (d_outer**4 - d_inner**4) / 64.0
+    J = np.pi * (d_outer**4 - d_inner**4) / 32.0
+
+    EI = E * I
+    GJ = G * J
+    Kinv_single = np.diag([1.0 / GJ, 1.0 / EI, 1.0 / EI])
+
+    def Kinv_fun(smid, wire_len):
+        del wire_len
+        number_of_segments = np.asarray(smid, float).reshape(-1).size
+        return np.repeat(
+            Kinv_single[:, :, None],
+            number_of_segments,
+            axis=2,
+        )
+
+    return Kinv_fun
+
+
+def build_test_model(
+    *,
+    contact_enabled: bool = True,
+    effective_youngs_modulus: float = 1.0e6,
+    remanence_fraction: float = 1.0,
+    lumen_cfg: LumenConfig | None = None,
+    p0_ur_lumen: np.ndarray | None = None,
+    q0_ur_lumen: np.ndarray | None = None,
+) -> MagneticBeamForwardModel:
+    """
+    Build the physical test model.
+
+    ``effective_youngs_modulus=1 MPa`` is a provisional runnable value. Replace
+    it with the measured modulus of the cured 80 wt% particle/Ecoflex composite.
+    """
+    beam_diameter = 2.0e-3
+    particle_mass_fraction = 0.8
+    particle_density = 7450.0
+    particle_specific_moment = 80.6
+    silicone_density = 1070.0
+    poisson_ratio = 0.49
+
+    composite = calculate_composite_beam_properties(
+        beam_diameter=beam_diameter,
+        particle_mass_fraction=particle_mass_fraction,
+        particle_density=particle_density,
+        particle_specific_moment=particle_specific_moment,
+        silicone_density=silicone_density,
+        remanence_fraction=remanence_fraction,
+    )
+
+    base = BaseFrameConfig(
+        p0_ur=np.array([0.0, 0.0, 0.0]),
+        q0_ur=np.array([1.0, 0.0, 0.0, 0.0]),
+        u_star=np.zeros(3),
+    )
+
+    beam = BeamModelConfig(
+        N_nodes=10,
+        maxiter=100,
+        L0_init=0.01,
+        dL_internal=0.02,
+        L_tip_full=0.04,
+        L_tip_min=0.01,
+        energy_scale=1e-8,
+        u_scale=30.0,
+    )
+
+    if contact_enabled:
+        contact = ContactConfig(
+            enabled=True,
+            use_in_jacobian=True,
+            params=ContactParams(
+                r_beam=0.5 * beam_diameter,
+                k=1e8,
+                pen_switch=5e-5,
+                k_hard=1e10,
+                smooth=True,
+                smooth_eps=1e-5,
+                window=3,
+            ),
+        )
+        lumen_query = make_test_lumen(
+            lumen_cfg=lumen_cfg,
+            p0_ur_lumen=p0_ur_lumen,
+            q0_ur_lumen=q0_ur_lumen,
+        )
+    else:
+        contact = ContactConfig.disabled()
+        lumen_query = None
+
+    Kinv_fun = make_Kinv_fun(
+        youngs_modulus=effective_youngs_modulus,
+        poisson_ratio=poisson_ratio,
+        outer_diameter=beam_diameter,
+    )
+    m_local_factory = make_uniform_axial_m_local_factory(
+        moment_per_length=composite["moment_per_length"],
+    )
+
+    mu0 = 4.0 * np.pi * 1e-7
+    source_diameter = 68.0e-3
+    source_length = 62.4e-3
+    source_remanence = 1.2
+    source_volume = np.pi * (0.5 * source_diameter) ** 2 * source_length
+    source_moment = source_remanence * source_volume / mu0
+    m_body = np.array([0.0, 0.0, source_moment])
+
+    model = MagneticBeamForwardModel(
+        base=base,
+        beam=beam,
+        contact=contact,
+        Kinv_fun=Kinv_fun,
+        m_body=m_body,
+        lumen_query=lumen_query,
+        m_local_factory=m_local_factory,
+    )
+    model.composite_properties = composite
+    model.source_magnet_parameters = {
+        "diameter": source_diameter,
+        "length": source_length,
+        "remanence": source_remanence,
+        "dipole_moment": float(source_moment),
+    }
+    model.effective_youngs_modulus = float(effective_youngs_modulus)
+    return model
+
+
+def build_run_plot_model(
+    *,
+    contact_enabled: bool = True,
+) -> MagneticBeamForwardModel:
+    """Build the exact material and lumen case displayed by ``run_plot.py``."""
+    return build_test_model(
+        contact_enabled=contact_enabled,
+        lumen_cfg=make_run_plot_lumen_config(),
+        effective_youngs_modulus=1.0e6,
+        remanence_fraction=1.0,
+        p0_ur_lumen=np.array([0.0, -0.005, 0.0]),
+    )
+
+
+def run_source_geometry_guard_test() -> None:
+    model = build_test_model(contact_enabled=False)
+    if not hasattr(model, "_validate_source_magnet_clearance"):
+        raise AssertionError(
+            "The imported MagneticBeamForwardModel does not contain the "
+            "source-magnet geometry guard. Imported from "
+            f"{_forward_model.__file__!r}."
+        )
+    invalid_p7 = np.array(
+        [0.03, 0.0, 0.03, 0.0, 0.0, 0.0, 0.06],
+        dtype=float,
+    )
+    try:
+        model.solve(invalid_p7, commit=False)
+    except ValueError as exc:
+        assert "intersects the finite source magnet" in str(exc)
+    else:
+        raise AssertionError(
+            "Expected the source-cylinder intersection guard to reject "
+            "the old singular test pose."
+        )
+    print("Source geometry guard smoke test passed.")
+
+
+def run_forward_only() -> None:
+    model = build_run_plot_model(contact_enabled=False)
+
+    p7 = make_run_plot_p7()
+
+    result = model.solve(p7, commit=True)
+
+    print("\n=== FORWARD SOLVE TEST ===")
+    summarise_solve_result(result)
+
+    assert result.tip.shape == (3,)
+    assert result.success, (
+        "The forward equilibrium did not converge; failed solutions are "
+        "deliberately not returned as exact cache hits."
+    )
+    assert result.u_flat_opt.size == 3 * (model.beam.N_nodes - 1)
+    assert model.cache.u_flat_opt is not None
+    assert model.cache.tip is not None
+
+    cached = model.solve(p7, commit=True)
+    assert cached.info["cache_hit"] is True
+    assert cached.info["solve_path"] == "exact_cache"
+
+    p7_changed = p7.copy()
+    p7_changed[0] += 1.0e-4
+    changed = model.solve(p7_changed, commit=True)
+    assert changed.info["solve_path"] in {
+        "warm_direct",
+        "warm_fallback_continuation",
+    }
+
+    print("Forward solve smoke test passed.")
+
+
+def run_forward_with_contact() -> None:
+    model = build_run_plot_model(contact_enabled=True)
+
+    p7 = make_run_plot_p7()
+
+    result = model.solve(p7, commit=True)
+
+    print("\n=== FORWARD SOLVE WITH CONTACT TEST ===")
+    summarise_solve_result(result)
+
+    assert result.tip.shape == (3,)
+    assert result.success, "The contact equilibrium did not converge."
+    assert "W_cf" in result.parts
+    assert model.cache.u_flat_opt is not None
+
+    print("Forward solve with contact smoke test passed.")
+
+
+def run_jacobian_test() -> None:
+    model = build_run_plot_model(contact_enabled=True)
+
+    p7 = make_run_plot_p7()
+
+    tip = model(p7)
+    J = model.jacobian_tip_pose7(
+        p7,
+        solve_if_needed=False,
+        eps_theta=1e-6,
+        eps_hess=1e-4,
+        debug_jac=False,
+    )
+
+    print("\n=== JACOBIAN TEST ===")
+    print("tip =", tip)
+    print("J shape =", J.shape)
+    print(J)
+
+    assert J.shape == (3, 7)
+    assert np.all(np.isfinite(J))
+
+    # An identical request returns the cached matrix.
+    J_cached = model.jacobian_tip_pose7(p7, mode="fast")
+    assert np.array_equal(J, J_cached)
+
+    # A nearby controller step retains the Hessian but recomputes G_theta.
+    p7_changed = p7.copy()
+    p7_changed[5] += 1.0e-3
+    model.solve(p7_changed, commit=True)
+    J_changed = model.jacobian_tip_pose7(
+        p7_changed,
+        mode="fast",
+        reuse_cached=False,
+    )
+    assert J_changed.shape == (3, 7)
+    assert np.all(np.isfinite(J_changed))
+    assert model.last_sens_info["hessian_reused"] is True
+    assert model.last_sens_info["gradient_evaluations"] == 8
+
+    print("Jacobian smoke test passed.")
+
+
+def main() -> None:
+    print("Running magnetic_beam smoke tests...")
+    print(f"Package under test: {PACKAGE_NAME}")
+    print(f"Forward model file: {_forward_model.__file__}")
+
+    run_source_geometry_guard_test()
+    run_forward_only()
+    run_forward_with_contact()
+
+
+    run_jacobian_test()
+
+    print("\nAll magnetic_beam smoke tests passed.")
+
+
+if __name__ == "__main__":
+    main()

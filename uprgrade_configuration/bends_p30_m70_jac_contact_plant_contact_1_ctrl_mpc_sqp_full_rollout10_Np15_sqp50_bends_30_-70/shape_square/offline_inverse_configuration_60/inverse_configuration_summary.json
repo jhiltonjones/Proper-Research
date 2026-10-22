@@ -1,0 +1,2912 @@
+{
+  "configuration": {
+    "position_tolerance_m": 0.0015,
+    "tangent_tolerance_rad": 3.139847324337799,
+    "initial_path_step_m": 0.00025,
+    "minimum_path_step_m": 0.000125,
+    "maximum_path_step_m": 0.0045,
+    "grow_step_after_successes": 999,
+    "step_growth_factor": 1.5,
+    "maximum_function_evaluations": 120,
+    "maximum_multistart_attempts": 5,
+    "maximum_joint_step_rad": [
+      0.075,
+      0.075,
+      0.075,
+      0.075,
+      0.075,
+      0.075
+    ],
+    "maximum_insertion_step_m": 0.00075,
+    "continuity_weight": [
+      0.05,
+      0.05,
+      0.05,
+      0.05,
+      0.05,
+      0.05,
+      0.1
+    ],
+    "joint_centre_weight": [
+      1e-06,
+      1e-06,
+      1e-06,
+      1e-06,
+      1e-06,
+      1e-06,
+      0.0
+    ],
+    "multistart_joint_perturbation_rad": 0.05,
+    "multistart_insertion_perturbation_m": 0.0005,
+    "random_seed": 7,
+    "start_at_initial_tip_projection": true,
+    "solve_initial_node": false,
+    "use_extrapolated_guess": true,
+    "use_jacobian_predictor_guess": true,
+    "jacobian_predictor_damping": 0.001,
+    "jacobian_predictor_use_tangent": false,
+    "insertion_non_decreasing": false,
+    "require_contact_model": true,
+    "source_magnet_lumen_exclusion_radius_m": 0.24,
+    "source_magnet_lumen_constraint_tolerance_m": 1e-06,
+    "require_analytical_magnet_position_jacobian": false,
+    "magnet_jacobian_joint_step_rad": 1e-06,
+    "magnet_jacobian_insertion_step_m": 1e-06,
+    "finite_difference_validation_at_start": true,
+    "finite_difference_validation_stride": 0,
+    "finite_difference_joint_step_rad": 1e-06,
+    "finite_difference_insertion_step_m": 1e-06,
+    "maximum_chain_rule_relative_error": 0.09,
+    "ftol": 1e-09,
+    "xtol": 1e-09,
+    "gtol": 1e-09,
+    "debug": true
+  },
+  "summary": {
+    "all_nodes_feasible": true,
+    "termination_reason": "path_end_reached",
+    "num_nodes": 42,
+    "num_feasible_nodes": 42,
+    "last_feasible_index": 41,
+    "last_feasible_progress_m": 0.010091276784848164,
+    "path_total_length_m": 0.010091276784848164,
+    "initial_progress_m": 0.0,
+    "initial_projection_distance_m": 0.0,
+    "maximum_position_error_m": 9.987851315049155e-05,
+    "maximum_tangent_error_rad": 3.138806167598914,
+    "contact_model": {
+      "enabled": true,
+      "use_in_jacobian": true
+    },
+    "source_magnet_lumen_exclusion_constraint": {
+      "enabled": true,
+      "radius_m": 0.24,
+      "jacobian_source": "magnet_position_jacobian",
+      "minimum_distance_m": 0.23999999990267637,
+      "minimum_margin_m": -9.732362138414885e-11,
+      "all_nodes_satisfied": true
+    },
+    "chain_rule_start": {
+      "analytical": [
+        [
+          7.273677801373068e-10,
+          4.884887407144241e-09,
+          2.3046192414517663e-09,
+          -6.75313969631953e-10,
+          5.448499746892349e-10,
+          1.52956630264528e-10,
+          -0.9999999998067121
+        ],
+        [
+          0.03134629858276345,
+          -0.014218582575202542,
+          -0.0553490124896683,
+          -0.03326268475831766,
+          0.028946978512390784,
+          0.00678005488845135,
+          4.574618531224366e-08
+        ],
+        [
+          1.081991765563244e-05,
+          0.06879948530098597,
+          0.047332828359013965,
+          0.0012609195394881441,
+          -0.0016641294386210712,
+          -5.486279474042555e-05,
+          1.0839891955575326e-07
+        ],
+        [
+          4.218222846620873e-08,
+          2.820377265168251e-07,
+          1.3280376759832266e-07,
+          -3.916682075056415e-08,
+          3.163779462526531e-08,
+          8.863539043593306e-09,
+          -1.0607257093539467e-13
+        ],
+        [
+          1.411370635956751,
+          -0.6401932390733888,
+          -2.491714146672514,
+          -1.4973794892121968,
+          1.3030942604101796,
+          0.3049537548123122,
+          1.0787079826041533e-06
+        ],
+        [
+          0.00045616867487609014,
+          3.0983668655603025,
+          2.1317204237039467,
+          0.05698696373996075,
+          -0.07476990694840388,
+          -0.0024811735300579742,
+          1.7057964134553624e-06
+        ]
+      ],
+      "finite_difference": [
+        [
+          7.216449660063518e-10,
+          4.940492459581947e-09,
+          2.3037127760972e-09,
+          -6.938893903907228e-10,
+          6.661338147750939e-10,
+          1.3877787807814457e-10,
+          -0.9999999998622222
+        ],
+        [
+          0.03101849094244713,
+          -0.01409228078674829,
+          -0.05477952652599427,
+          -0.03290227335028817,
+          0.028630672110896427,
+          0.006686928011312432,
+          4.4353409833775004e-08
+        ],
+        [
+          -2.643579799510576e-07,
+          0.0681812469868065,
+          0.04692085185144246,
+          0.0012595362374606678,
+          -0.001659996810149389,
+          -5.704298491893134e-05,
+          1.0425514618273013e-07
+        ],
+        [
+          4.2799097599299785e-08,
+          2.902122986370159e-07,
+          1.3761214390228815e-07,
+          -3.9690473130349346e-08,
+          3.191891195797325e-08,
+          8.992806499463768e-09,
+          0.0
+        ],
+        [
+          1.4569826374788997,
+          -0.6621080154733273,
+          -2.5737466422798643,
+          -1.5459077694428007,
+          1.345226856379089,
+          0.3146392411318745,
+          1.218739643082209e-06
+        ],
+        [
+          -1.234582289328366e-05,
+          3.2031453941467003,
+          2.2042523661116022,
+          0.05891513701527111,
+          -0.07829793339422009,
+          -0.0026755178954694994,
+          2.0249080056246466e-06
+        ]
+      ],
+      "difference": [
+        [
+          5.722814130955037e-12,
+          -5.560505243770587e-11,
+          9.064653545664409e-13,
+          1.8575420758769798e-11,
+          -1.2128384008585903e-10,
+          1.4178752186383437e-11,
+          5.5510152030535664e-11
+        ],
+        [
+          0.0003278076403163202,
+          -0.00012630178845425208,
+          -0.000569485963674031,
+          -0.0003604114080294901,
+          0.00031630640149435743,
+          9.312687713891772e-05,
+          1.3927754784686583e-09
+        ],
+        [
+          1.1084275635583498e-05,
+          0.0006182383141794673,
+          0.00041197650757150706,
+          1.3833020274763626e-06,
+          -4.132628471682255e-06,
+          2.180190178505786e-06,
+          4.14377337302313e-09
+        ],
+        [
+          -6.168691330910571e-10,
+          -8.174572120190813e-09,
+          -4.808376303965489e-09,
+          5.23652379785195e-10,
+          -2.8111733270793937e-10,
+          -1.2926745587046185e-10,
+          -1.0607257093539467e-13
+        ],
+        [
+          -0.045612001522148615,
+          0.02191477639993855,
+          0.08203249560735015,
+          0.04852828023060396,
+          -0.04213259596890939,
+          -0.009685486319562342,
+          -1.4003166047805566e-07
+        ],
+        [
+          0.0004685144977693738,
+          -0.1047785285863978,
+          -0.07253194240765559,
+          -0.001928173275310363,
+          0.003528026445816207,
+          0.0001943443654115252,
+          -3.1911159216928415e-07
+        ]
+      ],
+      "relative_frobenius_error": 0.03170050818472975,
+      "maximum_absolute_element_error": 0.1047785285863978
+    },
+    "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+    "jacobian_definition": "continuous d[tip_xyz,tangent_xyz]/d[q1..q6,L]"
+  },
+  "nodes": [
+    {
+      "node_index": 0,
+      "s_m": 0.0,
+      "q_rad": [
+        -0.85634357,
+        -1.94584002,
+        -1.76176286,
+        -1.0331945,
+        1.56234264,
+        -2.05640871
+      ],
+      "insertion_m": 0.034,
+      "magnet_pose6": [
+        0.24557497783369636,
+        -0.6700279629478505,
+        -0.016566991220873295,
+        -3.077932948039142,
+        0.5753726959665791,
+        0.045033578217205016
+      ],
+      "tip_position_m": [
+        0.4915750000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "tip_tangent": [
+        -0.999999999999995,
+        2.9506103442897364e-08,
+        9.608369706488439e-08
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "position_error_m": 0.0,
+      "tangent_error_rad": 9.996002811937589e-08,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "fixed_initial_state_feasible_and_committed",
+      "function_evaluations": 1,
+      "objective_value": 3.890897655596555e-07,
+      "jacobian_condition": 5010048.355832963,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226776597179587,
+      "minimum_state_margin": 0.016,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24304465076466444,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030446507646644527,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0,
+      "delta_insertion_m": 0.0,
+      "attempt_count": 1,
+      "chain_rule_relative_error": 0.03170050818472975
+    },
+    {
+      "node_index": 1,
+      "s_m": 0.00025,
+      "q_rad": [
+        -0.856340058983252,
+        -1.9458398427604149,
+        -1.7617631335166948,
+        -1.0331916900940001,
+        1.5623417646574507,
+        -2.056409164763177
+      ],
+      "insertion_m": 0.03417857660114333,
+      "magnet_pose6": [
+        0.24557773477474007,
+        -0.6700282839744314,
+        -0.016567039063553834,
+        -3.077936497424527,
+        0.5753670392503084,
+        0.045031157064347994
+      ],
+      "tip_position_m": [
+        0.49139642339885753,
+        -0.6700279986085763,
+        -0.016566993670120506
+      ],
+      "tip_tangent": [
+        -0.9999999999999537,
+        6.541993959876979e-08,
+        2.970250279503287e-07
+      ],
+      "desired_position_m": [
+        0.4913250000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "position_error_m": 7.142339899004376e-05,
+      "tangent_error_rad": 3.0429032231363977e-07,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.007936897240426252,
+      "jacobian_condition": 4873497.309322491,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226776142416409,
+      "minimum_state_margin": 0.01582142339885667,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2430418958575964,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030418958575963995,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 4.615416526328089e-06,
+      "delta_insertion_m": 0.0001785766011433293,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 2,
+      "s_m": 0.0005,
+      "q_rad": [
+        -0.856340148161467,
+        -1.9458398658398204,
+        -1.7617631790217803,
+        -1.0331917106263866,
+        1.562341710290437,
+        -2.05640917575472
+      ],
+      "insertion_m": 0.034408165097379394,
+      "magnet_pose6": [
+        0.24557762335771385,
+        -0.6700282872014466,
+        -0.01656706941629671,
+        -3.0779364590099867,
+        0.5753671547620711,
+        0.045031318228061896
+      ],
+      "tip_position_m": [
+        0.49116683490262064,
+        -0.6700279995134798,
+        -0.016566997213339422
+      ],
+      "tip_tangent": [
+        -0.9999999999999923,
+        2.1279522087578322e-08,
+        1.2205924903446124e-07
+      ],
+      "desired_position_m": [
+        0.4910750000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "position_error_m": 9.183490262364415e-05,
+      "tangent_error_rad": 1.237783411580038e-07,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 17,
+      "objective_value": 0.013119500370237003,
+      "jacobian_condition": 4701498.974210425,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226776131424867,
+      "minimum_state_margin": 0.015591834902620609,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24304200729242703,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030420072924270403,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 1.1855079452713413e-07,
+      "delta_insertion_m": 0.00022958849623606198,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 3,
+      "s_m": 0.00075,
+      "q_rad": [
+        -0.8563403169101457,
+        -1.9458399293246185,
+        -1.7617631024397167,
+        -1.033191768732551,
+        1.562341819703071,
+        -2.0564092247550736
+      ],
+      "insertion_m": 0.034652332000778004,
+      "magnet_pose6": [
+        0.24557755797674982,
+        -0.6700283174366221,
+        -0.01656708428285958,
+        -3.0779363100660646,
+        0.5753673197828731,
+        0.04503126373609205
+      ],
+      "tip_position_m": [
+        0.49092266799922235,
+        -0.6700280034405018,
+        -0.01656699823161429
+      ],
+      "tip_tangent": [
+        -0.9999999999999841,
+        -1.6215872925032437e-07,
+        7.38281119519121e-08
+      ],
+      "desired_position_m": [
+        0.4908250000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9999727314388829,
+        0.007384874992841875,
+        0.0
+      ],
+      "position_error_m": 9.766799930722035e-05,
+      "tangent_error_rad": 0.0073851042776424064,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 20,
+      "objective_value": 0.014838624100995776,
+      "jacobian_condition": 4527436.629460339,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226776082424513,
+      "minimum_state_margin": 0.015347667999222,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24304207285879248,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030420728587924883,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 2.3689604067112484e-07,
+      "delta_insertion_m": 0.0002441669033986099,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 4,
+      "s_m": 0.001,
+      "q_rad": [
+        -0.8563403749205283,
+        -1.945839902904873,
+        -1.7617627512802292,
+        -1.0331924527310552,
+        1.5623430417531232,
+        -2.0564120682135774
+      ],
+      "insertion_m": 0.03490066499582909,
+      "magnet_pose6": [
+        0.24557774018663392,
+        -0.6700283639729425,
+        -0.01656698265479306,
+        -3.077935949316642,
+        0.5753628411207151,
+        0.04503041425990679
+      ],
+      "tip_position_m": [
+        0.49067433500418034,
+        -0.670027986045968,
+        -0.01656698220228662
+      ],
+      "tip_tangent": [
+        -0.9999999999994524,
+        6.51674825629844e-07,
+        8.189192318249738e-07
+      ],
+      "desired_position_m": [
+        0.4905750000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9997670037972918,
+        0.021585599787497276,
+        0.0
+      ],
+      "position_error_m": 9.933500632357736e-05,
+      "tangent_error_rad": 0.02158662473871939,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.01534934653752478,
+      "jacobian_condition": 4363104.012100752,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226773238966009,
+      "minimum_state_margin": 0.015099335004170912,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24304189093964235,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030418909396423555,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 3.18965401569264e-06,
+      "delta_insertion_m": 0.0002483329950510871,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 5,
+      "s_m": 0.00125,
+      "q_rad": [
+        -0.8562745652388364,
+        -1.9457937177041822,
+        -1.7618266004929284,
+        -1.0332605622708835,
+        1.5624030150526893,
+        -2.056397225701309
+      ],
+      "insertion_m": 0.03515002832408671,
+      "magnet_pose6": [
+        0.2455968018544582,
+        -0.6699378000972529,
+        -0.016566399299329237,
+        -3.0778524254357054,
+        0.5752667790079261,
+        0.045076622580740154
+      ],
+      "tip_position_m": [
+        0.49042497331222945,
+        -0.6700184842091157,
+        -0.016567016400135078
+      ],
+      "tip_tangent": [
+        -0.9999999085183039,
+        0.0004277415269754769,
+        -7.549488703006305e-07
+      ],
+      "desired_position_m": [
+        0.49032519939318886,
+        -0.6700184243500767,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9985267612530038,
+        0.054261469401286525,
+        0.0
+      ],
+      "position_error_m": 9.977393870170568e-05,
+      "tangent_error_rad": 0.05386039027898387,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.015479520903933472,
+      "jacobian_condition": 5260939.421305237,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.2267880814782774,
+      "minimum_state_margin": 0.014849971675913294,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.243022287390151,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030222873901510072,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.000137828571698501,
+      "delta_insertion_m": 0.000249363328257618,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 6,
+      "s_m": 0.0015,
+      "q_rad": [
+        -0.8562042911348233,
+        -1.945744686959667,
+        -1.761893803418461,
+        -1.033333555873736,
+        1.5624648038180884,
+        -2.0563826793390603
+      ],
+      "insertion_m": 0.03539971246431822,
+      "magnet_pose6": [
+        0.24561665543191757,
+        -0.6698424111769944,
+        -0.01656534164407747,
+        -3.077765569409611,
+        0.5751625321346092,
+        0.045127662304116654
+      ],
+      "tip_position_m": [
+        0.4901752945733032,
+        -0.6700081279883859,
+        -0.01656702151030384
+      ],
+      "tip_tangent": [
+        -0.9999996170111756,
+        0.0008752008902569208,
+        -9.507753696431112e-07
+      ],
+      "desired_position_m": [
+        0.4900754161249158,
+        -0.6700080167138986,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9960776962287788,
+        0.08848289707942808,
+        0.0
+      ],
+      "position_error_m": 9.987851315049155e-05,
+      "tangent_error_rad": 0.08772356349014092,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 23,
+      "objective_value": 0.015517282285421012,
+      "jacobian_condition": 5653829.619482769,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.2268026278405255,
+      "minimum_state_margin": 0.01460028753568178,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24300189946574008,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0030018994657400877,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.00014565785610219848,
+      "delta_insertion_m": 0.0002496841402315139,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 7,
+      "s_m": 0.00175,
+      "q_rad": [
+        -0.8559703760874314,
+        -1.9455814701670544,
+        -1.7621180966187497,
+        -1.0335746763113072,
+        1.5626739382299368,
+        -2.0563319881384983
+      ],
+      "insertion_m": 0.03564786572001743,
+      "magnet_pose6": [
+        0.24568425162393834,
+        -0.6695237851007206,
+        -0.016562393307127832,
+        -3.0774739691891733,
+        0.5748188747316761,
+        0.04529270879048827
+      ],
+      "tip_position_m": [
+        0.4899271868820579,
+        -0.6699730292488942,
+        -0.016567068691784106
+      ],
+      "tip_tangent": [
+        -0.9999972990603401,
+        0.0023241909310779923,
+        -2.9224455480100194e-06
+      ],
+      "desired_position_m": [
+        0.48982792492666843,
+        -0.669972702936313,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9861356887033116,
+        0.1659409637963012,
+        0.0
+      ],
+      "position_error_m": 9.926251695052273e-05,
+      "tangent_error_rad": 0.16438793488875236,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.015329182354611701,
+      "jacobian_condition": 5600312.642254019,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226853319041088,
+      "minimum_state_margin": 0.014352134279982574,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2429327892997742,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0029327892997741967,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0004859107695153552,
+      "delta_insertion_m": 0.0002481532556992058,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 8,
+      "s_m": 0.002,
+      "q_rad": [
+        -0.8556591818455921,
+        -1.9453658782423073,
+        -1.7624138934083462,
+        -1.0338923315434723,
+        1.5629517905875199,
+        -2.0562649082673246
+      ],
+      "insertion_m": 0.03589368031637761,
+      "magnet_pose6": [
+        0.2457758633945503,
+        -0.6691024125403704,
+        -0.016558370457695815,
+        -3.0770889744929852,
+        0.574361933976715,
+        0.045507746204022224
+      ],
+      "tip_position_m": [
+        0.4896815000243449,
+        -0.6699258394936509,
+        -0.016567100136470704
+      ],
+      "tip_tangent": [
+        -0.9999908137572444,
+        0.004286301807569978,
+        -4.235386565182552e-06
+      ],
+      "desired_position_m": [
+        0.48958317668260554,
+        -0.6699253183277618,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9657567089528809,
+        0.25944937678186974,
+        0.0
+      ],
+      "position_error_m": 9.832477605245673e-05,
+      "tangent_error_rad": 0.25816569738247064,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.015043036420591056,
+      "jacobian_condition": 5285760.757385789,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226920398912261,
+      "minimum_state_margin": 0.014106319683622394,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24283981611794966,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.002839816117949673,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0006429805309328396,
+      "delta_insertion_m": 0.00024581459636018044,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 9,
+      "s_m": 0.0022500000000000003,
+      "q_rad": [
+        -0.8551676537805317,
+        -1.9450310214201245,
+        -1.7628733241758703,
+        -1.034386581695564,
+        1.5633887486388978,
+        -2.056159138008217
+      ],
+      "insertion_m": 0.03613445236913199,
+      "magnet_pose6": [
+        0.2459248393418051,
+        -0.6684437035748837,
+        -0.016552325557728842,
+        -3.0764882583553197,
+        0.5736418893029477,
+        0.04583800882246451
+      ],
+      "tip_position_m": [
+        0.4894410857428019,
+        -0.6698508948958951,
+        -0.016567140645184223
+      ],
+      "tip_tangent": [
+        -0.999972816641025,
+        0.007373326524825132,
+        -5.9138252383575355e-06
+      ],
+      "desired_position_m": [
+        0.48934478101632195,
+        -0.6698500354857776,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.9211082529908349,
+        0.38930654537545645,
+        0.0
+      ],
+      "position_error_m": 9.630866673698718e-05,
+      "tangent_error_rad": 0.3925052313945493,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 26,
+      "objective_value": 0.014437747405397943,
+      "jacobian_condition": 5042836.61543119,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227026169171369,
+      "minimum_state_margin": 0.01386554763086801,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24269017574134139,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.002690175741341394,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0010055886134351642,
+      "delta_insertion_m": 0.0002407720527543844,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 10,
+      "s_m": 0.0025000000000000005,
+      "q_rad": [
+        -0.8543866997909008,
+        -1.9445078788086743,
+        -1.7635916547541668,
+        -1.035154659213926,
+        1.5640883145104543,
+        -2.055987530646023
+      ],
+      "insertion_m": 0.036358868543403304,
+      "magnet_pose6": [
+        0.2461722779418344,
+        -0.6674062648123511,
+        -0.01654416898261646,
+        -3.0755409782000984,
+        0.5725065333493413,
+        0.04633434359248861
+      ],
+      "tip_position_m": [
+        0.48921763225340636,
+        -0.6697312400356639,
+        -0.01656721235180182
+      ],
+      "tip_tangent": [
+        -0.9999247777768768,
+        0.012265345865210353,
+        -8.869632240244903e-06
+      ],
+      "desired_position_m": [
+        0.4891278749795277,
+        -0.6697299160283777,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.8200628541863327,
+        0.5722734618901751,
+        0.0
+      ],
+      "position_error_m": 8.976729457591437e-05,
+      "tangent_error_rad": 0.5970098308808771,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 23,
+      "objective_value": 0.012557447856120238,
+      "jacobian_condition": 4813161.807472433,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227197776533563,
+      "minimum_state_margin": 0.013641131456596699,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2424453181411558,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.002445318141155811,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0015837773565657031,
+      "delta_insertion_m": 0.00022441617427131078,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 11,
+      "s_m": 0.0027500000000000007,
+      "q_rad": [
+        -0.8533517937538514,
+        -1.94384663890013,
+        -1.7644993880361568,
+        -1.0361331502168212,
+        1.5649981005177918,
+        -2.0557746948497537
+      ],
+      "insertion_m": 0.03655981648604372,
+      "magnet_pose6": [
+        0.24652107254220354,
+        -0.6660732915261443,
+        -0.016534625050764695,
+        -3.0743344099969634,
+        0.5709903957078916,
+        0.04694814183735065
+      ],
+      "tip_position_m": [
+        0.4890186648538242,
+        -0.6695746710534033,
+        -0.01656726104587942
+      ],
+      "tip_tangent": [
+        -0.999826749599318,
+        0.01861372256949965,
+        -1.085210976180503e-05
+      ],
+      "desired_position_m": [
+        0.48893824160396304,
+        -0.6695728617813016,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.6612946536142928,
+        0.7501262434424971,
+        0.0
+      ],
+      "position_error_m": 8.044402899323933e-05,
+      "tangent_error_rad": 0.8296381642491036,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.010092178691405745,
+      "jacobian_condition": 4709170.490966375,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227410612329832,
+      "minimum_state_margin": 0.013440183513956282,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24210637403953708,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.00210637403953709,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002040270259419706,
+      "delta_insertion_m": 0.00020094794264041704,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 12,
+      "s_m": 0.003000000000000001,
+      "q_rad": [
+        -0.8519779813946216,
+        -1.9429931351687446,
+        -1.7656727602758213,
+        -1.0374107575992062,
+        1.566200864597353,
+        -2.0554714567724743
+      ],
+      "insertion_m": 0.03671909111249766,
+      "magnet_pose6": [
+        0.24699899075677006,
+        -0.664323871545028,
+        -0.01652319233705274,
+        -3.0727477749984433,
+        0.5690180300300491,
+        0.047736669654182176
+      ],
+      "tip_position_m": [
+        0.4888632764506933,
+        -0.6693669569386435,
+        -0.016567335827537256
+      ],
+      "tip_tangent": [
+        -0.9996354885044519,
+        0.026997961576649607,
+        -1.3898619616796405e-05
+      ],
+      "desired_position_m": [
+        0.48879956655490675,
+        -0.6693648492077171,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.4633114172705784,
+        0.8861955374671711,
+        0.0
+      ],
+      "position_error_m": 6.374564697878815e-05,
+      "tangent_error_rad": 1.0620668534513698,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 27,
+      "objective_value": 0.006380007309224545,
+      "jacobian_condition": 4564338.071635219,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.2277138504071115,
+      "minimum_state_margin": 0.013280908887502343,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24165258643840748,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0016525864384074884,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002676472831320497,
+      "delta_insertion_m": 0.00015927462645393825,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 13,
+      "s_m": 0.003250000000000001,
+      "q_rad": [
+        -0.8504062197146224,
+        -1.942058673544309,
+        -1.7669597834297142,
+        -1.0387870713900325,
+        1.5675527739125377,
+        -2.0551397792739508
+      ],
+      "insertion_m": 0.03683076127299496,
+      "magnet_pose6": [
+        0.24757966460386543,
+        -0.6623869969681124,
+        -0.016513509151149963,
+        -3.07101543529159,
+        0.5667583760051083,
+        0.04854688021287889
+      ],
+      "tip_position_m": [
+        0.48875767106247225,
+        -0.6691339422585234,
+        -0.016567383918221774
+      ],
+      "tip_tangent": [
+        -0.9993383144752974,
+        0.03637214553259204,
+        -1.584385120842427e-05
+      ],
+      "desired_position_m": [
+        0.48871305366003187,
+        -0.669131835965453,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.3095001681877062,
+        0.9508993878911595,
+        0.0
+      ],
+      "position_error_m": 4.466875909127536e-05,
+      "tangent_error_rad": 1.2197488105428247,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 21,
+      "objective_value": 0.0031826240521945185,
+      "jacobian_condition": 4492795.757847206,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.2280455279056355,
+      "minimum_state_margin": 0.013169238727005046,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24111355764690323,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0011135576469032404,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002971866469954714,
+      "delta_insertion_m": 0.00011167016049729722,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 14,
+      "s_m": 0.0035000000000000014,
+      "q_rad": [
+        -0.8487635930693158,
+        -1.9411278932113174,
+        -1.768242351291542,
+        -1.0401782669726878,
+        1.5689592493319364,
+        -2.0548017093300888
+      ],
+      "insertion_m": 0.03691384426757352,
+      "magnet_pose6": [
+        0.24821794973363231,
+        -0.6604109866299586,
+        -0.016505797625464835,
+        -3.0692504278256663,
+        0.5643982928573474,
+        0.049327514534412156
+      ],
+      "tip_position_m": [
+        0.4886827468929385,
+        -0.6688930847819025,
+        -0.016567376099197763
+      ],
+      "tip_tangent": [
+        -0.9989400561977985,
+        0.04603003240168645,
+        -1.5512546611110094e-05
+      ],
+      "desired_position_m": [
+        0.4886495755132778,
+        -0.668891042264747,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.16990761338367488,
+        0.9854599955930549,
+        0.0
+      ],
+      "position_error_m": 3.323635506604087e-05,
+      "tangent_error_rad": 1.3540141058018298,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 24,
+      "objective_value": 0.0018006197251765892,
+      "jacobian_condition": 4403394.192696393,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.228383597849497,
+      "minimum_state_margin": 0.013086155732426483,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24053405459136415,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0005340545913641581,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003039316401078391,
+      "delta_insertion_m": 8.308299457856355e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 15,
+      "s_m": 0.0037500000000000016,
+      "q_rad": [
+        -0.8471024037079333,
+        -1.9401580426108118,
+        -1.769584438219134,
+        -1.041627609660634,
+        1.5703950227643941,
+        -2.0544556013469366
+      ],
+      "insertion_m": 0.03696200279613133,
+      "magnet_pose6": [
+        0.24883004368736175,
+        -0.6583707521777266,
+        -0.01649578394595297,
+        -3.067415528212102,
+        0.5620162807730587,
+        0.05018148009061309
+      ],
+      "tip_position_m": [
+        0.4886450678448876,
+        -0.668643853444009,
+        -0.01656739386898568
+      ],
+      "tip_tangent": [
+        -0.9984290951213792,
+        0.05602982911998953,
+        -1.6244656062260737e-05
+      ],
+      "desired_position_m": [
+        0.4886258732401208,
+        -0.6686421683965985,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        -0.05351655164605934,
+        0.9985669625517933,
+        0.0
+      ],
+      "position_error_m": 1.927249296111986e-05,
+      "tangent_error_rad": 1.4611950100096929,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.0006647409512395,
+      "jacobian_condition": 4335799.600330675,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.22872970583265,
+      "minimum_state_margin": 0.013037997203868675,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2400000000331755,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 3.3175517888395234e-11,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0031278088041536405,
+      "delta_insertion_m": 4.815852855780817e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 16,
+      "s_m": 0.004000000000000002,
+      "q_rad": [
+        -0.8458174893597306,
+        -1.9390102281152655,
+        -1.7711918395384634,
+        -1.0433605043194942,
+        1.5716565250622248,
+        -2.05412380469263
+      ],
+      "insertion_m": 0.03698334586021706,
+      "magnet_pose6": [
+        0.24892899942789096,
+        -0.6562557220840799,
+        -0.016455926335982807,
+        -3.0653726638615084,
+        0.5601716242736463,
+        0.05165475848351249
+      ],
+      "tip_position_m": [
+        0.48863629764788247,
+        -0.6683946030612128,
+        -0.016567485812882515
+      ],
+      "tip_tangent": [
+        -0.9978147443682261,
+        0.06607371275134402,
+        -2.011528019506986e-05
+      ],
+      "desired_position_m": [
+        0.4886278290330423,
+        -0.6683932945284501,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.06316731969280312,
+        0.9980029507585774,
+        0.0
+      ],
+      "position_error_m": 8.582989034575443e-06,
+      "tangent_error_rad": 1.5678838453356387,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 26,
+      "objective_value": 0.00020528349447868438,
+      "jacobian_condition": 4325043.324407652,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229061502486957,
+      "minimum_state_margin": 0.013016654139782945,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999999390245,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -6.097539140270669e-12,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0032025962851619104,
+      "delta_insertion_m": 2.1343064085729835e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 17,
+      "s_m": 0.004250000000000002,
+      "q_rad": [
+        -0.8445085251478396,
+        -1.9378648148498048,
+        -1.772797964303585,
+        -1.0450913338554926,
+        1.5729415593409977,
+        -2.053793704131342
+      ],
+      "insertion_m": 0.03698300736844075,
+      "magnet_pose6": [
+        0.24904737032287297,
+        -0.6541291057401716,
+        -0.016416426487191937,
+        -3.0633189087782196,
+        0.5582916002418281,
+        0.05310824868902697
+      ],
+      "tip_position_m": [
+        0.48865132398226363,
+        -0.6681452429349422,
+        -0.016567472609776094
+      ],
+      "tip_tangent": [
+        -0.997095673501552,
+        0.07615915897015885,
+        -1.973435356171692e-05
+      ],
+      "desired_position_m": [
+        0.4886515313061993,
+        -0.6681444206603016,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.17938556503543784,
+        0.9837788466199692,
+        0.0
+      ],
+      "position_error_m": 9.718107342818959e-07,
+      "tangent_error_rad": 1.674925201167946,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 24,
+      "objective_value": 9.292827523474708e-05,
+      "jacobian_condition": 4317071.602259089,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229391603048244,
+      "minimum_state_margin": 0.013016992631559254,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999999750615,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -2.493838469064258e-12,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003218857868671726,
+      "delta_insertion_m": -3.384917763096795e-07,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 18,
+      "s_m": 0.004500000000000002,
+      "q_rad": [
+        -0.8432071644333416,
+        -1.9367524217145682,
+        -1.7743616751916829,
+        -1.0467775817742317,
+        1.574213841721596,
+        -2.0534685985410492
+      ],
+      "insertion_m": 0.03694612855118154,
+      "magnet_pose6": [
+        0.2491818104872644,
+        -0.6520442998107441,
+        -0.016378827095988147,
+        -3.061306691444865,
+        0.5564293793755366,
+        0.054511978782771454
+      ],
+      "tip_position_m": [
+        0.48870446662175454,
+        -0.6679042545941611,
+        -0.01656746118239264
+      ],
+      "tip_tangent": [
+        -0.9962948677018438,
+        0.08600311746205698,
+        -1.9436390655643845e-05
+      ],
+      "desired_position_m": [
+        0.4887192656232679,
+        -0.6679044915683571,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.3214681718768682,
+        0.9469203844411337,
+        0.0
+      ],
+      "position_error_m": 1.4808145809771822e-05,
+      "tangent_error_rad": 1.8119663842756648,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 27,
+      "objective_value": 0.0004280254934748918,
+      "jacobian_condition": 4323507.843105655,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229716708638537,
+      "minimum_state_margin": 0.013053871448818463,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999999969115,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -3.088362898751029e-13,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0031534073765355627,
+      "delta_insertion_m": -3.687881725920883e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 19,
+      "s_m": 0.0047500000000000025,
+      "q_rad": [
+        -0.8419199251927897,
+        -1.935676698673056,
+        -1.775877507234571,
+        -1.0484126128273668,
+        1.5754676170095456,
+        -2.053150329909999
+      ],
+      "insertion_m": 0.03688259588078413,
+      "magnet_pose6": [
+        0.24933059297905033,
+        -0.6500098334368687,
+        -0.01634319633933734,
+        -3.059344309261712,
+        0.5545933017166286,
+        0.055860963445343685
+      ],
+      "tip_position_m": [
+        0.4887855787386631,
+        -0.6676727677780321,
+        -0.016567447244255955
+      ],
+      "tip_tangent": [
+        -0.9954233898371185,
+        0.09556293529778524,
+        -1.903815523829859e-05
+      ],
+      "desired_position_m": [
+        0.48881100932571336,
+        -0.6676739853867972,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.48065897774745425,
+        0.8769076046601332,
+        0.0
+      ],
+      "position_error_m": 2.5463683743772802e-05,
+      "tangent_error_rad": 1.976493376116376,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.001090225346091022,
+      "jacobian_condition": 4341780.438510563,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230034977269588,
+      "minimum_state_margin": 0.013117404119215872,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24000000000053678,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 5.367928324062632e-13,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003075465110451203,
+      "delta_insertion_m": -6.353267039740929e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 20,
+      "s_m": 0.005000000000000003,
+      "q_rad": [
+        -0.8407016663457252,
+        -1.934680751687617,
+        -1.7772838859601583,
+        -1.0499310278631724,
+        1.5766487568623602,
+        -2.0528516674289974
+      ],
+      "insertion_m": 0.03677798754210783,
+      "magnet_pose6": [
+        0.24948527692995337,
+        -0.6481096299342703,
+        -0.016310615519942562,
+        -3.0575129729221264,
+        0.5528616558687649,
+        0.05710360526177524
+      ],
+      "tip_position_m": [
+        0.4889078879974227,
+        -0.6674630968098656,
+        -0.016567416419133337
+      ],
+      "tip_tangent": [
+        -0.9945346517626282,
+        0.10440702141528484,
+        -1.796040605879876e-05
+      ],
+      "desired_position_m": [
+        0.48894968437476966,
+        -0.6674659728132127,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.675931033612005,
+        0.736964882338505,
+        0.0
+      ],
+      "position_error_m": 4.18972990411596e-05,
+      "tangent_error_rad": 2.208425988121878,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 26,
+      "objective_value": 0.002799244715533226,
+      "jacobian_condition": 4377241.231372533,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230333639750588,
+      "minimum_state_margin": 0.013222012457892174,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999999613436,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -3.865630038291101e-12,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002871208976453314,
+      "delta_insertion_m": -0.00010460833867630137,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 21,
+      "s_m": 0.005250000000000003,
+      "q_rad": [
+        -0.8397352870092648,
+        -1.9339033113298558,
+        -1.7783823910329595,
+        -1.0511205524801033,
+        1.5775894706135178,
+        -2.052618653871347
+      ],
+      "insertion_m": 0.03661870080311615,
+      "magnet_pose6": [
+        0.24961763733142509,
+        -0.6466149620617578,
+        -0.01628517911375843,
+        -3.0560699408471637,
+        0.551487577575511,
+        0.058064268122512586
+      ],
+      "tip_position_m": [
+        0.48908147684938874,
+        -0.6673093792397111,
+        -0.01656732289944778
+      ],
+      "tip_tangent": [
+        -0.993796392009897,
+        0.11121479678186609,
+        -1.4313610529766068e-05
+      ],
+      "desired_position_m": [
+        0.4891450391357376,
+        -0.66731463995154,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.8313243598514912,
+        0.5557875571812565,
+        0.0
+      ],
+      "position_error_m": 6.378044311412875e-05,
+      "tangent_error_rad": 2.440837287888017,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 26,
+      "objective_value": 0.006364317329065193,
+      "jacobian_condition": 4472938.472251791,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230566653308239,
+      "minimum_state_margin": 0.013381299196883856,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999997646335,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -2.3536644855326472e-11,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002258145792621439,
+      "delta_insertion_m": -0.0001592867389916819,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 22,
+      "s_m": 0.005500000000000003,
+      "q_rad": [
+        -0.8389284722640996,
+        -1.933264966895669,
+        -1.7792863345104581,
+        -1.0520968970749538,
+        1.5783662973305617,
+        -2.052424630584716
+      ],
+      "insertion_m": 0.03642481154623351,
+      "magnet_pose6": [
+        0.24973362533147242,
+        -0.6453816718254273,
+        -0.016264511951961935,
+        -3.0548834850785656,
+        0.5503450325882969,
+        0.058852789713249955
+      ],
+      "tip_position_m": [
+        0.48928714336186435,
+        -0.6671927551449702,
+        -0.01656727284507157
+      ],
+      "tip_tangent": [
+        -0.9931680782854305,
+        0.11669262239306705,
+        -1.2403791272368493e-05
+      ],
+      "desired_position_m": [
+        0.48936445223323616,
+        -0.6671997513017106,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.927548663744206,
+        0.3737023901266061,
+        0.0
+      ],
+      "position_error_m": 7.762527530743802e-05,
+      "tangent_error_rad": 2.6416361450739845,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 28,
+      "objective_value": 0.009392523408033053,
+      "jacobian_condition": 4526816.124495272,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230760676594871,
+      "minimum_state_margin": 0.013575188453766492,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.23999999990267637,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": -9.732362138414885e-11,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0018627670310985872,
+      "delta_insertion_m": -0.00019388925688263586,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 23,
+      "s_m": 0.005750000000000003,
+      "q_rad": [
+        -0.8383131580978609,
+        -1.932782526617407,
+        -1.7799698195468563,
+        -1.0528359768860671,
+        1.5789574733046559,
+        -2.0522781601201405
+      ],
+      "insertion_m": 0.036205127552577085,
+      "magnet_pose6": [
+        0.24982445646473303,
+        -0.6444464240029817,
+        -0.016248680899494383,
+        -3.053984149573106,
+        0.5494737769829672,
+        0.059447750145779035
+      ],
+      "tip_position_m": [
+        0.4895152975860687,
+        -0.6671160834393273,
+        -0.01656721330963698
+      ],
+      "tip_tangent": [
+        -0.992691282638639,
+        0.12068147029272273,
+        -1.006184052309872e-05
+      ],
+      "desired_position_m": [
+        0.4896028478995197,
+        -0.6671244684597264,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9735602188061857,
+        0.22843051538280054,
+        0.0
+      ],
+      "position_error_m": 8.795119288642568e-05,
+      "tangent_error_rad": 2.790151043260588,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.01203583460897729,
+      "jacobian_condition": 4670347.319765149,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230907147059446,
+      "minimum_state_margin": 0.013794872447422918,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24000000000042307,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 4.2307823910903153e-13,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0014126901772073398,
+      "delta_insertion_m": -0.00021968399365642627,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 24,
+      "s_m": 0.006000000000000004,
+      "q_rad": [
+        -0.837908894754176,
+        -1.932467803510271,
+        -1.7804152797000872,
+        -1.0533186730857629,
+        1.5793453831546636,
+        -2.052181765768961
+      ],
+      "insertion_m": 0.035969536366425976,
+      "magnet_pose6": [
+        0.2498858244447657,
+        -0.6438348334668984,
+        -0.01623803326825235,
+        -3.0533961515761403,
+        0.5489028188352948,
+        0.05983443732944076
+      ],
+      "tip_position_m": [
+        0.48975555958711287,
+        -0.667080149894333,
+        -0.016567145798443747
+      ],
+      "tip_tangent": [
+        -0.9923958084145653,
+        0.12308760858580425,
+        -7.336832420732139e-06
+      ],
+      "desired_position_m": [
+        0.48984942952702026,
+        -0.6670894822775523,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9943830825724717,
+        0.10584084794477555,
+        0.0
+      ],
+      "position_error_m": 9.433281959371679e-05,
+      "tangent_error_rad": 2.9121526381920835,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.013830184930808431,
+      "jacobian_condition": 4832293.096515322,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.231003541410625,
+      "minimum_state_margin": 0.014030463633574027,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24000002915898278,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 2.9158982783883403e-08,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0009239457652926461,
+      "delta_insertion_m": -0.0002355911861511087,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 25,
+      "s_m": 0.006250000000000004,
+      "q_rad": [
+        -0.8375812351621726,
+        -1.9322144462482473,
+        -1.780774253598226,
+        -1.0537065523192877,
+        1.5796582613481944,
+        -2.0521051434951385
+      ],
+      "insertion_m": 0.03572668947398985,
+      "magnet_pose6": [
+        0.24993648691878817,
+        -0.6433419409861123,
+        -0.016229550688238115,
+        -3.0529233765686676,
+        0.5484386946352556,
+        0.060145048484678575
+      ],
+      "tip_position_m": [
+        0.490001580301003,
+        -0.6670604052256438,
+        -0.016567108878136633
+      ],
+      "tip_tangent": [
+        -0.9921629696304701,
+        0.12495055686487341,
+        -5.762377540155609e-06
+      ],
+      "desired_position_m": [
+        0.4900983033951688,
+        -0.6670702187463319,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9999406754834241,
+        -0.010892452146028016,
+        0.0
+      ],
+      "position_error_m": 9.721972247069845e-05,
+      "tangent_error_rad": 3.0272073236623642,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 27,
+      "objective_value": 0.01469044055286965,
+      "jacobian_condition": 4860390.577249725,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.231080163684448,
+      "minimum_state_margin": 0.01427331052601015,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24000000001354924,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 1.3549245059252257e-11,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0007447328424539662,
+      "delta_insertion_m": -0.00024284689243612295,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 26,
+      "s_m": 0.006500000000000004,
+      "q_rad": [
+        -0.837580578657412,
+        -1.9321025507453404,
+        -1.7809368578782352,
+        -1.0538659570948021,
+        1.5796735559127715,
+        -2.052104153043816
+      ],
+      "insertion_m": 0.035478291851467905,
+      "magnet_pose6": [
+        0.24982376303496437,
+        -0.643205629236576,
+        -0.01621958058498657,
+        -3.052779979487244,
+        0.5484156127611342,
+        0.06038577500994984
+      ],
+      "tip_position_m": [
+        0.49024863696985876,
+        -0.667084107657935,
+        -0.016567204762755385
+      ],
+      "tip_tangent": [
+        -0.9921701107259696,
+        0.12489384003867501,
+        -1.0119842250757471e-05
+      ],
+      "desired_position_m": [
+        0.4903471772633173,
+        -0.667093921019489,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9918182467853947,
+        -0.12765800148657447,
+        0.0
+      ],
+      "position_error_m": 9.902794691091255e-05,
+      "tangent_error_rad": 3.138806167598914,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 25,
+      "objective_value": 0.015328558652821058,
+      "jacobian_condition": 5056122.286771672,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.2310811541357705,
+      "minimum_state_margin": 0.014521708148532098,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2401262344842988,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.00012623448429879836,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.00025417705168409723,
+      "delta_insertion_m": -0.0002483976225219481,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 27,
+      "s_m": 0.006750000000000004,
+      "q_rad": [
+        -0.837786089367144,
+        -1.932029717154089,
+        -1.7810414142764424,
+        -1.0539457971062218,
+        1.5795572022851798,
+        -2.052139364230631
+      ],
+      "insertion_m": 0.03523036491600562,
+      "magnet_pose6": [
+        0.24958070629411894,
+        -0.6432223926655058,
+        -0.016205020461384334,
+        -3.0527481651223956,
+        0.5486741708787916,
+        0.06062614652736364
+      ],
+      "tip_position_m": [
+        0.4904931519515748,
+        -0.6671282164554544,
+        -0.016567107861514045
+      ],
+      "tip_tangent": [
+        -0.9922792763936019,
+        0.12402353649763724,
+        -5.865920689169023e-06
+      ],
+      "desired_position_m": [
+        0.49059179663033214,
+        -0.6671385667323102,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9666640980359348,
+        -0.2560478892089774,
+        0.0
+      ],
+      "position_error_m": 9.918625387427254e-05,
+      "tangent_error_rad": 3.0070047887486724,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 39,
+      "objective_value": 0.01530110694109712,
+      "jacobian_condition": 5162792.390372696,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.231045942948955,
+      "minimum_state_margin": 0.014769635083994384,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24036626710083667,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0003662671008366758,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.00028217697636297645,
+      "delta_insertion_m": -0.0002479269354622865,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 28,
+      "s_m": 0.0070000000000000045,
+      "q_rad": [
+        -0.8382369087340404,
+        -1.932096924216183,
+        -1.7809458172775159,
+        -1.0538403772277354,
+        1.5792394531305207,
+        -2.0522066784573103
+      ],
+      "insertion_m": 0.03498460135274543,
+      "magnet_pose6": [
+        0.2492510817828294,
+        -0.6435258078080113,
+        -0.01619080180173882,
+        -3.0529607674330386,
+        0.5493025516603214,
+        0.06075406945423016
+      ],
+      "tip_position_m": [
+        0.49073232492934576,
+        -0.667203862006025,
+        -0.01656696618204324
+      ],
+      "tip_tangent": [
+        -0.9925566377959436,
+        0.12178391013260416,
+        1.612655912984291e-07
+      ],
+      "desired_position_m": [
+        0.4908301922966157,
+        -0.6672138495742944,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.9165445300852799,
+        -0.39993264979337884,
+        0.0
+      ],
+      "position_error_m": 9.837567842607617e-05,
+      "tangent_error_rad": 2.8522362646767885,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 27,
+      "objective_value": 0.015042317692300319,
+      "jacobian_condition": 5334197.468439171,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230978628722276,
+      "minimum_state_margin": 0.015015398647254576,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2406629629243659,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0006629629243659063,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0005774969767436231,
+      "delta_insertion_m": -0.0002457635632601915,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 29,
+      "s_m": 0.007250000000000005,
+      "q_rad": [
+        -0.839142899619651,
+        -1.9323671474395236,
+        -1.7805651076331395,
+        -1.05343003333632,
+        1.578543318426445,
+        -2.0523582644323235
+      ],
+      "insertion_m": 0.034753434687688864,
+      "magnet_pose6": [
+        0.2487079215500133,
+        -0.644311823426675,
+        -0.01617498583400595,
+        -3.0535937098797956,
+        0.5505733316903098,
+        0.06076103122117612
+      ],
+      "tip_position_m": [
+        0.49095188024127817,
+        -0.6673313168645533,
+        -0.01656688769515093
+      ],
+      "tip_tangent": [
+        -0.9931071774650324,
+        0.11720978651449461,
+        3.5585526185803433e-06
+      ],
+      "desired_position_m": [
+        0.4910439155302419,
+        -0.6673406097288574,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.8052945930135009,
+        -0.5928748758913807,
+        0.0
+      ],
+      "position_error_m": 9.250331831244485e-05,
+      "tangent_error_rad": 2.624448349766727,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 20,
+      "objective_value": 0.01331877713561227,
+      "jacobian_condition": 5580323.765853136,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230827042747263,
+      "minimum_state_margin": 0.015246565312311139,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.241124474328031,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0011244743280310054,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0013094822838910492,
+      "delta_insertion_m": -0.0002311666650565633,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 30,
+      "s_m": 0.007500000000000005,
+      "q_rad": [
+        -0.8404056409592066,
+        -1.9328105644102156,
+        -1.7799402911767561,
+        -1.05275506633477,
+        1.5775445908342711,
+        -2.052580082231837
+      ],
+      "insertion_m": 0.03454660958404047,
+      "magnet_pose6": [
+        0.24800988024551432,
+        -0.645496583161367,
+        -0.016158527153083135,
+        -3.054581170122704,
+        0.5523470329562857,
+        0.060641841881703636
+      ],
+      "tip_position_m": [
+        0.4911439184363764,
+        -0.6674968648366847,
+        -0.01656678536149881
+      ],
+      "tip_tangent": [
+        -0.9938414458604446,
+        0.11081146341905922,
+        8.058991219516561e-06
+      ],
+      "desired_position_m": [
+        0.4912262854025511,
+        -0.6675049274791891,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.6422515239527872,
+        -0.7664939529965795,
+        0.0
+      ],
+      "position_error_m": 8.276091176943392e-05,
+      "tangent_error_rad": 2.379267927372423,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 26,
+      "objective_value": 0.010682032076196286,
+      "jacobian_condition": 5705799.851665292,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230605224947749,
+      "minimum_state_margin": 0.015453390415959535,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24170524022043918,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0017052402204391914,
+      "source_magnet_lumen_segment_index": 9,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0019193150594468533,
+      "delta_insertion_m": -0.00020682510364839618,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 31,
+      "s_m": 0.007750000000000005,
+      "q_rad": [
+        -0.8420885060800968,
+        -1.93347312602809,
+        -1.779008160430146,
+        -1.0517485472380896,
+        1.5761891324857613,
+        -2.0528836359213116
+      ],
+      "insertion_m": 0.03437576980437604,
+      "magnet_pose6": [
+        0.24714121657757948,
+        -0.6471663443667508,
+        -0.016142816161710316,
+        -3.056000710026108,
+        0.5547197004090509,
+        0.06034722398060004
+      ],
+      "tip_position_m": [
+        0.4912969207491119,
+        -0.6677064547454559,
+        -0.016566680445041913
+      ],
+      "tip_tangent": [
+        -0.9947573906353223,
+        0.10226306084999712,
+        1.2727712727423883e-05
+      ],
+      "desired_position_m": [
+        0.4913649604516074,
+        -0.6677129400527736,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.4411632668366256,
+        -0.8974268616405664,
+        0.0
+      ],
+      "position_error_m": 6.834881958857835e-05,
+      "tangent_error_rad": 2.130132957338362,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 28,
+      "objective_value": 0.007328257604248911,
+      "jacobian_condition": 5888800.673843854,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.230301671258275,
+      "minimum_state_margin": 0.015624230195623964,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24241717825938014,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0024171782593801483,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.002661274790450222,
+      "delta_insertion_m": -0.00017083977966442926,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 32,
+      "s_m": 0.008000000000000005,
+      "q_rad": [
+        -0.8440591019033898,
+        -1.9343260512434552,
+        -1.7778111937900076,
+        -1.0504613408378913,
+        1.574579196162194,
+        -2.053246022877889
+      ],
+      "insertion_m": 0.03425658082212648,
+      "magnet_pose6": [
+        0.2461867191063877,
+        -0.6492146677705046,
+        -0.0161309520953396,
+        -3.05776561246084,
+        0.5575111105371149,
+        0.05986452294453164
+      ],
+      "tip_position_m": [
+        0.4913973760604791,
+        -0.6679446139292151,
+        -0.01656660213721813
+      ],
+      "tip_tangent": [
+        -0.9957417577506108,
+        0.09218650447475195,
+        1.6261934706548085e-05
+      ],
+      "desired_position_m": [
+        0.49144483264931904,
+        -0.6679491360982056,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.30753645606258706,
+        -0.9515362989358128,
+        0.0
+      ],
+      "position_error_m": 4.767320534947439e-05,
+      "tangent_error_rad": 1.9757168334606894,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 21,
+      "objective_value": 0.0036286621845561203,
+      "jacobian_condition": 6053515.393855088,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229939284301697,
+      "minimum_state_margin": 0.015743419177873523,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24319676455640699,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.0031967645564069946,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003228556650941789,
+      "delta_insertion_m": -0.0001191889822495587,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 33,
+      "s_m": 0.008250000000000006,
+      "q_rad": [
+        -0.8460909836307539,
+        -1.9352555498045905,
+        -1.7765108492708352,
+        -1.049059553314574,
+        1.5729003362664637,
+        -2.053626533278798
+      ],
+      "insertion_m": 0.03416606022375154,
+      "magnet_pose6": [
+        0.24523815003414923,
+        -0.651388272274419,
+        -0.016122660247000542,
+        -3.059655757517364,
+        0.560398578821426,
+        0.059282743603175266
+      ],
+      "tip_position_m": [
+        0.49147075116581324,
+        -0.6681871486359267,
+        -0.01656654913254932
+      ],
+      "tip_tangent": [
+        -0.9966533057686714,
+        0.08174464967635306,
+        1.8699453505248432e-05
+      ],
+      "desired_position_m": [
+        0.4915067950742463,
+        -0.6681905648950854,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.19403448837590673,
+        -0.9809947081002528,
+        0.0
+      ],
+      "position_error_m": 3.620822562934388e-05,
+      "tangent_error_rad": 1.8479054273633186,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 24,
+      "objective_value": 0.0021429959014810677,
+      "jacobian_condition": 6213786.2324824445,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229558773900788,
+      "minimum_state_margin": 0.01583393977624846,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24398003766782878,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.003980037667828784,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003407605284200259,
+      "delta_insertion_m": -9.052059837493659e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 34,
+      "s_m": 0.008500000000000006,
+      "q_rad": [
+        -0.8481814681288321,
+        -1.9362722478394154,
+        -1.7750921982958427,
+        -1.0475289635976237,
+        1.5711569857764958,
+        -2.054022565080305
+      ],
+      "insertion_m": 0.03410392112596962,
+      "magnet_pose6": [
+        0.24430838905795854,
+        -0.6536967140374247,
+        -0.016118996509004835,
+        -3.0616793368870128,
+        0.5633849935053036,
+        0.058576133041469726
+      ],
+      "tip_position_m": [
+        0.4915174211794757,
+        -0.6684355413673819,
+        -0.01656649906157596
+      ],
+      "tip_tangent": [
+        -0.9974835205354426,
+        0.07089870110757812,
+        2.1011369118078455e-05
+      ],
+      "desired_position_m": [
+        0.4915421504133057,
+        -0.6684380522685008,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.11676159294000948,
+        -0.9931599722170198,
+        0.0
+      ],
+      "position_error_m": 2.4861386219169342e-05,
+      "tangent_error_rad": 1.7587831004767793,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 22,
+      "objective_value": 0.0010767009850896373,
+      "jacobian_condition": 6354099.574645846,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.229162742099281,
+      "minimum_state_margin": 0.015896078874030384,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2447567933276997,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.00475679332769971,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003599331593487848,
+      "delta_insertion_m": -6.213909778192417e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 35,
+      "s_m": 0.008750000000000006,
+      "q_rad": [
+        -0.8502741737437103,
+        -1.9373523300092073,
+        -1.7735895962147694,
+        -1.0459088520688182,
+        1.5693928235405756,
+        -2.0544253719590997
+      ],
+      "insertion_m": 0.034062722980155204,
+      "magnet_pose6": [
+        0.24342249967662796,
+        -0.6560816461998867,
+        -0.016120201833526915,
+        -3.063786210796884,
+        0.5663885659227719,
+        0.057764736258064456
+      ],
+      "tip_position_m": [
+        0.49154527423039573,
+        -0.6686850883222336,
+        -0.016566474571287213
+      ],
+      "tip_tangent": [
+        -0.9982043238278562,
+        0.059900979951613836,
+        2.2185782636444887e-05
+      ],
+      "desired_position_m": [
+        0.49156162507244344,
+        -0.668687001114002,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.06676935705052123,
+        -0.997768436541796,
+        0.0
+      ],
+      "position_error_m": 1.647066296073522e-05,
+      "tangent_error_rad": 1.697552254864483,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.0005445053782298066,
+      "jacobian_condition": 6477078.5527583435,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.228759935220486,
+      "minimum_state_margin": 0.0159372770198448,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24550860178203734,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.005508601782037353,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0037017685557190418,
+      "delta_insertion_m": -4.119814581441533e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 36,
+      "s_m": 0.009000000000000006,
+      "q_rad": [
+        -0.8523511283299605,
+        -1.9384884736563974,
+        -1.7720127403880088,
+        -1.0442095927113357,
+        1.5676233227823693,
+        -2.0548310187754457
+      ],
+      "insertion_m": 0.03403560893694176,
+      "magnet_pose6": [
+        0.24259024761490702,
+        -0.6585254566120048,
+        -0.016126107589089722,
+        -3.0659610083194213,
+        0.5693854258525597,
+        0.05684951222900069
+      ],
+      "tip_position_m": [
+        0.49156126003952194,
+        -0.668935199251263,
+        -0.016566433545234707
+      ],
+      "tip_tangent": [
+        -0.9988079812561369,
+        0.0488120476748818,
+        2.4100322258365578e-05
+      ],
+      "desired_position_m": [
+        0.4915720327086215,
+        -0.6689367843822751,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.03249544398657847,
+        -0.9994718836065951,
+        0.0
+      ],
+      "position_error_m": 1.0903283820077052e-05,
+      "tangent_error_rad": 1.6521289443207094,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 22,
+      "objective_value": 0.0003108051305971637,
+      "jacobian_condition": 6587457.941954025,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.228354288404141,
+      "minimum_state_margin": 0.01596439106305824,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2462283981026462,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.006228398102646221,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003778121447979365,
+      "delta_insertion_m": -2.7114043213441463e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 37,
+      "s_m": 0.009250000000000006,
+      "q_rad": [
+        -0.854399611900988,
+        -1.939676141855049,
+        -1.7703687303934743,
+        -1.042439070725867,
+        1.565861777061198,
+        -2.0552423251322685
+      ],
+      "insertion_m": 0.03401942748320029,
+      "magnet_pose6": [
+        0.2418187523785519,
+        -0.6610155206411691,
+        -0.016137289299728075,
+        -3.068191770392448,
+        0.5723495830734685,
+        0.05583024791837112
+      ],
+      "tip_position_m": [
+        0.49156858249224816,
+        -0.66918534431369,
+        -0.016566402630130563
+      ],
+      "tip_tangent": [
+        -0.999290013916248,
+        0.03767582027799449,
+        2.5566483761046638e-05
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6691867225905125,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.012570100941678675,
+        -0.9999209931601176,
+        0.0
+      ],
+      "position_error_m": 6.590786315764316e-06,
+      "tangent_error_rad": 1.6210514980271429,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 21,
+      "objective_value": 0.00019705902130176986,
+      "jacobian_condition": 6685168.371259116,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227942982047318,
+      "minimum_state_margin": 0.015980572516799713,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24691093500752173,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.00691093500752174,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003836218698269783,
+      "delta_insertion_m": -1.6181453741472007e-05,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 38,
+      "s_m": 0.009500000000000007,
+      "q_rad": [
+        -0.8564087423410941,
+        -1.9409122795067266,
+        -1.7686622095094597,
+        -1.0406020745054425,
+        1.564110391100829,
+        -2.0556472740901426
+      ],
+      "insertion_m": 0.03401011919568188,
+      "magnet_pose6": [
+        0.24111318747235494,
+        -0.663543091757918,
+        -0.016153537367755266,
+        -3.0704730443130708,
+        0.5752821710621866,
+        0.05471264815009562
+      ],
+      "tip_position_m": [
+        0.49157131665149256,
+        -0.6694354295568017,
+        -0.01656638221639494
+      ],
+      "tip_tangent": [
+        -0.9996484620564564,
+        0.026513234475604205,
+        2.656695691101052e-05
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6694367225905125,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "position_error_m": 3.951977510438185e-06,
+      "tangent_error_rad": 1.5973126685069508,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 22,
+      "objective_value": 0.00015680333773606439,
+      "jacobian_condition": 6775764.185953707,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227538033089443,
+      "minimum_state_margin": 0.015989880804318124,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.24755235296414094,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.007552352964140946,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.00388365118172952,
+      "delta_insertion_m": -9.308287518411396e-06,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 39,
+      "s_m": 0.009750000000000007,
+      "q_rad": [
+        -0.858369244851852,
+        -1.9421953672917032,
+        -1.766895335878947,
+        -1.038699592892532,
+        1.562376069156359,
+        -2.0560522382481334
+      ],
+      "insertion_m": 0.03400440892047064,
+      "magnet_pose6": [
+        0.24048050951829145,
+        -0.6661037379521609,
+        -0.01617517396503443,
+        -3.0728032715192506,
+        0.5781584457270394,
+        0.05349157116173082
+      ],
+      "tip_position_m": [
+        0.491572742360521,
+        -0.6696854455252329,
+        -0.01656636598581214
+      ],
+      "tip_tangent": [
+        -0.9998824091143902,
+        0.015335162000420134,
+        2.7386568367672546e-05
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6696867225905124,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "position_error_m": 2.6696847385346997e-06,
+      "tangent_error_rad": 1.5861320899134341,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 19,
+      "objective_value": 0.00014626986388304938,
+      "jacobian_condition": 6868477.0598889645,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.227133068931453,
+      "minimum_state_margin": 0.015995591079529366,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2481466420004624,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.008146642000462417,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0039246696228644245,
+      "delta_insertion_m": -5.710275211241733e-06,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 40,
+      "s_m": 0.010000000000000007,
+      "q_rad": [
+        -0.8602810388752276,
+        -1.9435249738437468,
+        -1.7650683699720564,
+        -1.0367360168502908,
+        1.5606648676072974,
+        -2.056451141903918
+      ],
+      "insertion_m": 0.03400136443883931,
+      "magnet_pose6": [
+        0.2399219227832638,
+        -0.6686933581276822,
+        -0.016202196453832918,
+        -3.0751737532538663,
+        0.5809865634882354,
+        0.05216578569161635
+      ],
+      "tip_position_m": [
+        0.49157379261109074,
+        -0.6699354540199415,
+        -0.01656633860103816
+      ],
+      "tip_tangent": [
+        -0.9999914120426089,
+        0.004144275160744245,
+        2.8712737548226847e-05
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6699367225905125,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "position_error_m": 1.8713114956202514e-06,
+      "tangent_error_rad": 1.5749406138187316,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 18,
+      "objective_value": 0.0001431809219566589,
+      "jacobian_condition": 7073155.179272436,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226734165275668,
+      "minimum_state_margin": 0.01599863556116069,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2486933997499394,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.008693399749939407,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.003962774298110527,
+      "delta_insertion_m": -3.0444816313257572e-06,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    },
+    {
+      "node_index": 41,
+      "s_m": 0.010091276784848164,
+      "q_rad": [
+        -0.8609889288350601,
+        -1.9440199572517811,
+        -1.7643934845318558,
+        -1.0360088599838497,
+        1.5600313467410931,
+        -2.0565989036735384
+      ],
+      "insertion_m": 0.03400069372243838,
+      "magnet_pose6": [
+        0.23971162774166319,
+        -0.6696507879943251,
+        -0.016213776050177542,
+        -3.076048181004896,
+        0.5820357946733365,
+        0.05168185809738812
+      ],
+      "tip_position_m": [
+        0.4915743062891874,
+        -0.6700273750577307,
+        -0.016566498237824363
+      ],
+      "tip_tangent": [
+        -0.9999999993989006,
+        2.7127217360281242e-05,
+        2.1594280171516402e-05
+      ],
+      "desired_position_m": [
+        0.4915750000000001,
+        -0.6700279993753606,
+        -0.016566997954844186
+      ],
+      "desired_tangent": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "position_error_m": 1.0586426661395818e-06,
+      "tangent_error_rad": 1.5708234540122603,
+      "feasible": true,
+      "solver_success": true,
+      "termination_reason": "scipy_slsqp_status_0: Optimization terminated successfully; exclusion_jacobian=magnet_position_jacobian; fresh_postvalidated_and_committed",
+      "function_evaluations": 16,
+      "objective_value": 2.0109864335909737e-05,
+      "jacobian_condition": 5944921.491606792,
+      "jacobian_effective_rank": 5,
+      "minimum_joint_margin_rad": 4.226586403506047,
+      "minimum_state_margin": 0.015999306277561624,
+      "minimum_clearance_m": null,
+      "contact_active": false,
+      "source_magnet_lumen_distance_m": 0.2489061552906447,
+      "source_magnet_lumen_exclusion_radius_m": 0.24,
+      "source_magnet_lumen_margin_m": 0.008906155290644702,
+      "source_magnet_lumen_segment_index": 8,
+      "source_magnet_lumen_constraint_satisfied": true,
+      "delta_q_norm_rad": 0.0014674898513262855,
+      "delta_insertion_m": -6.707164009328581e-07,
+      "attempt_count": 1,
+      "chain_rule_relative_error": null
+    }
+  ]
+}

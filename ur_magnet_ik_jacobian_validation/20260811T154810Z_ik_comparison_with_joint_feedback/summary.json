@@ -1,0 +1,4356 @@
+{
+  "metadata": {
+    "generated_utc": "2026-08-11T15:48:20.772308+00:00",
+    "live_robot_connection_used": true,
+    "motion_commands_available_in_this_script": true,
+    "motion_execution_enabled": true,
+    "hardware_motion_performed_this_run": true,
+    "completed_motion_command_count": 2,
+    "magnet_pose_classification": "robot-inferred from actual TCP and calibrated T_TCP_M",
+    "transform_chain": "T_R_M = T_R_F(q) @ T_F_TCP @ T_TCP_M",
+    "ur_rtde_ik_chain": "T_R_TCP_target = T_R_M_target @ inverse(T_TCP_M)",
+    "magnet_position_equation": "p_R_M = p_R_TCP + R_R_TCP @ p_TCP_M",
+    "magnet_orientation_equation": "R_R_M = R_R_TCP @ R_TCP_M",
+    "configured_T_TCP_M_pose6": [
+      0.0,
+      0.0,
+      0.044,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "jacobian_convention": "6x6 base-frame geometric Jacobian; rows [vx,vy,vz,wx,wy,wz]; columns UR joints [base,shoulder,elbow,wrist1,wrist2,wrist3]",
+    "units": {
+      "translation": "metres",
+      "rotation_vectors_and_joints": "radians",
+      "jacobian_linear_rows": "metres per radian",
+      "jacobian_angular_rows": "radians per radian"
+    }
+  },
+  "configuration": {
+    "debug_enabled": true,
+    "debug_ik_iteration_interval": 10,
+    "debug_rtde_call_interval": 1,
+    "debug_print_matrices": false,
+    "debug_print_feedback_samples": true,
+    "query_actual_tool_flange_pose": false,
+    "use_live_robot": true,
+    "robot_ip": "192.168.56.101",
+    "rtde_frequency_hz": 125.0,
+    "robot_model": "ur10e",
+    "live_confirmation_phrase": "ready",
+    "execute_motion": true,
+    "motion_confirmation_phrase": "MOVE",
+    "motion_solution_sources": [
+      "own",
+      "ur_rtde"
+    ],
+    "motion_target_names": [
+      "robot_x_plus_100mm"
+    ],
+    "move_joint_speed_rad_s": 0.25,
+    "move_joint_acceleration_rad_s2": 0.2,
+    "maximum_commanded_joint_delta_norm_rad": 0.35,
+    "maximum_commanded_per_joint_delta_rad": [
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25,
+      0.25
+    ],
+    "feedback_sample_count": 5,
+    "feedback_sample_interval_s": 0.05,
+    "T_tcp_magnet_pose6": [
+      0.0,
+      0.0,
+      0.044,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "assume_tcp_is_magnet_frame": false,
+    "independent_measured_T_robot_magnet_pose6": null,
+    "offline_actual_q_rad": [
+      0.0,
+      -1.2,
+      1.4,
+      -1.7,
+      -1.57,
+      0.0
+    ],
+    "offline_active_T_flange_tcp_pose6": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "offline_actual_tcp_pose6": null,
+    "dh_delta_a_m": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "dh_delta_d_m": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "dh_delta_alpha_rad": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "dh_delta_theta_rad": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "joint_lower_bounds_rad": [
+      -6.283185307179586,
+      -6.283185307179586,
+      -6.283185307179586,
+      -6.283185307179586,
+      -6.283185307179586,
+      -6.283185307179586
+    ],
+    "joint_upper_bounds_rad": [
+      6.283185307179586,
+      6.283185307179586,
+      6.283185307179586,
+      6.283185307179586,
+      6.283185307179586,
+      6.283185307179586
+    ],
+    "targets": [
+      {
+        "name": "current_pose",
+        "translation_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      {
+        "name": "robot_x_plus_100mm",
+        "translation_mm": [
+          -100.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      {
+        "name": "robot_y_plus_100mm",
+        "translation_mm": [
+          0.0,
+          -100.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      {
+        "name": "robot_z_plus_100mm",
+        "translation_mm": [
+          0.0,
+          0.0,
+          -100.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      {
+        "name": "magnet_z_rotation_10deg",
+        "translation_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          -90.0
+        ],
+        "frame": "magnet_local"
+      }
+    ],
+    "orientation_characteristic_length_m": 0.1,
+    "ik_damping_m_per_rad": 0.0001,
+    "ik_maximum_damping_m_per_rad": 0.1,
+    "ik_max_iterations": 150,
+    "ik_position_tolerance_m": 1e-06,
+    "ik_orientation_tolerance_rad": 1e-05,
+    "ik_maximum_joint_step_norm_rad": 0.12,
+    "ik_maximum_per_joint_step_rad": [
+      0.08,
+      0.08,
+      0.08,
+      0.08,
+      0.08,
+      0.08
+    ],
+    "ik_line_search_steps": 10,
+    "finite_difference_joint_step_rad": 1e-06,
+    "rtde_jacobian_row_order": "linear_angular",
+    "calculate_rtde_fk_finite_difference_jacobian": true,
+    "calculate_jacobians_at_ik_solutions": true,
+    "maximum_snapshot_joint_drift_rad": 0.0001,
+    "maximum_actual_tcp_vs_rtde_fk_position_error_m": 0.001,
+    "maximum_actual_tcp_vs_rtde_fk_orientation_error_rad": 0.005,
+    "maximum_own_vs_fd_relative_jacobian_error": 1e-05,
+    "maximum_own_vs_rtde_relative_jacobian_error": 0.05,
+    "strict_validation": false,
+    "output_root": "ur_magnet_ik_jacobian_validation",
+    "run_name": "ik_comparison_with_joint_feedback",
+    "make_plots": true,
+    "show_plots_interactively": false
+  },
+  "dh_parameters_used": {
+    "a_m": [
+      0.0,
+      -0.6127,
+      -0.57155,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "d_m": [
+      0.1807,
+      0.0,
+      0.0,
+      0.17415,
+      0.11985,
+      0.11655
+    ],
+    "alpha_rad": [
+      1.5707963267948966,
+      0.0,
+      0.0,
+      1.5707963267948966,
+      -1.5707963267948966,
+      0.0
+    ],
+    "theta_offset_rad": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "actual_state": {
+    "q_actual_rad": [
+      -0.696547810231344,
+      -1.9662305317320765,
+      -1.6840369701385498,
+      -1.0245905679515381,
+      1.5399221181869507,
+      -3.382669512425558
+    ],
+    "q_before_rad": [
+      -0.696547810231344,
+      -1.9662305317320765,
+      -1.6840369701385498,
+      -1.0245905679515381,
+      1.5399221181869507,
+      -3.382669512425558
+    ],
+    "q_after_rad": [
+      -0.696547810231344,
+      -1.9662305317320765,
+      -1.6840369701385498,
+      -1.0245905679515381,
+      1.5399221181869507,
+      -3.382669512425558
+    ],
+    "snapshot_wrapped_joint_drift_norm_rad": 0.0,
+    "T_F_TCP": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_TCP_M": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.044
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_F_M": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.044
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_R_TCP_reported": [
+      [
+        0.44003352702051945,
+        0.8979520159974537,
+        0.007257552203767649,
+        0.5459410497836908
+      ],
+      [
+        0.8970547012888448,
+        -0.4391980219757977,
+        -0.04896897372957688,
+        -0.6881114623563447
+      ],
+      [
+        -0.04078428610951906,
+        0.028058411549039868,
+        -0.9987739321527577,
+        0.3567698062045795
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_R_M_robot_inferred": [
+      [
+        0.44003352702051945,
+        0.8979520159974537,
+        0.007257552203767649,
+        0.5462603820806566
+      ],
+      [
+        0.8970547012888448,
+        -0.4391980219757977,
+        -0.04896897372957688,
+        -0.6902660972004461
+      ],
+      [
+        -0.04078428610951906,
+        0.028058411549039868,
+        -0.9987739321527577,
+        0.31282375318985817
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "configured_tcp_to_magnet_translation_m": [
+      0.0,
+      0.0,
+      0.044
+    ],
+    "tcp_to_magnet_lever_arm_in_robot_base_m": [
+      0.0003193322969657908,
+      -0.0021546348441013885,
+      -0.04394605301472132
+    ],
+    "reconstructed_tcp_to_magnet_translation_m": [
+      2.537299542488143e-19,
+      1.564412428119383e-17,
+      0.04399999999999998
+    ],
+    "tcp_to_magnet_relative_rotation_vector_rad": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "T_R_F_reported_if_available": null,
+    "T_R_TCP_own_DH_at_actual_q": [
+      [
+        0.44058013280165276,
+        0.8976685407663696,
+        0.008963118812930014,
+        0.5451289187909302
+      ],
+      [
+        0.8968694773520195,
+        -0.4397112663676578,
+        -0.047740368910033276,
+        -0.6876736889605257
+      ],
+      [
+        -0.03891384297128049,
+        0.029072205759578997,
+        -0.9988195631231296,
+        0.355845719669695
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_R_M_own_DH_at_actual_q": [
+      [
+        0.44058013280165276,
+        0.8976685407663696,
+        0.008963118812930014,
+        0.5455232960186991
+      ],
+      [
+        0.8968694773520195,
+        -0.4397112663676578,
+        -0.047740368910033276,
+        -0.6897742651925672
+      ],
+      [
+        -0.03891384297128049,
+        0.029072205759578997,
+        -0.9988195631231296,
+        0.31189765889227733
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "reported_tcp_vs_own_DH": {
+      "position_error_m": 0.0013058094116080161,
+      "position_error_mm": 1.3058094116080161,
+      "orientation_error_rad": 0.002193594463341817,
+      "orientation_error_deg": 0.1256837047127509
+    },
+    "T_R_TCP_ur_rtde_calibrated_FK": [
+      [
+        0.44003352702051945,
+        0.8979520159974537,
+        0.007257552203767649,
+        0.5459410497836908
+      ],
+      [
+        0.8970547012888448,
+        -0.4391980219757977,
+        -0.04896897372957688,
+        -0.6881114623563447
+      ],
+      [
+        -0.04078428610951906,
+        0.028058411549039868,
+        -0.9987739321527577,
+        0.3567698062045795
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "T_R_M_ur_rtde_calibrated_FK": [
+      [
+        0.44003352702051945,
+        0.8979520159974537,
+        0.007257552203767649,
+        0.5462603820806566
+      ],
+      [
+        0.8970547012888448,
+        -0.4391980219757977,
+        -0.04896897372957688,
+        -0.6902660972004462
+      ],
+      [
+        -0.04078428610951906,
+        0.028058411549039868,
+        -0.9987739321527577,
+        0.31282375318985817
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "reported_tcp_vs_ur_rtde_calibrated_FK": {
+      "position_error_m": 0.0,
+      "position_error_mm": 0.0,
+      "orientation_error_rad": 0.0,
+      "orientation_error_deg": 0.0
+    },
+    "own_DH_vs_ur_rtde_calibrated_TCP_FK": {
+      "position_error_m": 0.0013058094116080161,
+      "position_error_mm": 1.3058094116080161,
+      "orientation_error_rad": 0.002193594463341817,
+      "orientation_error_deg": 0.1256837047127509
+    },
+    "own_DH_vs_ur_rtde_calibrated_magnet_FK": {
+      "position_error_m": 0.0012817352436123716,
+      "position_error_mm": 1.2817352436123717,
+      "orientation_error_rad": 0.002193594463341817,
+      "orientation_error_deg": 0.1256837047127509
+    }
+  },
+  "ik_targets": [
+    {
+      "target": {
+        "name": "current_pose",
+        "translation_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      "T_R_M_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5462603820806566
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6902660972004461
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.31282375318985817
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "own_ik": {
+        "q_rad": [
+          -0.6960540376986899,
+          -1.9667035396159631,
+          -1.6813727647502004,
+          -1.027316252366428,
+          1.5378661520655452,
+          -3.38278486137959
+        ],
+        "converged": true,
+        "iterations": 2,
+        "reason": "pose_tolerance",
+        "final_position_error_m": 2.3208801296677844e-12,
+        "final_orientation_error_rad": 1.099776658115915e-12,
+        "final_scaled_jacobian_condition": 15.469918406693646,
+        "final_damping_m_per_rad": 0.0001,
+        "history": [
+          {
+            "iteration": 0.0,
+            "position_error_m": 0.0012817352436123289,
+            "orientation_error_rad": 0.002193594463341817,
+            "scaled_cost_m": 0.0013003706400153746,
+            "scaled_jacobian_condition": 15.457331282399142,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 1.0,
+            "position_error_m": 1.5927172502801268e-06,
+            "orientation_error_rad": 6.848136253231851e-07,
+            "scaled_cost_m": 1.594188801978665e-06,
+            "scaled_jacobian_condition": 15.469900631509297,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 2.0,
+            "position_error_m": 2.3208801296677844e-12,
+            "orientation_error_rad": 1.099776658115915e-12,
+            "scaled_cost_m": 2.3234843798192655e-12,
+            "scaled_jacobian_condition": 15.469918406693646,
+            "damping_m_per_rad": 0.0001
+          }
+        ]
+      },
+      "ur_rtde_status": "solution",
+      "q_ur_rtde_rad": [
+        -0.696547810231344,
+        -1.9662305317320765,
+        -1.6840369701385498,
+        -1.0245905679515381,
+        1.539922118186952,
+        -3.3826695124255575
+      ],
+      "own_model_at_own_solution": {
+        "position_error_m": 2.3208801296677844e-12,
+        "position_error_mm": 2.3208801296677843e-09,
+        "orientation_error_rad": 1.099776658115915e-12,
+        "orientation_error_deg": 6.301256091704398e-11
+      },
+      "ur_rtde_fk_at_own_solution": {
+        "position_error_m": 0.0012826521373160828,
+        "position_error_mm": 1.2826521373160829,
+        "orientation_error_rad": 0.0021969546265652247,
+        "orientation_error_deg": 0.12587622788392722
+      },
+      "own_model_at_ur_rtde_solution": {
+        "position_error_m": 0.0012817352436123503,
+        "position_error_mm": 1.2817352436123504,
+        "orientation_error_rad": 0.002193594463343198,
+        "orientation_error_deg": 0.12568370471283002
+      },
+      "ur_rtde_fk_at_ur_rtde_solution": {
+        "position_error_m": 1.5700924586837752e-16,
+        "position_error_mm": 1.570092458683775e-13,
+        "orientation_error_rad": 2.3381299634413367e-15,
+        "orientation_error_deg": 1.3396497885826607e-13
+      },
+      "T_R_TCP_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5459410497836908
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6881114623563447
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.3567698062045795
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "target_tcp_to_magnet_lever_R_m": [
+        0.0003193322969657908,
+        -0.0021546348441013885,
+        -0.04394605301472132
+      ]
+    },
+    {
+      "target": {
+        "name": "robot_x_plus_100mm",
+        "translation_mm": [
+          -100.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      "T_R_M_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.44626038208065666
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6902660972004461
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.31282375318985817
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "own_ik": {
+        "q_rad": [
+          -0.7774309115428397,
+          -1.8810204608022285,
+          -1.8043720600606103,
+          -0.9874472890992393,
+          1.5409816456333654,
+          -3.464142144586117
+        ],
+        "converged": true,
+        "iterations": 3,
+        "reason": "pose_tolerance",
+        "final_position_error_m": 9.327330186079649e-07,
+        "final_orientation_error_rad": 6.202991224893662e-07,
+        "final_scaled_jacobian_condition": 14.656247583693888,
+        "final_damping_m_per_rad": 0.0001,
+        "history": [
+          {
+            "iteration": 0.0,
+            "position_error_m": 0.0992684523544273,
+            "orientation_error_rad": 0.002193594463341817,
+            "scaled_cost_m": 0.0992686947199866,
+            "scaled_jacobian_condition": 15.457331282399142,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 1.0,
+            "position_error_m": 0.04299814341246464,
+            "orientation_error_rad": 0.030986445682117707,
+            "scaled_cost_m": 0.04310965013867527,
+            "scaled_jacobian_condition": 15.097707098686465,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 2.0,
+            "position_error_m": 0.0010469219865239042,
+            "orientation_error_rad": 0.000749839748758368,
+            "scaled_cost_m": 0.001049603850200321,
+            "scaled_jacobian_condition": 14.64491507093391,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 3.0,
+            "position_error_m": 9.327330186079649e-07,
+            "orientation_error_rad": 6.202991224893662e-07,
+            "scaled_cost_m": 9.347933429454539e-07,
+            "scaled_jacobian_condition": 14.656247583693888,
+            "damping_m_per_rad": 0.0001
+          }
+        ]
+      },
+      "ur_rtde_status": "solution",
+      "q_ur_rtde_rad": [
+        -0.778107117566659,
+        -1.880622010176964,
+        -1.8068894492511403,
+        -0.9847941470763066,
+        1.5429278180270087,
+        -3.4639809898443197
+      ],
+      "own_model_at_own_solution": {
+        "position_error_m": 9.327330186079649e-07,
+        "position_error_mm": 0.0009327330186079649,
+        "orientation_error_rad": 6.202991224893662e-07,
+        "orientation_error_deg": 3.554052175430917e-05
+      },
+      "ur_rtde_fk_at_own_solution": {
+        "position_error_m": 0.0012944345595472101,
+        "position_error_mm": 1.2944345595472102,
+        "orientation_error_rad": 0.0021644070553357942,
+        "orientation_error_deg": 0.12401138941907944
+      },
+      "own_model_at_ur_rtde_solution": {
+        "position_error_m": 0.0012944869553828597,
+        "position_error_mm": 1.2944869553828597,
+        "orientation_error_rad": 0.002161801354831678,
+        "orientation_error_deg": 0.12386209377751847
+      },
+      "ur_rtde_fk_at_ur_rtde_solution": {
+        "position_error_m": 2.38052488631182e-12,
+        "position_error_mm": 2.38052488631182e-09,
+        "orientation_error_rad": 2.5541119816379324e-13,
+        "orientation_error_deg": 1.4633983695164875e-11
+      },
+      "T_R_TCP_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.44594104978369087
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6881114623563447
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.3567698062045795
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "target_tcp_to_magnet_lever_R_m": [
+        0.0003193322969657908,
+        -0.0021546348441013885,
+        -0.04394605301472132
+      ]
+    },
+    {
+      "target": {
+        "name": "robot_y_plus_100mm",
+        "translation_mm": [
+          0.0,
+          -100.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      "T_R_M_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5462603820806566
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.790266097200446
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.31282375318985817
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "own_ik": {
+        "q_rad": [
+          -0.7786321869445596,
+          -2.0855797080405902,
+          -1.5001061288377997,
+          -1.0871175828319013,
+          1.5410291762569857,
+          -3.465343031847508
+        ],
+        "converged": true,
+        "iterations": 4,
+        "reason": "pose_tolerance",
+        "final_position_error_m": 4.540788915953217e-07,
+        "final_orientation_error_rad": 1.4733230370376427e-10,
+        "final_scaled_jacobian_condition": 16.792975134821695,
+        "final_damping_m_per_rad": 0.0001,
+        "history": [
+          {
+            "iteration": 0.0,
+            "position_error_m": 0.10049880221579996,
+            "orientation_error_rad": 0.002193594463341817,
+            "scaled_cost_m": 0.10049904161422224,
+            "scaled_jacobian_condition": 15.457331282399142,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 1.0,
+            "position_error_m": 0.060809264909794186,
+            "orientation_error_rad": 0.039368313408907875,
+            "scaled_cost_m": 0.06093656816621811,
+            "scaled_jacobian_condition": 15.789995175337259,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 2.0,
+            "position_error_m": 0.033858174474761034,
+            "orientation_error_rad": 0.042907975612227485,
+            "scaled_cost_m": 0.03412897482308478,
+            "scaled_jacobian_condition": 16.394611088870466,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 3.0,
+            "position_error_m": 0.0007481590167059132,
+            "orientation_error_rad": 6.344570901770681e-05,
+            "scaled_cost_m": 0.0007481859179764657,
+            "scaled_jacobian_condition": 16.782546571888457,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 4.0,
+            "position_error_m": 4.540788915953217e-07,
+            "orientation_error_rad": 1.4733230370376427e-10,
+            "scaled_cost_m": 4.540788918343419e-07,
+            "scaled_jacobian_condition": 16.792975134821695,
+            "damping_m_per_rad": 0.0001
+          }
+        ]
+      },
+      "ur_rtde_status": "solution",
+      "q_ur_rtde_rad": [
+        -0.778888324916835,
+        -2.0849925323108955,
+        -1.5030147331695796,
+        -1.0842585179850168,
+        1.5432613950618055,
+        -3.465322817241127
+      ],
+      "own_model_at_own_solution": {
+        "position_error_m": 4.540788915953217e-07,
+        "position_error_mm": 0.00045407889159532173,
+        "orientation_error_rad": 1.4733230370376427e-10,
+        "orientation_error_deg": 8.44151918816536e-09
+      },
+      "ur_rtde_fk_at_own_solution": {
+        "position_error_m": 0.0012885384925476518,
+        "position_error_mm": 1.288538492547652,
+        "orientation_error_rad": 0.002307648996850401,
+        "orientation_error_deg": 0.1322185481171262
+      },
+      "own_model_at_ur_rtde_solution": {
+        "position_error_m": 0.0012876846245501981,
+        "position_error_mm": 1.287684624550198,
+        "orientation_error_rad": 0.002302883452995815,
+        "orientation_error_deg": 0.13194550256717388
+      },
+      "ur_rtde_fk_at_ur_rtde_solution": {
+        "position_error_m": 2.4858167387670995e-12,
+        "position_error_mm": 2.4858167387670997e-09,
+        "orientation_error_rad": 2.111679465460726e-14,
+        "orientation_error_deg": 1.209903210553413e-12
+      },
+      "T_R_TCP_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5459410497836908
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.7881114623563447
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.3567698062045795
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "target_tcp_to_magnet_lever_R_m": [
+        0.0003193322969657908,
+        -0.0021546348441013885,
+        -0.04394605301472132
+      ]
+    },
+    {
+      "target": {
+        "name": "robot_z_plus_100mm",
+        "translation_mm": [
+          0.0,
+          0.0,
+          -100.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "frame": "robot_base"
+      },
+      "T_R_M_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5462603820806566
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6902660972004461
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.21282375318985816
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "own_ik": {
+        "q_rad": [
+          -0.6960540376978783,
+          -2.0580215617940105,
+          -1.7500823976030107,
+          -0.86728859733878,
+          1.5378661520651575,
+          -3.382784861378652
+        ],
+        "converged": true,
+        "iterations": 4,
+        "reason": "pose_tolerance",
+        "final_position_error_m": 2.9437474535411334e-11,
+        "final_orientation_error_rad": 2.2706178441677557e-12,
+        "final_scaled_jacobian_condition": 15.514576964101634,
+        "final_damping_m_per_rad": 0.0001,
+        "history": [
+          {
+            "iteration": 0.0,
+            "position_error_m": 0.09907786829417835,
+            "orientation_error_rad": 0.002193594463341817,
+            "scaled_cost_m": 0.0990781111259457,
+            "scaled_jacobian_condition": 15.457331282399142,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 1.0,
+            "position_error_m": 0.01784033194021976,
+            "orientation_error_rad": 0.06864676276808604,
+            "scaled_cost_m": 0.019115470805674762,
+            "scaled_jacobian_condition": 15.201937648560813,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 2.0,
+            "position_error_m": 0.0017815843145009664,
+            "orientation_error_rad": 0.007838271589938082,
+            "scaled_cost_m": 0.001946388369481328,
+            "scaled_jacobian_condition": 15.485425076972334,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 3.0,
+            "position_error_m": 6.06899522856345e-06,
+            "orientation_error_rad": 4.5624378024910366e-08,
+            "scaled_cost_m": 6.068996943496068e-06,
+            "scaled_jacobian_condition": 15.514520304433134,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 4.0,
+            "position_error_m": 2.9437474535411334e-11,
+            "orientation_error_rad": 2.2706178441677557e-12,
+            "scaled_cost_m": 2.9438350226820344e-11,
+            "scaled_jacobian_condition": 15.514576964101634,
+            "damping_m_per_rad": 0.0001
+          }
+        ]
+      },
+      "ur_rtde_status": "solution",
+      "q_ur_rtde_rad": [
+        -0.6965906427180286,
+        -2.057726641596341,
+        -1.7525078041465552,
+        -0.8646319571941241,
+        1.5395524800906804,
+        -3.382406459888511
+      ],
+      "own_model_at_own_solution": {
+        "position_error_m": 2.9437474535411334e-11,
+        "position_error_mm": 2.9437474535411332e-08,
+        "orientation_error_rad": 2.2706178441677557e-12,
+        "orientation_error_deg": 1.3009681935790606e-10
+      },
+      "ur_rtde_fk_at_own_solution": {
+        "position_error_m": 0.0012496481221967452,
+        "position_error_mm": 1.2496481221967453,
+        "orientation_error_rad": 0.001978179423611818,
+        "orientation_error_deg": 0.113341332092579
+      },
+      "own_model_at_ur_rtde_solution": {
+        "position_error_m": 0.0012488917723151214,
+        "position_error_mm": 1.2488917723151214,
+        "orientation_error_rad": 0.0019755112490701474,
+        "orientation_error_deg": 0.11318845695233702
+      },
+      "ur_rtde_fk_at_ur_rtde_solution": {
+        "position_error_m": 2.0402291571925806e-12,
+        "position_error_mm": 2.0402291571925805e-09,
+        "orientation_error_rad": 4.918519886347303e-14,
+        "orientation_error_deg": 2.8181043093886582e-12
+      },
+      "T_R_TCP_target": [
+        [
+          0.44003352702051945,
+          0.8979520159974537,
+          0.007257552203767649,
+          0.5459410497836908
+        ],
+        [
+          0.8970547012888448,
+          -0.4391980219757977,
+          -0.04896897372957688,
+          -0.6881114623563447
+        ],
+        [
+          -0.04078428610951906,
+          0.028058411549039868,
+          -0.9987739321527577,
+          0.2567698062045795
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "target_tcp_to_magnet_lever_R_m": [
+        0.0003193322969657908,
+        -0.0021546348441013885,
+        -0.04394605301472135
+      ]
+    },
+    {
+      "target": {
+        "name": "magnet_z_rotation_10deg",
+        "translation_mm": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation_vector_deg": [
+          0.0,
+          0.0,
+          -90.0
+        ],
+        "frame": "magnet_local"
+      },
+      "T_R_M_target": [
+        [
+          -0.8979520159974536,
+          0.4400335270205197,
+          0.007257552203767649,
+          0.5462603820806566
+        ],
+        [
+          0.43919802197579794,
+          0.8970547012888447,
+          -0.04896897372957688,
+          -0.6902660972004461
+        ],
+        [
+          -0.028058411549039878,
+          -0.040784286109519056,
+          -0.9987739321527577,
+          0.31282375318985817
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "own_ik": {
+        "q_rad": [
+          -0.6960540352044365,
+          -1.9667035391570344,
+          -1.6813727652396049,
+          -1.027316253468995,
+          1.5378661423803952,
+          -4.953581134734356
+        ],
+        "converged": true,
+        "iterations": 20,
+        "reason": "pose_tolerance",
+        "final_position_error_m": 5.947828886115698e-10,
+        "final_orientation_error_rad": 5.181819421786067e-08,
+        "final_scaled_jacobian_condition": 15.469918405403545,
+        "final_damping_m_per_rad": 0.0001,
+        "history": [
+          {
+            "iteration": 0.0,
+            "position_error_m": 0.0012817352436123289,
+            "orientation_error_rad": 1.5714230075566153,
+            "scaled_cost_m": 0.15714752792206915,
+            "scaled_jacobian_condition": 15.457331282399142,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 1.0,
+            "position_error_m": 2.4700156709732696e-06,
+            "orientation_error_rad": 1.491021941773594,
+            "scaled_cost_m": 0.14910219419781845,
+            "scaled_jacobian_condition": 15.46775618465686,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 2.0,
+            "position_error_m": 2.873951428524065e-07,
+            "orientation_error_rad": 1.4107039587447001,
+            "scaled_cost_m": 0.14107039587476275,
+            "scaled_jacobian_condition": 15.468907950647395,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 3.0,
+            "position_error_m": 2.533850969270058e-07,
+            "orientation_error_rad": 1.3307773669984946,
+            "scaled_cost_m": 0.13307773670009068,
+            "scaled_jacobian_condition": 15.470762923472792,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 4.0,
+            "position_error_m": 8.841790409987508e-08,
+            "orientation_error_rad": 1.250972686590716,
+            "scaled_cost_m": 0.12509726865910287,
+            "scaled_jacobian_condition": 15.470690322177337,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 5.0,
+            "position_error_m": 6.019288466510138e-08,
+            "orientation_error_rad": 1.1709876238544923,
+            "scaled_cost_m": 0.11709876238546471,
+            "scaled_jacobian_condition": 15.469767053591248,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 6.0,
+            "position_error_m": 2.117078528924527e-08,
+            "orientation_error_rad": 1.0909066987984104,
+            "scaled_cost_m": 0.1090906698798431,
+            "scaled_jacobian_condition": 15.469585818301306,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 7.0,
+            "position_error_m": 1.4587494085908896e-08,
+            "orientation_error_rad": 1.010885385283381,
+            "scaled_cost_m": 0.10108853852833916,
+            "scaled_jacobian_condition": 15.469899716180342,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 8.0,
+            "position_error_m": 1.1953447480202039e-08,
+            "orientation_error_rad": 0.9309083131808199,
+            "scaled_cost_m": 0.09309083131808277,
+            "scaled_jacobian_condition": 15.470009915109745,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 9.0,
+            "position_error_m": 1.0885145935624377e-08,
+            "orientation_error_rad": 0.850917484622443,
+            "scaled_cost_m": 0.08509174846224499,
+            "scaled_jacobian_condition": 15.469937073988717,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 10.0,
+            "position_error_m": 9.941540544461227e-09,
+            "orientation_error_rad": 0.7709130615404286,
+            "scaled_cost_m": 0.07709130615404351,
+            "scaled_jacobian_condition": 15.46990228757268,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 11.0,
+            "position_error_m": 9.006128538275448e-09,
+            "orientation_error_rad": 0.6909108119212362,
+            "scaled_cost_m": 0.06909108119212422,
+            "scaled_jacobian_condition": 15.46991363438069,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 12.0,
+            "position_error_m": 8.07165572790185e-09,
+            "orientation_error_rad": 0.6109113808838584,
+            "scaled_cost_m": 0.06109113808838638,
+            "scaled_jacobian_condition": 15.469920221038379,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 13.0,
+            "position_error_m": 7.1370720105045505e-09,
+            "orientation_error_rad": 0.5309117183680074,
+            "scaled_cost_m": 0.05309117183680123,
+            "scaled_jacobian_condition": 15.469919065047451,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 14.0,
+            "position_error_m": 6.202453749203101e-09,
+            "orientation_error_rad": 0.4509116758468246,
+            "scaled_cost_m": 0.04509116758468289,
+            "scaled_jacobian_condition": 15.469918309599384,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 15.0,
+            "position_error_m": 5.267839303696559e-09,
+            "orientation_error_rad": 0.3709116508423867,
+            "scaled_cost_m": 0.03709116508423904,
+            "scaled_jacobian_condition": 15.469918374326566,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 16.0,
+            "position_error_m": 4.333228710881681e-09,
+            "orientation_error_rad": 0.29091165669051205,
+            "scaled_cost_m": 0.029091165669051528,
+            "scaled_jacobian_condition": 15.469918415282093,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 17.0,
+            "position_error_m": 3.398617308133801e-09,
+            "orientation_error_rad": 0.2109116616426122,
+            "scaled_cost_m": 0.021091166164261498,
+            "scaled_jacobian_condition": 15.469918409000606,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 18.0,
+            "position_error_m": 2.4640059205361277e-09,
+            "orientation_error_rad": 0.13091166540844634,
+            "scaled_cost_m": 0.013091166540844868,
+            "scaled_jacobian_condition": 15.469918405419449,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 19.0,
+            "position_error_m": 1.5293943193777327e-09,
+            "orientation_error_rad": 0.05091166927868103,
+            "scaled_cost_m": 0.005091166927868333,
+            "scaled_jacobian_condition": 15.46991840464673,
+            "damping_m_per_rad": 0.0001
+          },
+          {
+            "iteration": 20.0,
+            "position_error_m": 5.947828886115698e-10,
+            "orientation_error_rad": 5.181819421786067e-08,
+            "scaled_cost_m": 5.215843096239036e-09,
+            "scaled_jacobian_condition": 15.469918405403545,
+            "damping_m_per_rad": 0.0001
+          }
+        ]
+      },
+      "ur_rtde_status": "solution",
+      "q_ur_rtde_rad": [
+        -0.696547810232067,
+        -1.9662305317323998,
+        -1.6840369701419062,
+        -1.0245905679478087,
+        1.5399221181870595,
+        -4.953465839221142
+      ],
+      "own_model_at_own_solution": {
+        "position_error_m": 5.947828886115698e-10,
+        "position_error_mm": 5.947828886115698e-07,
+        "orientation_error_rad": 5.181819421786067e-08,
+        "orientation_error_deg": 2.9689638306726222e-06
+      },
+      "ur_rtde_fk_at_own_solution": {
+        "position_error_m": 0.0012826521858276818,
+        "position_error_mm": 1.2826521858276818,
+        "orientation_error_rad": 0.002196949488916543,
+        "orientation_error_deg": 0.12587593351834114
+      },
+      "own_model_at_ur_rtde_solution": {
+        "position_error_m": 0.001281735245697596,
+        "position_error_mm": 1.281735245697596,
+        "orientation_error_rad": 0.0021935944634344233,
+        "orientation_error_deg": 0.12568370471805684
+      },
+      "ur_rtde_fk_at_ur_rtde_solution": {
+        "position_error_m": 2.239645546619923e-12,
+        "position_error_mm": 2.239645546619923e-09,
+        "orientation_error_rad": 9.067867704990901e-14,
+        "orientation_error_deg": 5.195505486789585e-12
+      },
+      "T_R_TCP_target": [
+        [
+          -0.8979520159974536,
+          0.4400335270205197,
+          0.007257552203767649,
+          0.5459410497836908
+        ],
+        [
+          0.43919802197579794,
+          0.8970547012888447,
+          -0.04896897372957688,
+          -0.6881114623563447
+        ],
+        [
+          -0.028058411549039878,
+          -0.040784286109519056,
+          -0.9987739321527577,
+          0.3567698062045795
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "target_tcp_to_magnet_lever_R_m": [
+        0.0003193322969657908,
+        -0.0021546348441013885,
+        -0.04394605301472132
+      ]
+    }
+  ],
+  "jacobian_records": [
+    {
+      "label": "actual_q",
+      "q_rad": [
+        -0.696547810231344,
+        -1.9662305317320765,
+        -1.6840369701385498,
+        -1.0245905679515381,
+        1.5399221181869507,
+        -3.382669512425558
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6897742651925672,
+            -0.10063668444495649,
+            0.33307341284864234,
+            0.11955687078680878,
+            0.10309817651195109,
+            8.673617379884035e-19
+          ],
+          [
+            0.5455232960186991,
+            0.08417293771005385,
+            -0.278583975487766,
+            -0.09999785955837244,
+            0.12297373900263811,
+            1.0842021724855044e-17
+          ],
+          [
+            -0.0,
+            0.8609908363502643,
+            0.6249733297267799,
+            0.12578690366612416,
+            -0.004952576664889775,
+            -5.149960319306146e-19
+          ],
+          [
+            0.0,
+            -0.6415734733434979,
+            -0.6415734733434979,
+            -0.6415734733434979,
+            0.7665214207615685,
+            0.008963118812930014
+          ],
+          [
+            0.0,
+            -0.7670615870332447,
+            -0.7670615870332447,
+            -0.7670615870332447,
+            -0.6411216760472173,
+            -0.047740368910033276
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.0375221003686276,
+            -0.9988195631231296
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6897742652056671,
+            -0.10063668448578866,
+            0.33307341285038206,
+            0.11955687079234778,
+            0.10309817644049701,
+            0.0
+          ],
+          [
+            0.5455232960360767,
+            0.08417293767548628,
+            -0.2785839754437802,
+            -0.09999785954839524,
+            0.12297373891412278,
+            0.0
+          ],
+          [
+            0.0,
+            0.8609908362378071,
+            0.6249733296437299,
+            0.12578690364306588,
+            -0.004952576682093479,
+            0.0
+          ],
+          [
+            -2.622241050110746e-12,
+            -0.6415734733105958,
+            -0.6415734733313961,
+            -0.6415734732859164,
+            0.7665214206961972,
+            0.008963118813132701
+          ],
+          [
+            -1.870012096152261e-12,
+            -0.7670615869604572,
+            -0.7670615869851586,
+            -0.7670615869637254,
+            -0.6411216759940983,
+            -0.04774036891636085
+          ],
+          [
+            1.0000000000163394,
+            -3.0220235171938066e-11,
+            -1.7659500587875328e-11,
+            -1.7236012907191304e-11,
+            0.03752210035927299,
+            -0.9988195632546182
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6902661184304826,
+            -0.10104856817960695,
+            0.3319107916288644,
+            0.11946789213457265,
+            0.10263508831709345,
+            0.0
+          ],
+          [
+            0.546260351286243,
+            0.08509430798886441,
+            -0.27846144284859875,
+            -0.09918541188369545,
+            0.12256340137239974,
+            0.0
+          ],
+          [
+            0.0,
+            0.8617555212475647,
+            0.6257128953301994,
+            0.12586694239646867,
+            -0.005172352962601323,
+            0.0
+          ],
+          [
+            4.068074010192244e-10,
+            -0.6415732900121318,
+            -0.6417930225058764,
+            -0.6400868000250547,
+            0.7669231522285508,
+            0.0072575526082419
+          ],
+          [
+            -1.2858913345319958e-11,
+            -0.7670615681181068,
+            -0.7668774393524159,
+            -0.7682997029058155,
+            -0.6406410747636982,
+            -0.04896897372630242
+          ],
+          [
+            0.9999999992948406,
+            0.0005135288039424854,
+            -0.0008434657964040894,
+            0.0021109372959663493,
+            0.037521824147193496,
+            -0.9987739323462522
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.074744422969808,
+          "scaled_condition_number": 15.457331282399142
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.074744423220875,
+          "scaled_condition_number": 15.457331282086749
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.071343670585116,
+          "scaled_condition_number": 15.45644345681093
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.863830567851782e-10,
+          "relative_frobenius_error": 1.0015026509046979e-10,
+          "maximum_absolute_element_error": 1.3148859778766564e-10,
+          "column_l2_errors": [
+            2.7403235638194232e-11,
+            1.510053733889606e-10,
+            1.0772958262106358e-10,
+            9.543348578665012e-11,
+            1.4289559594090263e-10,
+            1.3164091528637948e-10
+          ],
+          "linear_block_frobenius_error": 1.967637879439912e-10,
+          "angular_block_frobenius_error": 2.0808475909483288e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004413273754120779,
+          "relative_frobenius_error": 0.0015433543497775954,
+          "maximum_absolute_element_error": 0.002110937295966288,
+          "column_l2_errors": [
+            0.0008860982310458712,
+            0.00136639169353122,
+            0.001645359043753029,
+            0.0029788553775202333,
+            0.0009074663132172475,
+            0.0021025004259053993
+          ],
+          "linear_block_frobenius_error": 0.002325439311163753,
+          "angular_block_frobenius_error": 0.0037509088550517424
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "current_pose:own_solution",
+      "q_rad": [
+        -0.6960540376986899,
+        -1.9667035396159631,
+        -1.6813727647502004,
+        -1.027316252366428,
+        1.5378661520655452,
+        -3.38278486137959
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6902660972002023,
+            -0.10138889911193781,
+            0.33241454748177063,
+            0.11964973334204212,
+            0.10303802493460339,
+            -1.5612511283791264e-17
+          ],
+          [
+            0.5462603820794057,
+            0.08471704251997528,
+            -0.2777540499989086,
+            -0.09997516134237218,
+            0.12301042442457355,
+            -1.0408340855860843e-17
+          ],
+          [
+            -0.0,
+            0.8617832776227554,
+            0.6254983504445997,
+            0.12570318929141916,
+            -0.005282366937495099,
+            4.0657581468206416e-19
+          ],
+          [
+            0.0,
+            -0.6411946412049233,
+            -0.6411946412049233,
+            -0.6411946412049233,
+            0.7668531758710802,
+            0.0072575522043175225
+          ],
+          [
+            0.0,
+            -0.7673782848700436,
+            -0.7673782848700436,
+            -0.7673782848700436,
+            -0.6407558783641935,
+            -0.04896897373052794
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03698798451077337,
+            -0.9987739321527073
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6902660972252228,
+            -0.10138889910971116,
+            0.3324145473881934,
+            0.11964973334332996,
+            0.10303802494560088,
+            0.0
+          ],
+          [
+            0.5462603820394207,
+            0.08471704249224388,
+            -0.27775404998209297,
+            -0.09997516137172369,
+            0.12301042440210352,
+            0.0
+          ],
+          [
+            0.0,
+            0.8617832775725809,
+            0.625498350392828,
+            0.12570318930205104,
+            -0.005282366905001723,
+            0.0
+          ],
+          [
+            2.8591123117118573e-12,
+            -0.641194641162459,
+            -0.641194641143379,
+            -0.641194641117006,
+            0.7668531758095849,
+            0.007257552208516491
+          ],
+          [
+            -1.3477086627782192e-11,
+            -0.7673782848259686,
+            -0.767378284794974,
+            -0.7673782847659265,
+            -0.6407558783127401,
+            -0.04896897373819039
+          ],
+          [
+            1.0000000000540348,
+            -1.437540703216112e-11,
+            1.0008075730618769e-11,
+            2.1909048297979135e-11,
+            0.036987984486090315,
+            -0.9987739322927454
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6907589984450624,
+            -0.10180227505429684,
+            0.3312500039265309,
+            0.11956022560877244,
+            0.10257572474747789,
+            0.0
+          ],
+          [
+            0.5469960321358158,
+            0.08563960429697204,
+            -0.27763097915078916,
+            -0.09916336146664761,
+            0.12259874732079012,
+            0.0
+          ],
+          [
+            0.0,
+            0.8625475974299857,
+            0.626237676215613,
+            0.1257830943568461,
+            -0.005501800209861685,
+            0.0
+          ],
+          [
+            2.513330597096756e-09,
+            -0.641194460580904,
+            -0.6414147722148287,
+            -0.6397128220317683,
+            0.7672495336559834,
+            0.005549300131372534
+          ],
+          [
+            1.5829769305771674e-09,
+            -0.7673782626604064,
+            -0.7671938355954102,
+            -0.7686111049103794,
+            -0.6402812394634573,
+            -0.05020372794066089
+          ],
+          [
+            1.000000000427315,
+            0.0005135294494976147,
+            -0.0008433292648600982,
+            0.002115932722490055,
+            0.03698771485162426,
+            -0.9987235808936082
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.08056847116413,
+          "scaled_condition_number": 15.469918406693646
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.080568472174822,
+          "scaled_condition_number": 15.4699184093956
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.077190698302656,
+          "scaled_condition_number": 15.46904126153972
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.86800426408884e-10,
+          "relative_frobenius_error": 1.0027877576245213e-10,
+          "maximum_absolute_element_error": 1.4003809223339658e-10,
+          "column_l2_errors": [
+            7.303692494377842e-11,
+            8.51114043749613e-11,
+            1.457500012370732e-10,
+            1.415133513296544e-10,
+            9.338114293560107e-11,
+            1.4031041197031738e-10
+          ],
+          "linear_block_frobenius_error": 1.410458851908372e-10,
+          "angular_block_frobenius_error": 2.4972092995792494e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004414844795411255,
+          "relative_frobenius_error": 0.0015436351919292698,
+          "maximum_absolute_element_error": 0.0021159327224899937,
+          "column_l2_errors": [
+            0.000885512644003354,
+            0.0013674418446283831,
+            0.0016466918858110409,
+            0.0029776198702839685,
+            0.0009020710139887941,
+            0.002108382876390044
+          ],
+          "linear_block_frobenius_error": 0.0023265841888341797,
+          "angular_block_frobenius_error": 0.0037520475183340438
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "current_pose:ur_rtde_solution",
+      "q_rad": [
+        -0.696547810231344,
+        -1.9662305317320765,
+        -1.6840369701385498,
+        -1.0245905679515381,
+        1.539922118186952,
+        -3.3826695124255575
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.689774265192567,
+            -0.10063668444495649,
+            0.33307341284864234,
+            0.11955687078680878,
+            0.10309817651195108,
+            5.898059818321144e-17
+          ],
+          [
+            0.5455232960186992,
+            0.08417293771005385,
+            -0.278583975487766,
+            -0.09999785955837244,
+            0.12297373900263812,
+            3.707971429900425e-17
+          ],
+          [
+            -0.0,
+            0.8609908363502642,
+            0.6249733297267798,
+            0.1257869036661241,
+            -0.004952576664889519,
+            -1.2468324983583301e-18
+          ],
+          [
+            0.0,
+            -0.6415734733434979,
+            -0.6415734733434979,
+            -0.6415734733434979,
+            0.7665214207615685,
+            0.00896311881293087
+          ],
+          [
+            0.0,
+            -0.7670615870332447,
+            -0.7670615870332447,
+            -0.7670615870332447,
+            -0.6411216760472173,
+            -0.047740368910032256
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.0375221003686276,
+            -0.9988195631231296
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6897742652056671,
+            -0.10063668448578866,
+            0.33307341285038206,
+            0.11955687079234778,
+            0.10309817649600816,
+            0.0
+          ],
+          [
+            0.5455232960915879,
+            0.08417293767548628,
+            -0.2785839754437802,
+            -0.09999785954839524,
+            0.12297373896963393,
+            0.0
+          ],
+          [
+            0.0,
+            0.8609908362378071,
+            0.6249733296437299,
+            0.12578690364306588,
+            -0.004952576682093479,
+            0.0
+          ],
+          [
+            -8.875175741327823e-13,
+            -0.6415734733088612,
+            -0.6415734733313962,
+            -0.6415734732841818,
+            0.7665214206975223,
+            0.008963118814867424
+          ],
+          [
+            7.320731178146844e-13,
+            -0.7670615869587225,
+            -0.7670615869816892,
+            -0.7670615869628581,
+            -0.641121675994282,
+            -0.04774036891679453
+          ],
+          [
+            1.0000000001103804,
+            2.3853683415578435e-11,
+            3.786453840529103e-11,
+            3.68514582074308e-11,
+            0.03752210035932796,
+            -0.998819563266829
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6902661184304826,
+            -0.10104856817960695,
+            0.33191079157335324,
+            0.11946789213457265,
+            0.10263508831709345,
+            0.0
+          ],
+          [
+            0.546260351286243,
+            0.08509430798886441,
+            -0.2784614429041099,
+            -0.0991854119392066,
+            0.12256340137239974,
+            0.0
+          ],
+          [
+            0.0,
+            0.8617555212475647,
+            0.6257128953301994,
+            0.12586694239646867,
+            -0.005172352962601323,
+            0.0
+          ],
+          [
+            -1.0943012010407634e-09,
+            -0.6415732916034971,
+            -0.6417930240079729,
+            -0.640086797788021,
+            0.766923154276241,
+            0.0072575518523661274
+          ],
+          [
+            -9.495327497701842e-10,
+            -0.7670615676748656,
+            -0.766877440291438,
+            -0.7682997043872717,
+            -0.6406410763704333,
+            -0.04896897419178536
+          ],
+          [
+            0.999999999218474,
+            0.000513528682710935,
+            -0.0008434656782162396,
+            0.002110937355476706,
+            0.03752182409126095,
+            -0.9987739322059692
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.074744422969811,
+          "scaled_condition_number": 15.457331282399135
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.074744423159759,
+          "scaled_condition_number": 15.457331282065931
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.071343682213756,
+          "scaled_condition_number": 15.456443478158167
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 3.0560644533654466e-10,
+          "relative_frobenius_error": 1.0687282570899342e-10,
+          "maximum_absolute_element_error": 1.4369938572400542e-10,
+          "column_l2_errors": [
+            1.329267614511563e-10,
+            1.510993778570326e-10,
+            1.1433805249175238e-10,
+            1.0243341311186912e-10,
+            9.289761647666259e-11,
+            1.4387144267075692e-10
+          ],
+          "linear_block_frobenius_error": 1.7924714692288478e-10,
+          "angular_block_frobenius_error": 2.475192108731042e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004413275388008462,
+          "relative_frobenius_error": 0.0015433549211601567,
+          "maximum_absolute_element_error": 0.002110937355476645,
+          "column_l2_errors": [
+            0.0008860982310470571,
+            0.0013663916477626452,
+            0.0016453591135955614,
+            0.0029788571367454393,
+            0.0009074663688022924,
+            0.0021025013141309956
+          ],
+          "linear_block_frobenius_error": 0.0023254393165979383,
+          "angular_block_frobenius_error": 0.0037509107740949727
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_x_plus_100mm:own_solution",
+      "q_rad": [
+        -0.7774309115428397,
+        -1.8810204608022285,
+        -1.8043720600606103,
+        -0.9874472890992393,
+        1.5409816456333654,
+        -3.464142144586117
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6902661638349303,
+            -0.09416669439623805,
+            0.3216706553780103,
+            0.11090919901300528,
+            0.1127027306162329,
+            -4.683753385137379e-17
+          ],
+          [
+            0.44625953854374634,
+            0.09267802396836239,
+            -0.31658540102935834,
+            -0.1091558482576384,
+            0.11424327841205148,
+            -1.431146867680866e-17
+          ],
+          [
+            -0.0,
+            0.8022448797025654,
+            0.6152046768266478,
+            0.12610142428397014,
+            -0.004782295401930127,
+            3.5914196963582334e-19
+          ],
+          [
+            0.0,
+            -0.7014507005483831,
+            -0.7014507005483831,
+            -0.7014507005483831,
+            0.7121606553855973,
+            0.007257102503595148
+          ],
+          [
+            0.0,
+            -0.7127179769727873,
+            -0.7127179769727873,
+            -0.7127179769727873,
+            -0.7009021895939861,
+            -0.04896854716725084
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03953886117621907,
+            -0.9987739563342554
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6902661638108487,
+            -0.0941666943865549,
+            0.321670655334394,
+            0.1109091990192379,
+            0.11270273059249547,
+            0.0
+          ],
+          [
+            0.4462595385446022,
+            0.09267802397738834,
+            -0.31658540100565347,
+            -0.10915584824910951,
+            0.11424327839293369,
+            0.0
+          ],
+          [
+            0.0,
+            0.8022448796107806,
+            0.6152046767293751,
+            0.12610142433033822,
+            -0.004782295420779903,
+            0.0
+          ],
+          [
+            2.595021693044049e-13,
+            -0.7014507004839402,
+            -0.7014507004742829,
+            -0.7014507005917898,
+            0.7121606553279141,
+            0.0072571025022720274
+          ],
+          [
+            3.766620025109399e-12,
+            -0.7127179769128668,
+            -0.7127179769007566,
+            -0.712717977014508,
+            -0.7009021895379948,
+            -0.04896854717359079
+          ],
+          [
+            1.0000000000204337,
+            -7.991547478870637e-12,
+            -8.076499228582017e-12,
+            7.156632704769514e-12,
+            0.03953886114251195,
+            -0.9987739565027768
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6907329068162049,
+            -0.09450900556595698,
+            0.3205693371310936,
+            0.11090101012523057,
+            0.11218344109220624,
+            0.0
+          ],
+          [
+            0.4470599415662413,
+            0.09359348007720314,
+            -0.3163547372397879,
+            -0.1083232036847015,
+            0.11389694126728855,
+            0.0
+          ],
+          [
+            0.0,
+            0.8030265086778066,
+            0.6159558464391424,
+            0.1261805439578545,
+            -0.00498640573276532,
+            0.0
+          ],
+          [
+            -1.3104656302123216e-09,
+            -0.7014505153227042,
+            -0.7015716062032824,
+            -0.6999127262961353,
+            0.7127533539368288,
+            0.005540700175925744
+          ],
+          [
+            3.6122848152303535e-10,
+            -0.7127179719546615,
+            -0.7125984372717229,
+            -0.7142255458347745,
+            -0.7002994799959907,
+            -0.049980139956046415
+          ],
+          [
+            0.9999999982517009,
+            0.0005135280305656384,
+            -0.0008629409255748335,
+            0.0020116345338126273,
+            0.03953853976149651,
+            -0.9987348428770133
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 5.790273662675716,
+          "scaled_condition_number": 14.656247583693888
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 5.79027366267072,
+          "scaled_condition_number": 14.65624758225931
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 5.7859901521601795,
+          "scaled_condition_number": 14.655922717251354
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.887073410423096e-10,
+          "relative_frobenius_error": 1.0217096913027502e-10,
+          "maximum_absolute_element_error": 1.6852141904166729e-10,
+          "column_l2_errors": [
+            3.181896008235287e-11,
+            1.2808942806332135e-10,
+            1.505681983860528e-10,
+            7.705560366989e-11,
+            9.424870431670693e-11,
+            1.6864582497612663e-10
+          ],
+          "linear_block_frobenius_error": 1.570111022254412e-10,
+          "angular_block_frobenius_error": 2.422796783671146e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004448984117924637,
+          "relative_frobenius_error": 0.0015744560471946825,
+          "maximum_absolute_element_error": 0.002011634533812566,
+          "column_l2_errors": [
+            0.0009265495178311027,
+            0.001352734915486034,
+            0.0016136723366579674,
+            0.003063401073538636,
+            0.0010704310301066406,
+            0.0019927084039842815
+          ],
+          "linear_block_frobenius_error": 0.0023207615473974583,
+          "angular_block_frobenius_error": 0.0037957246372289717
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_x_plus_100mm:ur_rtde_solution",
+      "q_rad": [
+        -0.778107117566659,
+        -1.880622010176964,
+        -1.8068894492511403,
+        -0.9847941470763066,
+        1.5429278180270087,
+        -3.4639809898443197
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6898001116605885,
+            -0.09346095267976177,
+            0.3221526035231014,
+            0.11079377910771505,
+            0.11277918688451434,
+            6.678685382510707e-17
+          ],
+          [
+            0.445458694662917,
+            0.09210793742203903,
+            -0.3174888656156204,
+            -0.10918984003695516,
+            0.1141804517592958,
+            -4.119968255444917e-18
+          ],
+          [
+            -0.0,
+            0.8014681609047101,
+            0.6146604500313677,
+            0.1261848971275153,
+            -0.004470116520954387,
+            7.860465750519907e-19
+          ],
+          [
+            0.0,
+            -0.7019324843301988,
+            -0.7019324843301988,
+            -0.7019324843301988,
+            0.7116713929102608,
+            0.008971115530900933
+          ],
+          [
+            0.0,
+            -0.7122434888730363,
+            -0.7122434888730363,
+            -0.7122434888730363,
+            -0.7013686704846532,
+            -0.04796396104660374
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.04007264123761811,
+            -0.9988087792599998
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6898001116695252,
+            -0.09346095269924248,
+            0.3221526034824507,
+            0.11079377912337485,
+            0.1127791868782424,
+            0.0
+          ],
+          [
+            0.4454586947089112,
+            0.0921079373328304,
+            -0.31748886564209045,
+            -0.10918984005847676,
+            0.11418045170463742,
+            0.0
+          ],
+          [
+            0.0,
+            0.8014681608103924,
+            0.6146604499546182,
+            0.1261848970868229,
+            -0.004470116554688985,
+            0.0
+          ],
+          [
+            7.534363624181257e-12,
+            -0.7019324842564856,
+            -0.7019324842474085,
+            -0.7019324843618319,
+            0.7116713928531644,
+            0.008971115534473372
+          ],
+          [
+            -1.556692527891287e-11,
+            -0.7122434887950305,
+            -0.71224348881216,
+            -0.7122434888958294,
+            -0.7013686704275863,
+            -0.047963961052920126
+          ],
+          [
+            1.0000000000506306,
+            1.8684528913799622e-11,
+            3.2226642688400245e-11,
+            4.565984139772401e-11,
+            0.040072641235041555,
+            -0.9988087793916527
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6902661159324808,
+            -0.09380176890783076,
+            0.32105327291143126,
+            0.11078626649396739,
+            0.1122591844482379,
+            0.0
+          ],
+          [
+            0.4462603438448731,
+            0.09302224723839458,
+            -0.3172585300026398,
+            -0.10835668645681196,
+            0.1138355239516109,
+            0.0
+          ],
+          [
+            0.0,
+            0.8022500039839287,
+            0.6154117565548844,
+            0.12626412612681825,
+            -0.00467449998153846,
+            0.0
+          ],
+          [
+            2.369169614387348e-09,
+            -0.7019323008274293,
+            -0.7020529231358522,
+            -0.7003908030246858,
+            0.7122697282455855,
+            0.0072575514745628145
+          ],
+          [
+            -2.02749997178934e-10,
+            -0.7122434864289163,
+            -0.7121242513190361,
+            -0.7137567481138932,
+            -0.700761045591508,
+            -0.04896897443225871
+          ],
+          [
+            1.0000000000164604,
+            0.0005135298106674633,
+            -0.0008630080899529509,
+            0.0020066367544013548,
+            0.040072314309601335,
+            -0.9987739323039212
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 5.786625424344003,
+          "scaled_condition_number": 14.646781544594848
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 5.786625423832109,
+          "scaled_condition_number": 14.64678154167083
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 5.782313460075449,
+          "scaled_condition_number": 14.646432033071111
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.967220576783723e-10,
+          "relative_frobenius_error": 1.0502456458413258e-10,
+          "maximum_absolute_element_error": 1.3165291079531016e-10,
+          "column_l2_errors": [
+            7.111880975713276e-11,
+            1.7059062471375644e-10,
+            1.408628555325315e-10,
+            7.726104448362824e-11,
+            1.0338361643244805e-10,
+            1.3185275105683153e-10
+          ],
+          "linear_block_frobenius_error": 1.8493684243841713e-10,
+          "angular_block_frobenius_error": 2.320395307308549e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004448167812673831,
+          "relative_frobenius_error": 0.0015744258831933604,
+          "maximum_absolute_element_error": 0.0020066367544012936,
+          "column_l2_errors": [
+            0.0009272547613026407,
+            0.0013517061967175522,
+            0.0016123119562158083,
+            0.0030649313864624327,
+            0.0010762730212905617,
+            0.001986848758931479
+          ],
+          "linear_block_frobenius_error": 0.0023196704080804993,
+          "angular_block_frobenius_error": 0.003795434900980801
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_y_plus_100mm:own_solution",
+      "q_rad": [
+        -0.7786321869445596,
+        -2.0855797080405902,
+        -1.5001061288377997,
+        -1.0871175828319013,
+        1.5410291762569857,
+        -3.465343031847508
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.7902659473873139,
+            -0.09405529349177881,
+            0.28558307344616446,
+            0.11077488769939774,
+            0.11283995553636325,
+            4.5102810375396984e-17
+          ],
+          [
+            0.5462602133509714,
+            0.09279107606370043,
+            -0.2817444899362804,
+            -0.10928593860973004,
+            0.11410806058815882,
+            -3.209238430557093e-17
+          ],
+          [
+            -0.0,
+            0.9438776998580357,
+            0.642217112194076,
+            0.12610709604415524,
+            -0.004774666832421719,
+            1.904130065427667e-18
+          ],
+          [
+            0.0,
+            -0.7023063647979944,
+            -0.7023063647979944,
+            -0.7023063647979944,
+            0.7113171404453839,
+            0.007257552228619206
+          ],
+          [
+            0.0,
+            -0.7118748274550987,
+            -0.7118748274550987,
+            -0.7118748274550987,
+            -0.7017561737793174,
+            -0.04896897387337402
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03957522294586031,
+            -0.998773932145527
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.7902659474035012,
+            -0.09405529349804098,
+            0.28558307335613264,
+            0.11077488765165455,
+            0.11283995554611792,
+            0.0
+          ],
+          [
+            0.5462602133965433,
+            0.09279107610060677,
+            -0.2817444899605448,
+            -0.10928593863201996,
+            0.11410806055600631,
+            0.0
+          ],
+          [
+            0.0,
+            0.9438776998882403,
+            0.6422171121012177,
+            0.12610709601568182,
+            -0.004774666828577523,
+            0.0
+          ],
+          [
+            6.2791079452660045e-12,
+            -0.7023063648697538,
+            -0.7023063647189244,
+            -0.7023063647431934,
+            0.7113171403896231,
+            0.0072575522293331736
+          ],
+          [
+            2.3820704477329533e-11,
+            -0.7118748275383868,
+            -0.711874827371964,
+            -0.7118748274020835,
+            -0.7017561737232265,
+            -0.04896897387935352
+          ],
+          [
+            1.0000000000288047,
+            1.3709989359366508e-11,
+            -5.1956690381928495e-12,
+            -1.549224818969936e-11,
+            0.03957522295052216,
+            -0.9987739322652202
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.790944756468015,
+            -0.09438818665552517,
+            0.284376187487112,
+            0.11073027045283013,
+            0.11238452307660296,
+            0.0
+          ],
+          [
+            0.546778955057281,
+            0.09380083088039726,
+            -0.28152677405968163,
+            -0.1084916138593961,
+            0.11369689656426374,
+            0.0
+          ],
+          [
+            0.0,
+            0.9446074178132147,
+            0.6429294181486966,
+            0.12618609573911144,
+            -0.005023606503007372,
+            0.0
+          ],
+          [
+            7.948501198047554e-10,
+            -0.7023061808312028,
+            -0.7026236284261812,
+            -0.7011789616348962,
+            0.7115159969865235,
+            0.005314857602772239
+          ],
+          [
+            -8.655936206315505e-10,
+            -0.7118748220764712,
+            -0.711561240680913,
+            -0.7129816330819275,
+            -0.7015545616572538,
+            -0.05018103070784457
+          ],
+          [
+            1.0000000006784697,
+            0.0005135275120609383,
+            -0.0007996778913068293,
+            0.0022919189103454227,
+            0.039575055491419424,
+            -0.9987259968787547
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.6552310202556155,
+          "scaled_condition_number": 16.792975134821695
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.655231020060215,
+          "scaled_condition_number": 16.792975134805342
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.652992681186321,
+          "scaled_condition_number": 16.790599195883512
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.8336416703886604e-10,
+          "relative_frobenius_error": 9.73618819656361e-11,
+          "maximum_absolute_element_error": 1.1969314428483813e-10,
+          "column_l2_errors": [
+            6.144420263770805e-11,
+            1.207804383114402e-10,
+            1.746642140609924e-10,
+            9.818731318134289e-11,
+            8.614463258513137e-11,
+            1.1984453670735461e-10
+          ],
+          "linear_block_frobenius_error": 1.6340222949711545e-10,
+          "angular_block_frobenius_error": 2.3150585858030112e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004433795073487945,
+          "relative_frobenius_error": 0.0015234199761946004,
+          "maximum_absolute_element_error": 0.0022919189103453616,
+          "column_l2_errors": [
+            0.0008543270602696988,
+            0.0013880279110803921,
+            0.0016881443358400007,
+            0.0028962272595274455,
+            0.0007201645223823409,
+            0.002290292987607041
+          ],
+          "linear_block_frobenius_error": 0.0023413176549597417,
+          "angular_block_frobenius_error": 0.003765205225782492
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_y_plus_100mm:ur_rtde_solution",
+      "q_rad": [
+        -0.778888324916835,
+        -2.0849925323108955,
+        -1.5030147331695796,
+        -1.0842585179850168,
+        1.5432613950618055,
+        -3.465322817241127
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.7895884903261909,
+            -0.09334626755560871,
+            0.2863221496514581,
+            0.11070592387817248,
+            0.1128679915171458,
+            -1.1275702593849246e-17
+          ],
+          [
+            0.5457396697830853,
+            0.09213877284491408,
+            -0.282618386337591,
+            -0.10927387071711994,
+            0.11409475221595118,
+            -4.185020385794047e-17
+          ],
+          [
+            -0.0,
+            0.943077125127586,
+            0.6417297265708054,
+            0.12619115124452532,
+            -0.004416617219797761,
+            1.883801274693564e-18
+          ],
+          [
+            0.0,
+            -0.7024886799328313,
+            -0.7024886799328313,
+            -0.7024886799328313,
+            0.7111221251474378,
+            0.0091964590187466
+          ],
+          [
+            0.0,
+            -0.711694916777005,
+            -0.711694916777005,
+            -0.711694916777005,
+            -0.7019232977357047,
+            -0.047761842959169534
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.04011243225765704,
+            -0.9988164153129745
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.7895884903685868,
+            -0.09334626760448828,
+            0.28632214960078173,
+            0.11070592387252276,
+            0.11286799150855842,
+            0.0
+          ],
+          [
+            0.5457396696773031,
+            0.0921387728336498,
+            -0.282618386415745,
+            -0.10927387078529804,
+            0.11409475220158782,
+            0.0
+          ],
+          [
+            0.0,
+            0.9430771252538772,
+            0.6417297265248756,
+            0.12619115125067637,
+            -0.004416617210845075,
+            0.0
+          ],
+          [
+            2.495096812995588e-12,
+            -0.7024886800321274,
+            -0.7024886798522443,
+            -0.7024886798674335,
+            0.7111221250914319,
+            0.009196459019664732
+          ],
+          [
+            -2.250413825749956e-11,
+            -0.7116949168830081,
+            -0.7116949167171874,
+            -0.7116949167287081,
+            -0.70192329767883,
+            -0.04776184296589596
+          ],
+          [
+            1.000000000056845,
+            -3.053936693223183e-11,
+            -4.638616263135956e-11,
+            -3.335775831097858e-11,
+            0.040112432251023455,
+            -0.9988164154641453
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.7902660595360267,
+            -0.09367790015923916,
+            0.2851169317308333,
+            0.11066178595697806,
+            0.11241195080335942,
+            0.0
+          ],
+          [
+            0.5462603649419862,
+            0.0931470676701629,
+            -0.28240196137119256,
+            -0.10847881759534772,
+            0.113685019287324,
+            0.0
+          ],
+          [
+            0.0,
+            0.9438074619338988,
+            0.6424424522089023,
+            0.1262703201165838,
+            -0.004666010827714118,
+            0.0
+          ],
+          [
+            -1.6437443013131944e-09,
+            -0.7024884966482948,
+            -0.702805310149065,
+            -0.7013559115841336,
+            0.7113273081586423,
+            0.007257551663161515
+          ],
+          [
+            1.6070699545751772e-09,
+            -0.7116949118128215,
+            -0.7113817905497288,
+            -0.7128075879437379,
+            -0.7017153759170561,
+            -0.048968974314386314
+          ],
+          [
+            1.0000000000729818,
+            0.0005135292842329828,
+            -0.000799939248193915,
+            0.0022869453378652114,
+            0.04011225622240797,
+            -0.998773932333072
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.645717796355002,
+          "scaled_condition_number": 16.77560735325738
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.645717796519504,
+          "scaled_condition_number": 16.77560735683468
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.643459573936619,
+          "scaled_condition_number": 16.773243510754376
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 3.497859145620487e-10,
+          "relative_frobenius_error": 1.202059802196557e-10,
+          "maximum_absolute_element_error": 1.5117085361282534e-10,
+          "column_l2_errors": [
+            1.293494785536575e-10,
+            2.012326934382476e-10,
+            1.5168972864053842e-10,
+            1.1153572145634033e-10,
+            8.2314007547661e-11,
+            1.5132321282972788e-10
+          ],
+          "linear_block_frobenius_error": 2.1752409498262032e-10,
+          "angular_block_frobenius_error": 2.7392235054482287e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004430902940757865,
+          "relative_frobenius_error": 0.001522705772526104,
+          "maximum_absolute_element_error": 0.0022869453378651502,
+          "column_l2_errors": [
+            0.0008545311478381082,
+            0.0013869905725894425,
+            0.001686882736386226,
+            0.0028968337142996703,
+            0.0007234521123386453,
+            0.0022843670120781473
+          ],
+          "linear_block_frobenius_error": 0.002340085152104028,
+          "angular_block_frobenius_error": 0.003762565926507995
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_z_plus_100mm:own_solution",
+      "q_rad": [
+        -0.6960540376978783,
+        -2.0580215617940105,
+        -1.7500823976030107,
+        -0.86728859733878,
+        1.5378661520651575,
+        -3.382784861378652
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6902660971890678,
+            -0.024651070608399432,
+            0.39081011940113636,
+            0.11964973334243124,
+            0.10303802493449098,
+            -6.938893903907228e-17
+          ],
+          [
+            0.5462603820670737,
+            0.020597578385633725,
+            -0.32654736161929376,
+            -0.09997516134253243,
+            0.12301042442466494,
+            1.431146867680866e-17
+          ],
+          [
+            -0.0,
+            0.8617832776060073,
+            0.5749319568406397,
+            0.1257031892909187,
+            -0.005282366937557882,
+            -1.1926223897340549e-18
+          ],
+          [
+            0.0,
+            -0.6411946412043006,
+            -0.6411946412043006,
+            -0.6411946412043006,
+            0.7668531758716912,
+            0.007257552201648441
+          ],
+          [
+            0.0,
+            -0.7673782848705639,
+            -0.7673782848705639,
+            -0.7673782848705639,
+            -0.6407558783636473,
+            -0.04896897372876357
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.036987984507565914,
+            -0.998773932152813
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.690266097280734,
+            -0.024651070684722498,
+            0.39081011932173837,
+            0.11964973334332996,
+            0.10303802489008973,
+            0.0
+          ],
+          [
+            0.546260382150443,
+            0.020597578365144642,
+            -0.3265473616509418,
+            -0.09997516137172369,
+            0.12301042440210352,
+            0.0
+          ],
+          [
+            0.0,
+            0.861783277697481,
+            0.5749319568065792,
+            0.12570318928817326,
+            -0.0052823669466350864,
+            0.0
+          ],
+          [
+            -1.4468596912894409e-11,
+            -0.641194641297675,
+            -0.6411946411368085,
+            -0.6411946412127266,
+            0.766853175811329,
+            0.007257552203312321
+          ],
+          [
+            7.310686992016516e-12,
+            -0.7673782849663947,
+            -0.7673782847648644,
+            -0.7673782848784022,
+            -0.6407558783117328,
+            -0.048968973736672514
+          ],
+          [
+            1.0000000000794753,
+            1.2120872447291002e-11,
+            -1.6915709763527613e-11,
+            -2.0741556063037956e-12,
+            0.03698798451231228,
+            -0.9987739322942091
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6907151111623655,
+            -0.024978479340465043,
+            0.3897151057419279,
+            0.11956314349692576,
+            0.10253765730938724,
+            0.0
+          ],
+          [
+            0.5470935839912983,
+            0.021448387566014304,
+            -0.3265126870544144,
+            -0.09915970577978328,
+            0.12263314763671929,
+            0.0
+          ],
+          [
+            0.0,
+            0.8625943225260002,
+            0.5757238871750836,
+            0.12578320329748038,
+            -0.0054444339314674295,
+            0.0
+          ],
+          [
+            1.6184438541818687e-09,
+            -0.6411944592712802,
+            -0.6415087943770365,
+            -0.6394667313236663,
+            0.7674463455139267,
+            0.0057947043257764435
+          ],
+          [
+            -2.601222400994183e-09,
+            -0.7673782675763012,
+            -0.7671152515891112,
+            -0.7688167604900991,
+            -0.640045339939158,
+            -0.049926478449965866
+          ],
+          [
+            1.0000000000471652,
+            0.0005135284972837236,
+            -0.0008114759360961301,
+            0.0017570608625110445,
+            0.03698738165746368,
+            -0.9987360855616358
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 5.940843555093956,
+          "scaled_condition_number": 15.514576964101634
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 5.940843554871477,
+          "scaled_condition_number": 15.514576964109603
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 5.936858144390826,
+          "scaled_condition_number": 15.511248656776665
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 3.302316478255107e-10,
+          "relative_frobenius_error": 1.1550253437174013e-10,
+          "maximum_absolute_element_error": 1.4139611703711807e-10,
+          "column_l2_errors": [
+            1.4809534651837108e-10,
+            1.807254548132195e-10,
+            1.5645921001706775e-10,
+            3.1578695920179855e-11,
+            9.446766271821743e-11,
+            1.4162691062465389e-10
+          ],
+          "linear_block_frobenius_error": 2.0458418611540292e-10,
+          "angular_block_frobenius_error": 2.592262564190794e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004296169638667708,
+          "relative_frobenius_error": 0.0015026375716092402,
+          "maximum_absolute_element_error": 0.0017570608625109834,
+          "column_l2_errors": [
+            0.0009464877150588967,
+            0.001323849746920017,
+            0.001629043526695979,
+            0.0029700194200657647,
+            0.0011294630078329852,
+            0.001748762866580724
+          ],
+          "linear_block_frobenius_error": 0.002304334080176056,
+          "angular_block_frobenius_error": 0.003625895477140701
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "robot_z_plus_100mm:ur_rtde_solution",
+      "q_rad": [
+        -0.6965906427180286,
+        -2.057726641596341,
+        -1.7525078041465552,
+        -0.8646319571941241,
+        1.5395524800906804,
+        -3.382406459888511
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6898182715055927,
+            -0.024015481913517663,
+            0.39132424025335105,
+            0.11955197893576819,
+            0.10310393640858274,
+            3.903127820947816e-17
+          ],
+          [
+            0.5454259762584575,
+            0.02008839638307497,
+            -0.327333695856012,
+            -0.10000247131792647,
+            0.12296650814020438,
+            -9.410874857174178e-17
+          ],
+          [
+            -0.0,
+            0.8609520942722824,
+            0.5742604567685636,
+            0.12578553569901046,
+            -0.005011853236076669,
+            4.865357249028701e-18
+          ],
+          [
+            0.0,
+            -0.6416063279101784,
+            -0.6416063279101784,
+            -0.6416063279101784,
+            0.7664941990293076,
+            0.008717311674520117
+          ],
+          [
+            0.0,
+            -0.7670341061423649,
+            -0.7670341061423649,
+            -0.7670341061423649,
+            -0.6411547080702686,
+            -0.04801852451023427
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03751377312066483,
+            -0.9988084049411223
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6898182714487611,
+            -0.024015481991934706,
+            0.3913242402342476,
+            0.11955197892765668,
+            0.10310393638857107,
+            0.0
+          ],
+          [
+            0.5454259762172065,
+            0.0200883964462939,
+            -0.32733369575987936,
+            -0.10000247124830608,
+            0.12296650808707454,
+            0.0
+          ],
+          [
+            0.0,
+            0.8609520943253512,
+            0.5742604567565701,
+            0.12578553569564388,
+            -0.005011853251857268,
+            0.0
+          ],
+          [
+            -9.741552698221571e-12,
+            -0.6416063279900152,
+            -0.6416063278266587,
+            -0.6416063279310757,
+            0.7664941989672394,
+            0.008717311674600032
+          ],
+          [
+            1.495777510137721e-11,
+            -0.7670341062318444,
+            -0.767034106064349,
+            -0.767034106170303,
+            -0.64115470801862,
+            -0.04801852451734392
+          ],
+          [
+            0.9999999999930266,
+            -4.3163421009878695e-12,
+            5.9599771603348715e-12,
+            6.530946508259427e-12,
+            0.03751377312277177,
+            -0.9988084050881999
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6902661214280847,
+            -0.024341522353310552,
+            0.3902309585468444,
+            0.11946576516930207,
+            0.10260281702034746,
+            0.0
+          ],
+          [
+            0.5462604423800421,
+            0.020938059230868333,
+            -0.32729945476095423,
+            -0.09918666327157766,
+            0.12259035248041172,
+            0.0
+          ],
+          [
+            0.0,
+            0.8617631878649057,
+            0.5750523051073486,
+            0.1258656085467713,
+            -0.005173908829148033,
+            0.0
+          ],
+          [
+            -7.276164247617853e-10,
+            -0.6416061457514491,
+            -0.6419200397685576,
+            -0.6398746963938589,
+            0.7670919248935526,
+            0.007257551850394673
+          ],
+          [
+            -7.15815576339407e-10,
+            -0.7670340876244449,
+            -0.7667711547623052,
+            -0.7684772641191712,
+            -0.6404394899147794,
+            -0.0489689741973648
+          ],
+          [
+            0.9999999992927808,
+            0.0005135276857690794,
+            -0.0008115960003693819,
+            0.0017512713560273812,
+            0.0375131668671372,
+            -0.9987739323364199
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 5.936305758902445,
+          "scaled_condition_number": 15.504185555703899
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 5.9363057581951075,
+          "scaled_condition_number": 15.504185553192977
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 5.932296653449271,
+          "scaled_condition_number": 15.500838856651175
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 3.0556670279853404e-10,
+          "relative_frobenius_error": 1.068944048245586e-10,
+          "maximum_absolute_element_error": 1.4707757234333485e-10,
+          "column_l2_errors": [
+            7.279246672519665e-11,
+            1.6541253252032679e-10,
+            1.5115491637698843e-10,
+            7.863854273654016e-11,
+            9.998382790108073e-11,
+            1.4724933188991613e-10
+          ],
+          "linear_block_frobenius_error": 1.898429109068365e-10,
+          "angular_block_frobenius_error": 2.3943825725557433e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004295014106320921,
+          "relative_frobenius_error": 0.001502496745893679,
+          "maximum_absolute_element_error": 0.00175127135602732,
+          "column_l2_errors": [
+            0.0009470497669870415,
+            0.0013228049201871306,
+            0.0016277922963904515,
+            0.002971126261156969,
+            0.0011347639944840006,
+            0.001742251908414002
+          ],
+          "linear_block_frobenius_error": 0.0023031998424632287,
+          "angular_block_frobenius_error": 0.0036252471169801732
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "magnet_z_rotation_10deg:own_solution",
+      "q_rad": [
+        -0.6960540352044365,
+        -1.9667035391570344,
+        -1.6813727652396049,
+        -1.027316253468995,
+        1.5378661423803952,
+        -4.953581134734356
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6902660967440225,
+            -0.10138889932473198,
+            0.332414548256284,
+            0.11964973366144147,
+            0.1030380246344765,
+            -1.3877787807814457e-17
+          ],
+          [
+            0.5462603824620281,
+            0.08471704226832935,
+            -0.2777540492380687,
+            -0.09997516110245505,
+            0.12301042460926975,
+            3.1008182133085427e-17
+          ],
+          [
+            -0.0,
+            0.8617832771763128,
+            0.6254983502575919,
+            0.12570318911286135,
+            -0.005282368490760969,
+            -1.6195269951502222e-18
+          ],
+          [
+            0.0,
+            -0.6411946392908875,
+            -0.6411946392908875,
+            -0.6411946392908875,
+            0.7668531775014475,
+            0.007257545242301779
+          ],
+          [
+            0.0,
+            -0.7673782864693454,
+            -0.7673782864693454,
+            -0.7673782864693454,
+            -0.6407558764783393,
+            -0.04896898040739746
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03698798337850596,
+            -0.9987739318759356
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6902660967811336,
+            -0.10138889944277807,
+            0.33241454816534954,
+            0.11964973356537456,
+            0.10303802461253397,
+            0.0
+          ],
+          [
+            0.5462603824279988,
+            0.08471704232571042,
+            -0.2777540491494257,
+            -0.09997516103865678,
+            0.12301042456863698,
+            0.0
+          ],
+          [
+            0.0,
+            0.861783277045225,
+            0.6254983502262945,
+            0.1257031891355176,
+            -0.005282368487069533,
+            0.0
+          ],
+          [
+            -1.1204656497351557e-11,
+            -0.6411946392544632,
+            -0.6411946392405983,
+            -0.6411946392506226,
+            0.766853177438698,
+            0.007257545245336459
+          ],
+          [
+            1.903582585538996e-11,
+            -0.7673782863881047,
+            -0.7673782864004476,
+            -0.7673782864203624,
+            -0.6407558764232472,
+            -0.048968980415357896
+          ],
+          [
+            1.0000000000248006,
+            -4.0073339622618374e-11,
+            2.5313762145831084e-11,
+            3.9905714022546974e-11,
+            0.0369879834070997,
+            -0.9987739320416713
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6907590250349038,
+            -0.10180224713218777,
+            0.33125000242772984,
+            0.11956022694104007,
+            0.10257572435889983,
+            0.0
+          ],
+          [
+            0.5469959921677869,
+            0.08563960446350549,
+            -0.2776309771523877,
+            -0.09916336118909186,
+            0.12259874743181243,
+            0.0
+          ],
+          [
+            0.0,
+            0.8625475974577412,
+            0.6262376760490795,
+            0.12578309421806821,
+            -0.00550180181968507,
+            0.0
+          ],
+          [
+            3.869878728699097e-09,
+            -0.6411944512913856,
+            -0.641414774166048,
+            -0.6397128243970058,
+            0.7672495334684726,
+            0.005549293173700832
+          ],
+          [
+            -2.941923085801315e-09,
+            -0.7673782655583166,
+            -0.7671938299394989,
+            -0.7686111099832271,
+            -0.6402812380268312,
+            -0.05020373453988296
+          ],
+          [
+            1.000000000711042,
+            0.0005135278578898735,
+            -0.0008433297965001286,
+            0.002115933360418685,
+            0.036987714013807516,
+            -0.9987235807565957
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.080568465794142,
+          "scaled_condition_number": 15.469918405403545
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.080568465209748,
+          "scaled_condition_number": 15.469918402901042
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.077190836983592,
+          "scaled_condition_number": 15.469041292334175
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 3.5987212473927895e-10,
+          "relative_frobenius_error": 1.2582804200908124e-10,
+          "maximum_absolute_element_error": 1.657357584505803e-10,
+          "column_l2_errors": [
+            6.031754167486585e-11,
+            2.0962856474318035e-10,
+            1.5818621465575593e-10,
+            1.3937512547641034e-10,
+            9.968140038103102e-11,
+            1.659545705419793e-10
+          ],
+          "linear_block_frobenius_error": 2.645966603956902e-10,
+          "angular_block_frobenius_error": 2.439191535566876e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004414839285901869,
+          "relative_frobenius_error": 0.0015436332656558502,
+          "maximum_absolute_element_error": 0.0021159333604186237,
+          "column_l2_errors": [
+            0.0008854941779491733,
+            0.0013674332901862593,
+            0.0016466951968611455,
+            0.002977619613048881,
+            0.0009020700714932769,
+            0.002108382824059285
+          ],
+          "linear_block_frobenius_error": 0.002326573704816766,
+          "angular_block_frobenius_error": 0.0037520475365322484
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    },
+    {
+      "label": "magnet_z_rotation_10deg:ur_rtde_solution",
+      "q_rad": [
+        -0.696547810232067,
+        -1.9662305317323998,
+        -1.6840369701419062,
+        -1.0245905679478087,
+        1.5399221181870595,
+        -4.953465839221142
+      ],
+      "matrices": {
+        "own_analytic": [
+          [
+            0.6897742651924136,
+            -0.10063668444343249,
+            0.3330734128498456,
+            0.1195568707867321,
+            0.10309817651204005,
+            -3.469446951953614e-18
+          ],
+          [
+            0.5455232960175721,
+            0.08417293770890281,
+            -0.2785839754891816,
+            -0.09999785955845521,
+            0.12297373900256428,
+            3.707971429900425e-17
+          ],
+          [
+            -0.0,
+            0.8609908363494307,
+            0.6249733297257635,
+            0.12578690366613193,
+            -0.004952576664872345,
+            -1.802486111757151e-18
+          ],
+          [
+            0.0,
+            -0.6415734733440525,
+            -0.6415734733440525,
+            -0.6415734733440525,
+            0.7665214207611036,
+            0.00896311881300348
+          ],
+          [
+            0.0,
+            -0.7670615870327808,
+            -0.7670615870327808,
+            -0.7670615870327808,
+            -0.6411216760477704,
+            -0.047740368909988305
+          ],
+          [
+            1.0,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            6.123233995736766e-17,
+            0.03752210036867728,
+            -0.9988195631231311
+          ]
+        ],
+        "own_finite_difference": [
+          [
+            0.6897742651501559,
+            -0.10063668443027751,
+            0.33307341285038206,
+            0.11955687079234778,
+            0.10309817644049701,
+            0.0
+          ],
+          [
+            0.5455232959805656,
+            0.08417293778650858,
+            -0.2785839754437802,
+            -0.09999785949288409,
+            0.12297373902514508,
+            0.0
+          ],
+          [
+            0.0,
+            0.8609908362933183,
+            0.6249733296714854,
+            0.12578690369857704,
+            -0.0049525766543379035,
+            0.0
+          ],
+          [
+            -1.648364003969413e-11,
+            -0.6415734733028373,
+            -0.6415734732967321,
+            -0.6415734733063129,
+            0.7665214206975222,
+            0.008963118814867424
+          ],
+          [
+            -1.353257218940398e-13,
+            -0.7670615869782724,
+            -0.7670615869877473,
+            -0.7670615869839112,
+            -0.6411216759951482,
+            -0.04774036891679453
+          ],
+          [
+            1.0000000000766995,
+            -4.7747600865354346e-11,
+            -7.359156624532538e-12,
+            -7.545572967803792e-12,
+            0.03752210038738898,
+            -0.998819563276058
+          ]
+        ],
+        "ur_rtde_fk_finite_difference": [
+          [
+            0.6902661486285488,
+            -0.10104853981340867,
+            0.33191079157335324,
+            0.11946789213457265,
+            0.10263508831709345,
+            0.0
+          ],
+          [
+            0.546260408185173,
+            0.08509430798886441,
+            -0.27846144284859875,
+            -0.09918541188369545,
+            0.12256340137239974,
+            0.0
+          ],
+          [
+            0.0,
+            0.8617555212198091,
+            0.6257128953024438,
+            0.12586694245197982,
+            -0.005172352879334596,
+            0.0
+          ],
+          [
+            -4.6249569253809647e-10,
+            -0.6415732918718352,
+            -0.6417930364018685,
+            -0.6400867981524733,
+            0.7669231532156143,
+            0.007257551744881333
+          ],
+          [
+            1.060394039793044e-09,
+            -0.7670615665620805,
+            -0.7668774423224715,
+            -0.7682997065646834,
+            -0.640641078806209,
+            -0.04896897237686706
+          ],
+          [
+            0.9999999970050869,
+            0.0005135279810938191,
+            -0.0008434671302675761,
+            0.002110940188286285,
+            0.037521824158325695,
+            -0.99877393245175
+          ]
+        ]
+      },
+      "conditions": {
+        "own_analytic": {
+          "raw_condition_number": 6.074744422961623,
+          "scaled_condition_number": 15.45733128238628
+        },
+        "own_finite_difference": {
+          "raw_condition_number": 6.0747444226801,
+          "scaled_condition_number": 15.45733128259294
+        },
+        "ur_rtde_fk_finite_difference": {
+          "raw_condition_number": 6.0713437877234435,
+          "scaled_condition_number": 15.4564436092925
+        }
+      },
+      "comparisons": {
+        "own_analytic_vs_own_finite_difference": {
+          "absolute_frobenius_error": 2.8376678219019975e-10,
+          "relative_frobenius_error": 9.923533458734375e-11,
+          "maximum_absolute_element_error": 1.5292689337087495e-10,
+          "column_l2_errors": [
+            9.648698080113622e-11,
+            1.2764798573734387e-10,
+            9.658713190810224e-11,
+            9.619376552138895e-11,
+            1.1358297717856996e-10,
+            1.530896262569599e-10
+          ],
+          "linear_block_frobenius_error": 1.69204757427681e-10,
+          "angular_block_frobenius_error": 2.2780109029243014e-10
+        },
+        "own_analytic_vs_ur_rtde_fk_finite_difference": {
+          "absolute_frobenius_error": 0.004413287352898124,
+          "relative_frobenius_error": 0.0015433591053705203,
+          "maximum_absolute_element_error": 0.002110940188286224,
+          "column_l2_errors": [
+            0.0008861623228166408,
+            0.0013663828198121498,
+            0.0016453612774420627,
+            0.002978859884428968,
+            0.0009074645895940179,
+            0.002102500335519584
+          ],
+          "linear_block_frobenius_error": 0.0023254587156462726,
+          "angular_block_frobenius_error": 0.003750912825043434
+        }
+      },
+      "warnings": [
+        "ur_rtde getJacobian unavailable: RuntimeError: unable to get state data for specified key: output_double_register_6"
+      ]
+    }
+  ],
+  "motion_records": [
+    {
+      "target_name": "robot_x_plus_100mm",
+      "solution_source": "own",
+      "target_T_R_M_pose6": [
+        0.44626038208065666,
+        -0.6902660972004461,
+        0.31282375318985817,
+        2.6269665850356825,
+        1.638434220195791,
+        -0.030602307831820896
+      ],
+      "q_command_rad": [
+        -0.7774309115428397,
+        -1.8810204608022285,
+        -1.8043720600606103,
+        -0.9874472890992393,
+        1.5409816456333654,
+        -3.464142144586117
+      ],
+      "q_before_rad": [
+        -0.6965411345111292,
+        -1.966233869592184,
+        -1.6840405464172363,
+        -1.0245787066272278,
+        1.5399060249328613,
+        -3.3826659361468714
+      ],
+      "tcp_before_pose6": [
+        0.5459448458938887,
+        -0.6881095736238093,
+        0.35676623695332915,
+        2.626955847851976,
+        1.6384325176245378,
+        -0.03062310764517483
+      ],
+      "raw_command_delta_from_received_q_rad": [
+        -0.08088977703171052,
+        0.08521340878995542,
+        -0.12033151364337402,
+        0.03713141752798854,
+        0.001075620700504043,
+        -0.08147620843924575
+      ],
+      "wrapped_command_delta_from_received_q_rad": [
+        -0.08088977703171052,
+        0.08521340878995542,
+        -0.12033151364337402,
+        0.037131417527988535,
+        0.001075620700504043,
+        -0.08147620843924576
+      ],
+      "command_delta_norm_rad": 0.19053195509077733,
+      "controller_joints_within_safety_limits": true,
+      "move_j_returned": true,
+      "status": "completed",
+      "feedback_samples": [
+        {
+          "sample_index": 0,
+          "elapsed_s": 8.38153064250946e-05,
+          "q_received_rad": [
+            -0.7773326078998011,
+            -1.8812042675414027,
+            -1.804351806640625,
+            -0.9878812593272706,
+            1.5409150123596191,
+            -3.4640122095691126
+          ],
+          "tcp_received_pose6": [
+            0.44687287237695816,
+            -0.6884903465606226,
+            0.357484098356913,
+            2.6268290673006356,
+            1.6397613460045442,
+            -0.034032063750962085
+          ],
+          "q_tracking_error_rad": [
+            9.830364303864413e-05,
+            -0.0001838067391741749,
+            2.0253419985349908e-05,
+            -0.0004339702280312663,
+            -6.663327374623051e-05,
+            0.00012993501700453436
+          ]
+        },
+        {
+          "sample_index": 1,
+          "elapsed_s": 0.05052909068763256,
+          "q_received_rad": [
+            -0.7773020903216761,
+            -1.8812009296812953,
+            -1.8042714595794678,
+            -0.9877936404994507,
+            1.5410144329071045,
+            -3.4640637079821985
+          ],
+          "tcp_received_pose6": [
+            0.4469317698617539,
+            -0.6884978283013022,
+            0.35754666151761544,
+            2.626642942798299,
+            1.6397936673822624,
+            -0.03381947584108577
+          ],
+          "q_tracking_error_rad": [
+            0.00012882122116364414,
+            -0.00018046887906675302,
+            0.00010060048114257646,
+            -0.00034635140021144206,
+            3.278727373912105e-05,
+            7.843660391859686e-05
+          ]
+        },
+        {
+          "sample_index": 2,
+          "elapsed_s": 0.10094744339585304,
+          "q_received_rad": [
+            -0.7772896925555628,
+            -1.8811890087523402,
+            -1.8042476177215576,
+            -0.9875813287547608,
+            1.5411101579666138,
+            -3.464151207600729
+          ],
+          "tcp_received_pose6": [
+            0.4469703772786657,
+            -0.6885061794742094,
+            0.35759693383710517,
+            2.626379632903018,
+            1.6398086459244607,
+            -0.03358543398165795
+          ],
+          "q_tracking_error_rad": [
+            0.0001412189872769254,
+            -0.0001685479501116749,
+            0.00012444233905273272,
+            -0.00013403965552150066,
+            0.00012851233324839836,
+            -9.063014611676579e-06
+          ]
+        },
+        {
+          "sample_index": 3,
+          "elapsed_s": 0.15137745812535286,
+          "q_received_rad": [
+            -0.7773736158954065,
+            -1.88116516689443,
+            -1.8042714595794678,
+            -0.9876039189151307,
+            1.541038155555725,
+            -3.4641404787646692
+          ],
+          "tcp_received_pose6": [
+            0.446895045807618,
+            -0.6885381083886025,
+            0.35759884257256164,
+            2.6264620760736106,
+            1.6396853784605605,
+            -0.03370466671221534
+          ],
+          "q_tracking_error_rad": [
+            5.729564743317539e-05,
+            -0.00014470609220151864,
+            0.00010060048114257646,
+            -0.0001566298158913737,
+            5.6509922359726517e-05,
+            1.6658214478937339e-06
+          ]
+        },
+        {
+          "sample_index": 4,
+          "elapsed_s": 0.20181509107351303,
+          "q_received_rad": [
+            -0.7774799505816858,
+            -1.881101747552389,
+            -1.804302453994751,
+            -0.9875455659678956,
+            1.5409507751464844,
+            -3.46415621439089
+          ],
+          "tcp_received_pose6": [
+            0.44680241889629635,
+            -0.6885806272006716,
+            0.35763820206915936,
+            2.6264468513479082,
+            1.6395050346689766,
+            -0.03380638090872273
+          ],
+          "q_tracking_error_rad": [
+            -4.9039038846121485e-05,
+            -8.128675016050302e-05,
+            6.960606585937335e-05,
+            -9.827686865626628e-05,
+            -3.087048688099614e-05,
+            -1.4069804772809391e-05
+          ]
+        }
+      ],
+      "final_q_received_rad": [
+        -0.7774799505816858,
+        -1.881101747552389,
+        -1.804302453994751,
+        -0.9875455659678956,
+        1.5409507751464844,
+        -3.46415621439089
+      ],
+      "final_tcp_received_pose6": [
+        0.44680241889629635,
+        -0.6885806272006716,
+        0.35763820206915936,
+        2.6264468513479082,
+        1.6395050346689766,
+        -0.03380638090872273
+      ],
+      "final_q_tracking_error_rad": [
+        -4.9039038846121485e-05,
+        -8.128675016050302e-05,
+        6.960606585937335e-05,
+        -9.827686865626628e-05,
+        -3.087048688099614e-05,
+        -1.4069804772809391e-05
+      ],
+      "final_q_tracking_error_norm_rad": 0.0001570562216740318,
+      "final_T_R_M_received_pose6": [
+        0.44704169786826076,
+        -0.6907773499624267,
+        0.3136937239782597,
+        2.626446851347908,
+        1.6395050346689763,
+        -0.03380638090872273
+      ],
+      "received_position_error_m": 0.0012761986206167727,
+      "received_position_error_mm": 1.2761986206167726,
+      "received_orientation_error_rad": 0.00221061313347475,
+      "received_orientation_error_deg": 0.1266588026842933
+    },
+    {
+      "target_name": "robot_x_plus_100mm",
+      "solution_source": "ur_rtde",
+      "target_T_R_M_pose6": [
+        0.44626038208065666,
+        -0.6902660972004461,
+        0.31282375318985817,
+        2.6269665850356825,
+        1.638434220195791,
+        -0.030602307831820896
+      ],
+      "q_command_rad": [
+        -0.778107117566659,
+        -1.880622010176964,
+        -1.8068894492511403,
+        -0.9847941470763066,
+        1.5429278180270087,
+        -3.4639809898443197
+      ],
+      "q_before_rad": [
+        -0.7774799505816858,
+        -1.881101747552389,
+        -1.804302453994751,
+        -0.9875455659678956,
+        1.5409507751464844,
+        -3.46415621439089
+      ],
+      "tcp_before_pose6": [
+        0.44680241889629635,
+        -0.6885806272006716,
+        0.35763820206915936,
+        2.6264468513479082,
+        1.6395050346689766,
+        -0.03380638090872273
+      ],
+      "raw_command_delta_from_received_q_rad": [
+        -0.0006271669849731154,
+        0.00047973737542506,
+        -0.0025869952563892795,
+        0.0027514188915889193,
+        0.00197704288052436,
+        0.00017522454657026287
+      ],
+      "wrapped_command_delta_from_received_q_rad": [
+        -0.0006271669849731154,
+        0.00047973737542506,
+        -0.0025869952563892795,
+        0.0027514188915889193,
+        0.00197704288052436,
+        0.00017522454657026287
+      ],
+      "command_delta_norm_rad": 0.0043388637848111615,
+      "controller_joints_within_safety_limits": true,
+      "move_j_returned": true,
+      "status": "completed",
+      "feedback_samples": [
+        {
+          "sample_index": 0,
+          "elapsed_s": 6.765685975551605e-05,
+          "q_received_rad": [
+            -0.7780693213092249,
+            -1.8806525669493617,
+            -1.8069313764572144,
+            -0.9849164050868531,
+            1.5426992177963257,
+            -3.4640396277057093
+          ],
+          "tcp_received_pose6": [
+            0.4459304169064033,
+            -0.6880957623914109,
+            0.35670516578391254,
+            2.6270012550842217,
+            1.6386282483088919,
+            -0.031019075061275336
+          ],
+          "q_tracking_error_rad": [
+            3.7796257434052905e-05,
+            -3.055677239771626e-05,
+            -4.192720607409938e-05,
+            -0.0001222580105464388,
+            -0.00022860023068305146,
+            -5.863786138959881e-05
+          ]
+        },
+        {
+          "sample_index": 1,
+          "elapsed_s": 0.05043565295636654,
+          "q_received_rad": [
+            -0.778048340474264,
+            -1.8806287250914515,
+            -1.806826114654541,
+            -0.9848170441440125,
+            1.5427597761154175,
+            -3.463996712361471
+          ],
+          "tcp_received_pose6": [
+            0.44598519413532606,
+            -0.6881163110290285,
+            0.35680101357409644,
+            2.6268453992149436,
+            1.6384872142086955,
+            -0.03084099549486273
+          ],
+          "q_tracking_error_rad": [
+            5.8777092394990405e-05,
+            -6.714914487560009e-06,
+            6.333459659924046e-05,
+            -2.289706770586264e-05,
+            -0.0001680419115912546,
+            -1.572251715131756e-05
+          ]
+        },
+        {
+          "sample_index": 2,
+          "elapsed_s": 0.1008969396352768,
+          "q_received_rad": [
+            -0.7780574003802698,
+            -1.8806377849974574,
+            -1.806826114654541,
+            -0.9848099511912842,
+            1.5428303480148315,
+            -3.4640002886401575
+          ],
+          "tcp_received_pose6": [
+            0.445986399465404,
+            -0.6881162002452552,
+            0.35679440562505677,
+            2.626865261820837,
+            1.63849228767338,
+            -0.03073607069831404
+          ],
+          "q_tracking_error_rad": [
+            4.971718638913103e-05,
+            -1.5774820493419384e-05,
+            6.333459659924046e-05,
+            -1.580411497759115e-05,
+            -9.74700121771921e-05,
+            -1.9298795837841e-05
+          ]
+        },
+        {
+          "sample_index": 3,
+          "elapsed_s": 0.15129493735730648,
+          "q_received_rad": [
+            -0.7780693213092249,
+            -1.8806377849974574,
+            -1.8068549633026123,
+            -0.9848890465549012,
+            1.5427974462509155,
+            -3.4639726320849817
+          ],
+          "tcp_received_pose6": [
+            0.4459608781455545,
+            -0.6881098341714893,
+            0.3567669635975449,
+            2.6269786628671112,
+            1.6384923009146164,
+            -0.030825147054567938
+          ],
+          "q_tracking_error_rad": [
+            3.7796257434052905e-05,
+            -1.5774820493419384e-05,
+            3.448594852795139e-05,
+            -9.489947859453451e-05,
+            -0.00013037177609320771,
+            8.35775933794025e-06
+          ]
+        },
+        {
+          "sample_index": 4,
+          "elapsed_s": 0.20169761963188648,
+          "q_received_rad": [
+            -0.77808124223818,
+            -1.880613466302389,
+            -1.8067951202392578,
+            -0.9848135274699708,
+            1.5427716970443726,
+            -3.4639809767352503
+          ],
+          "tcp_received_pose6": [
+            0.445970873644181,
+            -0.6881372585832517,
+            0.3568326477935397,
+            2.6268474035834157,
+            1.638398790959431,
+            -0.030805273861796108
+          ],
+          "q_tracking_error_rad": [
+            2.587532847897478e-05,
+            8.543874574939991e-06,
+            9.432901188244358e-05,
+            -1.9380393664114592e-05,
+            -0.00015612098263617646,
+            1.3109069385563998e-08
+          ]
+        }
+      ],
+      "final_q_received_rad": [
+        -0.77808124223818,
+        -1.880613466302389,
+        -1.8067951202392578,
+        -0.9848135274699708,
+        1.5427716970443726,
+        -3.4639809767352503
+      ],
+      "final_tcp_received_pose6": [
+        0.445970873644181,
+        -0.6881372585832517,
+        0.3568326477935397,
+        2.6268474035834157,
+        1.638398790959431,
+        -0.030805273861796108
+      ],
+      "final_q_tracking_error_rad": [
+        2.587532847897478e-05,
+        8.543874574939991e-06,
+        9.432901188244358e-05,
+        -1.9380393664114592e-05,
+        -0.00015612098263617646,
+        1.3109069385563998e-08
+      ],
+      "final_q_tracking_error_norm_rad": 0.00018544501597259064,
+      "final_T_R_M_received_pose6": [
+        0.446288051839489,
+        -0.6902993513432517,
+        0.31288694546794726,
+        2.6268474035834157,
+        1.6383987909594313,
+        -0.030805273861796115
+      ],
+      "received_position_error_m": 7.658144408188805e-05,
+      "received_position_error_mm": 0.07658144408188805,
+      "received_orientation_error_rad": 0.00017811609602766057,
+      "received_orientation_error_deg": 0.010205300565731839
+    }
+  ],
+  "checks": [
+    {
+      "name": "stationary snapshot joint drift norm",
+      "value": 0.0,
+      "maximum": 0.0001,
+      "passed": true
+    },
+    {
+      "name": "reported actual TCP versus ur_rtde calibrated FK position",
+      "value": 0.0,
+      "maximum": 0.001,
+      "passed": true
+    },
+    {
+      "name": "reported actual TCP versus ur_rtde calibrated FK orientation",
+      "value": 0.0,
+      "maximum": 0.005,
+      "passed": true
+    },
+    {
+      "name": "motion execution robot_x_plus_100mm:own",
+      "status": "completed",
+      "passed": true
+    },
+    {
+      "name": "motion execution robot_x_plus_100mm:ur_rtde",
+      "status": "completed",
+      "passed": true
+    },
+    {
+      "name": "own analytic versus own finite-difference Jacobian",
+      "value": 1.0015026509046979e-10,
+      "maximum": 1e-05,
+      "passed": true
+    }
+  ],
+  "all_checks_passed": true
+}

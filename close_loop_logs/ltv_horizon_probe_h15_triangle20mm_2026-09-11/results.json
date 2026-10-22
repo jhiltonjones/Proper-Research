@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/ltv_horizon_probe_h15_triangle20mm_2026-09-11/runs/ltv_rep1_20260911T164101Z",
+    "stop_reason": "path_complete",
+    "steps": 242,
+    "n_track": 221,
+    "rms_track_mm": 4.73631476488168,
+    "mean_track_mm": 3.927407239819005,
+    "max_track_mm": 9.878,
+    "p95_track_mm": 8.961,
+    "mean_hold_mm": 0.18104761904761904,
+    "final_mm": 0.111,
+    "duration_s": 44.0557
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/scurve_FF_n3_2026-09-13_ltv_rep3_redo/runs/ltv_rep1_20260913T122401Z",
+    "stop_reason": "path_complete",
+    "steps": 194,
+    "n_track": 172,
+    "rms_track_mm": 2.5776211236286732,
+    "mean_track_mm": 2.065761627906977,
+    "max_track_mm": 5.602,
+    "p95_track_mm": 5.30735,
+    "mean_hold_mm": 1.0668181818181817,
+    "final_mm": 0.847,
+    "duration_s": 39.4398
+  }
+]

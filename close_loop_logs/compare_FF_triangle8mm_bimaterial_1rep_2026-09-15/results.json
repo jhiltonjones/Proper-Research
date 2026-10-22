@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_triangle8mm_bimaterial_1rep_2026-09-15/runs/inv_rep1_20260915T135122Z",
+    "stop_reason": "path_complete",
+    "steps": 143,
+    "n_track": 122,
+    "rms_track_mm": 0.8530249357337724,
+    "mean_track_mm": 0.6492950819672131,
+    "max_track_mm": 2.132,
+    "p95_track_mm": 1.8627999999999998,
+    "mean_hold_mm": 0.18490476190476193,
+    "final_mm": 0.065,
+    "duration_s": 33.5405
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_triangle8mm_bimaterial_1rep_2026-09-15/runs/lti_rep1_20260915T135248Z",
+    "stop_reason": "path_complete",
+    "steps": 113,
+    "n_track": 91,
+    "rms_track_mm": 1.6866997557164898,
+    "mean_track_mm": 1.0523076923076924,
+    "max_track_mm": 5.316,
+    "p95_track_mm": 4.830500000000001,
+    "mean_hold_mm": 2.6091363636363636,
+    "final_mm": 0.339,
+    "duration_s": 36.0202
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_triangle8mm_bimaterial_1rep_2026-09-15/runs/ltv_rep1_20260915T135717Z",
+    "stop_reason": "path_complete",
+    "steps": 102,
+    "n_track": 85,
+    "rms_track_mm": 1.591925545110848,
+    "mean_track_mm": 0.9555764705882354,
+    "max_track_mm": 5.626,
+    "p95_track_mm": 4.290599999999999,
+    "mean_hold_mm": 3.711705882352941,
+    "final_mm": 1.939,
+    "duration_s": 36.6479
+  }
+]

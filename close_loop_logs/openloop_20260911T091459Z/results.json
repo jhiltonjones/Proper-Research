@@ -1,0 +1,15 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "/home/jack/Proper-Research/close_loop_logs/openloop_20260911T091459Z/runs/openloop_x1_rep1_20260911T091521Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.3420973039345345,
+    "mean_track_mm": 1.1990472440944882,
+    "max_track_mm": 2.59,
+    "p95_track_mm": 2.3748,
+    "mean_hold_mm": 0.46920000000000006,
+    "final_mm": 0.493
+  }
+]

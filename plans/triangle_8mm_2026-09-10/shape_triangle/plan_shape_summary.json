@@ -1,0 +1,27 @@
+{
+  "shape": "triangle",
+  "size_mm": 8.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.4955829090244966,
+    -0.6694141284814393,
+    -0.016556854953102364
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 53,
+  "perimeter_mm": 24.77677387372204,
+  "time_param_samples": 128,
+  "time_param_duration_s": 12.700000000000001,
+  "time_param_dir": "/home/jack/.claude/jobs/3710eca5/tmp/plan_tri_v2/time_parameterized_configuration_path"
+}

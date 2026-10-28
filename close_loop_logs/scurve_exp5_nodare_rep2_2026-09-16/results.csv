@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/scurve_exp5_nodare_rep2_2026-09-16/runs/ltv_rep1_20260916T110042Z,path_complete,193,171,1.8646085442772733,1.3962631578947369,4.336,3.9175,0.3682272727272728,0.231,44.9131

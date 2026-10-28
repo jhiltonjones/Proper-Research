@@ -1,0 +1,3 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,close_loop_logs/compare_ushape_gaindamp_CONTROL_2026-09-15/runs/inv_rep1_20260915T180334Z,path_complete,233,212,1.1170331049468363,0.9092971698113207,2.699,2.3506,0.5939047619047618,0.769,41.9524
+mpc_lti,lti,1,close_loop_logs/compare_ushape_gaindamp_CONTROL_2026-09-15/runs/lti_rep1_20260915T180514Z,path_complete,234,212,1.5307832176483913,1.348646226415094,3.191,2.7582999999999998,1.2031818181818184,1.068,43.9504

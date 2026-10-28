@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-10-15T18:50:56.093771Z",
+  "plan_dir": "plans/vessel_phi30_L30_left1mm_newwall_tol0p5_2026-10-06/time_parameterized_configuration_path",
+  "path_csv_hash": "7b7243097a21fb67",
+  "schedule_file": "plans/stage3_design/mpc_schedules/vessel_c_schedule_floor210_2026-10-06.npy",
+  "schedule_hash": "d42140ae1103a881",
+  "lumen_file": "vessel_lumen_robot_frame_2026-10-06_zcorrected.json",
+  "initial_poses_convention": "_recalibrated_make_initial_poses (same as build_contact_schedule_floor210.py -- NOT the floor240 JSON-start-position convention)",
+  "D": [
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.010000000000000002,
+    0.0002
+  ],
+  "units": "s_q,DeltaL in meters internally (grid stored in mm); J in SI (m per rad / m per m)",
+  "note": "floor210 map: no hardware-run-derived tick278/tick366 dense-tile anchors and no crossval-driven auto-tiles (neither has a floor210 equivalent, unlike floor240's production map) -- see build_dense_tiles_floor210.py's and crossval_contact_jacobian_map_floor210.py's own docstrings for what was substituted instead.",
+  "tiles": [
+    {
+      "name": "high_kappa",
+      "file": "contact_jacobian_map_high_kappa.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "convergence_failure",
+      "file": "contact_jacobian_map_convergence_failure.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "crossval_cluster",
+      "file": "contact_jacobian_map_crossval_cluster.npz",
+      "max_interp_error": null
+    },
+    {
+      "name": "coarse",
+      "file": "contact_jacobian_map_coarse.npz",
+      "max_interp_error": 0.6836520288505584
+    }
+  ]
+}

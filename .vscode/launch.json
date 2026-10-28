@@ -1,0 +1,123 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Run testing_script1 (module)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scrap2",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run characterisations",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.charactisations",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run characterisations 2",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.charactisations2",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run open_loop",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.experiments.open_loop_control",
+            "justMyCode": true,
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+
+        {
+            "name": "Run Advancer Unit test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.advancer_unit.advancer_control",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+
+        {
+            "name": "Run testing camera",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.vision_w_tangnet",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run hardware camera",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.hardware_move",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing beam/bounds",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.bounds_beam",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing camera no tan",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.camera",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run testing boundaries",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.vision.boundaries",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run forward model",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.models.forward_model",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+ 
+
+        {
+            "name": "Simualtion Controller",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.simulation.simulations.run_experiment_grid",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+   
+        {
+            "name": "Test Energy Minimisation",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "proper_research.simulation.magnetic_beam.run_solver_smoke_test",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+
+    ]
+}

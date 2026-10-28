@@ -1,0 +1,1464 @@
+{
+  "layer": 5,
+  "name": "flow_only_centreline_following",
+  "tolerance_de_over_R": 0.1,
+  "assumptions": {
+    "fluid": {
+      "rho_kg_m3": 1060.0,
+      "mu_Pa_s": 0.0035,
+      "heart_rate_bpm": 72.0,
+      "omega_rad_s": 7.5398223686155035,
+      "note": "no fluid parameters exist in the project (STEP 0 audit); blood defaults used"
+    },
+    "sigma_s": "UNKNOWN -- all noise-driven numbers reported as sigma_s/v_mean",
+    "bend_arclength_m": 0.03,
+    "waveforms": "synthetic, documented; PI and harmonic content reported",
+    "catheter": "matched to calibre: 3 Fr (a=0.55mm) < 2.5 mm vessels, 7 Fr (a=1.15mm) otherwise"
+  },
+  "D1": {
+    "scalar_sigma_min_residual_vs_4e_over_R": 1.6084511433867021e-07,
+    "differential_sigma_min_residual_vs_8a_over_R": 1.6084577580954829e-07,
+    "scalar_rank_zero_at_setpoint": true,
+    "differential_rank_two_everywhere": true,
+    "crossover_e_over_R": 0.4,
+    "classification": "exact"
+  },
+  "D2": {
+    "cross": {
+      "centre  (R=3.5mm, 20 deg)": {
+        "alpha": 5.288926260363583,
+        "a_over_R": 0.32857142857142857,
+        "Gamma": 0.8261261958576354,
+        "Gamma_ratio": 0.6285742794568965
+      },
+      "radius- (R=1.5mm, 20 deg)": {
+        "alpha": 2.2666826830129643,
+        "a_over_R": 0.3666666666666667,
+        "Gamma": 1.4357361982719838,
+        "Gamma_ratio": 0.9789110442763526
+      },
+      "radius+ (R=5.5mm, 20 deg)": {
+        "alpha": 8.311169837714202,
+        "a_over_R": 0.2090909090909091,
+        "Gamma": 0.1755948283113462,
+        "Gamma_ratio": 0.2099503381983487
+      },
+      "angle-  (R=3.5mm,  0 deg)": {
+        "alpha": 5.288926260363583,
+        "a_over_R": 0.32857142857142857,
+        "Gamma": 0.8261261958576354,
+        "Gamma_ratio": 0.6285742794568965
+      },
+      "angle+  (R=3.5mm,100 deg)": {
+        "alpha": 5.288926260363583,
+        "a_over_R": 0.32857142857142857,
+        "Gamma": 0.8261261958576354,
+        "Gamma_ratio": 0.6285742794568965
+      },
+      "corner  (R=5.5mm,100 deg)": {
+        "alpha": 8.311169837714202,
+        "a_over_R": 0.2090909090909091,
+        "Gamma": 0.1755948283113462,
+        "Gamma_ratio": 0.2099503381983487
+      }
+    },
+    "radius_arm_Gamma_ratio_spread": 0.7689607060780038,
+    "bend_angle_arm_Gamma_ratio_spread": 0.0,
+    "section_4_2_table_residual": 0.0005206516626599976,
+    "classification": "exact"
+  },
+  "D3": {
+    "waveforms": {
+      "coronary-like": {
+        "alpha": 2.27,
+        "PI": 0.4461567864839761,
+        "n_harmonics": 3,
+        "duty_within_tolerance": 1.0,
+        "low_gain_window_ms": 0.0,
+        "worst_de_over_R": 0.01490851924169425,
+        "phase_sep_lowgain_lowflow_deg": 19.499999999999996,
+        "theory_phase_sep_deg": 22.979121126995125,
+        "phase_sep_note": "phase_sep_lowgain_lowflow_deg is a crude time-domain estimate; theory_phase_sep_deg (section 4.4, fundamental-harmonic phasors) is the rigorous quantity"
+      },
+      "peripheral": {
+        "alpha": 5.29,
+        "PI": 1.4997402767992973,
+        "n_harmonics": 3,
+        "duty_within_tolerance": 1.0,
+        "low_gain_window_ms": 0.0,
+        "worst_de_over_R": 0.02026458875029759,
+        "phase_sep_lowgain_lowflow_deg": 79.49999999999999,
+        "theory_phase_sep_deg": 110.2054755117064,
+        "phase_sep_note": "phase_sep_lowgain_lowflow_deg is a crude time-domain estimate; theory_phase_sep_deg (section 4.4, fundamental-harmonic phasors) is the rigorous quantity"
+      },
+      "severe peripheral (low steady)": {
+        "alpha": 5.29,
+        "PI": 4.322373260553055,
+        "n_harmonics": 4,
+        "duty_within_tolerance": 0.8944444444444445,
+        "low_gain_window_ms": 87.96296296296296,
+        "worst_de_over_R": 47.07938356339259,
+        "phase_sep_lowgain_lowflow_deg": 12.999999999999993,
+        "theory_phase_sep_deg": 110.2054755117064,
+        "phase_sep_note": "phase_sep_lowgain_lowflow_deg is a crude time-domain estimate; theory_phase_sep_deg (section 4.4, fundamental-harmonic phasors) is the rigorous quantity"
+      }
+    },
+    "sigma_over_vmean": 0.02,
+    "cycle_ms": 833.3333333333334,
+    "classification": "scaling argument (waveform is an assumption)"
+  },
+  "D4": {
+    "bend_arclength_m": 0.03,
+    "points": {
+      "centre  (R=3.5mm, 20 deg)": {
+        "R_c_m": 0.08594366926962348,
+        "De": 128.34654790582786,
+        "bias_delta_over_R": 0.09929577514734024,
+        "band": [
+          0.04964788757367012,
+          0.1588732402357444
+        ]
+      },
+      "radius- (R=1.5mm, 20 deg)": {
+        "R_c_m": 0.08594366926962348,
+        "De": 18.00482972341016,
+        "bias_delta_over_R": 0.01915733275371724,
+        "band": [
+          0.00957866637685862,
+          0.030651732405947586
+        ]
+      },
+      "radius+ (R=5.5mm, 20 deg)": {
+        "R_c_m": 0.08594366926962348,
+        "De": 252.8285767000391,
+        "bias_delta_over_R": 0.14293110358148206,
+        "band": [
+          0.07146555179074103,
+          0.2286897657303713
+        ]
+      },
+      "angle-  (R=3.5mm,  0 deg)": {
+        "R_c_m": null,
+        "De": 0.0,
+        "bias_delta_over_R": 0.0,
+        "band": [
+          0.0,
+          0.0
+        ]
+      },
+      "angle+  (R=3.5mm,100 deg)": {
+        "R_c_m": 0.017188733853924696,
+        "De": 286.99160579486437,
+        "bias_delta_over_R": 0.15005808570452084,
+        "band": [
+          0.07502904285226042,
+          0.24009293712723334
+        ]
+      },
+      "corner  (R=5.5mm,100 deg)": {
+        "R_c_m": 0.017188733853924696,
+        "De": 565.3418841558068,
+        "bias_delta_over_R": 0.17474294977922325,
+        "band": [
+          0.08737147488961163,
+          0.2795887196467572
+        ]
+      }
+    },
+    "radius_arm_bias_spread": 0.12377377082776482,
+    "bend_angle_arm_bias_spread": 0.15005808570452084,
+    "De_along_radius_arm": {
+      "centre  (R=3.5mm, 20 deg)": 128.34654790582786,
+      "radius- (R=1.5mm, 20 deg)": 18.00482972341016,
+      "radius+ (R=5.5mm, 20 deg)": 252.8285767000391
+    },
+    "radius_arm_flat_as_predicted": false,
+    "points_over_tolerance": [
+      "radius+ (R=5.5mm, 20 deg)",
+      "angle+  (R=3.5mm,100 deg)",
+      "corner  (R=5.5mm,100 deg)"
+    ],
+    "classification": "scaling argument -- magnitude rests on a literature correlation"
+  },
+  "D5": {
+    "confound_fraction": {
+      "alpha2_e0.02": 0.0008136838825454251,
+      "alpha2_e0.05": 0.002034209706363563,
+      "alpha2_e0.15": 0.006102629119090688,
+      "alpha5_e0.02": 0.006274334802871118,
+      "alpha5_e0.05": 0.015685837007177794,
+      "alpha5_e0.15": 0.04705751102153338,
+      "alpha10_e0.02": 0.004228675068870686,
+      "alpha10_e0.05": 0.010571687672176717,
+      "alpha10_e0.15": 0.03171506301653015
+    },
+    "section_5_2_table_residual": 0.00045751102153337997,
+    "residual_zero_for_parabolic": true,
+    "dean_residual_above_noise": {
+      "angle-  (R=3.5mm,  0 deg)": false,
+      "centre  (R=3.5mm, 20 deg)": true,
+      "angle+  (R=3.5mm,100 deg)": true
+    },
+    "usable_uncorrected_offset_range": "|e|/R <~ 0.05 (confound < ~1.5% at alpha<=5)",
+    "classification": "exact (confound) + scaling argument (Dean signature magnitude)"
+  },
+  "D6": {
+    "section_6_alpha_residual": 0.004487154701237728,
+    "section_6_gamma_residual": 0.00048567844425795315,
+    "boundary_radius_mm": {
+      "3Fr_1%": 5.681025668502116,
+      "3Fr_2%": 4.8298200033474,
+      "3Fr_5%": 3.624766433200678,
+      "7Fr_1%": 6.578195007801304,
+      "7Fr_2%": 5.760882337985695,
+      "7Fr_5%": 4.631664292454515
+    },
+    "boundary_radius_residual_mm": 0.004766433200678044,
+    "map": [
+      {
+        "R_mm": 1.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.00246252334529701,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.00492504669059402,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.00985009338118804,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.024625233452970106,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.02161985609901425,
+        "dean_bias": 0.01915733275371724,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.024082379444311262,
+        "dean_bias": 0.01915733275371724,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.02900742613490528,
+        "dean_bias": 0.01915733275371724,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.04378256620668734,
+        "dean_bias": 0.01915733275371724,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.03433865799922788,
+        "dean_bias": 0.031876134653930875,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.0368011813445249,
+        "dean_bias": 0.031876134653930875,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.04172622803511891,
+        "dean_bias": 0.031876134653930875,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.056501368106900984,
+        "dean_bias": 0.031876134653930875,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.04250601691527973,
+        "dean_bias": 0.04004349356998272,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.04496854026057674,
+        "dean_bias": 0.04004349356998272,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.04989358695117076,
+        "dean_bias": 0.04004349356998272,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 1.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.06466872702295283,
+        "dean_bias": 0.04004349356998272,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.0034395040178172103,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.006879008035634421,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.013758016071268841,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.034395040178172104,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.03848898914979805,
+        "dean_bias": 0.03504948513198084,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.04192849316761526,
+        "dean_bias": 0.03504948513198084,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.048807501203249684,
+        "dean_bias": 0.03504948513198084,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.06944452531015294,
+        "dean_bias": 0.03504948513198084,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.05973988102341592,
+        "dean_bias": 0.05630037700559871,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.06317938504123313,
+        "dean_bias": 0.05630037700559871,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.07005839307686755,
+        "dean_bias": 0.05630037700559871,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.0906954171837708,
+        "dean_bias": 0.05630037700559871,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.07253117074742976,
+        "dean_bias": 0.06909166672961255,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.07597067476524696,
+        "dean_bias": 0.06909166672961255,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.08284968280088138,
+        "dean_bias": 0.06909166672961255,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 2.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.10348670690778465,
+        "dean_bias": 0.06909166672961255,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.003036058758993546,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.006072117517987092,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.012144235035974183,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.03036058758993546,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.07990909894195851,
+        "dean_bias": 0.07687304018296497,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.08294515770095205,
+        "dean_bias": 0.07687304018296497,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.08901727521893915,
+        "dean_bias": 0.07687304018296497,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.10723362777290042,
+        "dean_bias": 0.07687304018296497,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.11444161919082069,
+        "dean_bias": 0.11140556043182714,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.11747767794981423,
+        "dean_bias": 0.11140556043182714,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.12354979546780133,
+        "dean_bias": 0.11140556043182714,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.1417661480217626,
+        "dean_bias": 0.11140556043182714,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.13123161528524466,
+        "dean_bias": 0.12819555652625111,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.1342676740442382,
+        "dean_bias": 0.12819555652625111,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.14033979156222529,
+        "dean_bias": 0.12819555652625111,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.15855614411618657,
+        "dean_bias": 0.12819555652625111,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.0042796535488895315,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.008559307097779063,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.017118614195558126,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.04279653548889532,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.10357542869622977,
+        "dean_bias": 0.09929577514734024,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.1078550822451193,
+        "dean_bias": 0.09929577514734024,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.11641438934289837,
+        "dean_bias": 0.09929577514734024,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.14209231063623556,
+        "dean_bias": 0.09929577514734024,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.13941883777954894,
+        "dean_bias": 0.1351391842306594,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.14369849132843845,
+        "dean_bias": 0.1351391842306594,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.15225779842621753,
+        "dean_bias": 0.1351391842306594,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.1779357197195547,
+        "dean_bias": 0.1351391842306594,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.15433773925341038,
+        "dean_bias": 0.15005808570452084,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.1586173928022999,
+        "dean_bias": 0.15005808570452084,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.16717669990007897,
+        "dean_bias": 0.15005808570452084,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 3.5,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.19285462119341615,
+        "dean_bias": 0.15005808570452084,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.006159997507702118,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.012319995015404235,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.02463999003080847,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.06159997507702118,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.1066214968639236,
+        "dean_bias": 0.10046149935622148,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.11278149437162571,
+        "dean_bias": 0.10046149935622148,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.12510148938702995,
+        "dean_bias": 0.10046149935622148,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.16206147443324265,
+        "dean_bias": 0.10046149935622148,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.1424155876653027,
+        "dean_bias": 0.13625559015760058,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.14857558517300481,
+        "dean_bias": 0.13625559015760058,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.16089558018840905,
+        "dean_bias": 0.13625559015760058,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.19785556523462178,
+        "dean_bias": 0.13625559015760058,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.15717654357263172,
+        "dean_bias": 0.1510165460649296,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.16333654108033382,
+        "dean_bias": 0.1510165460649296,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.17565653609573806,
+        "dean_bias": 0.1510165460649296,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 4.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.2126165211419508,
+        "dean_bias": 0.1510165460649296,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.013400076083643863,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.026800152167287726,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.05360030433457545,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.13400076083643864,
+        "dean_bias": 0.0,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.1440284426788557,
+        "dean_bias": 0.13062836659521185,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.15742851876249958,
+        "dean_bias": 0.13062836659521185,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.18422867092978729,
+        "dean_bias": 0.13062836659521185,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.26462912743165046,
+        "dean_bias": 0.13062836659521185,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.1742480376228807,
+        "dean_bias": 0.16084796153923686,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.1876481137065246,
+        "dean_bias": 0.16084796153923686,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.21444826587381233,
+        "dean_bias": 0.16084796153923686,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.2948487223756755,
+        "dean_bias": 0.16084796153923686,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.18342168148076698,
+        "dean_bias": 0.17002160539712313,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.19682175756441087,
+        "dean_bias": 0.17002160539712313,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.2236219097316986,
+        "dean_bias": 0.17002160539712313,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 5.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.30402236623356177,
+        "dean_bias": 0.17002160539712313,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.03055156471900198,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.06110312943800396,
+        "dean_bias": 0.0,
+        "verdict": "PASS"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.12220625887600792,
+        "dean_bias": 0.0,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.30551564719001983,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.18273061499690862,
+        "dean_bias": 0.15217905027790665,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.21328217971591062,
+        "dean_bias": 0.15217905027790665,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.27438530915391457,
+        "dean_bias": 0.15217905027790665,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.45769469746792646,
+        "dean_bias": 0.15217905027790665,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.20345984527373187,
+        "dean_bias": 0.1729082805547299,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.23401140999273384,
+        "dean_bias": 0.1729082805547299,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.29511453943073784,
+        "dean_bias": 0.1729082805547299,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.47842392774474973,
+        "dean_bias": 0.1729082805547299,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.207784344361237,
+        "dean_bias": 0.17723277964223502,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.238335909080239,
+        "dean_bias": 0.17723277964223502,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.29943903851824294,
+        "dean_bias": 0.17723277964223502,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 6.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 0.48274842683225483,
+        "dean_bias": 0.17723277964223502,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.17439994550697782,
+        "dean_bias": 0.0,
+        "verdict": "MARGINAL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.34879989101395564,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.6975997820279113,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 1.7439994550697784,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.3476630848798248,
+        "dean_bias": 0.17326313937284696,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.5220630303868026,
+        "dean_bias": 0.17326313937284696,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.8708629214007583,
+        "dean_bias": 0.17326313937284696,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 1.9172625944426254,
+        "dean_bias": 0.17326313937284696,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.353791871370286,
+        "dean_bias": 0.1793919258633082,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.5281918168772639,
+        "dean_bias": 0.1793919258633082,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.8769917078912195,
+        "dean_bias": 0.1793919258633082,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 1.9233913809330865,
+        "dean_bias": 0.1793919258633082,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 0.35428384949470537,
+        "dean_bias": 0.17988390398772752,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 0.5286837950016832,
+        "dean_bias": 0.17988390398772752,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 0.8774836860156388,
+        "dean_bias": 0.17988390398772752,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 8.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 1.923883359057506,
+        "dean_bias": 0.17988390398772752,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 1.0809146430387173,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 2.1618292860774346,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 4.323658572154869,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 0.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 10.809146430387173,
+        "dean_bias": 0.0,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 1.259886665345161,
+        "dean_bias": 0.17897202230644382,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 2.3408013083838783,
+        "dean_bias": 0.17897202230644382,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 4.502630594461313,
+        "dean_bias": 0.17897202230644382,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 20.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 10.988118452693618,
+        "dean_bias": 0.17897202230644382,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 1.2608912124984506,
+        "dean_bias": 0.1799765694597332,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 2.3418058555371677,
+        "dean_bias": 0.1799765694597332,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 4.503635141614603,
+        "dean_bias": 0.1799765694597332,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 60.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 10.989122999846906,
+        "dean_bias": 0.1799765694597332,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.005,
+        "de_over_R": 1.2609129087307338,
+        "dean_bias": 0.1799982656920165,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.01,
+        "de_over_R": 2.341827551769451,
+        "dean_bias": 0.1799982656920165,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.02,
+        "de_over_R": 4.5036568378468855,
+        "dean_bias": 0.1799982656920165,
+        "verdict": "FAIL"
+      },
+      {
+        "R_mm": 10.0,
+        "angle_deg": 100.0,
+        "sigma_over_vmean": 0.05,
+        "de_over_R": 10.98914469607919,
+        "dean_bias": 0.1799982656920165,
+        "verdict": "FAIL"
+      }
+    ],
+    "classification": "exact given sigma_s/v_mean; Dean term is a scaling argument"
+  },
+  "validity": {
+    "blockage": {
+      "centre  (R=3.5mm, 20 deg)": 0.10795918367346939,
+      "radius- (R=1.5mm, 20 deg)": 0.13444444444444448,
+      "radius+ (R=5.5mm, 20 deg)": 0.043719008264462816,
+      "angle-  (R=3.5mm,  0 deg)": 0.10795918367346939,
+      "angle+  (R=3.5mm,100 deg)": 0.10795918367346939,
+      "corner  (R=5.5mm,100 deg)": 0.043719008264462816
+    },
+    "over_10pct_blockage": [
+      "centre  (R=3.5mm, 20 deg)",
+      "radius- (R=1.5mm, 20 deg)",
+      "angle-  (R=3.5mm,  0 deg)",
+      "angle+  (R=3.5mm,100 deg)"
+    ],
+    "eccentric_annulus_sign_argument": "an eccentric annulus redistributes flow toward the wide gap -- same sign as the effect being exploited -- so Gamma is likely conservative there, but the gain is uncalibrated and precise numbers are not quoted in that regime.",
+    "number_classification": {
+      "exact / reproducible by code": [
+        "channel decomposition and the quadrupole null for parabolic flow",
+        "scalar rank-1 / differential rank-2; 4|e|/R vs 8a/R (D1)",
+        "Womersley Gamma(alpha, a/R), Poiseuille limit to 6.8e-10 (D2)",
+        "phase separation of gradient and flow nulls (D3, section 4.4)",
+        "the resolution formula and the feasibility boundary radii (D6)"
+      ],
+      "scaling argument -- direction trustworthy, magnitude not": [
+        "Dean peak-shift magnitude (D4); bands are literature correlations",
+        "the eccentric-annulus sign argument at a/R > 0.3",
+        "the Dean quadrupole signature magnitude (D5)"
+      ],
+      "requires calibration before any number is quoted": [
+        "sigma_s and the sensor transfer function -- every D3/D6 number scales with sigma_s/v_mean and is reported that way",
+        "whether the sensors read speed, a thermal proxy, or something with its own dynamics",
+        "the physiological waveform harmonic content and PI (D3)",
+        "Gamma at a/R > 0.3, against an eccentric-annulus model"
+      ]
+    },
+    "cross_checks": {
+      "D1_scalar_residual": 1.6084511433867021e-07,
+      "D1_differential_residual": 1.6084577580954829e-07,
+      "D2_section_4_2_table_residual": 0.0005206516626599976,
+      "D6_section_6_gamma_residual": 0.00048567844425795315,
+      "D6_boundary_residual_mm": 0.004766433200678044
+    }
+  },
+  "findings": [
+    {
+      "level": "ok",
+      "title": "D1 confirms the data-path change",
+      "detail": "the scalar map is rank 1 and singular at the setpoint; the differential map is rank 2 and best-conditioned there. This is the justification for keeping the four raw channels."
+    },
+    {
+      "level": "ok",
+      "title": "D2 isolation holds",
+      "detail": "the bend-angle arm is flat (0.0e+00) while the radius arm spans 0.77; the cross separates discrimination gain from Dean bias cleanly."
+    },
+    {
+      "level": "info",
+      "title": "D3 sets the estimator coast time",
+      "detail": "the low-gain window is 0 ms for physiological traces with a normal steady component and up to 88 ms per beat only for an adversarial low-steady, PI ~ 2 trace at 2% noise. That window -- and the fact that it is offset in phase from the flow null -- is the main input to the estimator design that follows this study."
+    },
+    {
+      "level": "warn",
+      "title": "Dean bias exceeds tolerance on the sharp bend",
+      "detail": "the bend correction is mandatory outside the weak-De band; the existing LumenBend angle feeds it directly. Magnitude rests on a literature correlation with a wide band."
+    },
+    {
+      "level": "info",
+      "title": "D4 partially disagrees with the theory document",
+      "detail": "the Dean bias is NOT flat along the radius arm as predicted -- De couples to vessel calibre through Re as well as to the bend through R_c, so the cross does not mirror D2's isolation. Direction and dominant axis are as predicted."
+    },
+    {
+      "level": "info",
+      "title": "D5: the array self-diagnoses its model violation, near the centreline",
+      "detail": "the quadrupole residual is a Dean detector only for small offsets; a raw quadrupole is not a Dean measurement."
+    },
+    {
+      "level": "ok",
+      "title": "D6 feasibility map reproduces the theory envelope",
+      "detail": "boundary radii within 0.00 mm of section 6; the limit is the flow profile, not the instrument."
+    },
+    {
+      "level": "info",
+      "title": "Undisturbed-profile model used outside its range",
+      "detail": "blockage > 10% at centre  (R=3.5mm, 20 deg), radius- (R=1.5mm, 20 deg), angle-  (R=3.5mm,  0 deg), angle+  (R=3.5mm,100 deg); Gamma there is a scaling argument, likely conservative, and needs eccentric-annulus or CFD calibration."
+    },
+    {
+      "level": "ok",
+      "title": "Cross-checks against the theory tables pass",
+      "detail": "section 4.2 residual 0.0005, section 6 Gamma residual 0.000."
+    }
+  ]
+}

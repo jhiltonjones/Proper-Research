@@ -1,0 +1,350 @@
+% =============================================================
+% Model-necessity study -- contact-aware Jacobian modeling and
+% time-variation requirements for the vessel-navigation MPC.
+% IEEEtran (journal). Standalone compilable excerpt, companion to
+% methodology.tex: the full paper supplies title/abstract/
+% introduction/discussion and merges this content where
+% appropriate. Written 2026-09-23 from a completed five-part
+% offline+Monte Carlo study (Jacobian-mismatch characterization,
+% additive-vs-Jacobian residual test, horizon prediction, a
+% closed-loop mechanism study that identified and resolved a
+% controller-tuning confound, and an n=20 paired Monte Carlo
+% robustness campaign).
+% =============================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+
+\begin{document}
+
+\section{Model-Necessity Study: Is Contact-Aware, Time-Varying Jacobian Modeling Required?}
+\label{sec:model-necessity}
+
+\subsection{Motivation and Hypothesis}
+\label{sec:mn-motivation}
+
+The controller of Section~\ref{sec:feedback}\footnote{Cross-reference
+into the companion methodology document; section label kept symbolic
+here since the two files are not yet merged.} augments a linearized
+beam-position prediction with a persistent additive disturbance term
+$d_k$ (\S\ref{sec:feedback}). That design implicitly assumes contact's
+effect on the model is well approximated by a constant offset. This
+section tests that assumption directly.
+
+Let $p_{\mathrm{true}}$ denote the true (contact-aware) tip position and
+$p_{\mathrm{model}}$ the internal model's prediction, both linearized
+locally around a nominal state and evaluated at a configuration
+perturbation $\delta z$:
+\begin{equation}
+p_{\mathrm{true}} \approx p_0 + J_c\,\delta z,
+\qquad
+p_{\mathrm{model}} \approx \hat p_0 + J_{nc}\,\delta z,
+\end{equation}
+where $J_c$ and $J_{nc}$ are the contact-aware and no-contact task
+Jacobians evaluated at the same state. The model error decomposes as
+\begin{equation}
+p_{\mathrm{true}} - p_{\mathrm{model}}
+= \underbrace{(p_0 - \hat p_0)}_{\text{additive offset}}
++ \underbrace{(J_c - J_{nc})\,\delta z}_{\text{Jacobian mismatch}}.
+\end{equation}
+The disturbance term can compensate $d_k \approx p_0 - \hat p_0$, the
+first component, but not the second, which depends on the applied
+control/configuration change and therefore cannot be captured by a
+state-independent additive correction. Two questions follow:
+\begin{enumerate}
+\item[Q1.] Is contact-induced model error mainly additive, or does
+  contact materially rotate the input-output Jacobian?
+\item[Q2.] Given the correct contact physics, is a time-varying
+  Jacobian required, or is a Jacobian frozen at the trajectory's start
+  sufficient?
+\end{enumerate}
+
+\subsection{Experimental Design}
+\label{sec:mn-design}
+
+A full $2\times2\times2$ factorial isolates these questions. The
+nonlinear contact-aware beam model is the truth plant in every
+condition; only the controller's internal Jacobian source and
+disturbance handling vary:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Factor & Level 1 & Level 2 \\
+\midrule
+Jacobian physics & no-contact ($J_{nc}$) & contact-aware ($J_c$) \\
+Time dependence & LTI (frozen at start) & LTV (varies along path) \\
+Disturbance & $\beta_d=0$ (off) & $\beta_d=1$ (on) \\
+\bottomrule
+\end{tabular}
+\end{center}
+giving eight controller-model conditions A--H, with H
+($J_c$, LTV, $d$ on) the best-model benchmark and A the deliberately
+weakest. All eight share the same task weights, rate/state limits,
+disturbance-filter constant, $N=15$, $\Delta t=0.1\,\mathrm{s}$, and
+$d=2$-sample delay-aware prediction (joints only; insertion
+undelayed, \S\ref{sec:feedback}) established for the validated
+controller; only the factorial's three factors are varied.
+
+The reference trajectory is the accepted vessel-navigation plan used
+for hardware deployment: a digitized lumen centreline (60 samples,
+radius 4.1--5.6\,mm) with the beam base and source magnet raised
+$+30\,\mathrm{mm}$ in $z$ and the magnet-exclusion radius set from an
+empirically validated closest safe approach, time-parameterized to 180
+ticks at $100\,\mathrm{ms}$. Note that the plan's hard contact
+constraint (\texttt{contact\_active}) is \emph{never} active at any of
+its 118 inverse-configuration nodes: the beam tracks close enough to
+the centreline that the binary wall-contact flag does not trigger
+anywhere on this trajectory. All contact-related effects reported
+below are therefore continuous, sub-contact-threshold model
+differences, not consequences of a hard mechanical constraint firing.
+
+\subsection{Jacobian Mismatch Characterization}
+\label{sec:mn-exp1}
+
+$J_c(z)$ and $J_{nc}(z)$ were evaluated with matched robot kinematics
+along all 118 reference states (finite-difference beam-model
+Jacobians in accurate mode; see \S\ref{sec:mn-methods-note} for a fast-mode
+artifact caught during this analysis). For the position-only $3\times7$
+block, the Frobenius mismatch
+$E_J(s)=\lVert J_c-J_{nc}\rVert_F/\lVert J_c\rVert_F$
+and the largest principal angle between row spaces,
+$\theta_{\mathrm{row}}(s)$, are near zero for the first third of the
+path ($s<33\,\mathrm{mm}$: $E_J\approx2\times10^{-5}$,
+$\theta_{\mathrm{row}}\approx3\times10^{-4}\,{}^\circ$) and grow
+sharply thereafter, reaching $E_J\approx1.9$ and
+$\theta_{\mathrm{row}}\approx5.1^\circ$ by $s\approx49\,\mathrm{mm}$.
+Row-space rotation stays modest even at peak mismatch (mean
+$1.1^\circ$, max $5.1^\circ$): the two models largely agree on
+\emph{which} actuator combinations produce task motion. Per-actuator
+column rotation is far more informative: joints~1--2 stay well aligned
+(mean $3$--$4^\circ$), joints~3--5 rotate substantially (mean
+$16$--$28^\circ$, up to $69^\circ$), and the insertion column rotates
+the most (mean $20.4^\circ$, \textbf{max $95.1^\circ$} at
+$s=49.1\,\mathrm{mm}$) --- past $90^\circ$, contact does not merely
+weaken $\partial p/\partial L$, it inverts its effective direction.
+Contact therefore acts as a selective, actuator-dependent rotation of
+the control mapping rather than a uniform gain change, concentrated in
+roughly the trajectory's final third.
+
+\subsection{Additive vs.\ Jacobian-Corrected Residual Test}
+\label{sec:mn-exp2}
+
+At ten representative states spanning the full path, a battery of 54
+perturbations (14 canonical $\pm$ actuator directions plus 40 random
+directions, joint step $0.01\,\mathrm{rad}$, insertion step
+$1\,\mathrm{mm}$) was applied to the true contact plant. For each
+perturbation $\delta z^{(m)}$ the residual
+$r^{(m)}=\Delta p_{\mathrm{contact}}^{(m)} - J_{nc}\,\delta z^{(m)}$
+was regressed (36 train / 18 held-out test split) against an additive
+model $r\approx d$ and an additive-plus-Jacobian model
+$r\approx d+\Delta J\,\delta z$, and the held-out gain
+$G_{\Delta J}=1-E_{d+\Delta J}^2/E_d^2$ computed. In the near-null
+region ($s<33\,\mathrm{mm}$) $E_d$ is already at the solver's noise
+floor ($0.006$--$0.008\,\mathrm{mm}$) and $G_{\Delta J}$ is negative:
+fitting $\Delta J$ overfits noise, correctly, since there is no real
+signal there. From $s=36\,\mathrm{mm}$ onward, $E_d$ grows to
+$0.17$--$0.81\,\mathrm{mm}$ while $E_{d+\Delta J}$ collapses to
+$0.02$--$0.08\,\mathrm{mm}$, giving $G_{\Delta J}=0.87$--$0.998$: the
+Jacobian correction explains 87--99.8\% of residual variance beyond
+what additive compensation alone captures. The independently fitted
+$\Delta J$ matches the analytically computed $(J_c-J_{nc})$ from
+\S\ref{sec:mn-exp1} to within $4.5$--$12\%$ relative error at four of
+five tested nodes, confirming the fit recovers a real local Jacobian
+mismatch rather than a curve-fitting artifact. Once mismatch is
+non-negligible, additive disturbance compensation is demonstrably
+insufficient, and the achievable residual with $d$ alone
+($0.17$--$0.81\,\mathrm{mm}$) is on the order of this system's
+whole-path tracking targets.
+
+\subsection{Horizon Prediction}
+\label{sec:mn-exp3}
+
+All eight conditions were evaluated as pure prediction (linear
+integration of the true commanded trajectory; no closed-loop QP)
+against the realized nonlinear plant, at horizons
+$j\in\{1,3,5,10,15\}$ from eleven starting ticks:
+
+\begin{center}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Condition & $j{=}1$ & $j{=}3$ & $j{=}5$ & $j{=}10$ & $j{=}15$ (mm) \\
+\midrule
+A: $nc$, LTI, off & 2.950 & 2.947 & 2.951 & 2.965 & 3.050 \\
+B: $nc$, LTI, $+d$ & 0.040 & 0.123 & 0.235 & 0.568 & 0.863 \\
+C: $nc$, LTV, off & 2.950 & 2.958 & 2.984 & 2.993 & 3.119 \\
+D: $nc$, LTV, $+d$ & 0.040 & 0.122 & 0.230 & 0.497 & 0.736 \\
+E: $c$, LTI, off & 0.003 & 0.025 & 0.088 & 0.286 & 0.397 \\
+F: $c$, LTI, $+d$ & 0.003 & 0.025 & 0.088 & 0.286 & 0.397 \\
+G: $c$, LTV, off & 0.003 & 0.011 & 0.036 & 0.078 & 0.082 \\
+H: $c$, LTV, $+d$ & 0.003 & 0.011 & 0.036 & 0.078 & 0.082 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+($E{\equiv}F$ and $G{\equiv}H$ exactly, by construction, since the
+contact model \emph{is} the truth plant and its own disturbance is
+zero -- a built-in consistency check.) B illustrates the predicted
+textbook signature cleanly: disturbance compensation nearly eliminates
+error at $j=1$ ($2.95\to0.04\,\mathrm{mm}$) but it regrows
+$\sim\!22\times$ by $j=15$ ($0.04\to0.86\,\mathrm{mm}$) --- the offset
+is corrected, the wrong sensitivity accumulates. Paired contrasts at
+$j=15$: $H$ vs.\ $D$ ($0.082$ vs.\ $0.736\,\mathrm{mm}$) shows the gap
+persists even when both sides have disturbance compensation; $E$ vs.\
+$G$ ($0.397$ vs.\ $0.082\,\mathrm{mm}$, $4.9\times$) shows correct
+physics still benefits substantially from time-variation, while $A$
+vs.\ $C$ (statistically indistinguishable, $3.05$ vs.\
+$3.12\,\mathrm{mm}$) shows time-variation provides no benefit at all
+when the underlying physics is wrong -- the constant-offset error
+dominates regardless. Time-variation and correct contact physics
+therefore address distinct, non-interchangeable sources of error.
+
+\subsubsection{Methodological note: a fast-mode Jacobian artifact}
+\label{sec:mn-methods-note}
+
+An initial pass of this analysis used the beam model's
+\texttt{jacobian\_mode="fast"} finite-difference estimator and showed
+an unexplained spike at one specific tick (largest singular value
+$\approx79$ versus $\approx1.0$--$1.1$ at every neighboring tick),
+while the true tip-position output was smooth there
+($0.19\,\mathrm{mm}$ per-tick change, unremarkable). Direct comparison
+against \texttt{jacobian\_mode="accurate"} at the same state showed a
+smooth singular value ($1.001$), confirming a numerical estimator
+artifact rather than real physics. All results in this section use
+accurate-mode Jacobians.
+
+\subsection{Closed-Loop Mechanism Study}
+\label{sec:mn-exp4}
+
+An initial single-seed closed-loop evaluation of all eight conditions
+(genuine receding-horizon QP solves against the nonlinear plant,
+command-integrated state propagation) reproduced the horizon-prediction
+ranking for six of eight conditions, but showed a reversal: condition D
+($J_{nc}$, LTV, $+d$; RMS $0.819\,\mathrm{mm}$) outperformed H
+($J_c$, LTV, $+d$; RMS $1.502\,\mathrm{mm}$), and disturbance
+compensation \emph{worsened} tracking under LTI (B, F reaching RMS
+$\approx5.2\,\mathrm{mm}$, max $\approx8.5\,\mathrm{mm}$, traced to
+$74^\circ$ of joint drift by the final tick in a direction the stale
+LTI schedule's nullspace projector misclassified as task-irrelevant).
+A targeted diagnostic sequence resolved the D-vs-H reversal:
+
+\begin{enumerate}
+\item \textbf{Same-state cross-replay.} Re-solving both predictor
+  families along each other's realized trajectory showed $J_c$ remains
+  the strictly better predictor on \emph{both} D's own and H's own
+  states at every horizon (e.g.\ at $j{=}15$: $0.165$ vs.\
+  $2.895\,\mathrm{mm}$ on D's trajectory; $0.562$ vs.\
+  $2.429\,\mathrm{mm}$ on H's). H's worse closed-loop tracking is
+  therefore not attributable to the contact model becoming a worse
+  local predictor.
+\item \textbf{Exact $Q_N=0$ ablation.} The stagewise nullspace
+  posture-regularization term (built from the same schedule Jacobian
+  used for prediction) was set to exactly zero (not a scale
+  approximation). The reversal disappeared and flipped:
+  $D_{\mathrm{noN}}=2.068\,\mathrm{mm}$ vs.\
+  $H_{\mathrm{noN}}=0.854\,\mathrm{mm}$, matching the model-fidelity
+  ranking from \S\ref{sec:mn-exp1}--\ref{sec:mn-exp3}.
+\item \textbf{Projector-source cross experiment.} Decoupling the
+  primary prediction Jacobian from the Jacobian used to build the
+  nullspace projector (six conditions: $\{J_{nc},J_c\}$ primary
+  $\times\{J_{nc},J_c,\text{none}\}$ projector) showed performance
+  tracks the \emph{primary} Jacobian ($nc$-primary $\approx0.79$--$0.82\,\mathrm{mm}$;
+  $c$-primary $\approx1.49$--$1.50\,\mathrm{mm}$, regardless of
+  projector source, which shifts results by only 1--3\%). The
+  nullspace-projector \emph{source} is not the mechanism; what matters
+  is whether the $Q_N$ term is present at all, and it helps
+  $nc$-primary while hurting $c$-primary uniformly. This is most
+  consistent with an effective-gain conflict: the more accurate
+  contact model's primary tracking correction is more aggressive under
+  the fixed $Q_p/R$ weighting, so the fixed-weight posture regularizer
+  fights it harder than it fights the gentler no-contact correction.
+\item \textbf{$R$-sensitivity check.} With $Q_N$ exactly disabled, a
+  closed-loop sweep over $R\in\{100,300,700\}\times R_0$ for the two
+  LTV$+d$ conditions confirmed contact wins at every tested $R$ (ratio
+  $c/nc$: $0.82$, $0.38$, $0.41$), with the gap stable from
+  $R{=}300$ onward, matching the validated $R{=}700R_0$. $R700$ is not
+  materially confounding the physics comparison and was frozen for the
+  main study.
+\end{enumerate}
+
+\subsection{Monte Carlo Robustness Campaign}
+\label{sec:mn-mc}
+
+With $Q_N=0$ and $R=700R_0$ frozen (identical $Q_p$, $R_d$, $d=2$,
+$\beta_d=1$, $N=15$, $V_f=0$, constraints, disturbance estimator,
+reference trajectory, and solver settings across all conditions, no
+per-condition retuning), the four core conditions ($J_{nc}^{\mathrm{LTI}}{+}d$,
+$J_{nc}^{\mathrm{LTV}}{+}d$, $J_c^{\mathrm{LTI}}{+}d$,
+$J_c^{\mathrm{LTV}}{+}d$) were evaluated under matched-seed initial-state
+perturbations (joint offsets $\sim\mathcal N(0,2^\circ{}^2)$, insertion
+offset $\sim\mathcal N(0,(1\,\mathrm{mm})^2)$, identical realization
+across all four conditions per seed, giving a paired rather than
+unrelated-groups design). This isolates uncertainty in the initial tip
+placement specifically; measurement noise and beam/contact-parameter
+uncertainty are not included and are noted as a separate future
+campaign rather than mixed into one distribution.
+
+\emph{Time-variation contrasts (10 seeds).} With correct contact
+physics, LTV improved RMS by $4.310\,\mathrm{mm}$ on average relative
+to LTI (95\% CI $[4.147,4.473]\,\mathrm{mm}$, $10/10$ seeds); with
+no-contact physics, by $3.742\,\mathrm{mm}$ (95\% CI
+$[3.329,4.157]\,\mathrm{mm}$, $10/10$ seeds). Both effects are large
+and unambiguous; ten seeds were sufficient and this contrast was not
+extended.
+
+\emph{Contact-modeling contrast (extended to 20 seeds).} The
+contact-aware LTV model reduced whole-path RMS tracking error by
+$0.666\,\mathrm{mm}$ on average relative to the no-contact LTV model
+(95\% CI $[0.430,0.902]\,\mathrm{mm}$), with $16/20$ paired trials
+favoring the contact-aware model (median $0.808\,\mathrm{mm}$, IQR
+$[0.340,1.097]\,\mathrm{mm}$; standardized paired effect
+$d_z=1.32$). The improvement was strongly path-progress dependent.
+Splitting the path into three progress-based regimes (early,
+$s<33\,\mathrm{mm}$; transition, $33\le s<45\,\mathrm{mm}$; late,
+$s\ge45\,\mathrm{mm}$ -- chosen from the empirical $E_J$ transition
+in \S\ref{sec:mn-exp1}, \emph{not} from the hard contact-active flag,
+which never triggers on this plan, \S\ref{sec:mn-design}):
+the early-regime difference was statistically detectable but
+practically negligible ($-0.001\,\mathrm{mm}$, 95\% CI
+$[-0.0021,-0.0004]\,\mathrm{mm}$, favoring \emph{no-contact} by
+roughly one micron); the transition-regime difference was inconclusive
+($-0.052\,\mathrm{mm}$, 95\% CI $[-0.146,0.041]\,\mathrm{mm}$); and the
+late-regime contact advantage was large and robust
+($+1.416\,\mathrm{mm}$, 95\% CI $[0.956,1.877]\,\mathrm{mm}$, $18/20$
+trials favoring contact modeling). This directly corroborates
+\S\ref{sec:mn-exp1}: the whole-path Monte Carlo advantage is not a
+diffuse effect, it is concentrated exactly where the deterministic
+Jacobian-mismatch analysis located it.
+
+An exploratory (post-hoc, not used to select seeds) correlation
+between the paired difference and the normalized initial-perturbation
+magnitude was $\mathrm{corr}(\Delta,\lVert\delta z_0\rVert)=-0.60$:
+larger initial departures from the reference are associated with a
+smaller or reversed contact-model advantage. A plausible explanation
+is that both models' local linearizations degrade together far from
+the reference state, but this has not been directly demonstrated and
+is reported as a limitation/future-work item, not an established
+mechanism.
+
+\subsection{Summary}
+\label{sec:mn-summary}
+
+Time-variation is required much more decisively than contact-aware
+physics itself: LTV improves tracking by $3.7$--$4.3\,\mathrm{mm}$ in
+$10/10$ paired trials regardless of which Jacobian family is used.
+Contact-aware modeling provides a smaller but real and robust
+additional benefit ($0.67\,\mathrm{mm}$ whole-path, $16/20$ trials)
+that is not reproducible by additive disturbance compensation alone
+(\S\ref{sec:mn-exp2}--\ref{sec:mn-exp3}) and is concentrated in the
+later portion of this vessel's path, where the contact/no-contact
+Jacobian mismatch is largest (\S\ref{sec:mn-exp1},
+\S\ref{sec:mn-mc}). A controller-tuning confound (a Jacobian-dependent
+secondary posture cost) was identified and removed before this
+conclusion was drawn (\S\ref{sec:mn-exp4}); the input-reference penalty
+weight was checked and found not to be a confound over the tested
+range. The perturbation-magnitude sensitivity of the contact-model
+advantage is noted as an open question for future work.
+
+\end{document}

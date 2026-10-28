@@ -1,0 +1,28 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_ushape10x15mm_bimaterial_exp25_reps23_2026-09-15/runs/openloop_x1_rep1_20260915T165731Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.7893666754068613,
+    "mean_track_mm": 1.521816037735849,
+    "max_track_mm": 3.451,
+    "p95_track_mm": 3.1907499999999995,
+    "mean_hold_mm": 0.7263666666666666,
+    "final_mm": 0.767
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "close_loop_logs/openloop_ushape10x15mm_bimaterial_exp25_reps23_2026-09-15/runs/openloop_x1_rep2_20260915T165845Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 1.7617719451712395,
+    "mean_track_mm": 1.48572641509434,
+    "max_track_mm": 3.347,
+    "p95_track_mm": 3.13575,
+    "mean_hold_mm": 0.6493666666666668,
+    "final_mm": 0.618
+  }
+]

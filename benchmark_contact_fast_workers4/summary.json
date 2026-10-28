@@ -1,0 +1,64 @@
+{
+  "legacy": {
+    "calls": 95,
+    "success_rate": 1.0,
+    "forward_median_ms": 43.497958000000004,
+    "forward_p95_ms": 85.16096689999999,
+    "forward_p99_ms": 93.84459752000002,
+    "jacobian_median_ms": 70.41900000000001,
+    "jacobian_p95_ms": 94.076491,
+    "jacobian_p99_ms": 111.17132552,
+    "combined_median_ms": 114.61462399999999,
+    "combined_p95_ms": 169.64401180000002,
+    "combined_p99_ms": 182.07277252000003
+  },
+  "optimized": {
+    "calls": 95,
+    "success_rate": 1.0,
+    "forward_median_ms": 35.029375,
+    "forward_p95_ms": 60.083220700000005,
+    "forward_p99_ms": 65.99024950000002,
+    "jacobian_median_ms": 61.742625000000004,
+    "jacobian_p95_ms": 72.63958769999999,
+    "jacobian_p99_ms": 83.07526750000004,
+    "combined_median_ms": 97.741416,
+    "combined_p95_ms": 129.5492287,
+    "combined_p99_ms": 138.14635802000004
+  },
+  "speedup": {
+    "forward_median_x": 1.2417566114154193,
+    "jacobian_median_x": 1.1405248805019224,
+    "combined_median_x": 1.1726310983667352
+  },
+  "accuracy": {
+    "tip_error_max_m": 4.99736807847706e-10,
+    "tip_error_median_m": 4.1529420508408736e-13,
+    "jacobian_relative_error_max": 0.0013417497310931861,
+    "jacobian_relative_error_median": 0.0012887371933444126
+  },
+  "environment": {
+    "python": "3.12.9 | packaged by Anaconda, Inc. | (main, Feb  6 2025, 12:55:12) [Clang 14.0.6 ]",
+    "platform": "macOS-14.3-arm64-arm-64bit",
+    "processor": "arm",
+    "numpy": "2.5.1",
+    "scipy": "1.18.0",
+    "environment": {
+      "OMP_NUM_THREADS": "",
+      "OPENBLAS_NUM_THREADS": "",
+      "MKL_NUM_THREADS": "",
+      "VECLIB_MAXIMUM_THREADS": "",
+      "NUMEXPR_NUM_THREADS": "",
+      "MAGBEAM_SENSITIVITY_WORKERS": "",
+      "SLURM_JOB_ID": "",
+      "SLURM_CPUS_PER_TASK": ""
+    }
+  },
+  "acceptance": {
+    "tip_atol_m": 1e-08,
+    "jacobian_rtol": 0.005,
+    "tip_ok": true,
+    "jacobian_ok": true,
+    "all_solves_successful": true,
+    "passed": true
+  }
+}

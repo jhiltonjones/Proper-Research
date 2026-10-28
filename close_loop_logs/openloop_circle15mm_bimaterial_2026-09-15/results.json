@@ -1,0 +1,15 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_circle15mm_bimaterial_2026-09-15/runs/openloop_x1_rep1_20260915T170133Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 4.2260198659600485,
+    "mean_track_mm": 3.137757709251101,
+    "max_track_mm": 9.973,
+    "p95_track_mm": 9.372799999999998,
+    "mean_hold_mm": 2.411666666666667,
+    "final_mm": 2.514
+  }
+]

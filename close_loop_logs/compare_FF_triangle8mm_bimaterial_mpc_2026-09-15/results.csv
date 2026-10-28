@@ -1,0 +1,7 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/lti_rep1_20260915T133745Z,path_complete,121,99,1.3828627165880543,0.9551313131313132,3.507,3.1044999999999994,1.1349999999999998,0.134,35.5637
+mpc_ltv_offline,ltv,1,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/ltv_rep1_20260915T133913Z,path_complete,110,90,1.6783520786771766,1.0860111111111113,4.944,4.46345,2.6786,0.256,37.8486
+mpc_lti,lti,2,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/lti_rep2_20260915T134044Z,path_complete,105,89,1.7973560044525327,1.0677078651685392,6.185,5.039999999999997,4.4128750000000005,2.988,34.0872
+mpc_ltv_offline,ltv,2,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/ltv_rep2_20260915T134215Z,stale_vision(age=0.523s),31,31,0.360047084734492,0.32570967741935475,0.793,0.5005,nan,0.408,32.3212
+mpc_lti,lti,3,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/lti_rep3_20260915T134345Z,path_complete,113,92,1.7296657222913234,1.0766630434782607,5.368,4.773000000000001,2.952238095238095,0.572,35.3466
+mpc_ltv_offline,ltv,3,close_loop_logs/compare_FF_triangle8mm_bimaterial_mpc_2026-09-15/runs/ltv_rep3_20260915T134636Z,path_complete,99,77,1.9857511680214874,1.4543506493506495,5.013,4.4064000000000005,2.2562727272727274,0.256,35.5588

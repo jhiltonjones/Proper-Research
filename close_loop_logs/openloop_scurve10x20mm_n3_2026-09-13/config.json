@@ -1,0 +1,10 @@
+{
+  "plan_dir": "plans/scurve_10x20mm_2026-09-12/time_parameterized_configuration_path",
+  "speed_scale": [
+    1.0
+  ],
+  "reps": 3,
+  "out_dir": "close_loop_logs/openloop_scurve10x20mm_n3_2026-09-13",
+  "analyze_only": null,
+  "compare_dir": null
+}

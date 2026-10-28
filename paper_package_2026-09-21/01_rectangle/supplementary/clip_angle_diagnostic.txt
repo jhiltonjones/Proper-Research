@@ -1,0 +1,16 @@
+SJ rep0: mean theta_clip=3.7 deg  median=0.9 deg  frac>45deg=0.01  frac>90deg=0.00
+SJ rep1: mean theta_clip=3.1 deg  median=1.8 deg  frac>45deg=0.00  frac>90deg=0.00
+SJ rep2: mean theta_clip=2.8 deg  median=1.2 deg  frac>45deg=0.00  frac>90deg=0.00
+SJ rep3: mean theta_clip=3.0 deg  median=1.6 deg  frac>45deg=0.00  frac>90deg=0.00
+SJ rep4: mean theta_clip=3.6 deg  median=2.4 deg  frac>45deg=0.00  frac>90deg=0.00
+FJ rep0: mean theta_clip=6.3 deg  median=2.9 deg  frac>45deg=0.01  frac>90deg=0.00
+FJ rep1: mean theta_clip=5.3 deg  median=1.4 deg  frac>45deg=0.01  frac>90deg=0.01
+FJ rep2: mean theta_clip=5.1 deg  median=2.8 deg  frac>45deg=0.00  frac>90deg=0.00
+FJ rep3: mean theta_clip=4.3 deg  median=2.1 deg  frac>45deg=0.01  frac>90deg=0.00
+FJ rep4: mean theta_clip=5.7 deg  median=1.4 deg  frac>45deg=0.01  frac>90deg=0.01
+
+SJ overall: mean theta_clip=3.2 deg  median=1.6 deg  frac>45deg=0.00  frac>90deg=0.00  n_ticks=1417
+FJ overall: mean theta_clip=5.3 deg  median=2.1 deg  frac>45deg=0.01  frac>90deg=0.00  n_ticks=1417
+
+corr(mean theta_clip(k), mean |e_y|(k)) under FJ = -0.352
+saved inv7_clip_diagnostic.png

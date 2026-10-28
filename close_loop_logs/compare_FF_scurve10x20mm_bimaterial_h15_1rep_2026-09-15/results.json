@@ -1,0 +1,50 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_scurve10x20mm_bimaterial_h15_1rep_2026-09-15/runs/inv_rep1_20260915T185625Z",
+    "stop_reason": "path_complete",
+    "steps": 192,
+    "n_track": 171,
+    "rms_track_mm": 2.181048202850614,
+    "mean_track_mm": 1.5635789473684207,
+    "max_track_mm": 5.315,
+    "p95_track_mm": 4.932,
+    "mean_hold_mm": 0.8957142857142858,
+    "final_mm": 0.786,
+    "duration_s": 42.9643
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_scurve10x20mm_bimaterial_h15_1rep_2026-09-15/runs/lti_rep1_20260915T185826Z",
+    "stop_reason": "path_complete",
+    "steps": 193,
+    "n_track": 171,
+    "rms_track_mm": 1.7227677802192038,
+    "mean_track_mm": 1.2566374269005847,
+    "max_track_mm": 4.117,
+    "p95_track_mm": 3.6719999999999997,
+    "mean_hold_mm": 0.3320454545454545,
+    "final_mm": 0.02,
+    "duration_s": 44.0508
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_FF_scurve10x20mm_bimaterial_h15_1rep_2026-09-15/runs/ltv_rep1_20260915T190028Z",
+    "stop_reason": "path_complete",
+    "steps": 193,
+    "n_track": 171,
+    "rms_track_mm": 1.7388628014036251,
+    "mean_track_mm": 1.2696198830409358,
+    "max_track_mm": 4.354,
+    "p95_track_mm": 3.719,
+    "mean_hold_mm": 0.4763636363636364,
+    "final_mm": 0.338,
+    "duration_s": 41.9426
+  }
+]

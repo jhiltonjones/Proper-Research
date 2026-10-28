@@ -1,0 +1,6 @@
+anatomy,jacobian_model,controller,initial_condition,disturbance_alpha,tag,status,rms_beam_position_error_mm,failure
+radius_x1,no_contact,naive_inverse_jacobian,0,0.0,,ok,0.1,
+radius_x1,no_contact,mpc_lti,0,0.0,,ok,0.1,
+radius_x1,no_contact,mpc_ltv_offline,0,0.0,,ok,0.1,
+radius_x1,no_contact,mpc_ltv_sqp_online,0,0.0,,ok,0.1,
+radius_x1,contact,naive_inverse_jacobian,0,0.0,,failed,,boom

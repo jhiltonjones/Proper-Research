@@ -1,0 +1,11 @@
+condition,bin_label,bin_lo_mm,bin_hi_mm,n,mean_gain_ratio_original,mean_gain_ratio_recomputed,median_gain_ratio,G_agg,n_excluded_tiny_motion,den_p10_whole_condition_mm,mean_gain_ratio_excl_tiny,median_gain_ratio_excl_tiny,G_agg_excl_tiny
+mpc_C,pre-contact,0.0,28.5,37,1.279,1.279,1.224,1.337,0,0.07782,1.279,1.224,1.337
+mpc_C,early contact,28.5,45.0,82,1.481,1.482,1.439,1.461,0,0.07782,1.482,1.439,1.461
+mpc_C,mid-contact,45.0,55.0,61,1.591,1.597,1.358,1.899,0,0.07782,1.597,1.358,1.899
+mpc_C,late common region,55.0,60.0,29,1.418,1.421,1.398,1.544,0,0.07782,1.421,1.398,1.544
+mpc_C,NC pre-failure region,60.0,64.0,12,1.905,1.943,1.815,1.94,0,0.07782,1.943,1.815,1.94
+mpc_NC,pre-contact,0.0,28.5,45,1.285,1.285,1.165,1.263,0,0.13076,1.285,1.165,1.263
+mpc_NC,early contact,28.5,45.0,107,2.443,2.443,2.443,2.423,0,0.13076,2.443,2.443,2.423
+mpc_NC,mid-contact,45.0,55.0,60,2.147,2.095,2.108,0.069,0,0.13076,2.095,2.108,0.069
+mpc_NC,late common region,55.0,60.0,27,2.414,2.372,2.239,2.283,0,0.13076,2.372,2.239,2.283
+mpc_NC,NC pre-failure region,60.0,64.0,19,7.943,7.844,7.295,7.189,0,0.13076,7.844,7.295,7.189

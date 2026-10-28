@@ -1,0 +1,120 @@
+import numpy as np
+
+from proper_research.robot.transformations import get_point
+from proper_research.rig_calibration import (
+    BEAM_BASE_XYZ_M,
+    SOURCE_DIPOLE_BODY_AXIS,
+    TCP_TO_MAGNET_POSE6,
+)
+from scipy.spatial.transform import Rotation as R
+
+
+# =====================================================================
+# FRAME CALIBRATION  (robot read 2026-09-10; camera-frame corrected)
+# ---------------------------------------------------------------------
+# GEOMETRY: the beam grows along world -X (insertion -> tip moves -X).
+# Camera is OVERHEAD looking down (-Z), so it sees the world X-Y plane;
+# its blind axis is world Z.  So beam frame B:
+#   B.x (axial)      = world -X   (beam_axial_axis_R = (-1,0,0))
+#   B.y (in-plane)   = world +Y   (left/right in the image)
+#   B.z (blind)      = world -Z   (into the image; beam_plane_normal = (0,0,-1))
+#
+# Source magnet: N52 cylinder, 100 mm dia x 100 mm long, COAXIAL with the
+# beam, dipole along the beam axis (world -X).  Centre at beam_base +
+# [-0.28, 0, 0] -> 28 cm from the pivot along the axis, ~23 cm beyond the
+# tip, same world Y and Z.  DH deltas in urik.CONFIG.
+#
+#   joints (rad) = [-0.85634357, -1.94584002, -1.76176286,
+#                   -1.03319450,  1.56234264, -2.05640871]
+#   TCP pose6    = [0.40795443, -0.73732753, 0.32527992,
+#                  -3.07806404,  0.57586908,  0.04569585]
+#
+# Beam material parameters calibrated 2026-09-10 against live sweeps
+# (calibration_2026-09-10/): xy-plane arc (phi +-40 deg, r = 28-38 cm),
+# source-dipole rotation, and insertion length 18-36 mm.
+#   -> effective_youngs_modulus_pa = 2.5e6  (in beam_hardware_experiment_v2)
+#   -> in-plane RMS ~3.6 deg; camera confirms ZERO out-of-plane bend for
+#      every in-plane magnet move (frame calibration is correct).
+# Known model limits (fixed-permanent-magnetisation assumption):
+#   * bend scales ~linearly with inserted length; the real beam's tip
+#     angle is ~flat over 18-36 mm -> model only trust-worthy near ~33 mm.
+#   * model is ~2x too insensitive to source-dipole rotation.
+#   * model falls off too slowly with magnet distance (a bit stiff at r=38cm).
+# =====================================================================
+
+LIVE_JOINTS_RAD = (
+    -0.85634357,
+    -1.94584002,
+    -1.76176286,
+    -1.03319450,
+    1.56234264,
+    -2.05640871,
+)
+
+# TCP_TO_MAGNET_POSE6 and SOURCE_DIPOLE_BODY_AXIS now live in
+# rig_calibration.py (imported above) -- that module's docstring has the
+# full recalibration history (2026-10-02 remount, 2026-10-03 dipole-axis
+# fix, 2026-10-04 beam-base-distance fix) that used to be duplicated here.
+
+SOURCE_MAGNET_DIAMETER_M = 0.10
+SOURCE_MAGNET_LENGTH_M = 0.10
+
+
+def make_initial_poses() -> tuple[np.ndarray, np.ndarray, float, float]:
+    """
+    Fixed initial robot/beam pose, matched to the frame calibration above.
+
+    Returns ``(pivot_point, start_point, L_cmd, dt)``:
+      * ``pivot_point`` -- beam base pose6 in R; rotvec is
+        ``model_base_rotation_from_beam(+R.z, -R.x)``.
+      * ``start_point`` -- source-magnet pose6 in R (calibrated-FK consistent).
+      * ``L_cmd`` -- initial insertion [m] (near max).
+      * ``dt`` -- controller timestep [s].
+    """
+    # 2026-09-10: model calibrated at E = 2.5 MPa (arc + dipole + insertion
+    # sweeps).  L_cmd is the initial inserted length the offline planner starts
+    # from AND the length the live beam must be set to before a planned run.
+    # 2026-09-11: moved 0.030 -> 0.025 for the bigger (14 mm depth / 20 mm base)
+    # apex-at-start triangle -- taller insertion range (25-39 mm instead of
+    # 30-38.8 mm) at the SAME 39 mm max, to push the planned trajectory closer
+    # to the velocity/acceleration limits (a deliberate stress-test: see
+    # beam-lateral-authority-limit memory, MPC-vs-inverse-Jacobian clipping
+    # investigation).
+    # 2026-09-15: tried moving 0.025 -> 0.02 for the real-vessel
+    # (detect_blue-sourced lumen) planning campaign, per explicit request, but
+    # reverted: at L0=0.02 the vessel plan's chain-rule Jacobian validation
+    # fails (relative error 93.8% vs the 9% ceiling) while the identical
+    # config at L0=0.025 passes cleanly and proceeds into Layer 1 -- confirmed
+    # insertion-length-dependent, not a general vessel-planning bug. Root
+    # cause not yet found (not investigated: bimaterial wire/tip blend
+    # boundary vs. vessel contact-model geometry at short insertion). Left at
+    # 0.025 (known-working) pending that investigation.
+    L_cmd = 0.025
+    dt = 0.01
+
+    # X/Y from the single canonical rig_calibration.BEAM_BASE_XYZ_M; this
+    # function's own Z (-0.016567) predates and differs from that module's
+    # unraised-rig default.
+    pivot_point = np.array(
+        [BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567,
+         3.14159265, 0.0, 0.0],
+        dtype=float,
+    )
+
+    start_point = np.array(
+        [
+            BEAM_BASE_XYZ_M[0] - 0.28,
+            BEAM_BASE_XYZ_M[1],
+            -0.016567,
+            -3.07793295,
+            0.57537270,
+            0.04503358,
+        ],
+        dtype=float,
+    )
+
+    print(f"[INIT] start_point (magnet in R) = {start_point}")
+    print(f"[INIT] pivot_point  (beam base)  = {pivot_point}")
+    print(f"[INIT] L0={L_cmd:.4f}, dt={dt:.4f}")
+
+    return pivot_point, start_point, L_cmd, dt

@@ -1,0 +1,38 @@
+{
+  "gate1_timing_solver_pass": true,
+  "tick_dt": {
+    "new": 110.80000000000001,
+    "old_c": 110.29798387096776,
+    "diff": 0.5020161290322562,
+    "tol": 10.0,
+    "passed": true
+  },
+  "solver_time": {
+    "new": 9.573851958519281,
+    "old_c": 9.024599649506795,
+    "diff": 0.5492523090124859,
+    "tol": 10.0,
+    "passed": true
+  },
+  "realization": {
+    "new": 0.9382777568717262,
+    "old_c": 0.9570478999992887,
+    "diff": 0.018770143127562533,
+    "tol": 0.05,
+    "passed": true
+  },
+  "time_limit_fraction": {
+    "new": 0.0020242914979757085,
+    "old_c": 0.004032258064516129,
+    "diff": -0.0020079665665404204,
+    "max_excess": 0.05,
+    "passed": true
+  },
+  "tcp_workspace_check": {
+    "verified_from_artifacts": false,
+    "reason": "controller_metadata.json does not record tcp_workspace bounds/margin/live_relinearize -- confirmed by inspection, a gap in the original logging addition, not fixed here.",
+    "indirect_evidence": "all 15 commands omitted --disable-tcp-workspace-in-qp, --tcp-workspace-live-relinearize, and any --tcp-workspace-robust-margin-mm override; the box is a shared module-level constant (_WORKSPACE_XYZ_MIN_M/MAX_M), not per-condition-settable.",
+    "limitation": "this check is NOT a verified-from-artifacts pass -- it is the best available indirect evidence. A follow-up should add tcp_workspace bounds/margin to controller_metadata.json so future rounds can verify this directly."
+  },
+  "total_deadline_misses": 0
+}

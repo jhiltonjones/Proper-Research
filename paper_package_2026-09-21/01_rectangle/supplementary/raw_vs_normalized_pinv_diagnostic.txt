@@ -1,0 +1,30 @@
+mid-path Jacobian (ref_index=95):
+[[ 1.58226793e-03 -6.71742793e-04 -2.68495899e-03 -1.62192244e-03
+   1.45090974e-03  3.45118487e-04 -9.99125137e-01]
+ [ 4.53067104e-02 -1.97833263e-02 -7.69186910e-02 -4.62005386e-02
+   4.14939600e-02  9.86645216e-03  4.17480895e-02]
+ [ 1.00289015e-05  9.58072726e-02  6.56083597e-02  7.48161740e-04
+  -1.83293767e-03 -1.17644195e-04  2.84383896e-04]]
+
+e_pred (task error) = [ 0.0015 -0.001   0.    ]
+
+channel            du_raw      du_scaled   ratio raw/scaled
+joint0      -3.624211e-03  -3.632792e-03              0.998
+joint1      -1.795809e-03  -1.799650e-03              0.998
+joint2       3.839004e-03   3.846942e-03              0.998
+joint3       3.668986e-03   3.676635e-03              0.998
+joint4      -3.254269e-03  -3.261720e-03              0.998
+joint5      -7.850212e-04  -7.868111e-04              0.998
+insertion   -1.531660e-03  -1.228382e-03              1.247
+
+insertion's share of |du| (L1): raw pinv = 0.083   normalized pinv = 0.067
+|du_raw| = 7.623107e-03   |du_scaled| = 7.584151e-03
+
+normalized-effort (du/S_u), i.e. fraction of each channel's own velocity scale used:
+  joint0     raw=-0.0725  scaled=-0.0727
+  joint1     raw=-0.0359  scaled=-0.0360
+  joint2     raw=+0.0768  scaled=+0.0769
+  joint3     raw=+0.0734  scaled=+0.0735
+  joint4     raw=-0.0651  scaled=-0.0652
+  joint5     raw=-0.0157  scaled=-0.0157
+  insertion  raw=-0.3063  scaled=-0.2457

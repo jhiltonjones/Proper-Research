@@ -1,0 +1,26 @@
+{
+  "description": "Derived 2026-09-29 from user-supplied joints (verified: magnet z matches beam-base plane to 0.0012mm via robot_kin.T_F_M FK). User-given raw TCP reading disagreed with FK(joints) by 45.3mm and was NOT used -- see session notes.",
+  "joints_rad": [
+    -0.8294642607318323,
+    -1.9672757587828578,
+    -1.730027437210083,
+    -1.04366888225589,
+    1.5631502866744995,
+    -2.029626194630758
+  ],
+  "magnet_pose6_R": [
+    0.27564496,
+    -0.67001548,
+    -0.0165658,
+    -3.07797523,
+    0.57528182,
+    0.04487956
+  ],
+  "beam_base_pivot_xyz_R": [
+    0.525575,
+    -0.670028,
+    -0.016567
+  ],
+  "distance_magnet_to_beam_base_mm": 249.93004031646936,
+  "exclusion_floor_mm": 210.43
+}

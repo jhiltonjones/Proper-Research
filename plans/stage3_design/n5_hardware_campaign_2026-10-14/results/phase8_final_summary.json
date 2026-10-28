@@ -1,0 +1,70 @@
+{
+  "table1_whole_run_rmse": {
+    "NEW": [
+      0.6419518531931985,
+      0.6681280287138359,
+      0.6577313227521501,
+      0.6912914365175004,
+      0.6811574187732213
+    ],
+    "OLD-C": [
+      0.7413459875385019,
+      0.7204022266826051,
+      0.7047449765182515,
+      0.7311237897700649,
+      0.716777732056261
+    ],
+    "NC": [
+      1.4207331826735148,
+      1.447278766431504,
+      1.490824150790029,
+      1.4941738159624174,
+      1.425752358621123
+    ]
+  },
+  "table2_region_c_rmse": {
+    "NEW": [
+      0.5492803119638562,
+      0.5880808126894816,
+      0.6624891282658323,
+      0.5646763126147306,
+      0.5875176947689887
+    ],
+    "OLD-C": [
+      0.6477682841881038,
+      0.606644047197366,
+      0.6183737658453132,
+      0.7264361030157476,
+      0.6809236050265499
+    ],
+    "NC": [
+      0.4605206338887413,
+      0.48448125324491426,
+      0.6063517482641168,
+      0.4974954731077579,
+      0.49991790705385164
+    ]
+  },
+  "timing_gate_pass": true,
+  "primary_pass": true,
+  "delta_c_median": -0.0602505894191151,
+  "bootstrap_ci_95": [
+    -0.13891840824675883,
+    0.014720844077728445
+  ],
+  "within_anchor_mechanistic": {
+    "median_delta_ej": -0.00011577473771534868,
+    "frac_positive": 0.05042016806722689,
+    "passed": false
+  },
+  "condition_level_mechanistic_pass": true,
+  "any_safety_violation": false,
+  "chronology_check": {
+    "delta_ejd": -0.00031365200597094464,
+    "delta_theta_u": -1.1221092897288898,
+    "delta_e_future": -0.06627819056122958,
+    "chronology_holds": true
+  },
+  "rq_virtuous_cycle_finding": true,
+  "outcome_classification": "within-anchor E_J,D/theta_u NOT consistently down -> hybrid did not deliver its intended model-level advantage on these anchors"
+}

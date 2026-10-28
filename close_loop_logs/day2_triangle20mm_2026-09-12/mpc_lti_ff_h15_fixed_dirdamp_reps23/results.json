@@ -1,0 +1,34 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_fixed_dirdamp_reps23/runs/lti_rep1_20260912T100348Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 221,
+    "rms_track_mm": 1.8487883019752052,
+    "mean_track_mm": 1.435977375565611,
+    "max_track_mm": 3.846,
+    "p95_track_mm": 3.386,
+    "mean_hold_mm": 0.7553636363636365,
+    "final_mm": 0.605,
+    "duration_s": 51.3566
+  },
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 2,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_fixed_dirdamp_reps23/runs/lti_rep2_20260912T100533Z",
+    "stop_reason": "path_complete",
+    "steps": 243,
+    "n_track": 221,
+    "rms_track_mm": 1.6532333806392032,
+    "mean_track_mm": 1.362737556561086,
+    "max_track_mm": 3.273,
+    "p95_track_mm": 2.855,
+    "mean_hold_mm": 0.385,
+    "final_mm": 0.134,
+    "duration_s": 42.0513
+  }
+]

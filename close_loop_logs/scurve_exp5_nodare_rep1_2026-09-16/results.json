@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/scurve_exp5_nodare_rep1_2026-09-16/runs/ltv_rep1_20260916T105755Z",
+    "stop_reason": "path_complete",
+    "steps": 193,
+    "n_track": 171,
+    "rms_track_mm": 1.855909430135398,
+    "mean_track_mm": 1.4087134502923977,
+    "max_track_mm": 4.12,
+    "p95_track_mm": 3.8655,
+    "mean_hold_mm": 0.23831818181818185,
+    "final_mm": 0.204,
+    "duration_s": 41.8096
+  }
+]

@@ -1,0 +1,15 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_ushape_sanitycheck_2026-09-15/runs/openloop_x1_rep1_20260915T182629Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 2.0739817858682383,
+    "mean_track_mm": 1.8536650943396225,
+    "max_track_mm": 3.938,
+    "p95_track_mm": 3.5261999999999993,
+    "mean_hold_mm": 0.5965666666666666,
+    "final_mm": 0.604
+  }
+]

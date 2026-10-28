@@ -1,0 +1,10 @@
+{
+  "plan_dir": "plans/triangle_20mm_2026-09-11/time_parameterized_configuration_path",
+  "speed_scale": [
+    1.0
+  ],
+  "reps": 2,
+  "out_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/openloop_reps23",
+  "analyze_only": null,
+  "compare_dir": null
+}

@@ -1,0 +1,27 @@
+{
+  "shape": "square",
+  "size_mm": 3.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.4915750000000001,
+    -0.6700279993753606,
+    -0.016566997954844186
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 25,
+  "perimeter_mm": 10.091276784848164,
+  "time_param_samples": 49,
+  "time_param_duration_s": 4.800000000000001,
+  "time_param_dir": "uprgrade_configuration/bends_p30_m70_jac_contact_plant_contact_1_ctrl_mpc_sqp_full_rollout10_Np15_sqp50_bends_30_-70/time_parameterized_configuration_path"
+}

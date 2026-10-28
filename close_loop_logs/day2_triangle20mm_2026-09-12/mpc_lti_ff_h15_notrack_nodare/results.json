@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_notrack_nodare/runs/lti_rep1_20260912T093939Z",
+    "stop_reason": "path_complete",
+    "steps": 244,
+    "n_track": 222,
+    "rms_track_mm": 1.7786890657989642,
+    "mean_track_mm": 1.437,
+    "max_track_mm": 3.502,
+    "p95_track_mm": 3.2212499999999995,
+    "mean_hold_mm": 0.3772272727272727,
+    "final_mm": 0.341,
+    "duration_s": 53.2273
+  }
+]

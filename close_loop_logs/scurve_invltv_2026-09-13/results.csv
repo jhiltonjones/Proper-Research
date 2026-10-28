@@ -1,0 +1,3 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,close_loop_logs/scurve_invltv_2026-09-13/runs/inv_rep1_20260913T114601Z,path_complete,195,173,2.8703026788490598,2.291942196531792,6.182,5.6904,1.8015,1.479,42.7105
+mpc_ltv_offline,ltv,1,close_loop_logs/scurve_invltv_2026-09-13/runs/ltv_rep1_20260913T114802Z,path_complete,195,173,2.6614558415520992,2.0556242774566478,5.975,5.5162,1.2019090909090908,0.884,45.9845

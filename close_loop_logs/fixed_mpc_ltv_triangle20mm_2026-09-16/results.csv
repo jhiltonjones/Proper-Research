@@ -1,0 +1,6 @@
+controller,key,rep,run_dir,stop_reason,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s,steps,n_track
+mpc_ltv_offline,ltv,1,close_loop_logs/fixed_mpc_ltv_triangle20mm_2026-09-16/runs/ltv_rep1_20260916T151541Z,rc-11,nan,nan,nan,nan,nan,nan,nan,0,0
+mpc_ltv_offline,ltv,2,close_loop_logs/fixed_mpc_ltv_triangle20mm_2026-09-16/runs/ltv_rep2_20260916T151950Z,rc4,nan,nan,nan,nan,nan,nan,nan,0,0
+mpc_ltv_offline,ltv,3,close_loop_logs/fixed_mpc_ltv_triangle20mm_2026-09-16/runs/ltv_rep3_20260916T152422Z,path_complete,4.645987830219966,3.875669683257918,9.366,8.844,0.22518181818181818,0.195,44.1882,243,221
+mpc_ltv_offline,ltv,4,close_loop_logs/fixed_mpc_ltv_triangle20mm_2026-09-16/runs/ltv_rep4_20260916T152559Z,path_complete,4.631995176852589,3.8450762331838564,9.179,8.456999999999999,0.12454545454545451,0.05,47.8867,245,223
+mpc_ltv_offline,ltv,5,close_loop_logs/fixed_mpc_ltv_triangle20mm_2026-09-16/runs/ltv_rep5_20260916T152740Z,path_complete,4.629121455573449,3.8572432432432433,9.276,8.567749999999998,0.19827272727272727,0.099,43.8414,244,222

@@ -1,0 +1,410 @@
+"""Shared construction for the offline inverse and global path planners.
+
+This module extracts the active setup from the working experiment script.  It
+constructs the same one-entry experiment grid, lumen, beam models, robot
+configuration, controller pack, and inverse-planner configuration without
+running inverse planning, global optimization, or the online simulation.
+"""
+
+from dataclasses import replace
+from pathlib import Path
+
+import numpy as np
+
+from proper_research.hardware.beam_hardware_experiment_v2 import (
+    youngs_modulus_for_insertion_length,
+)
+from proper_research.planning.offline_inverse_configuration import (
+    InverseConfigurationPlannerConfig,
+)
+from proper_research.simulation.simulations.controller_factory import (
+    ControllerDesignConfig,
+)
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    JointSpaceRobotConfig,
+    build_controller,
+)
+from proper_research.simulation.simulations.initial_conditions import (
+    SOURCE_DIPOLE_BODY_AXIS,
+    make_initial_poses,
+)
+from proper_research.simulation.simulations.model_factory import (
+    build_model_bundle,
+)
+from proper_research.simulation.simulations.scenario import (
+    LumenBend,
+    LumenConfig,
+    make_curvature_jacobian_grid,
+)
+
+
+DEFAULT_RUN_ROOT = Path("uprgrade_configuration")
+
+
+def make_double_bend_lumen_config(
+    first_angle_deg: float = 20.0,
+    second_angle_deg: float = -40.0,
+) -> LumenConfig:
+    """Return the lumen geometry used by the saved inverse-planning run."""
+    return LumenConfig(
+        length=0.04,
+        n_pts=240,
+        n_ref_pts=100,
+        radius=0.0025,
+        ds_target=1.0e-3,
+        bends=(
+            LumenBend(
+                bend_axis=(0.0, 0.0, 1.0),
+                bend_angle_rad=np.deg2rad(first_angle_deg),
+                bend_start=0.015,
+                bend_end=0.02,
+            ),
+            LumenBend(
+                bend_axis=(0.0, 0.0, 1.0),
+                bend_angle_rad=np.deg2rad(second_angle_deg),
+                bend_start=0.02,
+                bend_end=0.035,
+            ),
+        ),
+    )
+
+
+def make_design_config() -> ControllerDesignConfig:
+    """Return a fresh controller design configuration for this experiment."""
+    return replace(
+        ControllerDesignConfig(),
+        n_out=3,
+        n_p=7,
+        w_tracking=(
+            1000.0,
+            1000.0,
+            0.0,
+        ),
+        u_max=np.array(
+            [
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.20,
+            ],
+            dtype=float,
+        ),
+        trust_radius=np.array(
+            [
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.10,
+            ],
+            dtype=float,
+        ),
+        trust_radius_min=np.array(
+            [
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.005,
+                0.0001,
+            ],
+            dtype=float,
+        ),
+        trust_radius_max=np.array(
+            [
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.50,
+                0.20,
+            ],
+            dtype=float,
+        ),
+        dL_guess=0.0,
+        enable_hard_epm_tip_clearance=True,
+        enable_hard_tip_tangent_angle=False,
+    )
+
+
+def make_robot_config() -> JointSpaceRobotConfig:
+    """Return the UR/insertion configuration matched to the live hardware.
+
+    ``q_seed_rad`` is the live joint vector (see
+    ``initial_conditions.LIVE_JOINTS_RAD``); with the offline-FK-consistent
+    ``start_point`` from ``make_initial_poses`` the initial magnet-pose IK
+    returns exactly those six joint angles.
+
+    ``tcp_to_magnet_pose6`` is sourced from
+    ``initial_conditions.TCP_TO_MAGNET_POSE6`` (itself
+    ``rig_calibration.TCP_TO_MAGNET_POSE6``), currently
+    ``(0, 0, 0.43, 0, 0, 0)`` -- the source magnet sits 0.43 m below the TCP
+    along TCP.z, post the 2026-10-02 remount (this docstring previously said
+    "30 mm", a stale pre-remount value; the code always used the imported
+    constant, so this was a comment-only staleness, not a live bug).
+    (The stale ``urik.CONFIG.T_tcp_magnet_pose6`` is 0.47 m and must be
+    overridden here.)  ``active_tcp_pose6 = 0`` because the robot's installed
+    TCP offset is zero (flange == TCP).
+    """
+    from proper_research.simulation.simulations.initial_conditions import (
+        LIVE_JOINTS_RAD,
+        TCP_TO_MAGNET_POSE6,
+    )
+
+    return JointSpaceRobotConfig(
+        q_seed_rad=tuple(LIVE_JOINTS_RAD),
+        active_tcp_pose6=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        tcp_to_magnet_pose6=tuple(TCP_TO_MAGNET_POSE6),
+        insertion_min_m=0.0,
+        insertion_max_m=0.05,
+        debug_initial_ik=True,
+        validate_chain_rule_at_start=True,
+    )
+
+
+def make_inverse_config() -> InverseConfigurationPlannerConfig:
+    """Return the exact inverse-planner configuration from the saved run."""
+    return InverseConfigurationPlannerConfig(
+        position_tolerance_m=1.0e-3,
+        tangent_tolerance_rad=np.deg2rad(80.0),
+
+        initial_path_step_m=2.5e-4,
+        minimum_path_step_m=1.25e-4,
+        maximum_path_step_m=4.5e-3,
+        grow_step_after_successes=999,
+
+        maximum_function_evaluations=300,
+        maximum_multistart_attempts=20,
+
+        maximum_joint_step_rad=(0.075,) * 6,
+        maximum_insertion_step_m=7.5e-4,
+
+        continuity_weight=(
+            5.0e-2,
+            5.0e-2,
+            5.0e-2,
+            5.0e-2,
+            5.0e-2,
+            5.0e-2,
+            1.0e-1,
+        ),
+
+        solve_initial_node=False,
+        use_extrapolated_guess=True,
+        insertion_non_decreasing=False,
+        require_contact_model=True,
+        finite_difference_validation_at_start=True,
+        debug=True,
+    )
+
+
+def make_experiment_config(
+    *,
+    run_root: Path = DEFAULT_RUN_ROOT,
+    plant_contact: bool = True,
+):
+    """Recreate the single ExperimentConfig used by the working script.
+
+    `plant_contact`: True (default) builds the contact-aware experiment
+    (plant AND Jacobian model both "contact" -- the plant actually sees the
+    wall). False builds the structurally contact-blind counterpart (plant
+    AND Jacobian model both "no_contact") -- for the "same plan, no-contact
+    model" comparison run, not a mix of one contact-aware and one blind.
+    """
+    # Radius-axis contact study (2026-09): centre point is the +30/-50 geometry,
+    # which already has a complete L1->L2->L3 reference under full_control_stack.
+    lumen_config = make_double_bend_lumen_config(
+        first_angle_deg=30.0,
+        second_angle_deg=-70.0,
+    )
+
+    jacobian_variant = "contact" if plant_contact else "no_contact"
+    experiments = make_curvature_jacobian_grid(
+        run_root=Path(run_root),
+        lumen_configs=(lumen_config,),
+        jacobian_variants=(jacobian_variant,),
+        controller_kinds=("mpc",),
+        solver_modes=("sqp_full",),
+        inverse_sequence_modes=("rollout_ltv",),
+        inverse_kp_values=(1,),
+        inverse_desired_step_max_m=4.0e-3,
+        inverse_extra_damping=0.0,
+        rollout_steps_values=(10,),
+        Np=15,
+        N_sqp=50,
+        max_steps=25,
+        plant_contact=plant_contact,
+        adaptive_rollout_enabled=False,
+    )
+
+    if len(experiments) != 1:
+        raise RuntimeError(
+            "Expected exactly one planning experiment, "
+            f"but the grid produced {len(experiments)}."
+        )
+
+    exp_cfg = experiments[0]
+    exp_cfg.validate()
+    return exp_cfg
+
+
+def build_planning_context(
+    *,
+    run_root: Path = DEFAULT_RUN_ROOT,
+    initial_poses: tuple | None = None,
+    plant_contact: bool = True,
+):
+    """Build the model and controller objects needed by both offline stages.
+
+    This function intentionally does not call ``solve_from_controller_pack``,
+    ``optimize_from_saved_inverse_result``, or ``run_simulation``.
+
+    Parameters
+    ----------
+    initial_poses
+        Optional ``(pivot_point, start_point, L0, dt)`` override, in the same
+        shape ``make_initial_poses()`` returns. Pass this instead of
+        monkey-patching ``initial_conditions.make_initial_poses`` /
+        ``planning_context.make_initial_poses`` at the module level (the
+        pattern several vessel_stage_a scripts used to inject a custom
+        beam-base/magnet pose) -- that pattern mutates shared module state
+        and is unsafe if two callers do it in sequence or concurrently.
+        Default ``None`` calls ``make_initial_poses()`` exactly as before,
+        so every existing non-patching caller is unaffected.
+    plant_contact
+        Passed straight through to ``make_experiment_config`` -- True
+        (default, unchanged behavior) builds the contact-aware experiment,
+        False builds the structurally contact-blind one (plant AND
+        Jacobian model both "no_contact").
+
+    Returns
+    -------
+    tuple
+        ``(exp_cfg, bundle, controller_pack, out_root)``.
+    """
+    exp_cfg = make_experiment_config(run_root=Path(run_root), plant_contact=plant_contact)
+    out_root = Path(exp_cfg.out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    pivot_point, start_point, L0, dt = (
+        make_initial_poses() if initial_poses is None else initial_poses
+    )
+
+    # The contact model needs a lumen that the (straight) nominal beam sits
+    # well inside, or the analytic contact Jacobian fails FD validation and the
+    # forward model bends.  The stock double-bend lumen curves away from the
+    # straight beam.  Use a straight, wide-bore lumen down the beam axis; the
+    # planners pass the real target centreline separately.
+    bundle_lumen_cfg = LumenConfig(
+        length=0.06, n_pts=240, n_ref_pts=100, radius=0.05, ds_target=1.0e-3, bends=()
+    )
+
+    bundle = build_model_bundle(
+        pivot_point=pivot_point,
+        L0=L0,
+        lumen_cfg=bundle_lumen_cfg,
+        plant_contact=exp_cfg.model.plant_contact,
+        # Lab magnet on an extended bracket; dipole aligned with the beam axial
+        # (world -X) magnetisation direction at the reference pose.  The legacy
+        # body -x default points the dipole ~horizontal and bends the model
+        # beam ~20 deg where the real beam is straight.
+        source_dipole_body_axis=SOURCE_DIPOLE_BODY_AXIS,
+        # Build the contact lumen at the real beam base, not the legacy fixed
+        # pose 270 mm away (which corrupts the contact solve).
+        lumen_pivot_point=pivot_point,
+        # Match the online prediction model (beam_hardware_experiment_v2 +
+        # rfmv.build_forward_model_in_shared_frame): uniform-rod stiffness at the
+        # calibrated Young's modulus, the N52 900 A m^2 source moment
+        # (from parameters.default_magnet_params()), and the -6 deg dipole yaw
+        # that reproduces the real beam's +0.7 mm pre-curl.  Refined against the
+        # corner sweep -> corner RMS 0.96 -> 0.25 mm (2026-09-10), then
+        # re-calibrated 2026-09-14 against a +Y translation sweep at 32mm
+        # insertion, off the vessel wall (a near-wall sweep first suggested a
+        # much larger, unphysically-converging gap, traced to wall-friction
+        # contamination). That first off-wall fit (E=32MPa) was ITSELF later
+        # found to be contaminated by the contact-lumen confound (jacobian_
+        # variant left at its "contact" default, pulling a stale lumen radius
+        # from manual_vessel_boundaries.json) plus camera/insertion
+        # calibration drift -- see CompositeBeamConfig.effective_youngs_modulus_pa's
+        # docstring in beam_hardware_experiment_v2.py for the full story.
+        # Redone 2026-09-14 with camera + insertion calibration fixed and
+        # jacobian_variant="no_contact" explicit, at two insertion depths in
+        # true open space (32mm -> E=1.80MPa, 40mm -> E=3.20MPa, each
+        # individually slope-matched to ~0.997-0.998). Joint fit across both
+        # -> E=2.25MPa, which lands back near the ORIGINAL 2026-09-10 estimate
+        # (2.5MPa) -- the whole 3.0->20.0->32.0 MPa escalation was chasing the
+        # contact-lumen artifact, not a real stiffness change.
+        #
+        # 2026-09-15: that single constant was first replaced by a fitted
+        # empirical E(L) (a wider 4-length campaign, 20/30/40/50mm, found E
+        # genuinely grows with insertion length, 1.49 -> 5.54 MPa, not noise
+        # around one value), then SUPERSEDED again the same day by a proper
+        # two-material (bimaterial) beam model once the user confirmed the
+        # real physical construction: a 0.2mm nitinol wire core with a 40mm
+        # PDMS+iron-particle composite tip, ~5mm bonded overlap. A length-
+        # offset-only explanation was tested and rejected first (residual
+        # trend survives even at its best fit), and a pure elastic cantilever
+        # scaling law (E~L^3) fit badly (R^2=0.68) -- both pointed at a
+        # non-uniform beam, which the bimaterial model directly represents
+        # instead of curve-fitting around. Validated against the same 4
+        # lengths: composite-only E=1.60MPa (wire fixed at nitinol's real
+        # ~75GPa modulus, not fit -- letting both float ran away to an
+        # unphysical E_wire, same asymptotic-non-convergence pattern as the
+        # very first uniform-beam E-refit this session). See
+        # use_bimaterial_beam's docstring in beam_hardware_experiment_v2.py
+        # for the fit, residuals, and the still-open smaller residual within
+        # the pure-composite 20-40mm range. Kept identical to the online
+        # model (same E_composite, same wire parameters).
+        use_physical_stiffness=True,
+        effective_youngs_modulus=1.60e6,
+        use_bimaterial_beam=True,
+        wire_youngs_modulus_pa=75.0e9,
+        # 2026-10-04: zeroed during the model-vs-camera physics debugging
+        # (was -6.0, a 2026-09-10 small-deflection pre-curl fudge, predating
+        # the Oct-2 remount and this session's SOURCE_DIPOLE_BODY_AXIS
+        # recalibration -- quantified to shift the problematic phi=60deg
+        # case by only ~0.6mm/1.5deg, not the cause of the larger
+        # model-vs-camera gap, but an undocumented second definition of the
+        # source dipole axis on top of the live one). Do not refit until the
+        # bigger discrepancy is resolved and the camera rotational extrinsic
+        # has been audited.
+        source_dipole_yaw_deg=0.0,
+    )
+
+    plant_model = bundle.models["plant"]
+    jacobian_model = bundle.models[
+        exp_cfg.model.jacobian_variant
+    ]
+
+    controller_pack = build_controller(
+        start_point=start_point,
+        L0=L0,
+        dt=dt,
+        plant_model=plant_model,
+        jacobian_model=jacobian_model,
+        lumen_C=bundle.lumen_C,
+        lumen_R=bundle.lumen_R,
+        run_cfg=exp_cfg.controller,
+        design_cfg=make_design_config(),
+        robot_cfg=make_robot_config(),
+    )
+
+    return exp_cfg, bundle, controller_pack, out_root
+
+
+__all__ = [
+    "DEFAULT_RUN_ROOT",
+    "build_planning_context",
+    "make_design_config",
+    "make_double_bend_lumen_config",
+    "make_experiment_config",
+    "make_inverse_config",
+    "make_robot_config",
+]

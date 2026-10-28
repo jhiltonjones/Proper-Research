@@ -1,0 +1,10 @@
+{
+  "stop_reason": "exception:FileNotFoundError: [Errno 2] No such file or directory: '/home/jack/Proper-Research/manual_vessel_boundaries.json'",
+  "samples_logged": 0,
+  "initial_position_bias_m": null,
+  "initial_angle_bias_deg": null,
+  "raw_position_error_rmse_mm": NaN,
+  "bias_corrected_position_error_rmse_mm": NaN,
+  "raw_angle_error_rmse_deg": NaN,
+  "bias_corrected_angle_error_rmse_deg": NaN
+}

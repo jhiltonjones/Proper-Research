@@ -212,6 +212,26 @@ class InverseConfigurationPlannerConfig:
     # to 0.0 to make selection purely position-accuracy-driven.
     tangent_error_selection_weight: float = 1.0
 
+    # 2026-11-04 (Round 23, Y3/Y4): mirrored here, with identical
+    # defaults, from offline_inverse_configuration_head_exclusion's
+    # InverseConfigurationPlannerConfig -- that is a SEPARATE dataclass,
+    # and plan_shape_path.py's CLI-override logic filters its `shared`
+    # dict by `hasattr(make_inverse_config()_instance, field_name)`, i.e.
+    # by attributes of THIS (legacy) class's instance. Any field added
+    # only to the head-exclusion class is silently dropped before it
+    # ever reaches the solver -- confirmed directly: a real rebuild with
+    # --magnet-distance-weight 1.0 logged magnet_distance_weight=0.0 and
+    # reproduced the unfixed 636.15mm excursion exactly, because this
+    # field didn't exist here yet. Keep this in sync with the other
+    # class whenever either one changes -- see also the comment on
+    # source_magnet_lumen_tube_radius_m above and
+    # run_inverse_head_exclusion._upgrade_planner_config, which has the
+    # same hasattr-filtered-copy pattern for a different call path.
+    tangent_residual_weight: float = 0.0
+    magnet_distance_weight: float = 0.0
+    magnet_distance_max_m: float = 0.500
+    magnet_distance_scale_m: float = 0.010
+
     def validate(self) -> None:
         positive_scalars = {
             "position_tolerance_m": self.position_tolerance_m,

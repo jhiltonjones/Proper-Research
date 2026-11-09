@@ -34,12 +34,12 @@ from proper_research.simulation.simulations.simulate_time_parameterized_configur
 
 from . import common
 
-# Must run before close_loop_path_follow.main() ever instantiates its own
-# StateStreamConfig -- see rectangle_stage_a/common.py's import-site comment
-# for the live failure this fixes (marker_min_count mismatch: unpatched
-# default requires 3 red markers, this rig's post-2026-09-29 physical setup
-# only has 2). Same call vessel_stage_a's run scripts already make.
-common.patch_state_stream_config_for_recalibrated_rig(pf)
+# 2026-10-23: physical rig's middle marker is permanently gone (removed
+# 2026-09-29, see common.py's patch_state_stream_config_two_markers) --
+# this script's own live-tracking warmup needs 3-4 markers by default and
+# fails outright against the current rig without this patch. Must run
+# before anything else reassigns pf.StateStreamConfig.
+common.patch_state_stream_config_two_markers(pf)
 
 
 def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:

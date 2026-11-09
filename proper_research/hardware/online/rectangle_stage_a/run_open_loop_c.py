@@ -41,7 +41,7 @@ from . import common
 # default requires 3 red markers, this rig's post-2026-09-29 physical setup
 # only has 2). Same call vessel_stage_a's run_open_loop_vessel.py/run_mpc_
 # delay_aware_vessel.py/run_inverse_jacobian_vessel.py already make.
-common.patch_state_stream_config_for_recalibrated_rig(pf)
+common.patch_state_stream_config_two_markers(pf)
 
 
 def main() -> None:

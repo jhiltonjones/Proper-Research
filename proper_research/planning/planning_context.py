@@ -24,6 +24,7 @@ from proper_research.simulation.simulations.controller_factory_joint_space impor
     JointSpaceRobotConfig,
     build_controller,
 )
+from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 from proper_research.simulation.simulations.initial_conditions import (
     SOURCE_DIPOLE_BODY_AXIS,
     make_initial_poses,
@@ -255,6 +256,57 @@ def make_experiment_config(
     return exp_cfg
 
 
+def _calibrated_default_initial_poses() -> tuple:
+    """(pivot_point, start_point, L0, dt), Z pinned to the single
+    calibrated ``rig_calibration.BEAM_BASE_XYZ_M[2]``.
+
+    2026-11-05 (Round 27): this used to be a bare call to
+    ``make_initial_poses()``, which still returns the pre-2026-10-02-
+    remount Z (-0.016567) -- the SAME stale value already fixed in
+    ``plan_shape_path.py``'s config builder, its own ``_bend_axes_R()``,
+    and ``robotics_frame_measurement_validation.py``. A caller of
+    ``build_planning_context()`` that didn't pass ``initial_poses``
+    explicitly (most callers, including every shape MPC runner's own
+    ``build_or_load_schedule()``) got the stale pivot even when the
+    PLAN it was building a schedule for had itself been built with
+    ``--use-calibrated-beam-base`` -- an L1-vs-schedule pivot mismatch
+    confirmed directly on two real schedules (rectangle, triangle-25),
+    now archived under archive/stale_pivot/.
+
+    This function is now the DEFAULT, not an opt-in, deliberately: the
+    old default was documented as preserving exact legacy behavior for
+    every non-overriding caller, but that is precisely what let the
+    stale value keep reappearing. There is no longer a bare
+    ``make_initial_poses()`` call anywhere in this function's own
+    control flow. NOTE: this changes the silent default for every one
+    of this module's ~40 call sites that didn't pass ``initial_poses``
+    explicitly (several one-off analysis/study scripts among them) --
+    not individually re-audited here; flagged for the author's review.
+    """
+    pivot_point, start_point, L0, dt = make_initial_poses()
+    pivot_point = pivot_point.copy()
+    start_point = start_point.copy()
+    pivot_point[2] = float(BEAM_BASE_XYZ_M[2])
+    start_point[2] = float(BEAM_BASE_XYZ_M[2])
+    return pivot_point, start_point, L0, dt
+
+
+def resolved_beam_base_xyz_m(initial_poses: tuple | None = None) -> np.ndarray:
+    """The beam-base XYZ that ``build_planning_context(initial_poses=...)``
+    resolves to for the SAME ``initial_poses`` argument -- without building
+    anything. For provenance logging only: a plan's build calls this with
+    whatever ``initial_poses`` it passed to ``build_planning_context`` (often
+    ``None``) and writes the result into its own saved summary, so later
+    schedule builds and the guard in ``build_or_load_schedule`` have a real
+    recorded value to compare against instead of trusting a plan's
+    construction command to have been logged.
+    """
+    pivot_point, _start_point, _L0, _dt = (
+        _calibrated_default_initial_poses() if initial_poses is None else initial_poses
+    )
+    return np.asarray(pivot_point[:3], dtype=float)
+
+
 def build_planning_context(
     *,
     run_root: Path = DEFAULT_RUN_ROOT,
@@ -276,8 +328,11 @@ def build_planning_context(
         pattern several vessel_stage_a scripts used to inject a custom
         beam-base/magnet pose) -- that pattern mutates shared module state
         and is unsafe if two callers do it in sequence or concurrently.
-        Default ``None`` calls ``make_initial_poses()`` exactly as before,
-        so every existing non-patching caller is unaffected.
+        Default ``None`` now calls ``_calibrated_default_initial_poses()``
+        (2026-11-05, Round 27) -- the single calibrated beam-base Z, not
+        the stale pre-remount one bare ``make_initial_poses()`` still
+        returns. This is a deliberate default change, not an opt-in; see
+        that function's own docstring for why and its blast radius.
     plant_contact
         Passed straight through to ``make_experiment_config`` -- True
         (default, unchanged behavior) builds the contact-aware experiment,
@@ -294,7 +349,9 @@ def build_planning_context(
     out_root.mkdir(parents=True, exist_ok=True)
 
     pivot_point, start_point, L0, dt = (
-        make_initial_poses() if initial_poses is None else initial_poses
+        _calibrated_default_initial_poses()
+        if initial_poses is None
+        else initial_poses
     )
 
     # The contact model needs a lumen that the (straight) nominal beam sits

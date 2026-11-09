@@ -232,6 +232,14 @@ class InverseConfigurationPlannerConfig:
     magnet_distance_max_m: float = 0.500
     magnet_distance_scale_m: float = 0.010
 
+    # 2026-11-05 (Round 27): mirrored here for the same hasattr-filtered-copy
+    # reason documented above for magnet_distance_weight -- see that
+    # comment. Identical defaults to
+    # offline_inverse_configuration_head_exclusion.InverseConfigurationPlannerConfig.
+    tcp_box_weight: float = 0.0
+    tcp_box_margin_m: float = 0.025
+    tcp_box_scale_m: float = 0.010
+
     def validate(self) -> None:
         positive_scalars = {
             "position_tolerance_m": self.position_tolerance_m,

@@ -232,10 +232,53 @@ def _wrapped_build_offline_solver(kind, **kwargs):
 pf.build_offline_solver = _wrapped_build_offline_solver
 
 
+def _calibrated_default_initial_poses_for_guard():
+    from proper_research.planning.planning_context import (
+        _calibrated_default_initial_poses,
+    )
+    pivot, _start, _L0, _dt = _calibrated_default_initial_poses()
+    return pivot[:3]
+
+
 def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
-    if cache_path and os.path.exists(cache_path):
-        print(f"[qn_zero] loading cached genuine LTV schedule from {cache_path}")
-        return np.load(cache_path)
+    # 2026-11-05 (Round 27): build_planning_context()'s pivot now matches
+    # the calibrated beam base by default (previously a THIRD stale-
+    # pivot reader, separate from the two already fixed elsewhere).
+    # Verify the plan this schedule is FOR actually recorded the same
+    # beam base its own L1 solve used, and refuse rather than silently
+    # building/loading a schedule for the wrong geometry.
+    current_beam_base = _calibrated_default_initial_poses_for_guard()
+    plan_summary_path = os.path.join(os.path.dirname(plan_dir.rstrip('/')), "plan_shape_summary.json")
+    if os.path.exists(plan_summary_path):
+        with open(plan_summary_path) as _f:
+            _plan_beam_base = json.load(_f).get("beam_base_xyz_m")
+        if _plan_beam_base is not None:
+            _diff = float(np.max(np.abs(np.asarray(_plan_beam_base) - current_beam_base)))
+            if _diff > 1.0e-6:
+                raise RuntimeError(
+                    f"[qn_zero] REFUSING to build/load a schedule: plan's own "
+                    f"recorded beam base {_plan_beam_base} differs from the "
+                    f"current build_planning_context() default {current_beam_base.tolist()} "
+                    f"by {_diff*1000:.3f}mm (> 1e-6m). This plan and this schedule "
+                    f"build would be using different geometry."
+                )
+    else:
+        print(f"[qn_zero] WARNING: {plan_summary_path} has no beam_base_xyz_m -- "
+              f"cannot verify this schedule matches the plan's own L1 pivot.")
+    meta_path = (cache_path + ".meta.json") if cache_path else None
+    if cache_path and os.path.exists(cache_path) and meta_path and os.path.exists(meta_path):
+        with open(meta_path) as _f:
+            _cached_beam_base = np.asarray(json.load(_f)["beam_base_xyz_m"], dtype=float)
+        if float(np.max(np.abs(_cached_beam_base - current_beam_base))) <= 1.0e-6:
+            print(f"[qn_zero] loading cached genuine LTV schedule from {cache_path} "
+                  f"(beam base verified matching)")
+            return np.load(cache_path)
+        print(f"[qn_zero] cache at {cache_path} was built with a different beam base "
+              f"({_cached_beam_base.tolist()} vs current {current_beam_base.tolist()}) "
+              f"-- rebuilding, not reusing.")
+    elif cache_path and os.path.exists(cache_path):
+        print(f"[qn_zero] cache at {cache_path} has no beam-base metadata (pre-Round-27) "
+              f"-- rebuilding, not reusing.")
     print("[qn_zero] building genuine from_model_bundle Jacobian schedule "
           "(one beam solve per reference sample, ~90-150s)...")
     reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
@@ -256,6 +299,9 @@ def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
     )
     if cache_path:
         np.save(cache_path, schedule)
+        if meta_path:
+            with open(meta_path, "w") as _f:
+                json.dump({"beam_base_xyz_m": current_beam_base.tolist()}, _f)
         print(f"[qn_zero] schedule cached -> {cache_path}")
     return schedule
 

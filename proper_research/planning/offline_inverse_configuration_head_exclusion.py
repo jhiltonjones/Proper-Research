@@ -57,6 +57,11 @@ import numpy as np
 from scipy.optimize import Bounds, minimize, least_squares
 from scipy.spatial.transform import Rotation as Rot
 
+import proper_research.hardware.ur_magnet_ik_jacobian_validation as urik
+from proper_research.hardware.online.rectangle_stage_a.common import (
+    WORKSPACE_XYZ_MIN_M as _TCP_BOX_MIN_M,
+    WORKSPACE_XYZ_MAX_M as _TCP_BOX_MAX_M,
+)
 from proper_research.controllers.dipole_alignment import (
     dipole_alignment_residual_and_jacobian,
 )
@@ -447,6 +452,32 @@ class InverseConfigurationPlannerConfig:
     magnet_distance_max_m: float = 0.500
     magnet_distance_scale_m: float = 0.010
 
+    # 2026-11-05 (Round 27): the author's physically-measured free-space
+    # TCP box leaves per-face clearance under the required 25mm (15mm QP
+    # robust margin + 10mm tracking headroom) at some nodes of the
+    # corrected-pivot plans -- same flat-cost story as magnet_distance
+    # above, just against six fixed planes instead of one point. One-
+    # sided residual per face, active only when clearance drops below
+    # tcp_box_margin_m:
+    #   r_box_i = sqrt(w_box) * max(0, tcp_box_margin_m - clearance_i) / d_box
+    # clearance_i = tcp_coord - box_min (lower faces) or
+    # box_max - tcp_coord (upper faces). p_tcp from the same calibrated
+    # FK (urik.forward_kinematics) this module uses for the magnet above,
+    # just without the TCP->magnet offset. Box values are read from
+    # rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M -- the SAME
+    # constants the shape MPC's in-QP constraint and the post-hoc
+    # monitor both use, so planner, QP and monitor all agree on one box.
+    # 0.0 (default) disables it exactly, same always-computed-but-zero
+    # pattern as magnet_distance_weight. tcp_box_margin_m=0.025m and
+    # tcp_box_scale_m=0.010m (matching magnet_distance_scale_m) are
+    # chosen so w_box=1.0 makes being right at the margin boundary (i.e.
+    # 0mm clearance, 25mm short of a comfortable margin) cost about as
+    # much as 2.5mm of tip error -- verified empirically, see the
+    # Round 27 report.
+    tcp_box_weight: float = 0.0
+    tcp_box_margin_m: float = 0.025
+    tcp_box_scale_m: float = 0.010
+
     force_torque_preference: dict | None = None
 
     def validate(self) -> None:
@@ -566,6 +597,12 @@ class InverseConfigurationPlannerConfig:
             raise ValueError("magnet_distance_weight must be finite and >= 0.")
         if not np.isfinite(self.magnet_distance_max_m) or self.magnet_distance_max_m <= 0.0:
             raise ValueError("magnet_distance_max_m must be finite and positive.")
+        if self.tcp_box_weight < 0.0 or not np.isfinite(self.tcp_box_weight):
+            raise ValueError("tcp_box_weight must be finite and >= 0.")
+        if not np.isfinite(self.tcp_box_margin_m) or self.tcp_box_margin_m <= 0.0:
+            raise ValueError("tcp_box_margin_m must be finite and positive.")
+        if not np.isfinite(self.tcp_box_scale_m) or self.tcp_box_scale_m <= 0.0:
+            raise ValueError("tcp_box_scale_m must be finite and positive.")
         if not np.isfinite(self.magnet_distance_scale_m) or self.magnet_distance_scale_m <= 0.0:
             raise ValueError("magnet_distance_scale_m must be finite and positive.")
 
@@ -1393,6 +1430,13 @@ class _NodeObjective:
             _analytical_magnet_jac if callable(_analytical_magnet_jac) else None
         )
 
+        self.tcp_box_weight_sqrt = float(np.sqrt(config.tcp_box_weight))
+        self.tcp_box_margin_m = float(config.tcp_box_margin_m)
+        self.tcp_box_scale_m = float(config.tcp_box_scale_m)
+        self._tcp_box_min = np.asarray(_TCP_BOX_MIN_M, dtype=float)
+        self._tcp_box_max = np.asarray(_TCP_BOX_MAX_M, dtype=float)
+        self._tcp_box_dh = urik.corrected_dh_from_config(urik.CONFIG)
+
         span = self.state_max - self.state_min
         self.state_centre = 0.5 * (self.state_max + self.state_min)
         self.state_half_range = np.where(span > 1.0e-12, 0.5 * span, 1.0)
@@ -1508,6 +1552,65 @@ class _NodeObjective:
             J[:, index] = (p_plus - p_minus) / (2.0 * step)
         return J
 
+    def _tcp_position_for_box(self, state: Array) -> Array:
+        q6 = np.asarray(state[:6], dtype=float)
+        result = urik.forward_kinematics(q6, self._tcp_box_dh, None)
+        p = result.T_R_F[:3, 3]
+        if not np.all(np.isfinite(p)):
+            raise FloatingPointError(
+                "forward_kinematics returned a non-finite TCP position "
+                "(tcp_box_weight > 0)."
+            )
+        return p
+
+    def _tcp_position_jacobian_for_box(self, state: Array) -> Array:
+        steps = np.full(
+            7, float(self.config.magnet_jacobian_joint_step_rad), dtype=float
+        )
+        steps[6] = float(self.config.magnet_jacobian_insertion_step_m)
+        J = np.zeros((3, 7), dtype=float)
+        for index in range(6):
+            step = steps[index]
+            delta = np.zeros(7, dtype=float)
+            delta[index] = step
+            p_plus = self._tcp_position_for_box(state + delta)
+            p_minus = self._tcp_position_for_box(state - delta)
+            J[:, index] = (p_plus - p_minus) / (2.0 * step)
+        return J
+
+    def _tcp_box_clearance(self, state: Array) -> Array:
+        p = self._tcp_position_for_box(state)
+        clearance_lo = p - self._tcp_box_min
+        clearance_hi = self._tcp_box_max - p
+        return np.concatenate((clearance_lo, clearance_hi))
+
+    def _tcp_box_residual(self, state: Array) -> Array:
+        if self.tcp_box_weight_sqrt == 0.0:
+            return np.zeros(6, dtype=float)
+        clearance = self._tcp_box_clearance(state)
+        excess = np.maximum(0.0, self.tcp_box_margin_m - clearance)
+        raw = excess / self.tcp_box_scale_m
+        return self.tcp_box_weight_sqrt * raw
+
+    def _tcp_box_jacobian(self, state: Array) -> Array:
+        if self.tcp_box_weight_sqrt == 0.0:
+            return np.zeros((6, 7), dtype=float)
+        clearance = self._tcp_box_clearance(state)
+        active = clearance < self.tcp_box_margin_m
+        if not np.any(active):
+            return np.zeros((6, 7), dtype=float)
+        J_p = self._tcp_position_jacobian_for_box(state)
+        signs = np.array([1.0, 1.0, 1.0, -1.0, -1.0, -1.0], dtype=float)
+        idx_map = [0, 1, 2, 0, 1, 2]
+        scale = self.tcp_box_weight_sqrt / self.tcp_box_scale_m
+        rows = np.zeros((6, 7), dtype=float)
+        for i in range(6):
+            if not active[i]:
+                continue
+            d_clearance_dstate = signs[i] * J_p[idx_map[i], :]
+            rows[i, :] = -scale * d_clearance_dstate
+        return rows
+
     def _magnet_distance_residual(self, state: Array) -> Array:
         if self.magnet_distance_weight_sqrt == 0.0:
             return np.zeros(1, dtype=float)
@@ -1554,6 +1657,7 @@ class _NodeObjective:
         )
         alignment_residual = self._dipole_alignment_residual(state)
         magnet_distance_residual = self._magnet_distance_residual(state)
+        tcp_box_residual = self._tcp_box_residual(state)
         residual = np.concatenate(
             (
                 position_residual,
@@ -1562,6 +1666,7 @@ class _NodeObjective:
                 centre_residual,
                 alignment_residual,
                 magnet_distance_residual,
+                tcp_box_residual,
             )
         )
         if not np.all(np.isfinite(residual)):
@@ -1580,8 +1685,9 @@ class _NodeObjective:
         J_centre = np.diag(self.centre_sqrt / self.state_half_range)
         J_alignment = self._dipole_alignment_jacobian(state)
         J_magnet_distance = self._magnet_distance_jacobian(state)
+        J_tcp_box = self._tcp_box_jacobian(state)
         result = np.vstack(
-            (J_position, J_tangent, J_continuity, J_centre, J_alignment, J_magnet_distance)
+            (J_position, J_tangent, J_continuity, J_centre, J_alignment, J_magnet_distance, J_tcp_box)
         )
         if not np.all(np.isfinite(result)):
             raise FloatingPointError("Inverse objective Jacobian is non-finite.")

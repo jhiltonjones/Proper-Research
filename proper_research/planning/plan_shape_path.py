@@ -400,6 +400,17 @@ def _arguments() -> argparse.Namespace:
                    help="explicit weight for the tangent residual block "
                         "(was a hardcoded *0; 0.0 default reproduces the "
                         "exact old dead-tangent behavior).")
+    p.add_argument("--tcp-box-weight", type=float, default=0.0,
+                   help="w_box for the L1 one-sided TCP-workspace-box "
+                        "residual (Round 27). 0.0 (default) reproduces "
+                        "the exact old behavior -- the term is inert.")
+    p.add_argument("--tcp-box-margin-mm", type=float, default=25.0,
+                   help="required clearance (mm) to every face of the "
+                        "shared workspace box -- only matters if "
+                        "--tcp-box-weight > 0.")
+    p.add_argument("--tcp-box-scale-mm", type=float, default=10.0,
+                   help="d_box (mm) for the TCP-box residual -- only "
+                        "matters if --tcp-box-weight > 0.")
     p.add_argument("--dt", type=float, default=0.1, help="reference sample period [s]")
     p.add_argument("--joint-velocity-limit", type=float, default=0.10)
     p.add_argument("--insertion-velocity-limit", type=float, default=2.0e-3)
@@ -438,7 +449,9 @@ def main() -> None:
     from proper_research.planning.planning_context import (
         build_planning_context,
         make_inverse_config,
+        resolved_beam_base_xyz_m,
     )
+    from proper_research.rig_calibration import TCP_TO_MAGNET_POSE6 as _rig_tcp_to_magnet_pose6
     from proper_research.planning.offline_inverse_configuration_head_exclusion import (
         InverseConfigurationPlannerConfig,
         solve_from_controller_pack,
@@ -596,6 +609,12 @@ def main() -> None:
         shared["magnet_distance_scale_m"] = float(args.magnet_distance_scale_mm) * 1.0e-3
     if "tangent_residual_weight" in shared:
         shared["tangent_residual_weight"] = float(args.tangent_residual_weight)
+    if "tcp_box_weight" in shared:
+        shared["tcp_box_weight"] = float(args.tcp_box_weight)
+    if "tcp_box_margin_m" in shared:
+        shared["tcp_box_margin_m"] = float(args.tcp_box_margin_mm) * 1.0e-3
+    if "tcp_box_scale_m" in shared:
+        shared["tcp_box_scale_m"] = float(args.tcp_box_scale_mm) * 1.0e-3
 
     if args.fast:
         shared["maximum_function_evaluations"] = 120
@@ -725,6 +744,18 @@ def main() -> None:
         "time_param_samples": n,
         "time_param_duration_s": dur,
         "time_param_dir": str(time_param_dir),
+        # 2026-11-05 (Round 27): the actual (pivot_point) beam base this
+        # plan's L1 solve used -- explicit provenance so a schedule build
+        # (or anything else reusing this plan later) can verify it's using
+        # the SAME beam base, not silently re-deriving a different one.
+        "beam_base_xyz_m": resolved_beam_base_xyz_m(initial_poses_override).tolist(),
+        # 2026-11-09: the full resolved rig config this build used, beyond
+        # just the beam base, so a later consumer (schedule build, the
+        # guard, provenance audits) never has to re-derive or assume it.
+        "rig_config": {
+            "beam_base_xyz_m": resolved_beam_base_xyz_m(initial_poses_override).tolist(),
+            "tcp_to_magnet_pose6": list(_rig_tcp_to_magnet_pose6),
+        },
     }
     (shape_dir / "plan_shape_summary.json").write_text(json.dumps(summary, indent=2))
     print(f"\n[done] run online with:\n"

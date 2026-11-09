@@ -333,12 +333,19 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             self._q_cmd_prev = self._q_cmd.copy()
             self._ins_cmd = float(z_meas[6])
 
+        # (2026-10-26 instrumentation pass) wall-clock the full round trip
+        # (parent-side pickle+send, worker recv+deserialize, solve, worker
+        # pickle+send, parent poll+recv+deserialize) around try_solve, so
+        # round_trip_ms - t_solve_ms isolates IPC/serialization overhead on
+        # its own -- previously unmeasured; see A1 loop-overhead localization.
+        _ipc_t0 = time.monotonic()
         resp = self._worker.try_solve(
             kind=self._controller_kind, z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
             insertion_cmd=self._ins_cmd, measured_beam_position=measured_beam_position,
             control_index=reference_index, previous_input=self._prev_input,
             deadline_s=self._deadline_s,
         )
+        round_trip_ms = (time.monotonic() - _ipc_t0) * 1e3
 
         if resp is not None and resp["status"] == "ok":
             command = np.asarray(resp["command"], dtype=float)
@@ -374,6 +381,7 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 "success": success,
                 "deadline_miss": resp is None,
                 "t_solve_ms": resp["t_solve_ms"] if resp else None,
+                "round_trip_ms": round_trip_ms,
                 "predicted_states": (
                     None if resp is None or resp.get("predicted_states") is None
                     else np.asarray(resp["predicted_states"], dtype=float).tolist()

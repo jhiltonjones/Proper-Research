@@ -58,8 +58,18 @@ JOINT_ACCELERATION_LIMIT_RAD_S2 = 0.40
 # triangle plans violate the original box (min=(0.15,-1.20,0.20),
 # max=(1.10,-0.483,0.70)) by 28-125mm. Both y faces and the negative-x
 # face widened outward by 0.05m; z and the positive-x face unchanged.
-WORKSPACE_XYZ_MIN_M: tuple[float, float, float] = (0.10, -1.25, 0.20)
-WORKSPACE_XYZ_MAX_M: tuple[float, float, float] = (1.10, -0.433, 0.70)
+# SUPERSEDED 2026-11-05 (Round 27): the above was an ad-hoc guess, never
+# grounded in measurement. The author jogged the real arm to its six
+# physical workspace limits and reported the raw TCP extremes
+# (robot-base frame): x in [0.22469, 0.60971], y in [-0.91361,
+# -0.47576], z in [0.34544, 0.48496]. Reduced here by a 20mm safety
+# margin on every face -- that margin must NOT be re-applied anywhere
+# downstream (the L1 tcp_box_margin_m / QP
+# --tcp-workspace-robust-margin-mm terms are a separate, additional
+# requirement on top of this already-safe box, not a second
+# application of this 20mm).
+WORKSPACE_XYZ_MIN_M: tuple[float, float, float] = (0.24469, -0.89361, 0.36544)
+WORKSPACE_XYZ_MAX_M: tuple[float, float, float] = (0.58971, -0.49576, 0.46496)
 
 
 def load_plan_initial_state(plan_dir: str) -> tuple[np.ndarray, float]:

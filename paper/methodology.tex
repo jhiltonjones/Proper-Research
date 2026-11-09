@@ -525,19 +525,31 @@ triangle, U-shape; nominal dimensions in Table~\ref{tab:params}), using
 the beam and platform of Sec.~\ref{sec:beam-model}--\ref{sec:online}.
 Controller parameters are fixed once and not retuned between geometries,
 licensing the three geometries as a generalization check on a single
-design rather than three separately tuned instances.
+design rather than three separately tuned instances. The rectangle and
+triangle paths carry the full campaign described below; the U-shape path
+retains the smaller $n=5$ campaign of an earlier round and is reported
+separately with its own sample size, not pooled with the rectangle/triangle
+results.
 
 The primary comparison is INV-7 vs.\ MPC under scheduled-$J$
-(Sec.~\ref{sec:common}), 5 repeated live runs per controller and path
-(the run, not the tick, is the experimental unit,
-Sec.~\ref{sec:metrics}). A second, factorial comparison crosses controller
-with Jacobian condition (SJ, FJ) on the rectangle and triangle paths,
-again 5 repeated runs per cell, as a robustness stress test to model
-staleness. On the U-shape path, both attempted MPC-FJ trials developed
-rapidly increasing tracking error in the same path region and were
-safety-terminated (Sec.~\ref{sec:online}) before completing the path; no
-complete-path metric is reported for that cell, and it is reported as a
-genuine failure mode rather than omitted or imputed.
+(Sec.~\ref{sec:common}), 10 repeated live runs per controller and path on
+the rectangle and triangle (5 on the U-shape; the run, not the tick, is
+the experimental unit, Sec.~\ref{sec:metrics}). A second, factorial
+comparison crosses controller with Jacobian condition (SJ, FJ) on the
+rectangle and triangle paths, again 10 repeated runs per cell, as a
+robustness stress test to model staleness. A third comparison, run only
+on MPC, crosses Jacobian condition (SJ, FJ) with prediction horizon
+$N\in\{15,1\}$ on the rectangle and triangle paths, 10 repeated runs per
+cell, isolating the horizon's own contribution from the Jacobian-source
+comparisons; this complements, and is reported alongside, the offline
+decision-level horizon ablation of Sec.~\ref{sec:replay} with an
+independent live-hardware result at the two horizon extremes actually
+used elsewhere in this protocol. On the U-shape path, both attempted
+MPC-FJ trials developed rapidly increasing tracking error in the same
+path region and were safety-terminated (Sec.~\ref{sec:online}) before
+completing the path; no complete-path metric is reported for that cell,
+and it is reported as a genuine failure mode rather than omitted or
+imputed.
 
 Each run starts from the same calibrated home configuration, after the
 frame transform \eqref{eq:frame-fit} and workspace bounds are
@@ -582,16 +594,22 @@ command-increment (acceleration-limit) activity} \eqref{eq:mpc-rate} ---
 the joint velocity bound itself is rarely approached.
 
 The independent experimental unit is the \emph{run}: with
-$T\!\approx\!250$--$290$ ticks per run and 5 runs per condition, tables
-report run-level mean$\,\pm\,$SD and figures show individual run-level
-points together with the run-level mean and a 95\% confidence interval
-$\bar x\pm t_{0.975,4}\,s/\sqrt5$, $t_{0.975,4}\approx2.776$, computed
-from the 5 run-level values, not the $\approx\!1300$ pooled (non-independent)
-ticks. Tick-resolved traces are used only for time/path-resolved
-visualization and the mechanistic analyses of Sec.~\ref{sec:replay}, not
-as additional statistical samples. Given $n=5$, cross-geometry claims are
-stated as heterogeneous in effect size (large on the rectangle, smaller on
-the triangle and U-shape) rather than as a uniform effect.
+$T\!\approx\!250$--$290$ ticks per run and $n=10$ runs per condition on
+the rectangle and triangle paths ($n=5$ on the U-shape, unchanged from
+the earlier round), tables report run-level mean$\,\pm\,$95\% confidence
+interval, $\bar x\pm t_{0.975,n-1}\,s/\sqrt n$ ($t_{0.975,9}\approx2.262$
+at $n=10$, $t_{0.975,4}\approx2.776$ at $n=5$), computed from the
+run-level values, not the $\approx\!2500$--$2900$ pooled
+(non-independent) ticks at $n=10$. Group comparisons additionally use the
+two-sided Mann-Whitney $U$ test on the $n$ run-level RMSE values, which
+makes no normality assumption and is reported alongside the CI for every
+primary comparison. Figures show individual run-level points together
+with the run-level mean and this same confidence interval. Tick-resolved
+traces are used only for time/path-resolved visualization and the
+mechanistic analyses of Sec.~\ref{sec:replay}, not as additional
+statistical samples. Cross-geometry claims are stated as heterogeneous in
+effect size (large on the rectangle, smaller on the triangle, and not yet
+re-established at $n=10$ on the U-shape) rather than as a uniform effect.
 
 \subsection{Offline Mechanistic Replay and Ablations}
 \label{sec:replay}
@@ -707,7 +725,7 @@ Matrix Poisson ratio $\nu$ & 0.49 \\
 Actuating magnet & N52 NdFeB, $100\times100$\,mm cylinder \\
 Joint/insertion delay $d$ & 2 / 0 ticks \\
 Disturbance persistence $\beta_d$ & 1 (constant over horizon) \\
-MPC horizon $N$ & 15 \\
+MPC horizon $N$ & 15 (ablated at $N{=}1$, Sec.~\ref{sec:protocol}) \\
 Output weight $Q_p$ scale & 0.5\,mm, weight 1.0 \\
 Command weight $R$ ($S_u$-normalized) & 7.0 \\
 Increment weight $R_d$ ($S_{\Delta u}$-normalized) & $1\times10^{-3}$ \\

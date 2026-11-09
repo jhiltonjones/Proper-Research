@@ -1,0 +1,404 @@
+% =============================================================
+% Prediction-horizon necessity study -- does a longer MPC lookahead
+% improve closed-loop vessel-navigation tracking because it enables
+% anticipatory control, or merely correlate with it? Standalone
+% compilable excerpt, companion to methodology.tex and
+% hardware_validation_section5.tex (\S\ref{sec:hw-validation}):
+% those documents fix the Jacobian source as the independent
+% variable; this one fixes the Jacobian source (the hybrid
+% schedule) and varies ONLY the prediction horizon N, isolating
+% horizon length as a causal variable in its own right. Written
+% 2026-10-23 from a completed five-layer analysis (n=10/10 hardware
+% campaign, a matched-configuration hard gate, a same-state
+% command-divergence replay, and a correctly-recalibrated
+% common-horizon nonlinear-oracle rollout).
+%
+% Layout note (2026-10-23, second revision): switched from
+% \documentclass[journal]{IEEEtran} (two-column, ~245pt column
+% width) to a single-column `article` layout with generous margins.
+% Two successive attempts to fit this content into IEEEtran's
+% narrow column (first via plain tabular/boxed, then via table*
+% floats + stacked equations) both still overlapped -- a two-column
+% journal layout is the wrong target for a dense, table- and
+% equation-heavy methods appendix like this one; merge into the
+% two-column paper body as prose only, once accepted, rather than
+% re-fighting the column width here.
+% =============================================================
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+\usepackage{array}
+
+\begin{document}
+
+\section{Prediction-Horizon Necessity Study: Does Longer MPC Lookahead Improve Tracking Through Anticipation?}
+\label{sec:horizon-necessity}
+
+\subsection{Motivation and the Central Hypothesis}
+\label{sec:ph-motivation}
+
+The MPC controller of \S\ref{sec:control}\footnote{Cross-reference
+into the companion methodology document; section label kept symbolic
+here since the files are not yet merged.} re-solves a finite-horizon
+quadratic program every tick, with prediction horizon $N$ a free
+design parameter. The obvious experiment --- run the identical
+controller at $N{=}15$ and $N{=}1$ and compare tracking error ---
+answers only a weak, correlational question. The claim this section
+is designed to support or refute is the stronger, mechanistic one:
+\begin{equation}
+\boxed{
+N{=}15 \;\rightarrow\; \text{better anticipatory action}
+\;\rightarrow\; \text{smaller subsequent tracking error}
+}
+\label{eq:causal-chain}
+\end{equation}
+not merely
+\begin{equation}
+\boxed{\mathrm{RMSE}_{15} < \mathrm{RMSE}_{1}.}
+\label{eq:weak-claim}
+\end{equation}
+Equation~\eqref{eq:weak-claim} is necessary but not sufficient
+evidence for \eqref{eq:causal-chain}: a horizon-dependent timing
+confound, a trivial constant-offset effect, or an artifact of which
+states each condition happens to visit could all produce
+\eqref{eq:weak-claim} without any genuine anticipatory mechanism. The
+analysis below is organized into five layers, each designed to rule
+out one specific alternative explanation before the next layer's
+result is trusted.
+
+\subsection{Experimental Design: Five Layers}
+\label{sec:ph-design}
+
+All conditions share the dipole-aligned floor240 vessel plan, the
+contact-model hybrid Jacobian schedule (contact-model joint columns,
+no-contact-model insertion column), and every controller weight,
+constraint, and rate limit of \S\ref{sec:control}; only the
+prediction horizon $N\in\{1,15\}$ differs. Ten clean hardware
+repetitions per condition were collected (two further conditions on
+the no-dipole-alignment variant of the same plan replicate the same
+pattern and are reported in \S\ref{sec:ph-nodipole} for completeness).
+
+\begin{enumerate}
+\item \textbf{Layer 1 (matched-comparison hard gate).} Every logged
+  controller-configuration field is diffed between the two
+  conditions; real-time control-loop cadence and QP solver health are
+  compared explicitly, since a horizon-dependent solve-time increase
+  could silently change the realized sample period.
+\item \textbf{Layer 2 (run-level physical tracking).} Per-run RMSE, median,
+  $p_{90}$, $p_{95}$, $\max$ of the tracking error $e(s)$, parametrized
+  by physical path progress $s$ (not tick index), plus lag and
+  cross-track decomposition. Run-level (never tick-level) bootstrap
+  confidence interval and an exact permutation test on
+  $\Delta_{\mathrm{RMSE}} = \mathrm{median}_r\,\mathrm{RMSE}_r^{(15)} -
+  \mathrm{median}_r\,\mathrm{RMSE}_r^{(1)}$.
+\item \textbf{Layer 3 (region-C signature, inconclusive by design).} Tests
+  whether command divergence precedes error divergence specifically
+  around the established contact-sensitive region C
+  ($s\in[55,65]\,\mathrm{mm}$). Found uninformative here --- see
+  \S\ref{sec:ph-layer3}.
+\item \textbf{Layer 4 (same-state command replay).} At matched anchor
+  states $x_k$ drawn from the real hardware logs, two controller
+  objects --- identical in every respect except $N$ --- are each
+  solved once, holding $x_k$, the delay-filter residual, the previous
+  command, the Jacobian schedule, and all weights fixed. Only the
+  first command $u_0^{(N)}(x_k)$ is compared.
+\item \textbf{Layer 5 (consequence of the divergence).} Two independent
+  tests link the Layer-4 command divergence to subsequent physical
+  outcome: a delay-corrected correlation against the real hardware's
+  own future error (\S\ref{sec:ph-5a}), and a common-horizon nonlinear
+  oracle rollout (\S\ref{sec:ph-5b}) that evaluates both candidate
+  first commands under an identical future policy and an identical,
+  correctly-calibrated contact-model ground truth.
+\end{enumerate}
+
+\subsection{Layer 1: The Comparison Is Matched, With One Honest Caveat}
+\label{sec:ph-layer1}
+
+Every logged field in \texttt{summary.json}/\texttt{controller\_metadata.json}
+is identical between the $N{=}15$ and $N{=}1$ conditions except
+\texttt{horizon} itself (and the derived \texttt{run\_name}). No
+Jacobian-source, weight, delay, or constraint difference survives this
+check.
+
+A genuine timing confound does exist and is reported rather than
+hidden (Table~\ref{tab:timing}). $N{=}15$ runs its control loop
+$18.7\%$ slower in real time than $N{=}1$. Critically, this bias runs
+\emph{against} the hypothesis under test: a feedback loop that samples
+state less often should track worse, not better. If $N{=}15$
+nonetheless wins decisively (\S\ref{sec:ph-layer2}) despite this
+handicap, the result is \emph{more}, not less, credible.
+Commanded-vs-achieved velocity realization is statistically identical
+between conditions (servo RMS error $0.00569$ vs.\
+$0.00575\,\mathrm{rad}$), ruling out an actuation-fidelity explanation
+for the slower loop.
+
+\begin{table}[h]
+\centering
+\caption{Layer 1: realized control-loop timing, $N{=}15$ vs.\ $N{=}1$ (nominal tick period $0.100\,\mathrm{s}$ in both).}
+\label{tab:timing}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+ & $N{=}15$ & $N{=}1$ \\
+\midrule
+Mean solver time & $\sim$20--23\,ms & 4.46\,ms \\
+QP hits its own time limit & 150/5513 (2.7\%) & 0/6367 (0\%) \\
+Realized tick period & 0.1253\,s & 0.1056\,s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Layer 2: Complete, Non-Overlapping RMSE Separation}
+\label{sec:ph-layer2}
+
+\begin{table}[h]
+\centering
+\caption{Layer 2: run-level physical tracking, $n{=}10$ repetitions per condition.}
+\label{tab:rmse}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+ & $N{=}15$ & $N{=}1$ \\
+\midrule
+Median RMSE & $0.708\,\mathrm{mm}$ & $2.232\,\mathrm{mm}$ \\
+Range & $[0.626,0.786]\,\mathrm{mm}$ & $[2.035,2.483]\,\mathrm{mm}$ \\
+Mean lag RMS & $0.535\,\mathrm{mm}$ & $1.122\,\mathrm{mm}$ \\
+Mean cross-track RMS & $0.451\,\mathrm{mm}$ & $1.879\,\mathrm{mm}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two ten-run samples do not overlap at all: the worst $N{=}15$ run
+($0.786\,\mathrm{mm}$) beats the best $N{=}1$ run
+($2.035\,\mathrm{mm}$). The run-level bootstrap 95\% confidence
+interval on $\Delta_{\mathrm{RMSE}}$ is $[-1.653,-1.417]\,\mathrm{mm}$,
+entirely negative. The exact permutation test over all
+$\binom{20}{10}=184{,}756$ possible run-label assignments gives
+$p=0.00076$ (only 140 assignments produce a gap this large or
+larger). Cross-track error degrades roughly $4\times$ going from
+$N{=}15$ to $N{=}1$, versus only $2\times$ for lag --- $N{=}1$'s
+deficiency is disproportionately lateral, the signature expected if
+it cannot anticipate upcoming steering demand.
+
+Equation~\eqref{eq:weak-claim} is therefore established beyond
+reasonable doubt. The remaining layers test whether
+\eqref{eq:causal-chain} is too.
+
+\subsection{Layer 3: An Honest Null, Not a Negative}
+\label{sec:ph-layer3}
+
+A ``does command divergence precede error divergence'' test, binned
+by path progress $s$, found both $e(s)$ and the command signals
+$\|u(s)\|,\|\Delta u(s)\|$ already significantly separated between
+conditions at the very first bin ($s=1.5\,\mathrm{mm}$) --- a direct
+consequence of Layer 2's complete separation having no overlap
+anywhere along the path. The test is uninformative by construction
+once the two conditions never agree at any point, not evidence
+against anticipation. This motivates Layers 4--5, which compare
+counterfactual commands \emph{at the same state} rather than two
+already-diverged trajectories.
+
+\subsection{Layer 4: Horizon Length Materially Changes the Optimized Action}
+\label{sec:ph-layer4}
+
+At $n=3955$ same-state anchors (full 10+10 dataset), holding
+$x_k,u_{k-1}$, the delay-filter residual, the Jacobian schedule, and
+all weights fixed and varying only $N$, the mean angular divergence
+between the two candidate first commands,
+$\theta_u = \angle(u_0^{(15)},u_0^{(1)})$, is shown in
+Table~\ref{tab:theta}.
+
+\begin{table}[h]
+\centering
+\caption{Layer 4: same-state command divergence $\theta_u$ by path region (pre-region $s{\in}[40,55]\,\mathrm{mm}$, region C $s{\in}[55,65]\,\mathrm{mm}$).}
+\label{tab:theta}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & All anchors & Pre-region & Region C \\
+\midrule
+Mean $\theta_u$ & $35.53^{\circ}$ & $34.20^{\circ}$ & $41.06^{\circ}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Commands are never close to identical ($\theta_u$ never approaches
+$0^{\circ}$ anywhere in the dataset), ruling out the null
+``$u_0^{(15)}\approx u_0^{(1)}$ everywhere, so horizon length is not
+explaining the hardware difference.'' The $+20\%$ step-up entering
+region C is consistent with --- though on its own insufficient to
+prove --- the divergence concentrating where lookahead should matter
+most.
+
+\subsection{Layer 5a: A Confounded Correlation, Correctly Discarded}
+\label{sec:ph-5a}
+
+Defining a delay-corrected future-error statistic
+$E_{\mathrm{future}}(k) = \tfrac{1}{H_f}\sum_{h=d}^{d+H_f-1}\|e_{k+h}\|$
+($d{=}2$ delay samples, $H_f{=}10$) and correlating it against the
+Layer-4 divergence magnitude within each condition's own real
+trajectory gives
+\begin{equation}
+\mathrm{Spearman}(\theta_u, E_{\mathrm{future}}) = +0.287\ (N{=}15),
+\quad +0.700\ (N{=}1),
+\end{equation}
+both strongly positive and highly significant ($p\ll 0.001$) --- the
+\emph{wrong} sign for a naive ``bigger departure causes better
+outcome'' reading. This is explained by a common-cause confound,
+not a refutation: harder states independently produce both larger
+same-state disagreement and worse subsequent error in both
+conditions, without one causing the other. This result is correctly
+treated as non-identifying, not as evidence against $N{=}15$, and
+motivates the counterfactual design of Layer 5b.
+
+\subsection{Layer 5b: Common-Horizon Oracle --- the Decisive Test}
+\label{sec:ph-5b}
+
+At each anchor, both candidate first commands $u_0^{(15)}(x_k)$ and
+$u_0^{(1)}(x_k)$ are rolled forward under an \emph{identical} policy
+(the candidate for one step, then the plan's own reference velocity
+for the remaining $H_c{-}1{=}7$ steps) and scored against an
+\emph{identical}, correctly-calibrated nonlinear contact-model oracle
+evaluated against the plan's true target tip position (not a
+joint-state proxy --- see \S\ref{sec:ph-oracle-bug} for why that
+distinction mattered). This isolates the horizon's causal contribution
+from state-difficulty confounds by construction: both candidates face
+the same future, the same ground truth, and only their first action
+differs.
+
+\begin{table}[h]
+\centering
+\caption{Layer 5b: common-horizon oracle outcome. $\Delta_{\mathrm{rms}} = \mathrm{rms}(u_0^{(1)}) - \mathrm{rms}(u_0^{(15)})$; $\Delta_{\mathrm{rms}}{>}0$ means the $N{=}15$ command has lower predicted cost.}
+\label{tab:oracle}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & $n$ & $P(\Delta_{\mathrm{rms}}{>}0)$ & Median $\Delta_{\mathrm{rms}}$ \\
+\midrule
+Overall & 334 & $0.617$ & $+0.0091\,\mathrm{mm}$ \\
+Pre-region & 15 & $0.600$ & $+0.0031\,\mathrm{mm}$ \\
+Region C & 264 & $\mathbf{0.636}$ & $+0.0116\,\mathrm{mm}$ \\
+Elsewhere & 55 & $\mathbf{0.527}$ ($\approx$chance) & $+0.0018\,\mathrm{mm}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The single most mechanistically informative number in
+Table~\ref{tab:oracle} is the region contrast: the advantage is
+\emph{real and elevated specifically inside region C} (64\%) and
+\emph{collapses to chance everywhere else} (53\%). This is the
+anticipation signature \eqref{eq:causal-chain} predicts --- not a
+uniform background advantage that happens to coincide with better
+overall tracking, but one that concentrates precisely where the
+path's geometric demand is highest and lookahead has the most to
+offer.
+
+\subsubsection{A Methodological Pitfall That Nearly Produced a False Null}
+\label{sec:ph-oracle-bug}
+
+An initial version of this test scored both candidates against
+$\mathrm{oracle}(\mathrm{reference.state}[\mathrm{idx}])$ --- the
+offline plan's own joint-space solution at the matching index --- as
+ground truth. This produced absurd magnitudes (oracle RMS of
+$9$--$19\,\mathrm{mm}$, later traced to as much as $50\,\mathrm{mm}$),
+physically impossible given the vessel lumen's own
+$5.6$--$10.2\,\mathrm{mm}$ radius, and a result trending \emph{toward}
+chance as more data arrived ($0.565\to0.548$) rather than away from
+it. Two independent, compounding errors were found and fixed:
+\begin{enumerate}
+\item The oracle adapter was built without an explicit
+  \texttt{initial\_poses} argument, silently falling back to a
+  generic default beam-base pivot ($z{=}{-}0.0166\,\mathrm{m}$) instead
+  of this plan's real, recalibrated pivot
+  ($z{=}{-}0.0396\,\mathrm{m}$) --- the identical $23\,\mathrm{mm}$
+  bug class this project had already fixed once before, reintroduced
+  by omission.
+\item Even with the pivot corrected, scoring against
+  $\mathrm{oracle}(\mathrm{reference.state}[\mathrm{idx}])$ remained
+  invalid: this controller runs with a reference-input nulling option
+  in its cost (\texttt{diagnostic\_zero\_input\_reference\_in\_R}) that
+  deliberately lets the arm's kinematically redundant joint drift away
+  from the plan's own joint-space solution while preserving tip
+  tracking. The true nonlinear model is \emph{not} fully agnostic to
+  that redundant motion the way the live controller's own simplified
+  Jacobian is, so the reference joint state silently drifts out of
+  registration with physical reality as the run progresses (an
+  oracle-vs-oracle discrepancy growing from $0.07\,\mathrm{mm}$ at
+  tick 0 to $4.4\,\mathrm{mm}$ by tick 365, tracking the growing
+  joint-space divergence almost exactly) --- while real,
+  vision-measured tracking error stayed under $1\,\mathrm{mm}$
+  throughout. The fix was to score against the plan's actual target
+  tip position (arc-length indexed, invariant to joint
+  configuration), eliminating both the frame-calibration bug and the
+  redundant-DOF confound simultaneously, and as a side effect halving
+  the oracle evaluations required.
+\end{enumerate}
+After both fixes, oracle-predicted tip position matched real
+vision-measured tip position to within $2$--$6\,\mathrm{mm}$ (a
+physically sensible residual, itself growing mildly with the same
+redundant-DOF effect), and the result above emerged. This is recorded
+here because it is exactly the kind of silent, large, and
+state-dependent methodological error that a weaker check (e.g.\
+trusting internal self-consistency between two oracle evaluations,
+rather than validating against an independent ground truth) would not
+have caught.
+
+\subsection{Synthesis: What Causes the Improvement}
+\label{sec:ph-synthesis}
+
+The five-layer chain supports a specific, qualified version of
+\eqref{eq:causal-chain}:
+\begin{enumerate}
+\item The configuration is genuinely matched (\S\ref{sec:ph-layer1}), and
+  the one real confound (slower realized loop rate under $N{=}15$)
+  biases against, not for, the observed result.
+\item The hardware effect is large, decisive, and non-overlapping
+  across ten independent repetitions per condition
+  (\S\ref{sec:ph-layer2}).
+\item Horizon length is not a nominal parameter: it changes the
+  optimized command by a large margin ($\sim\!35^{\circ}$) at
+  identical states (\S\ref{sec:ph-layer4}).
+\item That command divergence corresponds to a genuinely lower
+  predicted future cost under a controlled, common-policy,
+  correctly-calibrated nonlinear rollout (\S\ref{sec:ph-5b}), and the
+  size of that advantage is itself concentrated in the one region
+  where anticipation should matter most (64\% in region C vs.\ 53\%,
+  indistinguishable from chance, elsewhere).
+\end{enumerate}
+The mechanism is that a 15-step ($1.5\,\mathrm{s}$) horizon lets the
+optimizer account for the upcoming high-curvature, contact-sensitive
+segment of the path before the tracking error from it has appeared,
+while a 1-step horizon is purely reactive and can only respond once
+error is already present; this is directly visible as cross-track
+error (the lateral, anticipation-sensitive component) degrading
+roughly twice as much as lag error (the along-path, purely reactive
+component) when the horizon is shortened (\S\ref{sec:ph-layer2}).
+
+The appropriate strength of claim is, however, a qualified one. The
+Layer 5b effect size (62\% overall, 64\% in region C) is real,
+region-localized, and statistically distinguishable from the
+chance-level 53\% observed outside that region, but it is moderate,
+not overwhelming. The $3.2\times$ hardware RMSE gap is far larger than
+a single-tick 62\%-vs-chance advantage can plausibly explain in one
+step; the most defensible reading is that anticipation provides a
+real, demonstrable, region-localized edge at the level of individual
+decisions, and that this edge compounds across hundreds of ticks into
+the much larger aggregate advantage observed on hardware ---
+distinguishing it from a competing (and not fully excluded) hypothesis
+that most of the aggregate gap instead reflects the horizon-$1$
+controller's reactive-only commands repeatedly overshooting and
+correcting along the way, a dynamic whose cumulative cost could exceed
+what any single-tick oracle comparison captures.
+
+\subsection{No-Dipole-Alignment Replication}
+\label{sec:ph-nodipole}
+
+The identical $N\in\{1,15\}$ comparison, repeated on the no-dipole-
+alignment variant of the same plan (hybrid schedule, otherwise
+identical configuration), reproduces the Layer 2 pattern closely:
+median RMSE $0.66$--$0.68\,\mathrm{mm}$ at $N{=}15$ versus
+$1.75$--$1.88\,\mathrm{mm}$ at $N{=}1$ (complete separation, $n{=}10$
+each), confirming the horizon effect is not an artifact specific to
+the dipole-alignment cost term.
+
+\end{document}

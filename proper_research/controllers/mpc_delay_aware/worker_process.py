@@ -201,6 +201,12 @@ def _worker_main(
             gamma=0.0, insertion_state_anchor_weight=insertion_state_anchor_weight,
             reference=reference, config=null_mpc_config, beam_config=beam_config,
             reference_position_jacobians=schedule, delay_samples=delay_samples, beta_d=beta_d,
+            # 2026-11-04: thread the same tcp_workspace kwarg exact_qn0_controller
+            # already receives below -- this class inherits the identical
+            # _configure_tcp_workspace/tcp_workspace machinery from
+            # StagewiseTaskNullspaceDelayAwareMPC -> DelayAwareBeamOutputTrackingMPC,
+            # it was just never wired in at this specific call site before.
+            tcp_workspace=tcp_workspace_kwargs,
         )
 
         # --- startup assertions (frozen-spec item 13): verify the exact

@@ -92,8 +92,16 @@ from proper_research.planning.planning_context import build_planning_context
 from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
     load_configuration_reference,
 )
+from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
 
 from . import common
+
+# 2026-10-23: physical rig's middle marker is permanently gone (removed
+# 2026-09-29, see common.py's patch_state_stream_config_two_markers) --
+# this script's own live-tracking warmup needs 3-4 markers by default and
+# fails outright against the current rig without this patch. Must run
+# before anything else reassigns pf.StateStreamConfig.
+common.patch_state_stream_config_two_markers(pf)
 
 _real_build_offline_solver = controller_adapters.build_offline_solver
 _real_make_output_dir = pf._make_output_dir
@@ -126,6 +134,12 @@ pf._make_output_dir = _wrapped_make_output_dir
 _DEADLINE_MS = 70.0
 _INSERTION_OFFSET_ABORT_M = 0.005  # 5mm, see module docstring for rationale
 _WORKER: MPCWorkerHandle | None = None
+# 2026-11-04: in-QP TCP-workspace constraint, same mechanism as the vessel
+# runner's --disable-tcp-workspace-in-qp/--tcp-workspace-robust-margin-mm.
+# Reads the SAME box the post-hoc tcp_out_of_workspace monitor uses
+# (common.WORKSPACE_XYZ_MIN_M/MAX_M), so the QP always acts before that
+# monitor would ever fire. Set in main(); logged into controller_metadata.json.
+_TCP_WORKSPACE_IN_QP: bool = False
 
 
 def spawn_and_warm_worker(
@@ -133,6 +147,7 @@ def spawn_and_warm_worker(
     joint_velocity_limit_rad_s: float, insertion_rate_limit_m_s: float,
     joint_acceleration_limit_rad_s2: float, position_error_scale_mm: float,
     position_tracking_weight: float,
+    tcp_workspace_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
     identical lifecycle ordering to nullq_r700's runner."""
@@ -166,6 +181,7 @@ def spawn_and_warm_worker(
         enable_nullspace_r700=True,
         nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
         insertion_state_anchor_weight=_INSERTION_STATE_ANCHOR_WEIGHT,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -210,6 +226,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "insertion_state_anchor_weight": _INSERTION_STATE_ANCHOR_WEIGHT,
             "insertion_state_anchor_scale_m": _INSERTION_STATE_ANCHOR_SCALE,
             "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
+            "insertion_offset_monitor_disabled": bool(args.disable_insertion_offset_abort),
             "state_scale_q_rad": math.radians(0.5),
             "state_scale_L_m": 0.25e-3,
             "input_scale_q_rad_s": 0.05,
@@ -223,6 +240,9 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "planner_to_live_R_fit": r_fit.tolist(),
             "planner_to_live_t_fit_m": t_fit.tolist(),
             "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
+            "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
+            "workspace_xyz_min_m": list(common.WORKSPACE_XYZ_MIN_M),
+            "workspace_xyz_max_m": list(common.WORKSPACE_XYZ_MAX_M),
         }
         (_LAST_OUTPUT_DIR / "controller_metadata.json").write_text(json.dumps(meta, indent=2))
         print(f"[insertion_anchor] wrote controller_metadata.json -> {_LAST_OUTPUT_DIR} "
@@ -304,17 +324,39 @@ def main() -> None:
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0,
                     help="independent safety monitor: abort/hold if |L-L_ref| exceeds this (mm); "
                          "see module docstring for how the default was chosen")
+    p.add_argument("--disable-insertion-offset-abort", action="store_true",
+                    help="turn the insertion-offset monitor off by design (threshold -> None), "
+                         "regardless of --insertion-offset-abort-mm. Prefer this to passing a "
+                         "very large --insertion-offset-abort-mm value: this records "
+                         "insertion_offset_monitor_disabled=true in controller_metadata.json, "
+                         "so provenance shows the monitor was off on purpose, not merely loose.")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0,
                     help="preflight refuses to proceed unless the camera-measured physical "
                          "insertion is within this of the plan's expected L0 (see common.py's "
                          "check_camera_healthy)")
+    p.add_argument("--disable-tcp-workspace-in-qp", action="store_true",
+                    help="disable the linearized TCP Cartesian-workspace constraint wired "
+                         "directly into the QP (2026-11-04): keeps the robot's TCP within "
+                         "common.WORKSPACE_XYZ_MIN_M/MAX_M (the SAME box close_loop_path_"
+                         "follow.py's post-hoc tcp_out_of_workspace monitor already checks "
+                         "-- that monitor stays on regardless of this flag). Same mechanism "
+                         "as the vessel runner's own flag of the same name.")
+    p.add_argument("--tcp-workspace-robust-margin-mm", type=float, default=15.0,
+                    help="inward safety margin (mm) subtracted from common.WORKSPACE_XYZ_"
+                         "MIN_M/MAX_M before becoming the QP's own hard bound, so the "
+                         "optimizer always acts before the post-hoc monitor would ever "
+                         "fire. Default matches the vessel runner's own default for the "
+                         "equivalent flag.")
     p.add_argument("--dry-run", action="store_true",
                     help="real camera+robot connection, real solves, but no servoJ motion "
                          "-- integration smoke test before committing real robot time")
     args = p.parse_args()
 
     _DEADLINE_MS = args.deadline_ms
-    _INSERTION_OFFSET_ABORT_M = args.insertion_offset_abort_mm * 1e-3
+    _INSERTION_OFFSET_ABORT_M = (
+        None if args.disable_insertion_offset_abort
+        else args.insertion_offset_abort_mm * 1e-3
+    )
 
     schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache)
     pf._SCHEDULE_OVERRIDE = schedule
@@ -323,6 +365,44 @@ def main() -> None:
           f"d=2, beta_d=1.0, V_f=0, N={args.horizon}, process-isolated, "
           f"deadline={args.deadline_ms:.0f}ms, insertion-offset-abort={args.insertion_offset_abort_mm:.1f}mm)")
 
+    global _TCP_WORKSPACE_IN_QP
+    tcp_workspace_kwargs = None
+    _TCP_WORKSPACE_IN_QP = not args.disable_tcp_workspace_in_qp
+    if not args.disable_tcp_workspace_in_qp:
+        _tcp_dh = urik.corrected_dh_from_config(urik.CONFIG)
+        _tcp_T_F_TCP = urik.pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_pose6)
+        _tcp_reference = load_configuration_reference(args.plan_dir, require_planned_beam_feasible=False)
+        _tcp_ref_states_q = np.asarray(_tcp_reference.state[:, :6], dtype=float)
+        _tcp_S = _tcp_ref_states_q.shape[0]
+        tcp_jacobians = np.zeros((_tcp_S, 3, 6))
+        tcp_positions = np.zeros((_tcp_S, 3))
+        for _i in range(_tcp_S):
+            _res = urik.forward_kinematics(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)
+            tcp_positions[_i] = _res.T_R_target[:3, 3]
+            tcp_jacobians[_i] = urik.geometric_jacobian(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)[:3, :6]
+        _tcp_margin_m = args.tcp_workspace_robust_margin_mm * 1e-3
+        _tcp_xyz_min = np.asarray(common.WORKSPACE_XYZ_MIN_M, dtype=float) + _tcp_margin_m
+        _tcp_xyz_max = np.asarray(common.WORKSPACE_XYZ_MAX_M, dtype=float) - _tcp_margin_m
+        if np.any(_tcp_xyz_min >= _tcp_xyz_max):
+            raise ValueError(
+                f"--tcp-workspace-robust-margin-mm {args.tcp_workspace_robust_margin_mm:.1f}mm "
+                f"is too large: it would invert the QP's own TCP-workspace bounds "
+                f"(post-hoc bounds min={common.WORKSPACE_XYZ_MIN_M}, max={common.WORKSPACE_XYZ_MAX_M})."
+            )
+        tcp_workspace_kwargs = dict(
+            position_jacobians=tcp_jacobians, nominal_positions_m=tcp_positions,
+            xyz_min=_tcp_xyz_min, xyz_max=_tcp_xyz_max,
+        )
+        print(f"[insertion_anchor] TCP Cartesian-workspace constraint will be wired INTO the QP "
+              f"(x in [{_tcp_xyz_min[0]*1e3:.1f},{_tcp_xyz_max[0]*1e3:.1f}]mm, "
+              f"y in [{_tcp_xyz_min[1]*1e3:.1f},{_tcp_xyz_max[1]*1e3:.1f}]mm, "
+              f"z in [{_tcp_xyz_min[2]*1e3:.1f},{_tcp_xyz_max[2]*1e3:.1f}]mm "
+              f"= post-hoc bounds +/- {args.tcp_workspace_robust_margin_mm:.1f}mm robust margin) "
+              f"-- pass --disable-tcp-workspace-in-qp to turn this off")
+    else:
+        print("[insertion_anchor] --disable-tcp-workspace-in-qp set: tcp_out_of_workspace "
+              "stays ONLY a post-hoc monitor, not visible to the optimizer")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -330,6 +410,7 @@ def main() -> None:
         insertion_rate_limit_m_s=_INSERTION_RATE_LIMIT_M_S,
         joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
         position_error_scale_mm=0.5, position_tracking_weight=1.0,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
     )
 
     if args.skip_preflight:
@@ -358,6 +439,9 @@ def main() -> None:
     cfg.control_hz = common.CONTROL_HZ
     cfg.max_control_steps = args.max_control_steps
     cfg.initial_insertion_m = l0
+
+    cfg.workspace_xyz_min_m = common.WORKSPACE_XYZ_MIN_M
+    cfg.workspace_xyz_max_m = common.WORKSPACE_XYZ_MAX_M
 
     cfg.output_root = args.out_dir
     cfg.run_name = args.run_name

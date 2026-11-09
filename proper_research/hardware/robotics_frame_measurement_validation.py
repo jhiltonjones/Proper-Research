@@ -33,6 +33,8 @@ from typing import Any, Iterable
 import numpy as np
 from scipy.spatial.transform import Rotation as Rot
 
+from proper_research.rig_calibration import TCP_TO_MAGNET_POSE6 as _RIG_TCP_TO_MAGNET_POSE6
+
 import proper_research.hardware.beam_hardware_experiment_v2 as experiment_v2
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
@@ -75,9 +77,19 @@ SOURCE_MAGNET_BODY_ROTVEC_IN_TCP: tuple[float, float, float] = (0.0, 0.0, 0.0)
 # at beam_base + [-0.23, 0, 0] in R (== [0, 0, +230] mm in beam frame B: purely
 # out of the vision plane, level with the base; near edge 15.5 cm, ~15 cm long).
 # Flange->magnet translation in the flange frame at the reference orientation.
-# Keep in sync with simulation.simulations.initial_conditions.TCP_TO_MAGNET_POSE6.
+#
+# 2026-10-29: was hardcoded (-0.16542, -0.0022782, 0.3469254, 0, 0, 0) here --
+# a 2026-09-09 direct measurement, pre-dating the 2026-10-02 TCP_TO_MAGNET_POSE6
+# remount and never re-verified afterward. Confirmed stale: pushing real logged
+# joint configs through this value vs rig_calibration.TCP_TO_MAGNET_POSE6 gave a
+# constant ~185mm magnet-position disagreement (see Round-3 E2 FK calibration
+# audit). Sourced from rig_calibration directly now, matching the fix already
+# applied to ur_magnet_ik_jacobian_validation.py's T_tcp_magnet_pose6, so this
+# module can no longer drift independently out of sync with the live
+# calibrated value the way the docstring at the top of rig_calibration.py
+# warns every hardcoded copy eventually does.
 SOURCE_MAGNET_T_TCP_M_POSE6: tuple[float, float, float, float, float, float] = (
-    -0.16542, -0.0022782, 0.3469254, 0.0, 0.0, 0.0,
+    _RIG_TCP_TO_MAGNET_POSE6
 )
 
 

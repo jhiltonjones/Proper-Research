@@ -130,6 +130,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -218,7 +219,7 @@ _MAGNET_RISE_LIMIT_M = 0.04  # tightened 2026-09-23 after the live near-miss (wa
 # file, for the full historical-incident comment explaining these specific
 # numbers. Edit the box HERE (the single source of truth); the later site
 # just assigns `cfg.workspace_xyz_min_m = _WORKSPACE_XYZ_MIN_M` unchanged.
-_WORKSPACE_XYZ_MIN_M = (0.270, -0.750, 0.170)
+_WORKSPACE_XYZ_MIN_M = (0.270, -0.880, 0.170)
 _WORKSPACE_XYZ_MAX_M = (0.660, -0.530, 0.500)
 # NOT a bare JointSpaceRobotConfig() -- its tcp_to_magnet_pose6 default
 # (None) falls back to ur_magnet_ik_jacobian_validation.CONFIG's STALE
@@ -277,6 +278,12 @@ _BEAM_BASE_EXCLUSION_RADIUS_M = 0.21043  # placeholder only -- always overwritte
 # value is now stale relative to that flag's own default (97.0mm, see
 # argparse definition below) and should not be read as "the" default.
 _MAGNET_CONSTRAINTS_IN_QP: bool = False  # set in main(); True unless --disable-magnet-exclusion-in-qp
+# (2026-10-27) argv + TCP-workspace-in-QP flag, logged into
+# controller_metadata.json -- a prior investigation found no way to recover
+# whether --disable-tcp-workspace-in-qp was passed for a specific historical
+# run, since neither argv nor this flag's resolved value was ever persisted.
+_ARGV: list = []  # set in main() to sys.argv[:]
+_TCP_WORKSPACE_IN_QP: bool = False  # set in main(); True unless --disable-tcp-workspace-in-qp
 
 
 def _wrapped_make_output_dir(cfg):
@@ -318,12 +325,11 @@ def spawn_and_warm_worker(
     magnet_exclusion_clearance_kwargs: dict | None = None,
     magnet_workspace_clearance_kwargs: dict | None = None,
     tcp_workspace_kwargs: dict | None = None,
-    magnetic_force_preference_kwargs: dict | None = None,
-    dipole_alignment_preference_kwargs: dict | None = None,
     solver_time_limit_s: float = 0.0,
     zero_input_reference_in_r: bool = False,
     right_shift_m: float = 0.0,
     jacobian_source_kwargs: dict | None = None,
+    dipole_alignment_preference_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -397,10 +403,9 @@ def spawn_and_warm_worker(
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
-        magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
-        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
         right_shift_m=right_shift_m,
         jacobian_source_kwargs=jacobian_source_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -444,6 +449,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
             "input_increment_weight": _INPUT_INCREMENT_WEIGHT,
             "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
+            "insertion_offset_monitor_disabled": bool(args.disable_insertion_offset_abort),
             "max_tracking_error_m": float(cfg.max_tracking_error_m),
             "state_scale_q_rad": math.radians(0.5),
             "state_scale_L_m": 0.25e-3,
@@ -462,6 +468,8 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "magnet_exclusion_radius_m": _MAGNET_EXCLUSION_RADIUS_M,
             "magnet_exclusion_source": f"beam_base_fixed_{_BEAM_BASE_EXCLUSION_RADIUS_M*1e3:.2f}mm",
             "magnet_constraints_in_qp": _MAGNET_CONSTRAINTS_IN_QP,
+            "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
+            "argv": list(_ARGV),
             "planner_to_live_R_fit": r_fit.tolist(),
             "planner_to_live_t_fit_m": t_fit.tolist(),
             "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
@@ -612,6 +620,8 @@ def main() -> None:
     global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M
     global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
     global _BEAM_BASE_PIVOT_XYZ_R, _BEAM_BASE_EXCLUSION_RADIUS_M
+    global _ARGV, _TCP_WORKSPACE_IN_QP
+    _ARGV = list(sys.argv)
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
@@ -679,6 +689,14 @@ def main() -> None:
     p.add_argument("--horizon", type=int, default=15)
     p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
     p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
+    p.add_argument("--control-hz", type=float, default=common.CONTROL_HZ,
+                    help="2026-10-15: MPC/outer-loop tick rate. MUST equal 1/reference.sample_period_s "
+                         "-- close_loop_path_follow.py raises otherwise. Default is common.CONTROL_HZ "
+                         "(10.0, today's standard rate); pass a slower rate (e.g. 2.0) ONLY with a "
+                         "--plan-dir whose own time-parameterized reference was rescaled to match "
+                         "(same state sequence, velocity/acceleration fields rescaled accordingly -- "
+                         "see build_slowed_contact_plan.py's pattern). --servo-stream-hz is independent "
+                         "and does not need to change.")
     p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
@@ -722,6 +740,12 @@ def main() -> None:
                          "trying to track moves. 0.0 (default) = no shift, bit-identical "
                          "to not passing this flag at all.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
+    p.add_argument("--disable-insertion-offset-abort", action="store_true",
+                    help="turn the insertion-offset monitor off by design (threshold -> None), "
+                         "regardless of --insertion-offset-abort-mm. Prefer this to passing a "
+                         "very large --insertion-offset-abort-mm value: this records "
+                         "insertion_offset_monitor_disabled=true in controller_metadata.json, "
+                         "so provenance shows the monitor was off on purpose, not merely loose.")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
     p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
                     help="2026-10-07: same direct beam-tracking-error abort "
@@ -851,45 +875,6 @@ def main() -> None:
                          "2*soft_margin_mm < (QP z_max - QP z_min), or the controller will "
                          "refuse to build with a ValueError (floor/ceiling soft bands would "
                          "overlap/invert).")
-    p.add_argument("--magnetic-force-preference-schedule", type=str, default=None,
-                    help="path to the .npz written by compute_magnetic_force_preference_"
-                         "schedule.py for THIS plan (force_jacobians/torque_jacobians/"
-                         "nominal_force_N/nominal_torque_Nm). None (default) = disabled, "
-                         "exact existing behaviour. When given, also requires --lambda-force "
-                         "and/or --lambda-torque > 0 to actually do anything -- see "
-                         "delay_aware_mpc.py's _configure_magnetic_force_preference docstring: "
-                         "a SOFT tie-breaker added to the QP cost, never a constraint, never "
-                         "overriding the primary beam-tip-tracking term.")
-    p.add_argument("--force-desired-n", type=float, nargs=3, default=(0.0, 0.0, 0.0),
-                    metavar=("FX", "FY", "FZ"),
-                    help="desired resultant magnetic force on the beam (Newtons, robot frame "
-                         "R) the soft preference pulls toward. Choose this in the direction "
-                         "that HELPS the task -- see this feature's design note: maximizing "
-                         "force magnitude alone can favor a force that pushes the beam the "
-                         "wrong way.")
-    p.add_argument("--torque-desired-nm", type=float, nargs=3, default=(0.0, 0.0, 0.0),
-                    metavar=("TX", "TY", "TZ"),
-                    help="desired resultant magnetic torque on the beam (N*m, robot frame R).")
-    p.add_argument("--lambda-force", type=float, default=0.0,
-                    help="weight on the force term of the soft preference. 0.0 (default) "
-                         "disables the force term specifically (independent of --lambda-torque).")
-    p.add_argument("--lambda-torque", type=float, default=0.0,
-                    help="weight on the torque term of the soft preference. 0.0 (default) "
-                         "disables the torque term specifically (independent of --lambda-force).")
-    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
-                    help="2026-10-19: enable the dipole-to-point alignment term wired INTO the "
-                         "QP cost, live-relinearized every solve (no schedule file, unlike "
-                         "--magnetic-force-preference-schedule above) -- see controllers."
-                         "dipole_alignment's module docstring for why this is the preferred "
-                         "mechanism for 'point the magnet somewhere': minimizing torque (m x B) "
-                         "can be satisfied by moving the magnet FARTHER away just as well as by "
-                         "genuine alignment; this term's residual is a difference of two UNIT "
-                         "vectors, so it is blind to distance by construction. 0.0 (default) "
-                         "disables it exactly.")
-    p.add_argument("--dipole-alignment-target-point-m", type=float, nargs=3, default=None,
-                    metavar=("X", "Y", "Z"), help="defaults to BEAM_BASE_XYZ_M if unset.")
-    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
-                    help="+1.0 (default): dipole points TOWARD the target. -1.0: away from it.")
     p.add_argument("--jacobian-source", choices=["schedule", "hybrid_j1j3"], default="schedule",
                     help="2026-10-14: 'schedule' (default) is today's exact behavior -- the "
                          "exact_qn0 controller tracks via the precomputed, reference-index-"
@@ -912,6 +897,19 @@ def main() -> None:
                          "plans/stage3_design/contact_jacobian_maps/floor240_2026-10-12 -- "
                          "required when --jacobian-source=hybrid_j1j3, ignored otherwise. No "
                          "default: this must name the map built for THIS plan, never assumed.")
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="2026-10-19: enable the dipole-to-point alignment term wired INTO the "
+                         "QP cost, live-relinearized every solve (no schedule file) -- see "
+                         "controllers.dipole_alignment's module docstring for why this is the "
+                         "preferred mechanism for 'point the magnet somewhere': minimizing torque "
+                         "(m x B) can be satisfied by moving the magnet FARTHER away just as well "
+                         "as by genuine alignment; this term's residual is a difference of two "
+                         "UNIT vectors, so it is blind to distance by construction. 0.0 (default) "
+                         "disables it exactly.")
+    p.add_argument("--dipole-alignment-target-point-m", type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"), help="defaults to BEAM_BASE_XYZ_M if unset.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the target. -1.0: away from it.")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
                     help="disable BOTH linearized magnet safety constraints wired directly into "
@@ -949,7 +947,10 @@ def main() -> None:
     print(f"[vessel-mpc] beam_base_pivot_xyz = {_BEAM_BASE_PIVOT_XYZ_R[0].tolist()} (recalibrated, fixed)")
 
     _DEADLINE_MS = args.deadline_ms
-    _INSERTION_OFFSET_ABORT_M = args.insertion_offset_abort_mm * 1e-3
+    _INSERTION_OFFSET_ABORT_M = (
+        None if args.disable_insertion_offset_abort
+        else args.insertion_offset_abort_mm * 1e-3
+    )
     _CONTACT = bool(args.contact)
 
     schedule = build_or_load_schedule(
@@ -1109,6 +1110,7 @@ def main() -> None:
     # few mm (not the ~0.11mm this DH gets elsewhere), so the default
     # margin here is deliberately larger than magnet-exclusion's.
     tcp_workspace_kwargs = None
+    _TCP_WORKSPACE_IN_QP = not args.disable_tcp_workspace_in_qp
     if not args.disable_tcp_workspace_in_qp:
         _tcp_dh = urik.corrected_dh_from_config(urik.CONFIG)
         _tcp_T_F_TCP = urik.pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_pose6)
@@ -1176,36 +1178,27 @@ def main() -> None:
               f"weaken, the hard z-workspace constraint above; active within soft_margin of "
               f"either z bound")
 
-    magnetic_force_preference_kwargs = None
-    if args.magnetic_force_preference_schedule is not None:
-        if args.lambda_force <= 0.0 and args.lambda_torque <= 0.0:
+    jacobian_source_kwargs = None
+    if args.jacobian_source == "hybrid_j1j3":
+        if not args.contact_jacobian_map_dir:
             raise SystemExit(
-                "--magnetic-force-preference-schedule was given but both --lambda-force "
-                "and --lambda-torque are 0.0 -- the preference would have no effect; pass "
-                "at least one positive lambda, or drop the schedule flag."
+                "--jacobian-source hybrid_j1j3 requires --contact-jacobian-map-dir "
+                "(no default -- the map must name the plan it was built for)."
             )
-        _force_pref_npz = np.load(args.magnetic_force_preference_schedule)
-        magnetic_force_preference_kwargs = dict(
-            force_jacobians=np.asarray(_force_pref_npz["force_jacobians"], dtype=float),
-            torque_jacobians=np.asarray(_force_pref_npz["torque_jacobians"], dtype=float),
-            nominal_force_N=np.asarray(_force_pref_npz["nominal_force_N"], dtype=float),
-            nominal_torque_Nm=np.asarray(_force_pref_npz["nominal_torque_Nm"], dtype=float),
-            force_desired_N=np.asarray(args.force_desired_n, dtype=float),
-            torque_desired_Nm=np.asarray(args.torque_desired_nm, dtype=float),
-            lambda_force=float(args.lambda_force), lambda_torque=float(args.lambda_torque),
-        )
-        print(f"[vessel-mpc] magnetic force/torque PREFERENCE requested "
-              f"(schedule={args.magnetic_force_preference_schedule}, "
-              f"F_des={args.force_desired_n}N, tau_des={args.torque_desired_nm}Nm, "
-              f"lambda_force={args.lambda_force:.3g}, lambda_torque={args.lambda_torque:.3g}) "
-              f"-- soft tie-breaker only, wired INTO the QP cost")
+        map_dir_abs = args.contact_jacobian_map_dir
+        if not os.path.isabs(map_dir_abs):
+            map_dir_abs = os.path.join("/home/jack/Proper-Research", map_dir_abs)
+        if not os.path.isdir(map_dir_abs):
+            raise SystemExit(f"--contact-jacobian-map-dir does not exist: {map_dir_abs}")
+        jacobian_source_kwargs = dict(map_dir=map_dir_abs)
+        print(f"[vessel-mpc] contact-Jacobian J1/J3 HYBRID requested "
+              f"(map_dir={map_dir_abs}) -- worker will fail loudly at startup if this "
+              f"map is missing or incomplete (no silent fallback to 'schedule').")
 
     dipole_alignment_preference_kwargs = None
     if args.dipole_alignment_weight > 0.0:
         # m_body (the source magnet's own calibrated dipole moment, body frame) is NOT a
-        # cheap constant -- confirmed live it differs from parameters.default_magnet_params()
-        # (that one is stale/uncalibrated) -- so build the real model bundle once, here, at
-        # startup (same ~10-30s one-time cost build_c_schedule_floor240.py pays), not per tick.
+        # cheap constant -- build the real model bundle once, here, at startup, not per tick.
         _dipole_target = (
             np.asarray(BEAM_BASE_XYZ_M, dtype=float) if args.dipole_alignment_target_point_m is None
             else np.asarray(args.dipole_alignment_target_point_m, dtype=float)
@@ -1229,26 +1222,9 @@ def main() -> None:
               f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
               f"live-relinearized every solve, wired INTO the QP cost, no schedule file")
 
-    jacobian_source_kwargs = None
-    if args.jacobian_source == "hybrid_j1j3":
-        if not args.contact_jacobian_map_dir:
-            raise SystemExit(
-                "--jacobian-source hybrid_j1j3 requires --contact-jacobian-map-dir "
-                "(no default -- the map must name the plan it was built for)."
-            )
-        map_dir_abs = args.contact_jacobian_map_dir
-        if not os.path.isabs(map_dir_abs):
-            map_dir_abs = os.path.join("/home/jack/Proper-Research", map_dir_abs)
-        if not os.path.isdir(map_dir_abs):
-            raise SystemExit(f"--contact-jacobian-map-dir does not exist: {map_dir_abs}")
-        jacobian_source_kwargs = dict(map_dir=map_dir_abs)
-        print(f"[vessel-mpc] contact-Jacobian J1/J3 HYBRID requested "
-              f"(map_dir={map_dir_abs}) -- worker will fail loudly at startup if this "
-              f"map is missing or incomplete (no silent fallback to 'schedule').")
-
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
-        control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
+        control_hz=args.control_hz, prediction_horizon=args.horizon,
         joint_velocity_limit_rad_s=args.joint_velocity_limit_rad_s,
         insertion_rate_limit_m_s=_INSERTION_RATE_LIMIT_M_S,
         joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
@@ -1259,12 +1235,11 @@ def main() -> None:
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
         magnet_workspace_clearance_kwargs=magnet_workspace_clearance_kwargs,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
-        magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
-        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
         solver_time_limit_s=args.solver_time_limit_s,
         zero_input_reference_in_r=args.zero_input_reference_in_r,
         right_shift_m=args.right_shift_mm * 1.0e-3,
         jacobian_source_kwargs=jacobian_source_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
     )
     print(f"[vessel-mpc] R-term v_ref: "
           f"{'ZEROED (v^T R v)' if args.zero_input_reference_in_r else 'offline plan (v-v_ref)^T R (v-v_ref)'}")
@@ -1395,7 +1370,7 @@ def main() -> None:
     cfg.max_joint_step_rad = args.max_joint_step_rad
     cfg.joint_acceleration_limit_rad_s2 = common.JOINT_ACCELERATION_LIMIT_RAD_S2
     cfg.control_insertion = True
-    cfg.control_hz = common.CONTROL_HZ
+    cfg.control_hz = args.control_hz
     cfg.max_control_steps = args.max_control_steps
     cfg.initial_insertion_m = l0
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0

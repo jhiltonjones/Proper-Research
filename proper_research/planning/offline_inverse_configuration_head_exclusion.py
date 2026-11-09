@@ -285,6 +285,19 @@ class InverseConfigurationPlannerConfig:
         0.0,
     )
 
+    # 2026-11-04: the tangent_residual block below the dipole-alignment
+    # fields was multiplied by a bare `*0` literal -- correct in effect
+    # (the online controllers never track desired_tangent, see
+    # tangent_error_selection_weight's own docstring) but silent and
+    # unlogged. This makes the same "always zero by default" behaviour an
+    # explicit, validated, metadata-logged config value instead, with no
+    # change to the default numerics: weight 0.0 reproduces the old `*0`
+    # residual exactly. The analytical tangent Jacobian block is left
+    # UNCHANGED (not re-scaled by this weight) to preserve today's exact
+    # Gauss-Newton behaviour at the default -- only the residual itself was
+    # ever zeroed, and that is the only thing being made explicit here.
+    tangent_residual_weight: float = 0.0
+
     multistart_joint_perturbation_rad: float = 0.05
     multistart_insertion_perturbation_m: float = 5.0e-4
     random_seed: int = 7
@@ -410,6 +423,30 @@ class InverseConfigurationPlannerConfig:
     dipole_alignment_target_point_m: Any | None = None
     dipole_alignment_sign: float = 1.0
 
+    # 2026-11-04 (Round 22/23): at near-straight path nodes the field barely
+    # shapes the rod, the plant Jacobian collapses to near rank-1, and
+    # nothing in the residual above ties the magnet's position down -- the
+    # optimizer was free to drift the magnet to physically meaningless
+    # distances (500-800mm) from the tip with zero cost. This one-sided
+    # residual penalizes exceeding a maximum magnet-to-tip distance:
+    #   r_dist = sqrt(w_r) * max(0, ||p_m(q) - p_tip(chi)|| - r_max) / d_r
+    # p_m from the adapter's own magnet_transform (calibrated FK + the
+    # TCP->magnet offset the adapter was built with); p_tip from the same
+    # beam-equilibrium output already used by position_residual above --
+    # no second, possibly-inconsistent tip computation. 0.0 (default)
+    # disables it exactly (same always-computed-but-zero pattern as
+    # dipole_alignment_weight above) -- existing plans are unaffected until
+    # a caller opts in explicitly. magnet_distance_max_m=0.500m and
+    # magnet_distance_scale_m=0.010m are chosen so that w_r=1.0 makes 10mm
+    # beyond r_max cost about as much as 1mm of tip error (position_residual
+    # contributes exactly 1.0^2 to the sum-of-squares for a 1mm error at
+    # position_tolerance_m=1mm; this term contributes the same 1.0^2 at
+    # exactly 10mm past r_max when w_r=1.0, d_r=0.010m -- verified
+    # empirically, see the Y3 fork report).
+    magnet_distance_weight: float = 0.0
+    magnet_distance_max_m: float = 0.500
+    magnet_distance_scale_m: float = 0.010
+
     force_torque_preference: dict | None = None
 
     def validate(self) -> None:
@@ -521,6 +558,16 @@ class InverseConfigurationPlannerConfig:
                 raise ValueError("dipole_alignment_target_point_m must be 3 finite values.")
         if abs(self.dipole_alignment_sign) != 1.0:
             raise ValueError("dipole_alignment_sign must be exactly +1.0 or -1.0.")
+
+        if self.tangent_residual_weight < 0.0 or not np.isfinite(self.tangent_residual_weight):
+            raise ValueError("tangent_residual_weight must be finite and >= 0.")
+
+        if self.magnet_distance_weight < 0.0 or not np.isfinite(self.magnet_distance_weight):
+            raise ValueError("magnet_distance_weight must be finite and >= 0.")
+        if not np.isfinite(self.magnet_distance_max_m) or self.magnet_distance_max_m <= 0.0:
+            raise ValueError("magnet_distance_max_m must be finite and positive.")
+        if not np.isfinite(self.magnet_distance_scale_m) or self.magnet_distance_scale_m <= 0.0:
+            raise ValueError("magnet_distance_scale_m must be finite and positive.")
 
         if self.force_torque_preference is not None:
             pref = self.force_torque_preference
@@ -1327,6 +1374,25 @@ class _NodeObjective:
                 "(the source magnet's own dipole moment, body frame)."
             )
 
+        # 2026-11-04 (Round 22/23): see InverseConfigurationPlannerConfig's
+        # magnet_distance_weight docstring. tangent_residual_weight_sqrt
+        # reproduces the old hardcoded "*0" exactly at its 0.0 default; the
+        # tangent JACOBIAN block is deliberately left unscaled (see that
+        # docstring) so today's numerics are unchanged bit-for-bit at the
+        # default. magnet_distance uses the adapter's own analytical
+        # magnet_position_jacobian when available, else a central
+        # difference over magnet_transform using the same step sizes the
+        # existing magnet/lumen exclusion constraint already uses -- no new
+        # finite-difference convention introduced.
+        self.tangent_residual_weight_sqrt = float(np.sqrt(config.tangent_residual_weight))
+        self.magnet_distance_weight_sqrt = float(np.sqrt(config.magnet_distance_weight))
+        self.magnet_distance_max_m = float(config.magnet_distance_max_m)
+        self.magnet_distance_scale_m = float(config.magnet_distance_scale_m)
+        _analytical_magnet_jac = getattr(adapter, "magnet_position_jacobian", None)
+        self._magnet_distance_analytical_jacobian = (
+            _analytical_magnet_jac if callable(_analytical_magnet_jac) else None
+        )
+
         span = self.state_max - self.state_min
         self.state_centre = 0.5 * (self.state_max + self.state_min)
         self.state_half_range = np.where(span > 1.0e-12, 0.5 * span, 1.0)
@@ -1411,6 +1477,65 @@ class _NodeObjective:
         )[1]
         return self.dipole_alignment_weight_sqrt * raw
 
+    def _magnet_position_for_distance(self, state: Array) -> Array:
+        pose6 = _magnet_pose6(self.adapter, state)
+        if not np.all(np.isfinite(pose6[:3])):
+            raise FloatingPointError(
+                "magnet_transform returned a non-finite source-magnet "
+                "position (magnet_distance_weight > 0)."
+            )
+        return pose6[:3]
+
+    def _magnet_position_jacobian_for_distance(self, state: Array) -> Array:
+        if self._magnet_distance_analytical_jacobian is not None:
+            matrix = np.asarray(
+                self._magnet_distance_analytical_jacobian(state), dtype=float
+            )
+            if matrix.shape == (3, 6):
+                matrix = np.column_stack((matrix, np.zeros(3, dtype=float)))
+            if matrix.shape == (3, 7) and np.all(np.isfinite(matrix)):
+                return matrix
+        steps = np.full(
+            7, float(self.config.magnet_jacobian_joint_step_rad), dtype=float
+        )
+        steps[6] = float(self.config.magnet_jacobian_insertion_step_m)
+        J = np.zeros((3, 7), dtype=float)
+        for index, step in enumerate(steps):
+            delta = np.zeros(7, dtype=float)
+            delta[index] = step
+            p_plus = self._magnet_position_for_distance(state + delta)
+            p_minus = self._magnet_position_for_distance(state - delta)
+            J[:, index] = (p_plus - p_minus) / (2.0 * step)
+        return J
+
+    def _magnet_distance_residual(self, state: Array) -> Array:
+        if self.magnet_distance_weight_sqrt == 0.0:
+            return np.zeros(1, dtype=float)
+        p_m = self._magnet_position_for_distance(state)
+        p_tip = self.output(state)[:3]
+        distance = float(np.linalg.norm(p_m - p_tip))
+        excess = max(0.0, distance - self.magnet_distance_max_m)
+        raw = excess / self.magnet_distance_scale_m
+        return np.array([self.magnet_distance_weight_sqrt * raw], dtype=float)
+
+    def _magnet_distance_jacobian(self, state: Array) -> Array:
+        if self.magnet_distance_weight_sqrt == 0.0:
+            return np.zeros((1, 7), dtype=float)
+        p_m = self._magnet_position_for_distance(state)
+        p_tip = self.output(state)[:3]
+        diff = p_m - p_tip
+        distance = float(np.linalg.norm(diff))
+        if distance <= self.magnet_distance_max_m or distance < 1.0e-12:
+            return np.zeros((1, 7), dtype=float)
+        unit = diff / distance
+        J_magnet = self._magnet_position_jacobian_for_distance(state)
+        J_tip = self.output_jacobian(state)[:3, :]
+        d_distance_dstate = unit @ (J_magnet - J_tip)
+        row = (
+            self.magnet_distance_weight_sqrt / self.magnet_distance_scale_m
+        ) * d_distance_dstate
+        return row.reshape(1, 7)
+
     def residual(self, state: Any) -> Array:
         state = _finite_vector(state, 7, "residual state")
         output = self.output(state)
@@ -1418,9 +1543,9 @@ class _NodeObjective:
         position_residual = (
             output[:3] - self.desired_position
         ) / float(self.config.position_tolerance_m)
-        tangent_residual = ((
+        tangent_residual = self.tangent_residual_weight_sqrt * (
             tangent - self.desired_tangent
-        ) / self.tangent_scale)*0
+        ) / self.tangent_scale
         continuity_residual = self.continuity_sqrt * (
             (state - self.previous_state) / self.step_scale
         )
@@ -1428,6 +1553,7 @@ class _NodeObjective:
             (state - self.state_centre) / self.state_half_range
         )
         alignment_residual = self._dipole_alignment_residual(state)
+        magnet_distance_residual = self._magnet_distance_residual(state)
         residual = np.concatenate(
             (
                 position_residual,
@@ -1435,6 +1561,7 @@ class _NodeObjective:
                 continuity_residual,
                 centre_residual,
                 alignment_residual,
+                magnet_distance_residual,
             )
         )
         if not np.all(np.isfinite(residual)):
@@ -1452,8 +1579,9 @@ class _NodeObjective:
         J_continuity = np.diag(self.continuity_sqrt / self.step_scale)
         J_centre = np.diag(self.centre_sqrt / self.state_half_range)
         J_alignment = self._dipole_alignment_jacobian(state)
+        J_magnet_distance = self._magnet_distance_jacobian(state)
         result = np.vstack(
-            (J_position, J_tangent, J_continuity, J_centre, J_alignment)
+            (J_position, J_tangent, J_continuity, J_centre, J_alignment, J_magnet_distance)
         )
         if not np.all(np.isfinite(result)):
             raise FloatingPointError("Inverse objective Jacobian is non-finite.")

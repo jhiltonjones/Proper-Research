@@ -224,7 +224,48 @@ def _build_shape_centreline(
 # ---------------------------------------------------------------------------
 # bend-plane axes (robot base frame R)
 # ---------------------------------------------------------------------------
-def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+# 2026-11-03: shape plans (rectangle/triangle) built before this date used
+# ``initial_conditions.make_initial_poses()``'s bare, uncorrected beam-base Z
+# (-0.016567 m) with no override -- unlike the vessel builds, which always pass
+# an explicit ``initial_poses`` override pinned to the single calibrated
+# ``rig_calibration.BEAM_BASE_XYZ_M`` constant (see build_vessel_plan.py). The
+# author confirmed the rig was never physically raised for the shape runs; the
+# beam base was at its calibrated height throughout, exactly as for the vessel.
+# ``--use-calibrated-beam-base`` (opt-in, default off -- every existing caller
+# and plan is unaffected) fixes this by reusing the SAME calibrated constant,
+# instead of adding a third independent copy of this value.
+def _calibrated_initial_poses() -> tuple:
+    """(pivot_point, start_point, L0, dt) with Z pinned to the single
+    calibrated ``rig_calibration.BEAM_BASE_XYZ_M[2]``, matching the vessel
+    pipeline's own override exactly (same X/Y/rotation/L0/dt as the stock
+    ``make_initial_poses()``; only the stale Z is replaced in both the pivot
+    and the start/magnet pose, which share one Z at this reference pose).
+    """
+    from proper_research.rig_calibration import BEAM_BASE_XYZ_M
+    from proper_research.simulation.simulations.initial_conditions import (
+        make_initial_poses,
+    )
+
+    pivot_point, start_point, L0, dt = make_initial_poses()
+    pivot_point = pivot_point.copy()
+    start_point = start_point.copy()
+    pivot_point[2] = float(BEAM_BASE_XYZ_M[2])
+    start_point[2] = float(BEAM_BASE_XYZ_M[2])
+    print(
+        "[use-calibrated-beam-base] pivot_point (beam base)  = "
+        f"{pivot_point.tolist()}"
+    )
+    print(
+        "[use-calibrated-beam-base] start_point (magnet in R) = "
+        f"{start_point.tolist()}"
+    )
+    return pivot_point, start_point, L0, dt
+
+
+# ---------------------------------------------------------------------------
+def _bend_axes_R(
+    bundle, controller_pack, initial_poses: tuple | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """(tip0, u, v) in the robot base frame R.
 
     With ``initial_conditions.make_initial_poses`` pointing the planner at the
@@ -242,7 +283,9 @@ def _bend_axes_R(bundle, controller_pack) -> tuple[np.ndarray, np.ndarray, np.nd
         make_initial_poses,
     )
 
-    pivot_point, _start, L0, _dt = make_initial_poses()
+    pivot_point, _start, L0, _dt = (
+        make_initial_poses() if initial_poses is None else initial_poses
+    )
     base_R = np.asarray(pivot_point[:3], dtype=float)
     u = np.array([-1.0, 0.0, 0.0])         # -R.x, beam axial / growth direction
     v = np.array([0.0, 1.0, 0.0])          # +R.y, in-plane bending
@@ -338,6 +381,25 @@ def _arguments() -> argparse.Namespace:
                         "--magnet-exclusion-radius-mm.")
     p.add_argument("--skip-global", action="store_true",
                    help="time-parameterise the Layer 1 inverse path directly")
+    p.add_argument("--use-calibrated-beam-base", action="store_true",
+                   help="build with the vessel pipeline's own calibrated "
+                        "rig_calibration.BEAM_BASE_XYZ_M beam-base override "
+                        "instead of make_initial_poses()'s bare, uncorrected "
+                        "Z. Opt-in; default preserves the exact old behavior.")
+    p.add_argument("--magnet-distance-weight", type=float, default=0.0,
+                   help="w_r for the L1 one-sided magnet-to-tip distance "
+                        "residual (Y3, Round 23). 0.0 (default) reproduces "
+                        "the exact old behavior -- the term is inert.")
+    p.add_argument("--magnet-distance-max-mm", type=float, default=500.0,
+                   help="r_max (mm) for the magnet-distance residual -- only "
+                        "matters if --magnet-distance-weight > 0.")
+    p.add_argument("--magnet-distance-scale-mm", type=float, default=10.0,
+                   help="d_r (mm) for the magnet-distance residual -- only "
+                        "matters if --magnet-distance-weight > 0.")
+    p.add_argument("--tangent-residual-weight", type=float, default=0.0,
+                   help="explicit weight for the tangent residual block "
+                        "(was a hardcoded *0; 0.0 default reproduces the "
+                        "exact old dead-tangent behavior).")
     p.add_argument("--dt", type=float, default=0.1, help="reference sample period [s]")
     p.add_argument("--joint-velocity-limit", type=float, default=0.10)
     p.add_argument("--insertion-velocity-limit", type=float, default=2.0e-3)
@@ -392,11 +454,18 @@ def main() -> None:
     )
     from dataclasses import fields
 
-    _, bundle, controller_pack, out_root = build_planning_context()
+    initial_poses_override = (
+        _calibrated_initial_poses() if args.use_calibrated_beam_base else None
+    )
+    _, bundle, controller_pack, out_root = build_planning_context(
+        initial_poses=initial_poses_override
+    )
     out_root = Path(args.output_root or out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    tip0, u_axis, v_axis = _bend_axes_R(bundle, controller_pack)
+    tip0, u_axis, v_axis = _bend_axes_R(
+        bundle, controller_pack, initial_poses=initial_poses_override
+    )
     centreline = _build_shape_centreline(
         shape=args.shape,
         size_m=args.size_mm * 1.0e-3,
@@ -518,6 +587,15 @@ def main() -> None:
             f"(magnet now at R={np.round(magnet_R, 3).tolist()}, "
             f"current min gap {1e3 * gaps.min():.1f} mm)"
         )
+
+    if "magnet_distance_weight" in shared:
+        shared["magnet_distance_weight"] = float(args.magnet_distance_weight)
+    if "magnet_distance_max_m" in shared:
+        shared["magnet_distance_max_m"] = float(args.magnet_distance_max_mm) * 1.0e-3
+    if "magnet_distance_scale_m" in shared:
+        shared["magnet_distance_scale_m"] = float(args.magnet_distance_scale_mm) * 1.0e-3
+    if "tangent_residual_weight" in shared:
+        shared["tangent_residual_weight"] = float(args.tangent_residual_weight)
 
     if args.fast:
         shared["maximum_function_evaluations"] = 120

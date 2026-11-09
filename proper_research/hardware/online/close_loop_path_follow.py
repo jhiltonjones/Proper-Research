@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import math
 import signal
+import threading
 import time
 from dataclasses import asdict, dataclass, replace as replace_dc
 from datetime import datetime, timezone
@@ -67,6 +68,127 @@ from proper_research.hardware.online.state_stream import (
     StateStreamConfig,
     _DebugLineFilter,
 )
+
+
+# Round-7 K1 (2026-11-02) fix: BackgroundArmStreamer's own cadence, in
+# seconds. The original version had NO independent scheduler -- it just
+# called robot.servo_j(time_s=2*outer_dt=0.2s) back-to-back and re-read the
+# shared target only after each call returned, so a target update sitting
+# mid-call waited for that whole call before being picked up (measured
+# mean 43ms / max 80ms pickup latency -- see the dry run this fix reruns).
+# This mirrors the existing, already-proven n_inner inner-loop pattern a
+# few hundred lines below (dt_inner = dt/n_inner, time_s = 2*dt_inner,
+# paced by an explicit next_tick += dt scheduler, NOT by servo_j's own
+# blocking duration) instead of inventing a new convention.
+_STREAM_INTERVAL_S = 0.02  # 50Hz, matching cfg.servo_stream_hz's own default
+
+
+class BackgroundArmStreamer:
+    """Owns every robot.servo_j() call from a dedicated background thread.
+
+    Round-7 (2026-11-02) timing fix. Calling robot.servo_j() directly from
+    the main control loop is why the realized period was ~125ms at N=15 /
+    ~105ms at N=1 instead of the nominal 100ms: solve time stacks ON TOP of
+    whatever servo_j() costs instead of overlapping it.
+
+    This class moves every servo_j() call to its own thread, which streams
+    the CURRENT target (whatever the control loop most recently handed off
+    via update_target()) to the robot at a fixed _STREAM_INTERVAL_S (20ms)
+    cadence, paced by its OWN next_cycle += interval scheduler -- the same
+    style as the main loop's next_tick += dt below -- rather than by
+    however long servo_j() itself takes to return. K1 fix: this is the part
+    the original version was missing. Re-reading the shared target happens
+    at the TOP of every 20ms cycle unconditionally, so no cycle can run
+    against a target that is more than one cycle (~20ms) stale. The control
+    loop's own per-tick cost becomes: read state, solve, update_target() (a
+    lock-protected copy, microseconds), sleep until the next 100ms
+    deadline -- nothing in that path blocks on servo_j any more.
+
+    No target is sent until update_target() is called at least once
+    (self._target starts as None) -- this avoids streaming a stale/zero
+    target before the control loop has computed its first real one.
+    """
+
+    def __init__(
+        self,
+        robot,
+        time_s: float,
+        lookahead_time: float,
+        gain: int,
+        stream_interval_s: float = _STREAM_INTERVAL_S,
+    ) -> None:
+        self._robot = robot
+        self._time_s = float(time_s)
+        self._lookahead_time = float(lookahead_time)
+        self._gain = int(gain)
+        self._stream_interval_s = float(stream_interval_s)
+        self._lock = threading.Lock()
+        self._target: np.ndarray | None = None
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self.last_servo_ms = 0.0
+        self.last_servo_error: BaseException | None = None
+        self.calls = 0
+
+    def update_target(self, q_target) -> float:
+        """Thread-safe handoff of the next joint target. Returns elapsed ms."""
+        t0 = now_monotonic()
+        target = np.asarray(q_target, dtype=float).reshape(6).copy()
+        with self._lock:
+            self._target = target
+        return (now_monotonic() - t0) * 1e3
+
+    def start(self) -> None:
+        assert self._thread is None, "BackgroundArmStreamer already started"
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._run, name="arm-streamer", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        next_cycle = now_monotonic()
+        while self._running:
+            with self._lock:
+                target = None if self._target is None else self._target.copy()
+            if target is None:
+                time.sleep(0.005)
+                next_cycle = now_monotonic()
+                continue
+            t0 = now_monotonic()
+            try:
+                self._robot.servo_j(
+                    target,
+                    time_s=self._time_s,
+                    lookahead_time=self._lookahead_time,
+                    gain=self._gain,
+                )
+                self.last_servo_error = None
+            except Exception as exc:  # noqa: BLE001
+                # Don't let a transient servo_j error kill the streaming
+                # thread silently -- record it so the main loop can notice
+                # and abort, same as a direct-call failure would surface.
+                self.last_servo_error = exc
+            self.last_servo_ms = (now_monotonic() - t0) * 1e3
+            self.calls += 1
+            # K1 fix: pace this loop with an explicit scheduler (same
+            # pattern as the main control loop's next_tick += dt below),
+            # not by however long servo_j() itself took. This guarantees a
+            # fresh read of self._target every _STREAM_INTERVAL_S
+            # regardless of servo_j()'s own call duration -- the original
+            # bug was relying on that duration to self-space the loop.
+            next_cycle += self._stream_interval_s
+            now = now_monotonic()
+            if next_cycle > now:
+                time.sleep(next_cycle - now)
+            else:
+                next_cycle = now
+
+    def stop(self, timeout: float = 2.0) -> None:
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
 
 
 # =============================================================================
@@ -387,6 +509,23 @@ class PathFollowConfig:
     # seam fix's own G 0.199->1.0 jump. Default 10.0 = same as control_hz,
     # i.e. exactly one servoJ call per tick (today's unchanged behaviour).
     servo_stream_hz: float = 10.0
+    # Round-7 (2026-11-02) timing fix: robot.servo_j() measured to block
+    # for its own ~100ms interpolation window on every call (servo_ms in
+    # the log), which is why the realized control period was ~125ms at
+    # N=15 / ~105ms at N=1 instead of the nominal 100ms (Batch 3 timing
+    # investigation). The author rejected feeding the measured tick
+    # length into the solver/accumulator (reference, prediction, delay
+    # model and accumulator all count ticks; mixing measured dt into some
+    # terms and not others would create a new mismatch and force a
+    # per-tick matrix rebuild). Fixing the PERIOD instead: when True, a
+    # background thread (BackgroundArmStreamer) owns every servo_j() call
+    # and the main control loop only updates a shared target, so the
+    # 100ms-per-tick blocking call never sits on the control loop's own
+    # critical path. Opt-in, default False: this is new and unvalidated
+    # on real hardware (dry-run tested only so far with a mocked robot
+    # interface) and must not silently change behaviour for any existing
+    # caller/condition until explicitly turned on for it.
+    use_background_streaming: bool = False
     # 2026-09-11: briefly raised 0.006 -> 0.012 -> 0.018 while diagnosing why
     # pure-feedback inverse-Jacobian doesn't reach the 20mm triangle's corners
     # (see beam-lateral-authority-limit memory: the old 0.006 cap was pinned
@@ -536,15 +675,13 @@ _JACOBIAN_PROVIDER_OVERRIDE = None
 # _JACOBIAN_PROVIDER_OVERRIDE above.
 _MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
 
-# 2026-10-15: a comparison harness may set this to a dict of
-# InverseJacobianBeamController's new magnetic force/torque actuation-
-# preference kwargs (force_preference_gradient_fn, force_preference_gain --
-# see build_magnetic_force_preference_gradient_fn in
-# inverse_jacobian_controller.py). Same override pattern as
-# _MAGNET_CONSTRAINT_CLIP_OVERRIDE just above, and the same restriction:
-# only applied for controller_kind in ("naive_inverse_jacobian",
-# "naive_inverse_jacobian_ltv"); None (default) leaves every caller
-# unaffected.
+# 2026-10-19: a comparison harness may set this to a dict
+# (force_preference_gradient_fn, force_preference_gain) -- the naive-
+# controller analogue of delay_aware_mpc.py's dipole-alignment/magnetic-
+# force QP cost term, applied as one step of nullspace gradient descent
+# instead of a QP term. Only applied for controller_kind in
+# ("naive_inverse_jacobian", "naive_inverse_jacobian_ltv") -- same override
+# pattern as _MAGNET_CONSTRAINT_CLIP_OVERRIDE above.
 _FORCE_PREFERENCE_OVERRIDE = None
 
 # 2026-10-07: a comparison harness may set this to a callable
@@ -1029,6 +1166,7 @@ def main() -> None:
     jac_provider: Any = None
     solver: Any = None
     reference: Any = None
+    arm_streamer: Any = None  # Round-7 background-streaming fix (opt-in)
     log_file = log_path.open("w", encoding="utf-8")
     traj_file = (output_dir / "tip_trajectory.csv").open("w", encoding="utf-8", newline="")
     traj_file.write(
@@ -1076,6 +1214,20 @@ def main() -> None:
                 start_tips.append(np.asarray(est.tip_position_m, dtype=float))
             time.sleep(dt)
         start_tip = np.mean(np.vstack(start_tips), axis=0)
+        # (2026-10-26) persist the stationary-startup tip readings -- this was
+        # previously computed and discarded, leaving no way to measure the
+        # camera's actual noise floor from real data (only an assumed
+        # kf_measurement_noise_std_m prior existed). One row per settle tick;
+        # std of these, pooled across runs, is the camera noise floor itself
+        # (beam genuinely stationary here), not the upper-bound proxy needed
+        # when the beam is moving.
+        try:
+            noise_floor_path = output_dir / "startup_stationary_tips.jsonl"
+            with noise_floor_path.open("w", encoding="utf-8") as _nf:
+                for _tip in start_tips:
+                    _nf.write(json.dumps({"tip_m": [round(float(v), 6) for v in _tip]}) + "\n")
+        except Exception as _e:
+            print(f"[path] WARNING: failed to persist startup_stationary_tips.jsonl: {_e!r}")
         q0 = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
         z0 = np.concatenate([q0, [insertion_m]])
 
@@ -1473,8 +1625,8 @@ def main() -> None:
             "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
         ):
             force_pref_kwargs = dict(_force_pref_override)
-            print(f"[path] {cfg.controller_kind}: magnetic force/torque preference "
-                  f"ENABLED (external override, soft nullspace tie-breaker only)")
+            print(f"[path] {cfg.controller_kind}: actuation preference (nullspace) "
+                  f"ENABLED (external override, gain={force_pref_kwargs.get('force_preference_gain')})")
 
         solver = build_offline_solver(
             cfg.controller_kind,
@@ -1614,6 +1766,22 @@ def main() -> None:
         ):
             time.sleep(0.02)
 
+        if cfg.use_background_streaming and not cfg.dry_run:
+            # K1 fix (2026-11-02): time_s used to be 2*dt (0.2s, the OUTER
+            # tick period) -- matched to the thread's old per-call pacing,
+            # which no longer exists now that _run() has its own 20ms
+            # scheduler. Use 2*_STREAM_INTERVAL_S (0.04s) instead, the same
+            # multiplier convention already used by the proven n_inner
+            # inner-loop pattern a few hundred lines below.
+            arm_streamer = BackgroundArmStreamer(
+                robot,
+                time_s=2.0 * _STREAM_INTERVAL_S,
+                lookahead_time=cfg.servo_lookahead_s,
+                gain=cfg.servo_gain,
+            )
+            arm_streamer.start()
+            print("[path] background arm-streaming thread started")
+
         safety_check_every = max(1, int(round(cfg.control_hz)))
         next_tick = now_monotonic()
         terminal_since = None
@@ -1624,6 +1792,7 @@ def main() -> None:
                 time.sleep(min(next_tick - now, dt))
                 continue
             next_tick = max(next_tick + dt, now)
+            loop_start_t = now_monotonic()
 
             if not camera.healthy:
                 abort_reason = f"camera_unhealthy: {camera.last_error!r}"
@@ -1658,9 +1827,16 @@ def main() -> None:
                     abort_reason = f"tcp_out_of_workspace({np.round(pose[:3], 3).tolist()})"
                     break
 
+            # (2026-10-26 instrumentation pass) wall-clock the full solver
+            # call from the main loop's side -- covers non-process-isolated
+            # controllers too, where process_isolated_adapter.py's own
+            # round_trip_ms doesn't apply; see A1 loop-overhead localization.
+            _solver_call_t0 = now_monotonic()
             result = solver(estimate, dt)
+            solver_call_ms = (now_monotonic() - _solver_call_t0) * 1e3
             command = np.asarray(result.u0, dtype=float).reshape(7)
             info = result.info
+            info["solver_call_ms"] = solver_call_ms
             ref_index = int(info.get("reference_index", 0))
             terminal_hold = bool(info.get("terminal_hold", False))
 
@@ -1801,43 +1977,62 @@ def main() -> None:
                 # in because the planned reference has stopped advancing.
                 q_target = q + delta_q
 
+            # Round-7 timing fix: how long the tick took BEFORE the
+            # target/servo handoff -- i.e. the cost the background-
+            # streaming fix is meant to protect (read state + solve +
+            # command compute). Independent of whether servo_j() itself
+            # would also have blocked.
+            pre_servo_elapsed_s = now_monotonic() - loop_start_t
+            deadline_miss = bool(pre_servo_elapsed_s > dt)
+            target_update_ms = 0.0
             t_servo = now_monotonic()
             if not cfg.dry_run:
-                # condition "C" of the 2026-09-17 A/B/C seam-and-rate
-                # identification test: interpolate the accumulator's move
-                # from q_cmd_prev to q_target into servo_stream_hz/control_hz
-                # intermediate absolute targets instead of sending q_target
-                # once. Live-validated to cut mean/max command-tracking
-                # error ~4x versus sending once at 10Hz (see
-                # servoj-realization-gain memory). No-op (n_inner=1) unless
-                # accumulator_seam is on and servo_stream_hz > control_hz.
-                n_inner = 1
-                if cfg.accumulator_seam and cfg.servo_stream_hz > cfg.control_hz + 1e-9:
-                    n_inner = max(1, int(round(cfg.servo_stream_hz / cfg.control_hz)))
-                if n_inner > 1 and q_cmd_prev is not None:
-                    dt_inner = dt / n_inner
-                    q_start, q_end = q_cmd_prev[:6], q_target[:6]
-                    lookahead_inner = min(cfg.servo_lookahead_s, 2.5 * dt_inner)
-                    next_inner = t_servo
-                    for m in range(1, n_inner + 1):
-                        q_servo = q_start + (m / n_inner) * (q_end - q_start)
+                if cfg.use_background_streaming and arm_streamer is not None:
+                    # Background thread owns every servo_j() call now; the
+                    # loop only hands off the new target (lock-protected
+                    # copy, microseconds -- see BackgroundArmStreamer).
+                    target_update_ms = arm_streamer.update_target(q_target)
+                    if arm_streamer.last_servo_error is not None:
+                        abort_reason = (
+                            f"arm_streamer_servo_error: "
+                            f"{arm_streamer.last_servo_error!r}"
+                        )
+                else:
+                    # condition "C" of the 2026-09-17 A/B/C seam-and-rate
+                    # identification test: interpolate the accumulator's move
+                    # from q_cmd_prev to q_target into servo_stream_hz/control_hz
+                    # intermediate absolute targets instead of sending q_target
+                    # once. Live-validated to cut mean/max command-tracking
+                    # error ~4x versus sending once at 10Hz (see
+                    # servoj-realization-gain memory). No-op (n_inner=1) unless
+                    # accumulator_seam is on and servo_stream_hz > control_hz.
+                    n_inner = 1
+                    if cfg.accumulator_seam and cfg.servo_stream_hz > cfg.control_hz + 1e-9:
+                        n_inner = max(1, int(round(cfg.servo_stream_hz / cfg.control_hz)))
+                    if n_inner > 1 and q_cmd_prev is not None:
+                        dt_inner = dt / n_inner
+                        q_start, q_end = q_cmd_prev[:6], q_target[:6]
+                        lookahead_inner = min(cfg.servo_lookahead_s, 2.5 * dt_inner)
+                        next_inner = t_servo
+                        for m in range(1, n_inner + 1):
+                            q_servo = q_start + (m / n_inner) * (q_end - q_start)
+                            robot.servo_j(
+                                q_servo,
+                                time_s=2.0 * dt_inner,
+                                lookahead_time=lookahead_inner,
+                                gain=cfg.servo_gain,
+                            )
+                            next_inner += dt_inner
+                            sleep_s = next_inner - now_monotonic()
+                            if sleep_s > 0:
+                                time.sleep(sleep_s)
+                    else:
                         robot.servo_j(
-                            q_servo,
-                            time_s=2.0 * dt_inner,
-                            lookahead_time=lookahead_inner,
+                            q_target,
+                            time_s=2.0 * dt,
+                            lookahead_time=cfg.servo_lookahead_s,
                             gain=cfg.servo_gain,
                         )
-                        next_inner += dt_inner
-                        sleep_s = next_inner - now_monotonic()
-                        if sleep_s > 0:
-                            time.sleep(sleep_s)
-                else:
-                    robot.servo_j(
-                        q_target,
-                        time_s=2.0 * dt,
-                        lookahead_time=cfg.servo_lookahead_s,
-                        gain=cfg.servo_gain,
-                    )
                 if np.any(np.abs(delta_q) > 1e-9):
                     started_moving = True
             servo_ms = 1e3 * (now_monotonic() - t_servo)
@@ -1885,6 +2080,21 @@ def main() -> None:
                 ),
                 "insertion_rate_cmd_m_s": round(float(insertion_rate_cmd_m_s), 6),
                 "servo_ms": round(servo_ms, 1),
+                # Round-7 timing-fix fields. loop_start_s: wall time (run-
+                # relative) at the top of this tick, right after the
+                # scheduler advanced next_tick -- the true start of this
+                # tick's own work, independent of servo_j()'s blocking.
+                # target_update_ms: cost of the lock-protected target
+                # handoff when use_background_streaming is on (expected
+                # microseconds -- 0.0 under the legacy direct-call path).
+                # deadline_miss: did read-state+solve+compute alone (i.e.
+                # excluding servo_j()/the handoff) already exceed dt --
+                # the real health signal now that servo_j is off the
+                # control loop's hot path.
+                "loop_start_s": round(loop_start_t - t_zero, 4),
+                "target_update_ms": round(target_update_ms, 3),
+                "deadline_miss": deadline_miss,
+                "use_background_streaming": bool(cfg.use_background_streaming),
                 "dry_run": cfg.dry_run,
                 # --- controller-internals diagnostics (2026-09-11) ---
                 "controller_kind": cfg.controller_kind,
@@ -1901,6 +2111,7 @@ def main() -> None:
                 "solver_success": info.get("success"),
                 "solver_iterations": info.get("iterations"),
                 "solver_time_s": info.get("solve_time_s"),
+                "solver_call_ms": info.get("solver_call_ms"),
                 "objective": info.get("objective"),
                 "primal_residual": info.get("primal_residual"),
                 "dual_residual": info.get("dual_residual"),
@@ -1945,6 +2156,11 @@ def main() -> None:
         raise
     finally:
         signal.signal(signal.SIGINT, prev_handler)
+        if arm_streamer is not None:
+            try:
+                arm_streamer.stop()
+            except Exception:
+                pass
         if not cfg.dry_run:
             try:
                 robot.servo_stop(2.0)

@@ -60,6 +60,7 @@ from proper_research.hardware.online.close_loop_tip_control import (
 from proper_research.hardware.online.controller_adapters import (
     OfflineControllerConfig,
     build_offline_solver,
+    _MPC_KINDS,
 )
 from proper_research.hardware.online.messages import now_monotonic
 from proper_research.hardware.online.state_stream import (
@@ -245,6 +246,14 @@ class PathFollowConfig:
     #                              validated development point trim_kp=0.6,
     #                              trim_kn=0.0 (rectangle_stage_a/README.md)
     controller_kind: str = "naive_inverse_jacobian"
+    # Z4b step 1 (2026-11-11): "counter" now the default everywhere (vessel,
+    # shape, INV-7) -- control_index increments by one every tick, matching
+    # compare_controllers.run_closed_loop's simulation convention. Previously
+    # "wallclock" was the honest default because the control loop's realized
+    # period could drift from the reference's dt; the K2/J2 streaming fix
+    # (100.0ms realized period, confirmed in the mocked dry run) removed that
+    # drift, so "counter" is now the correct default. Still overridable.
+    progress_mode: str = "counter"
     position_gain: float = 0.6
     damping: float = 5.0e-2
     nullspace_gain: float = 0.0
@@ -521,11 +530,16 @@ class PathFollowConfig:
     # background thread (BackgroundArmStreamer) owns every servo_j() call
     # and the main control loop only updates a shared target, so the
     # 100ms-per-tick blocking call never sits on the control loop's own
-    # critical path. Opt-in, default False: this is new and unvalidated
-    # on real hardware (dry-run tested only so far with a mocked robot
-    # interface) and must not silently change behaviour for any existing
-    # caller/condition until explicitly turned on for it.
-    use_background_streaming: bool = False
+    # critical path.
+    #
+    # Z4 (2026-11-10) "streaming on by default": flipped True. This was
+    # opt-in (default False) while unvalidated on real hardware
+    # (dry-run-tested only); it is now the explicit, requested default for
+    # every caller/condition -- the one case this was deliberately NOT
+    # turned on for before. A caller that still needs the old blocking
+    # per-tick servo_j() behaviour can pass use_background_streaming=False
+    # explicitly.
+    use_background_streaming: bool = True
     # 2026-09-11: briefly raised 0.006 -> 0.012 -> 0.018 while diagnosing why
     # pure-feedback inverse-Jacobian doesn't reach the 20mm triangle's corners
     # (see beam-lateral-authority-limit memory: the old 0.006 cap was pinned
@@ -986,6 +1000,40 @@ def main() -> None:
     import sys
 
     cfg = CONFIG
+
+    # Z4b step 2 (2026-11-11): tracking-error abort now defaults ON for every
+    # controller/runner (vessel, shape, INV-7), not opt-in -- previously only
+    # callers that set max_tracking_error_m explicitly (e.g.
+    # run_open_loop_vessel.py, run_mpc_delay_aware_vessel.py, both at 5mm)
+    # had any protection; the shape/rectangle runners had none. Threshold is
+    # controller-family-aware: 7mm for MPC paths, 15mm for every inverse-
+    # Jacobian-family path ("INV-7" from the user's own wording generalizes
+    # to the whole inverse-Jacobian family, since no third bucket was named
+    # and this codebase has exactly two controller families).
+    #
+    # NOTE: controller_adapters._MPC_KINDS ("mpc_lti", "mpc_ltv_offline",
+    # "mpc_ltv_sqp_online") classifies build_offline_solver's offline `kind`
+    # argument -- a DIFFERENT namespace from the online runners' own
+    # cfg.controller_kind strings, which are "mpc_delay_aware" (qn_zero,
+    # insertion_anchor, nullq_r700, run_mpc_delay_aware.py, the vessel MPC
+    # runner) or "mpc_ltv_offline"/"mpc_lti" (run_mpc_ltv.py, run_mpc_delay_
+    # baseline.py). Using _MPC_KINDS alone here would silently misclassify
+    # every "mpc_delay_aware" runner as non-MPC (15mm instead of 7mm) --
+    # _ONLINE_MPC_KINDS covers both namespaces' MPC strings explicitly.
+    # Everything else (every inv_* and naive_inverse_jacobian* kind, AND
+    # "open_loop_ff" -- no feedback correction, so a live tracking-error net
+    # is still the right default even though the user's spec didn't name a
+    # third bucket for it) gets the 15mm default.
+    #
+    # A caller that still explicitly sets max_tracking_error_m to a nonzero
+    # value before calling main() keeps that value; this only fills in the
+    # sentinel default (0.0 == "not explicitly set").
+    if cfg.max_tracking_error_m <= 0.0:
+        _ONLINE_MPC_KINDS = set(_MPC_KINDS) | {"mpc_delay_aware"}
+        cfg.max_tracking_error_m = (
+            0.007 if cfg.controller_kind in _ONLINE_MPC_KINDS else 0.015
+        )
+
     if cfg.controller_kind not in (
         "naive_inverse_jacobian", "naive_inverse_jacobian_ltv",
         "mpc_lti", "mpc_ltv_offline", "mpc_ltv_sqp_online",
@@ -1637,7 +1685,7 @@ def main() -> None:
             schedule=schedule_override,
             freeze_index=int(cfg.mpc_freeze_index),
             adapter_config=OfflineControllerConfig(
-                progress_mode="wallclock",
+                progress_mode=cfg.progress_mode,
                 terminal_hold_steps=terminal_hold_steps,
             ),
             position_gain=cfg.position_gain,

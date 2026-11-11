@@ -495,4 +495,120 @@ def resolve_start_pose_at_radius(
     print(f"[start-radius-override] reset target moved from {direction_norm_m*1e3:.1f}mm "
           f"to {radius_mm:.1f}mm from the beam base (same direction/orientation, "
           f"IK position_error={ik.final_position_error_m*1e3:.4f}mm)")
+
+
+class ProtocolMismatchError(RuntimeError):
+    """Raised by check_against_protocol when the run's resolved configuration
+    disagrees with its protocol_campaign2.yaml entry on any field."""
+
+
+def _flatten(prefix: str, value) -> dict:
+    """Flatten a nested dict into {"a.b.c": leaf_value} pairs, skipping any
+    key starting with "_" (metadata like "_source") and the "osqp" block's
+    own "source_note" string."""
+    out = {}
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str) and (k.startswith("_") or k == "source_note"):
+                continue
+            out.update(_flatten(f"{prefix}.{k}" if prefix else str(k), v))
+    else:
+        out[prefix] = value
+    return out
+
+
+def check_against_protocol(
+    condition_key: str,
+    resolved_fields: dict,
+    *,
+    protocol_path: str = "protocol_campaign2.yaml",
+    numeric_tol: float = 1e-9,
+) -> list[dict]:
+    """Z4b step 4: compare a run's resolved configuration, field by field,
+    against its protocol_campaign2.yaml entry. Refuses (raises
+    ProtocolMismatchError) on ANY mismatch, logging the full comparison
+    first so the operator sees every field that was checked, not just the
+    first failure.
+
+    `resolved_fields` is a (possibly nested) dict of the run's actual
+    resolved values, using the SAME dotted-path field names the protocol
+    entry uses once flattened (e.g. "weights.R", "keep_out.radius_m",
+    "tracking_error_abort_m"). Only fields present in BOTH the protocol
+    entry and `resolved_fields` are compared -- a protocol field the
+    caller doesn't pass is reported as "not_checked", not a mismatch (the
+    caller is expected to pass every field it can resolve; an author
+    reviewing the yaml should treat "not_checked" fields as a real gap,
+    but this function itself does not fail the run over them, since
+    forcing every caller to resolve every single protocol field before
+    this function could even be written would block adoption entirely).
+
+    Returns the full comparison log (list of {"field", "protocol_value",
+    "resolved_value", "status"} dicts); also written to stdout and, if the
+    caller wants it persisted, should be saved by the caller into that
+    run's own output directory (e.g. alongside controller_metadata.json).
+    """
+    import yaml
+
+    protocol_file = Path(protocol_path)
+    if not protocol_file.exists():
+        protocol_file = Path(__file__).resolve().parents[3] / protocol_path
+    if not protocol_file.exists():
+        raise ProtocolMismatchError(
+            f"[preflight-protocol] REFUSING to start: {protocol_path} not found "
+            f"(tried {protocol_path!r} and {protocol_file}). No protocol, no run."
+        )
+    with open(protocol_file) as f:
+        protocol = yaml.safe_load(f)
+
+    if str(protocol.get("status", "")).upper().startswith("DRAFT"):
+        print(f"[preflight-protocol] WARNING: {protocol_file} status={protocol.get('status')!r} "
+              f"-- this protocol has NOT been reviewed/signed off by the author yet.")
+
+    conditions = protocol.get("conditions", {})
+    if condition_key not in conditions:
+        raise ProtocolMismatchError(
+            f"[preflight-protocol] REFUSING to start: condition {condition_key!r} not found "
+            f"in {protocol_file} (known conditions: {sorted(conditions)})."
+        )
+    protocol_flat = _flatten("", conditions[condition_key])
+    resolved_flat = _flatten("", resolved_fields)
+
+    log: list[dict] = []
+    mismatches: list[str] = []
+    for field, protocol_value in protocol_flat.items():
+        if field not in resolved_flat:
+            log.append({"field": field, "protocol_value": protocol_value,
+                        "resolved_value": None, "status": "not_checked"})
+            continue
+        resolved_value = resolved_flat[field]
+        match = False
+        try:
+            if isinstance(protocol_value, (int, float)) and isinstance(resolved_value, (int, float)):
+                match = abs(float(protocol_value) - float(resolved_value)) <= numeric_tol
+            elif isinstance(protocol_value, (list, tuple)) and isinstance(resolved_value, (list, tuple)):
+                match = len(protocol_value) == len(resolved_value) and all(
+                    abs(float(a) - float(b)) <= numeric_tol for a, b in zip(protocol_value, resolved_value)
+                )
+            else:
+                match = protocol_value == resolved_value
+        except (TypeError, ValueError):
+            match = protocol_value == resolved_value
+        log.append({"field": field, "protocol_value": protocol_value,
+                     "resolved_value": resolved_value, "status": "match" if match else "MISMATCH"})
+        if not match:
+            mismatches.append(field)
+
+    print(f"[preflight-protocol] condition={condition_key!r}: {len(log)} fields checked "
+          f"against {protocol_file}")
+    for row in log:
+        marker = {"match": "OK", "MISMATCH": "**MISMATCH**", "not_checked": "(not checked)"}[row["status"]]
+        print(f"  [{marker}] {row['field']}: protocol={row['protocol_value']!r} "
+              f"resolved={row['resolved_value']!r}")
+
+    if mismatches:
+        raise ProtocolMismatchError(
+            f"[preflight-protocol] REFUSING to start: {len(mismatches)} field(s) disagree "
+            f"with {condition_key!r}'s protocol entry: {mismatches}"
+        )
+    return log
     return np.asarray(ik.q_rad, dtype=float).reshape(6)

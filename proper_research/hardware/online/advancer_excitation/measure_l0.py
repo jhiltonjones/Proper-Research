@@ -34,9 +34,16 @@ from proper_research.hardware.online.messages import now_monotonic
 from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
-# X/Y from the single canonical rig_calibration.py source; this file's own
-# Z (-0.016567) predates and differs from the unraised-rig default there.
-PIVOT_XYZ = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], -0.016567])  # StateStreamConfig.T_robot_beam_pose6[:3]
+# FIXED 2026-11-11 (K2 live run): this file's own Z (-0.016567) was the
+# stale pre-recalibration pivot height, left here under the mistaken belief
+# it "predates and differs" from the real rig deliberately -- it doesn't;
+# it's the same stale constant documented and fixed elsewhere this session
+# (see state_stream.py's _DEFAULT_T_ROBOT_BEAM_POSE6). All three axes now
+# come from the single canonical rig_calibration.py source. This constant
+# feeds check_camera_healthy()'s insertion-length safety check (via
+# rectangle_stage_a/common.py), so this bug was corrupting that check's
+# "ground truth" measurement, not just a diagnostic print.
+PIVOT_XYZ = np.array([BEAM_BASE_XYZ_M[0], BEAM_BASE_XYZ_M[1], BEAM_BASE_XYZ_M[2]])  # StateStreamConfig.T_robot_beam_pose6[:3]
 
 
 def build_measurement_camera() -> tuple[CameraSource, NewFrameTipMapper]:

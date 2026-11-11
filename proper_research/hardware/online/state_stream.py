@@ -49,8 +49,19 @@ from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 # difference hasn't been investigated, but X/Y now share the single
 # canonical source (see rig_calibration.py's docstring for why this
 # duplication was a problem).
+# FIXED 2026-11-11 (K2 live run on rectangle stage A): z was hardcoded at
+# -0.016567, the stale pre-recalibration pivot height documented throughout
+# this project's Round 10-14 history (23.06mm above the real calibrated
+# base) -- x/y already correctly pulled from BEAM_BASE_XYZ_M but z never
+# did. patch_state_stream_config_two_markers() (rectangle_stage_a/common.py)
+# deliberately does NOT touch T_robot_beam_pose6, on the documented (and
+# incorrect) assumption that this default was "independently validated" --
+# it was not. Any rectangle_stage_a script that does not explicitly override
+# T_robot_beam_pose6 inherited this stale pivot. Vessel scripts are
+# unaffected -- they explicitly set it via their own recalibrated-rig
+# factory (vessel_stage_a/common.py's raised_state_stream_config_factory).
 _DEFAULT_T_ROBOT_BEAM_POSE6 = (
-    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), -0.016567, 0.0, -1.5707963, 0.0,
+    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), float(BEAM_BASE_XYZ_M[2]), 0.0, -1.5707963, 0.0,
 )
 
 

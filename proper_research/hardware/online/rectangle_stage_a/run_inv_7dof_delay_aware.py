@@ -43,21 +43,8 @@ common.patch_state_stream_config_two_markers(pf)
 
 
 def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
-    if cache_path and os.path.exists(cache_path):
-        print(f"[inv_7dof_delay_aware] loading cached genuine LTV schedule from {cache_path}")
-        return np.load(cache_path)
-    print("[inv_7dof_delay_aware] building genuine from_model_bundle Jacobian schedule "
-          "(one beam solve per reference sample, ~90-150s)...")
-    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
-    _, bundle, controller_pack, _ = build_planning_context()
-    jac_provider = from_model_bundle(bundle=bundle, controller_pack=controller_pack, contact=False)
-    schedule = mpc_variants.precompute_schedule(
-        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
-    )
-    if cache_path:
-        np.save(cache_path, schedule)
-        print(f"[inv_7dof_delay_aware] schedule cached -> {cache_path}")
-    return schedule
+    # Z4 (2026-11-10): consolidated into common.py -- see its docstring.
+    return common.build_or_load_schedule(plan_dir, cache_path, label="inv_7dof_delay_aware")
 
 
 def main() -> None:
@@ -85,6 +72,12 @@ def main() -> None:
     p.add_argument("--insertion-tol-mm", type=float, default=3.0,
                     help="preflight refuses to proceed unless the camera-measured physical "
                          "insertion is within this of the plan's expected L0")
+    p.add_argument("--max-tracking-error-mm", type=float, default=0.0,
+                    help="Z4b step 2 (2026-11-11): ported from the vessel runner -- stop the "
+                         "run and report failure if the measured beam-tip tracking error ever "
+                         "exceeds this. Default 0.0 means 'let close_loop_path_follow.main() "
+                         "fill in the controller-aware default' (15mm for this INV-7 path); "
+                         "pass a nonzero value to override.")
     p.add_argument("--dry-run", action="store_true",
                     help="camera/robot connect and every tick solves normally, but no servoJ/"
                          "advancer motion commands are sent -- for validating the wiring before "
@@ -104,6 +97,7 @@ def main() -> None:
     cfg.controller_kind = "inv_7dof_delay_aware"
     cfg.plan_dir = args.plan_dir
     cfg.reference_source = "plan_dir"
+    cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
 
     cfg.trim_kp = args.kp
     cfg.trim_kn = 0.0

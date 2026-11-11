@@ -1,5 +1,13 @@
 # How to run the closed-loop inverse-Jacobian controller (vessel)
 
+> **Campaign 2 (2026-11-11):** for the current vessel-plan-B /
+> rectangle / triangle-35 campaign (plan B' and trap paths out of
+> scope), use `../HOWTO_CAMPAIGN2.md` as the single entry point --
+> it has the exact commands, the four-way offline/mock/motion-free/
+> real-motion split, and the flagged shape-MPC-runner ambiguity.
+> This file remains accurate for what it describes below.
+
+
 This is the naive-controller comparator against `run_mpc_delay_aware_vessel.py`
 (see `HOWTO_CLOSED_LOOP_MPC.md`): one-step resolved-rate feedback instead of a
 finite-horizon QP, built on the SAME offline Jacobian schedule MPC uses (not a

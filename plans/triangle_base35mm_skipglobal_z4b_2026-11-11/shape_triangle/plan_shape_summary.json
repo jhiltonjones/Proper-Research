@@ -1,0 +1,33 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "centreline_points": 161,
+  "perimeter_mm": 77.21082666941352,
+  "time_param_samples": 412,
+  "time_param_duration_s": 110.18946690205485,
+  "time_param_dir": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path",
+  "note": "Z4b step 6 (2026-11-11): executed rebuild from the current (post-Z4b) code, verbatim AD2 recipe, new campaign directory.",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "tcp_box_activation_margin_m": 0.027,
+  "tcp_box_gate_margin_m": 0.025
+}

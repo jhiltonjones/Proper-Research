@@ -1,0 +1,31 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "centreline_points": 161,
+  "perimeter_mm": 77.21082666941352,
+  "time_param_samples": 395,
+  "time_param_duration_s": 39.400000000000006,
+  "time_param_dir": "/home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_tcpbox_2026-11-09/time_parameterized_configuration_path",
+  "note": "2026-11-10 (AD1): this plan was built via a bypass script that loaded the exact pre-existing shape_centreline.npz directly (base 33.578mm, not the nominal 35mm -- see AB1) and drove the L1 solve/time-parameterization functions outside the normal plan_shape_path.py CLI, which is why this provenance file was missing until now. beam_base_xyz_m and rig_config below are the values the bypass script's own log confirmed (`[use-calibrated-beam-base] pivot_point... -0.039627`), not re-derived here.",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  }
+}

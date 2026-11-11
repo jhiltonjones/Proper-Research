@@ -73,7 +73,13 @@
       -0.719727,
       -0.039627
     ],
-    "dipole_alignment_sign": 1.0
+    "dipole_alignment_sign": 1.0,
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "beam_base_xyz_m_provenance": "stamped 2026-11-09, verified by Rounds 11 and 28 (vessel runner override) -- NOT a rebuild. run_mpc_delay_aware_vessel.py passes an explicit initial_poses override (z = rig_calibration.BEAM_BASE_XYZ_M[2]) directly into build_vessel_planning_context(), confirmed by two independent prior checks, so this plan's actual L1/L3 solves always used the correct beam base -- this field records that fact for provenance/guard consumers, it does not change what the plan's own saved nodes/schedule already are."
   },
   "summary": {
     "all_nodes_feasible": true,

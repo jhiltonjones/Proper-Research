@@ -339,6 +339,14 @@ class InverseConfigurationPlannerConfig:
     source_magnet_lumen_exclusion_radius_m: float | None = None
     source_magnet_lumen_constraint_tolerance_m: float = 1.0e-6
 
+    # Z4 (2026-11-10): the one field offline_inverse_configuration.py's own
+    # (now-removed) twin class had that this superset lacked -- added here
+    # so this is a true superset and the two modules can share one class.
+    # See offline_inverse_configuration.py's own usage for the full
+    # rationale (a soft capsule-radius tube around lumen_C, separate from
+    # the hard exclusion radius above).
+    source_magnet_lumen_tube_radius_m: float | None = None
+
     # 2026-09-12 safety fixes, added after a live incident: a closed-circle
     # plan's insertion retracted well below its starting length, which pulled
     # the magnet close enough to the beam base to breach the documented
@@ -554,6 +562,20 @@ class InverseConfigurationPlannerConfig:
             raise ValueError(
                 "source_magnet_lumen_constraint_tolerance_m must be finite and "
                 "non-negative."
+            )
+
+        # Z4 (2026-11-10): ported from offline_inverse_configuration.py's own
+        # validate() so the merged class validates BOTH radius fields -- this
+        # is the soft-tube constraint used by that module's solver, a
+        # separate concept from source_magnet_lumen_exclusion_radius_m above
+        # (the hard exclusion this module's own solver uses).
+        tube_radius = self.source_magnet_lumen_tube_radius_m
+        if tube_radius is not None and (
+            not np.isfinite(tube_radius) or float(tube_radius) <= 0.0
+        ):
+            raise ValueError(
+                "source_magnet_lumen_tube_radius_m must be finite and positive "
+                "when the hard tube constraint is enabled."
             )
 
         joint_step = np.asarray(self.maximum_joint_step_rad, dtype=float).reshape(-1)

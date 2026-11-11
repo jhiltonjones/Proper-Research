@@ -151,6 +151,10 @@ minimal horizon cannot escape} (Section~\ref{sec:res-pred}).
 to test one layer each, with predictions stated in advance, and a
 demonstration of the complete pipeline in a silicone neurovascular model
 (Sections~\ref{sec:experiments}--\ref{sec:results}).
+% SCOPE 2026-11-11 (rev 2): trap paths are PLANNED, scheduled after the
+% core vessel/shape campaign in this same study (not dropped or pushed to
+% future work). \NEWRUN{} placeholders remain because no trap data has
+% been collected yet, not because the work is cancelled.
 \end{enumerate}
 
 % =============================================================
@@ -207,6 +211,7 @@ robot-base frame $\mathcal F_R$, and the 235\,mm magnet keep-out sphere
 about the insertion point drawn to scale. (b) Vessel phantom with
 centerline and segment C. (c) Rectangle, the three triangles and a
 trap path to scale, with the height band and keep-out sphere.
+% SCOPE 2026-11-11 (rev 2): trap path restored to this panel -- planned, runs later in this campaign.
 (d) MCR cross-section and marker layout. Remove lab names and logos.}
 \caption{Experimental platform and tasks.}
 \label{fig:setup}
@@ -665,6 +670,9 @@ $\delta\in\{\NEWRUN{10, 5, 2}\}$\,mm. The full grid was first simulated
 with a perturbed plant; \NEWRUN{three} points were then run on hardware: one
 where both horizons were predicted to succeed, one where only $N=15$
 was, and one where both were predicted to fail.
+% SCOPE 2026-11-11 (rev 2): trap-path trials are scheduled LATER in this
+% same campaign, after the core vessel/shape conditions and before the
+% silicone demonstration -- see the campaign order in Sec.~\ref{sec:conclusion}.
 
 \emph{Silicone model.} A silicone model of \NEWRUN{vessel segment and
 source, e.g., a segmented internal carotid--middle cerebral artery} is
@@ -1103,11 +1111,19 @@ lies at \NEWRUN{high speed and small clearance}. On hardware, at the point
 predicted to separate them, $N=3$ \NEWRUN{completed $m$ of 10 trials and
 $N=15$ $m'$ of 10} (Fisher $p\NEWRUN{}$); at the other two points both
 horizons \NEWRUN{behaved as predicted}.
-% AUTHOR NOTE: write from the data. If N = 3 is never trapped where N = 15
-% succeeds, the claim of this section becomes "the horizon must span the
-% delay; beyond that, constraints in the QP, not lookahead, carry the
-% safety benefit", and the abstract and contributions change accordingly.
+% SCOPE 2026-11-11 (rev 2): trap trials run LATER in this campaign (after
+% the core vessel/shape conditions, before silicone) -- see the campaign
+% order in Sec.~\ref{sec:conclusion}. \NEWRUN{} placeholders remain
+% because no trap data is collected yet, not because the claim is dropped.
+% AUTHOR NOTE: write from the data once collected. If N = 3 is never
+% trapped where N = 15 succeeds, the claim of this section becomes "the
+% horizon must span the delay; beyond that, constraints in the QP, not
+% lookahead, carry the safety benefit", and the abstract and contributions
+% change accordingly.
 
+% SCOPE 2026-11-11 (rev 2): fig:trap restored -- trap trials are planned
+% later in this campaign, not dropped. Figure stays in place with
+% \NEWRUN{} placeholders pending that data.
 \begin{figure}[t]
 \centering
 \figph{\columnwidth}{4.6cm}{(a) Simulated outcome over reference speed
@@ -1156,7 +1172,7 @@ Closing the loop and spanning the delay helped on every task. The Jacobian
 schedule helped wherever the control map moved far from where it was
 frozen, and decided completion on the vessel. In-QP constraints decided
 completion on every path that ran close to a bound, and the long horizon
-\NEWRUN{decided completion on the trap path}.
+\NEWRUN{decided completion on the trap path}. % SCOPE 2026-11-11 (rev 2): restored, trap trials planned later this campaign.
 
 \begin{figure}[t]
 \centering
@@ -1168,6 +1184,7 @@ orange: it hurts; grey: CI includes zero. Rows for the triangle widths
 and $N=3$ are added when those trials exist; completion outcomes (vessel
 and trap paths) are reported in Table~\ref{tab:vessel} and
 Fig.~\ref{fig:trap} because failed trials have no RMSE.}
+% SCOPE 2026-11-11 (rev 2): trap-path reference restored.
 \label{fig:forest}
 \end{figure}
 
@@ -1232,7 +1249,10 @@ The ablation phantom is a dry geometry, and INV-7 was run at a
 matched-saturation gain rather than its most accurate one; its failures
 are caused by blocked commands, not by its gain. The trap paths were
 designed to separate the two horizons, so they show that the separation
-exists and where, not how often it arises in clinical anatomy. How the
+exists and where, not how often it arises in clinical anatomy.
+% SCOPE 2026-11-11 (rev 2): trap paths restored to the limitations claim --
+% they run later in this same campaign (planned), not a future study.
+How the
 vessel wall changes the Jacobian, and which model the schedule should be
 built from near the wall, is the subject of a companion study.
 
@@ -1254,9 +1274,12 @@ neurovascular model. Experiments designed to test one layer each show
 that the Jacobian must be scheduled where the control map moves, that
 safety constraints must sit inside the optimizer rather than be checked
 after it, that the horizon must span the actuation delay, and that a
-longer horizon \NEWRUN{keeps the magnet out of constraint traps}. Future
+longer horizon \NEWRUN{keeps the magnet out of constraint traps}
+(trap-path trials run later in this campaign, after the core vessel/shape
+conditions and before the silicone demonstration; \NEWRUN{} pending that data). Future
 work will address contact-aware scheduling near the vessel wall,
 three-dimensional sensing, and fluoroscopic guidance.
+% SCOPE 2026-11-11 (rev 2): trap claim + campaign-order note restored.
 
 % =============================================================
 \begin{thebibliography}{99}

@@ -756,7 +756,42 @@ def main() -> None:
             "beam_base_xyz_m": resolved_beam_base_xyz_m(initial_poses_override).tolist(),
             "tcp_to_magnet_pose6": list(_rig_tcp_to_magnet_pose6),
         },
+        # 2026-11-10 (Round 31/AD2): tcp_box_margin_m doubles as the L1
+        # residual's activation threshold. A plan built with the
+        # activation threshold equal to the 25mm validation gate lands
+        # right on the boundary (no incentive to clear it with margin).
+        # Split the two explicitly in provenance: activation is whatever
+        # --tcp-box-margin-mm this build actually used (27mm for this
+        # round); the gate is the fixed 25mm validation requirement,
+        # independent of this flag and never moved by it.
+        "tcp_box_activation_margin_m": (
+            float(args.tcp_box_margin_mm) * 1.0e-3
+            if hasattr(args, "tcp_box_margin_mm") else None
+        ),
+        "tcp_box_gate_margin_m": 0.025,
     }
+    # Z4b step 5 (2026-11-11): automatic provenance, additive only -- no
+    # existing field's meaning or value changes, these are new fields only.
+    # Generalizes what earlier rounds hand-patched into individual plans'
+    # plan_shape_summary.json (source_centreline_file/sha256, full argv,
+    # git commit) into something every future build writes automatically.
+    import hashlib
+    import subprocess
+    import sys
+    _centreline_path = shape_dir / "shape_centreline.npz"
+    with open(_centreline_path, "rb") as _f:
+        _centreline_sha256 = hashlib.sha256(_f.read()).hexdigest()
+    try:
+        _git_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=str(Path(__file__).resolve().parent),
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception as _exc:
+        _git_commit = f"<unavailable: {_exc}>"
+    summary["argv"] = list(sys.argv)
+    summary["source_centreline_file"] = str(_centreline_path)
+    summary["source_centreline_sha256"] = _centreline_sha256
+    summary["git_commit"] = _git_commit
     (shape_dir / "plan_shape_summary.json").write_text(json.dumps(summary, indent=2))
     print(f"\n[done] run online with:\n"
           f"  edit close_loop_path_follow.CONFIG: reference_source='plan_dir', "

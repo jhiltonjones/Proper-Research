@@ -1,5 +1,13 @@
 # How to plan and run a vessel path from scratch
 
+> **Campaign 2 (2026-11-11):** for the current vessel-plan-B /
+> rectangle / triangle-35 campaign (plan B' and trap paths out of
+> scope), use `../HOWTO_CAMPAIGN2.md` as the single entry point --
+> it has the exact commands, the four-way offline/mock/motion-free/
+> real-motion split, and the flagged shape-MPC-runner ambiguity.
+> This file remains accurate for what it describes below.
+
+
 This covers the full workflow for the real-vessel (contact-aware) planning
 campaign: digitizing a vessel with `detect_blue.py`, capturing a live start
 position, trimming the centreline if needed, building the offline plan, and

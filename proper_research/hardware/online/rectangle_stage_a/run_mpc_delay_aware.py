@@ -47,8 +47,23 @@ from . import common
 # StateStreamConfig -- see rectangle_stage_a/common.py's import-site comment
 # for the live failure this fixes (marker_min_count mismatch: unpatched
 # default requires 3 red markers, this rig's post-2026-09-29 physical setup
-# only has 2). Same call vessel_stage_a's run scripts already make.
-common.patch_state_stream_config_for_recalibrated_rig(pf)
+# only has 2).
+#
+# Z4 (2026-11-10) state_stream z fix: this used to call
+# `common.patch_state_stream_config_for_recalibrated_rig`, which (a) never
+# existed on rectangle_stage_a's own `common` module -- it lives on the
+# shared `stage_a_common` module and is a hard AttributeError here -- and
+# (b), even fixed to import correctly, is the WRONG patch for this rig: it
+# overwrites StateStreamConfig's T_robot_beam_pose6 z with the VESSEL rig's
+# recalibrated beam-base height (see stage_a_common.
+# raised_state_stream_config_factory's docstring). rectangle_stage_a's own
+# pivot height is independently validated and must not be silently
+# overwritten by the vessel rig's z -- see
+# patch_state_stream_config_two_markers's own docstring for the same point.
+# Use the marker-count-only patch instead, matching every other script in
+# this package (run_inv_7dof_delay_aware.py, run_mpc_delay_aware_insertion_
+# anchor.py, run_open_loop_c.py).
+common.patch_state_stream_config_two_markers(pf)
 
 _real_build_offline_solver = controller_adapters.build_offline_solver
 _real_make_output_dir = pf._make_output_dir
@@ -123,21 +138,8 @@ pf.build_offline_solver = _wrapped_build_offline_solver
 
 
 def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
-    if cache_path and os.path.exists(cache_path):
-        print(f"[mpc_delay_aware] loading cached genuine LTV schedule from {cache_path}")
-        return np.load(cache_path)
-    print("[mpc_delay_aware] building genuine from_model_bundle Jacobian schedule "
-          "(one beam solve per reference sample, ~90-150s)...")
-    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
-    _, bundle, controller_pack, _ = build_planning_context()
-    jac_provider = from_model_bundle(bundle=bundle, controller_pack=controller_pack, contact=False)
-    schedule = mpc_variants.precompute_schedule(
-        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
-    )
-    if cache_path:
-        np.save(cache_path, schedule)
-        print(f"[mpc_delay_aware] schedule cached -> {cache_path}")
-    return schedule
+    # Z4 (2026-11-10): consolidated into common.py -- see its docstring.
+    return common.build_or_load_schedule(plan_dir, cache_path, label="mpc_delay_aware")
 
 
 def main() -> None:

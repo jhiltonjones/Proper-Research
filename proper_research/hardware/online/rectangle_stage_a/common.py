@@ -21,6 +21,9 @@ measured joints, silently, with no warning if that isn't the plan's start.
 """
 from __future__ import annotations
 
+import glob
+import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -68,8 +71,167 @@ JOINT_ACCELERATION_LIMIT_RAD_S2 = 0.40
 # --tcp-workspace-robust-margin-mm terms are a separate, additional
 # requirement on top of this already-safe box, not a second
 # application of this 20mm).
+#
+# 2026-11-10: z_min was briefly loosened by 1.3mm (0.36544 -> 0.36414m)
+# to make the shared, hardware-fixed start pose clear the 25mm gate.
+# REVERTED same day (Round 33, AF1): the box is the rig's measured
+# physical limit, not something sized to a plan's requirement -- the
+# loosening was never grounded in a new measurement, it was sized only
+# to pass the gate, which is exactly the practice this box exists to
+# rule out. z_min is back at the original 0.36544.
+#
+# DOCUMENTED EXCEPTION, not a box change: node 0 -- the real,
+# hardware-fixed start pose shared by every shape plan (rectangle,
+# triangle-35, and any future shape using the same start) -- clears
+# this original z_min by 24.7336mm against the general 25mm QP/
+# tracking clearance requirement (0.2664mm short). This node is
+# fixed/committed in L1 and is never re-solved by any residual, so no
+# planner weight or threshold can move it closer to or further from
+# this face. The exception is accepted for this one node only: 24.7336
+# mm at the real start pose, vs the 25mm gate that applies to every
+# other (solved) node. See BOX_ADJUSTMENT_NOTE.txt (plan dirs and
+# here) for the recomputation and the revert.
 WORKSPACE_XYZ_MIN_M: tuple[float, float, float] = (0.24469, -0.89361, 0.36544)
 WORKSPACE_XYZ_MAX_M: tuple[float, float, float] = (0.58971, -0.49576, 0.46496)
+
+
+def _calibrated_default_initial_poses_for_guard() -> np.ndarray:
+    from proper_research.planning.planning_context import (
+        _calibrated_default_initial_poses,
+    )
+    pivot, _start, _L0, _dt = _calibrated_default_initial_poses()
+    return pivot[:3]
+
+
+def build_or_load_schedule(
+    plan_dir: str,
+    cache_path: str | None,
+    allow_unverified: bool = False,
+    label: str = "schedule",
+) -> np.ndarray:
+    """The ONE rectangle-stage-A Jacobian-schedule builder (Z4 consolidation,
+    2026-11-10): this used to be copy-pasted, independently, across nine
+    other run_*.py scripts in this package (run_mpc_delay_aware.py,
+    run_mpc_delay_aware_insertion_anchor.py, run_mpc_delay_aware_nullq_r700.py,
+    run_mpc_delay_baseline.py, run_mpc_ltv.py, run_inv_2dof_trim.py,
+    run_inv_2dof_map_trim.py, run_inv_2dof_delay_aware.py,
+    run_inv_7dof_delay_aware.py), eight of which never received the
+    Round-27/AD1 beam-base guard or the accurate-Jacobian-mode fix below --
+    only run_mpc_delay_aware_qn_zero.py had both, and is the version this
+    function is lifted from verbatim. Every script now imports this one
+    instead of defining its own.
+
+    `label` is just the log-line prefix (kept per-caller for readable
+    console output); it changes no behaviour.
+    """
+    # 2026-11-05 (Round 27): build_planning_context()'s pivot now matches
+    # the calibrated beam base by default (previously a THIRD stale-
+    # pivot reader, separate from the two already fixed elsewhere).
+    # Verify the plan this schedule is FOR actually recorded the same
+    # beam base its own L1 solve used, and refuse rather than silently
+    # building/loading a schedule for the wrong geometry.
+    current_beam_base = _calibrated_default_initial_poses_for_guard()
+    # 2026-11-10 (AD1): plan_dir is the time_parameterized_configuration_path
+    # directory; plan_shape_summary.json is NOT one level up from there (the
+    # plan root) -- it's written one level further IN, under the shape-
+    # specific shape_{rectangle,triangle}/ subdirectory (plan_shape_path.py's
+    # `shape_dir`). Glob for the real file instead of assuming a fixed
+    # relative path.
+    _plan_root = os.path.dirname(plan_dir.rstrip("/"))
+    _candidates = sorted(glob.glob(os.path.join(_plan_root, "shape_*", "plan_shape_summary.json")))
+    if len(_candidates) > 1:
+        raise RuntimeError(
+            f"[{label}] found {len(_candidates)} plan_shape_summary.json files under "
+            f"{_plan_root}/shape_*/ ({_candidates}) -- ambiguous, refusing to guess which "
+            f"one describes this plan."
+        )
+    plan_summary_path = _candidates[0] if _candidates else os.path.join(_plan_root, "plan_shape_summary.json")
+    # 2026-11-09: hard-fail by default on EITHER a missing field or a real
+    # mismatch. The ONLY way around either check is the explicit
+    # allow_unverified=True (plumbed in from each caller's own
+    # --allow-unverified-plan flag) -- never to be used for a real
+    # campaign run.
+    _plan_beam_base = None
+    if os.path.exists(plan_summary_path):
+        with open(plan_summary_path) as _f:
+            _plan_beam_base = json.load(_f).get("beam_base_xyz_m")
+    if _plan_beam_base is None:
+        _msg = (
+            f"[{label}] REFUSING to build/load a schedule: {plan_summary_path} "
+            f"does not exist or has no beam_base_xyz_m field, so this plan's "
+            f"own L1 beam base cannot be verified against the current "
+            f"build_planning_context() default ({current_beam_base.tolist()}). "
+            f"Pass --allow-unverified-plan to bypass this (never for a real "
+            f"campaign run)."
+        )
+        if allow_unverified:
+            print(f"[{label}] WARNING (bypassed via --allow-unverified-plan): {_msg}")
+        else:
+            raise RuntimeError(_msg)
+    else:
+        _diff = float(np.max(np.abs(np.asarray(_plan_beam_base) - current_beam_base)))
+        if _diff > 1.0e-6:
+            _msg = (
+                f"[{label}] REFUSING to build/load a schedule: plan's own "
+                f"recorded beam base {_plan_beam_base} differs from the "
+                f"current build_planning_context() default {current_beam_base.tolist()} "
+                f"by {_diff*1000:.3f}mm (> 1e-6m). This plan and this schedule "
+                f"build would be using different geometry. Pass "
+                f"--allow-unverified-plan to bypass this (never for a real "
+                f"campaign run)."
+            )
+            if allow_unverified:
+                print(f"[{label}] WARNING (bypassed via --allow-unverified-plan): {_msg}")
+            else:
+                raise RuntimeError(_msg)
+        else:
+            print(
+                f"[{label}] beam-base check PASSED: plan={plan_summary_path}, "
+                f"value={_plan_beam_base}, ref={current_beam_base.tolist()}"
+            )
+    meta_path = (cache_path + ".meta.json") if cache_path else None
+    if cache_path and os.path.exists(cache_path) and meta_path and os.path.exists(meta_path):
+        with open(meta_path) as _f:
+            _cached_beam_base = np.asarray(json.load(_f)["beam_base_xyz_m"], dtype=float)
+        if float(np.max(np.abs(_cached_beam_base - current_beam_base))) <= 1.0e-6:
+            print(f"[{label}] loading cached genuine LTV schedule from {cache_path} "
+                  f"(beam base verified matching)")
+            return np.load(cache_path)
+        print(f"[{label}] cache at {cache_path} was built with a different beam base "
+              f"({_cached_beam_base.tolist()} vs current {current_beam_base.tolist()}) "
+              f"-- rebuilding, not reusing.")
+    elif cache_path and os.path.exists(cache_path):
+        print(f"[{label}] cache at {cache_path} has no beam-base metadata (pre-Round-27) "
+              f"-- rebuilding, not reusing.")
+    print(f"[{label}] building genuine from_model_bundle Jacobian schedule "
+          "(one beam solve per reference sample, ~90-150s)...")
+    from proper_research.controllers import mpc_variants
+    from proper_research.controllers.beam_jacobian_providers import from_model_bundle
+    from proper_research.planning.planning_context import build_planning_context
+    from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
+        load_configuration_reference,
+    )
+    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
+    _, bundle, controller_pack, _ = build_planning_context()
+    # jacobian_mode="accurate" for every caller now (2026-11-10 Z4
+    # consolidation): checked 2026-09-24 on the raised plan, worst-case
+    # relative Frobenius error between fast/accurate is 5.3% -- not huge,
+    # but there is no reason to accept even that once it's this cheap to
+    # remove, and nine of the ten pre-consolidation copies of this function
+    # were still silently using "fast".
+    jac_provider = from_model_bundle(
+        bundle=bundle, controller_pack=controller_pack, contact=False, jacobian_mode="accurate",
+    )
+    schedule = mpc_variants.precompute_schedule(
+        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
+    )
+    if cache_path:
+        np.save(cache_path, schedule)
+        if meta_path:
+            with open(meta_path, "w") as _f:
+                json.dump({"beam_base_xyz_m": current_beam_base.tolist()}, _f)
+        print(f"[{label}] schedule cached -> {cache_path}")
+    return schedule
 
 
 def load_plan_initial_state(plan_dir: str) -> tuple[np.ndarray, float]:

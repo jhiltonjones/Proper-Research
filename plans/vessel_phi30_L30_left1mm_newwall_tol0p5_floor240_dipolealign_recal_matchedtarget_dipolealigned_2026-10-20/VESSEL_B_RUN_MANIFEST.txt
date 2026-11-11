@@ -1,0 +1,217 @@
+VESSEL-B (dipole-aligned) RUN MANIFEST
+plan: plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/
+generated 2026-10-28, from close_loop_logs/myrun/*
+
+See plans/CONTROLLER_OBJECTIVE_SPECIFICATIONS.txt for the full controller-objective
+specification (every term/weight, confirmed per condition, vessel + shapes), the
+dipole-alignment-vs-nodipole empirical confirmation, and the Section-0 trial-set
+validity rules this manifest's run lists feed into.
+
+Each controller is organized as 10 repetition slots (rep1..rep10, i.e. base + v2..v10).
+A rep with more than one attempt was retried; every attempt is listed, none dropped
+(a retry is a new run of the same controller -- keeping only the final attempt is survivorship bias).
+
+====================================================================================================
+SJ-N15  --  10 attempts over 10 repetition slots
+====================================================================================================
+-- rep 1 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_20261020T141102Z
+    ts=2026-10-20T14:11:02  stop=path_complete  steps=553  max_tracking_error_m=0.007
+-- rep 2 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v2_20261020T142028Z
+    ts=2026-10-20T14:20:28  stop=path_complete  steps=549  max_tracking_error_m=0.007
+-- rep 3 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v3_20261020T143016Z
+    ts=2026-10-20T14:30:16  stop=path_complete  steps=557  max_tracking_error_m=0.007
+-- rep 4 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261020T155708Z
+    ts=2026-10-20T15:57:08  stop=path_complete  steps=555  max_tracking_error_m=0.007
+-- rep 5 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261020T160027Z
+    ts=2026-10-20T16:00:27  stop=path_complete  steps=548  max_tracking_error_m=0.007
+-- rep 6 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v6_20261021T095348Z
+    ts=2026-10-21T09:53:48  stop=path_complete  steps=551  max_tracking_error_m=0.007
+-- rep 7 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v7_20261021T104705Z
+    ts=2026-10-21T10:47:05  stop=path_complete  steps=547  max_tracking_error_m=0.007
+-- rep 8 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v8_20261021T163704Z
+    ts=2026-10-21T16:37:04  stop=path_complete  steps=556  max_tracking_error_m=0.007
+-- rep 9 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v9_20261021T164053Z
+    ts=2026-10-21T16:40:53  stop=path_complete  steps=557  max_tracking_error_m=0.007
+-- rep 10 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v10_20261021T164409Z
+    ts=2026-10-21T16:44:09  stop=path_complete  steps=555  max_tracking_error_m=0.007
+
+====================================================================================================
+SJ-N1  --  14 attempts over 10 repetition slots
+====================================================================================================
+-- rep 1 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v1_20261021T103706Z
+    ts=2026-10-21T10:37:06  stop=tracking_error_exceeded(7.19mm > 7.00mm)  steps=641  max_tracking_error_m=0.007
+-- rep 2 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v2_20261021T104238Z
+    ts=2026-10-21T10:42:38  stop=tracking_error_exceeded(7.01mm > 7.00mm)  steps=646  max_tracking_error_m=0.007
+-- rep 3 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v3_20261021T105103Z
+    ts=2026-10-21T10:51:03  stop=tracking_error_exceeded(7.07mm > 7.00mm)  steps=635  max_tracking_error_m=0.007
+-- rep 4 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v4_20261021T105419Z
+    ts=2026-10-21T10:54:19  stop=tracking_error_exceeded(7.43mm > 7.00mm)  steps=636  max_tracking_error_m=0.007
+-- rep 5 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v5_20261021T110156Z
+    ts=2026-10-21T11:01:56  stop=tracking_error_exceeded(7.22mm > 7.00mm)  steps=637  max_tracking_error_m=0.007
+-- rep 6 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v6_20261021T110600Z
+    ts=2026-10-21T11:06:00  stop=tracking_error_exceeded(7.23mm > 7.00mm)  steps=624  max_tracking_error_m=0.007
+-- rep 7 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v7_20261021T140913Z
+    ts=2026-10-21T14:09:13  stop=tracking_error_exceeded(7.04mm > 7.00mm)  steps=645  max_tracking_error_m=0.007
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v7_20261021T161355Z
+    ts=2026-10-21T16:13:55  stop=tracking_error_exceeded(7.09mm > 7.00mm)  steps=639  max_tracking_error_m=0.007
+-- rep 8 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v8_20261021T141325Z
+    ts=2026-10-21T14:13:25  stop=tracking_error_exceeded(7.17mm > 7.00mm)  steps=640  max_tracking_error_m=0.007
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v8_20261021T161741Z
+    ts=2026-10-21T16:17:41  stop=tracking_error_exceeded(7.18mm > 7.00mm)  steps=625  max_tracking_error_m=0.007
+-- rep 9 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v9_20261021T141826Z
+    ts=2026-10-21T14:18:26  stop=tracking_error_exceeded(7.14mm > 7.00mm)  steps=640  max_tracking_error_m=0.007
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v9_20261021T162921Z
+    ts=2026-10-21T16:29:21  stop=tracking_error_exceeded(7.17mm > 7.00mm)  steps=648  max_tracking_error_m=0.007
+-- rep 10 --
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v10_20261021T142200Z
+    ts=2026-10-21T14:22:00  stop=tracking_error_exceeded(7.41mm > 7.00mm)  steps=634  max_tracking_error_m=0.007
+  mpc_closedloop_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_horizon1_v10_20261021T163248Z
+    ts=2026-10-21T16:32:48  stop=tracking_error_exceeded(7.19mm > 7.00mm)  steps=636  max_tracking_error_m=0.007
+
+====================================================================================================
+FJ  --  16 attempts over 10 repetition slots
+====================================================================================================
+-- rep 1 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_20261020T144802Z
+    ts=2026-10-20T14:48:02  stop=tracking_error_exceeded(7.04mm > 7.00mm)  steps=323  max_tracking_error_m=0.007
+-- rep 2 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v2_20261020T145158Z
+    ts=2026-10-20T14:51:58  stop=tracking_error_exceeded(7.15mm > 7.00mm)  steps=310  max_tracking_error_m=0.007
+-- rep 3 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v3_20261020T145505Z
+    ts=2026-10-20T14:55:05  stop=tracking_error_exceeded(7.02mm > 7.00mm)  steps=295  max_tracking_error_m=0.007
+-- rep 4 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T110932Z
+    ts=2026-10-21T11:09:32  stop=tracking_error_exceeded(7.02mm > 7.00mm)  steps=311  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T113518Z
+    ts=2026-10-21T11:35:18  stop=tracking_error_exceeded(7.01mm > 7.00mm)  steps=280  max_tracking_error_m=0.007
+-- rep 5 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T111208Z
+    ts=2026-10-21T11:12:08  stop=magnet_exclusion_violated(gap=235.0mm < 235.0mm)  steps=209  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T111447Z
+    ts=2026-10-21T11:14:47  stop=magnet_exclusion_violated(gap=234.2mm < 235.0mm)  steps=174  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T111800Z
+    ts=2026-10-21T11:18:00  stop=tcp_out_of_workspace([0.27, -0.708, 0.342])  steps=83  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T112046Z
+    ts=2026-10-21T11:20:46  stop=magnet_exclusion_violated(gap=234.1mm < 235.0mm)  steps=182  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T112700Z
+    ts=2026-10-21T11:27:00  stop=tcp_out_of_workspace([0.485, -0.53, 0.366])  steps=146  max_tracking_error_m=0.007
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T112954Z
+    ts=2026-10-21T11:29:54  stop=tracking_error_exceeded(7.04mm > 7.00mm)  steps=288  max_tracking_error_m=0.007
+-- rep 6 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v6_20261021T113225Z
+    ts=2026-10-21T11:32:25  stop=tracking_error_exceeded(7.03mm > 7.00mm)  steps=284  max_tracking_error_m=0.007
+-- rep 7 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v7_20261021T134633Z
+    ts=2026-10-21T13:46:33  stop=tracking_error_exceeded(7.12mm > 7.00mm)  steps=255  max_tracking_error_m=0.007
+-- rep 8 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v8_20261021T134941Z
+    ts=2026-10-21T13:49:41  stop=tracking_error_exceeded(7.31mm > 7.00mm)  steps=240  max_tracking_error_m=0.007
+-- rep 9 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v9_20261021T135148Z
+    ts=2026-10-21T13:51:48  stop=tracking_error_exceeded(7.21mm > 7.00mm)  steps=242  max_tracking_error_m=0.007
+-- rep 10 --
+  mpc_closedloop_frozen_floor240_dipolealign_recal_matchedtarget_dipolealigned_v10_20261021T135414Z
+    ts=2026-10-21T13:54:14  stop=tracking_error_exceeded(7.58mm > 7.00mm)  steps=258  max_tracking_error_m=0.007
+
+====================================================================================================
+INV-7  --  16 attempts over 10 repetition slots
+====================================================================================================
+-- rep 1 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_20261020T153306Z
+    ts=2026-10-20T15:33:06  stop=tracking_error_exceeded(7.08mm > 7.00mm)  steps=89  max_tracking_error_m=None  [EXCLUDED: different condition / crashed, not comparable]
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_20261020T153443Z
+    ts=2026-10-20T15:34:43  stop=tracking_error_exceeded(15.05mm > 15.00mm)  steps=337  max_tracking_error_m=None
+-- rep 2 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v2_20261020T154009Z
+    ts=2026-10-20T15:40:09  stop=max_control_steps  steps=0  max_tracking_error_m=None  [EXCLUDED: different condition / crashed, not comparable]
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v2_20261020T154108Z
+    ts=2026-10-20T15:41:08  stop=tracking_error_exceeded(15.03mm > 15.00mm)  steps=361  max_tracking_error_m=None
+-- rep 3 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v3_20261020T154523Z
+    ts=2026-10-20T15:45:23  stop=independent_magnet_z_violated(z=17.9mm not in [-28.1,16.9]mm)  steps=30  max_tracking_error_m=None
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v3_20261020T154654Z
+    ts=2026-10-20T15:46:54  stop=tracking_error_exceeded(15.05mm > 15.00mm)  steps=350  max_tracking_error_m=None
+-- rep 4 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T113814Z
+    ts=2026-10-21T11:38:14  stop=independent_magnet_z_violated(z=16.9mm not in [-28.1,16.9]mm)  steps=24  max_tracking_error_m=None
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T114023Z
+    ts=2026-10-21T11:40:23  stop=independent_magnet_z_violated(z=17.6mm not in [-28.1,16.9]mm)  steps=25  max_tracking_error_m=None
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T114508Z
+    ts=2026-10-21T11:45:08  stop=independent_magnet_z_violated(z=17.0mm not in [-28.1,16.9]mm)  steps=24  max_tracking_error_m=None
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v4_20261021T115621Z
+    ts=2026-10-21T11:56:21  stop=tracking_error_exceeded(15.01mm > 15.00mm)  steps=242  max_tracking_error_m=None
+-- rep 5 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v5_20261021T115801Z
+    ts=2026-10-21T11:58:01  stop=tracking_error_exceeded(15.03mm > 15.00mm)  steps=250  max_tracking_error_m=None
+-- rep 6 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v6_20261021T115950Z
+    ts=2026-10-21T11:59:50  stop=tracking_error_exceeded(15.12mm > 15.00mm)  steps=201  max_tracking_error_m=None
+-- rep 7 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v7_20261021T164853Z
+    ts=2026-10-21T16:48:53  stop=tracking_error_exceeded(15.00mm > 15.00mm)  steps=230  max_tracking_error_m=None
+-- rep 8 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v8_20261021T165221Z
+    ts=2026-10-21T16:52:21  stop=tracking_error_exceeded(15.13mm > 15.00mm)  steps=232  max_tracking_error_m=None
+-- rep 9 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v9_20261021T165545Z
+    ts=2026-10-21T16:55:45  stop=tracking_error_exceeded(15.20mm > 15.00mm)  steps=254  max_tracking_error_m=None
+-- rep 10 --
+  invjac_hybrid_contactq_nocontactL_floor240_dipolealign_recal_matchedtarget_dipolealigned_v10_20261021T165939Z
+    ts=2026-10-21T16:59:39  stop=tracking_error_exceeded(15.08mm > 15.00mm)  steps=253  max_tracking_error_m=None
+
+====================================================================================================
+NOTES
+====================================================================================================
+- SJ-N15: 10 attempts, 10 reps, no retries, all path_complete. Clean.
+- SJ-N1: 14 attempts, 10 reps (reps 7-10 retried once each). None register stop_reason=
+  path_complete (all stop via tracking_error_exceeded at the 7mm threshold), though all 14
+  reach a step count close to SJ-N15's full-path length. This conflicts with an earlier
+  (now-superseded) report of '12 of 14 completed' -- that split could not be reproduced
+  from this data and should not be used; use step/ref_index coverage, not stop_reason, to
+  judge N=1 completion.
+- FJ: 16 attempts, 10 reps (rep4 x2, rep5 x6, rest x1). 0 of 16 reach path_complete.
+  Stop-cause breakdown (all 16, all at the 7mm threshold -- same setting throughout):
+    11 tracking_error_exceeded, 3 magnet_exclusion_violated, 2 tcp_out_of_workspace.
+  Of the 11 tracking_error_exceeded attempts, 10 cluster tightly (7.01-7.31mm, excess
+  0.01-0.31mm over the 7.00mm threshold); the 11th (v10, 7.58mm, excess 0.58mm) is a clear
+  outlier, >4x the excess of any other. Not yet decided whether to exclude it for a matched
+  n=10 tracking-error-exceeded comparison against INV-7 -- flagged, not resolved.
+- INV-7: 16 attempts, 10 reps (rep1 x2, rep2 x2, rep3 x2, rep4 x4, rest x1). 0 of 16 reach
+  path_complete. Two attempts are NOT comparable to the rest and are flagged above:
+    - the first chronological attempt (...20261020T153306Z) ran at max_tracking_error_m=
+      0.007 (7mm) instead of 0.015 (15mm) used everywhere else -- a different condition.
+    - one attempt (v2, ...20261020T154009Z) crashed (stop_reason=max_control_steps,
+      control_steps=0) -- no real trial, no data.
+  Excluding those two leaves 14 valid attempts: 10 tracking_error_exceeded (15.00-15.20mm,
+  excess 0.00-0.20mm over the 15.00mm threshold, tight cluster, no outlier) + 4
+  independent_magnet_z_violated (all very early, steps 24-25, all at the upper z-bound).
+- The chronological gaps between consecutive attempts (both FJ's 11 and INV-7's 10
+  tracking_error_exceeded runs) show the same session structure: short 2-6 min gaps within
+  a session, separated by a ~20hr overnight break and a few hours' midday break -- both
+  controllers' sessions roughly time-correspond, consistent with deliberately-spaced
+  repetitions rather than rapid-fire retries of one failing attempt.
+- No frozen-Jacobian (FJ) variant exists for the B' (nodipole) plan.
+- v_ref is NEVER zeroed for any run in this manifest, at any horizon, regardless of whether
+  --zero-input-reference-in-r was passed: DelayAwareBeamOutputTrackingMPC._linear_cost_exec
+  is a self-contained reimplementation that never reads that flag (confirmed by code trace
+  and by direct empirical re-solve, both documented in Batch 1f).

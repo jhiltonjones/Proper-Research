@@ -76,6 +76,7 @@ import argparse
 import json
 import math
 import os
+import glob
 from pathlib import Path
 
 import numpy as np
@@ -132,8 +133,9 @@ pf._make_output_dir = _wrapped_make_output_dir
 
 
 _DEADLINE_MS = 70.0
-_INSERTION_OFFSET_ABORT_M = 0.005  # 5mm, see module docstring for rationale
+_INSERTION_OFFSET_ABORT_M = 0.02  # 5mm, see module docstring for rationale
 _WORKER: MPCWorkerHandle | None = None
+_ALLOW_UNVERIFIED_PLAN = False
 # 2026-11-04: in-QP TCP-workspace constraint, same mechanism as the vessel
 # runner's --disable-tcp-workspace-in-qp/--tcp-workspace-robust-margin-mm.
 # Reads the SAME box the post-hoc tcp_out_of_workspace monitor uses
@@ -185,10 +187,16 @@ def spawn_and_warm_worker(
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
+    _insertion_abort_desc = (
+        "disabled (insertion-offset abort off by default; pass "
+        "--enable-insertion-offset-abort to turn it on)"
+        if _INSERTION_OFFSET_ABORT_M is None
+        else f"|L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm"
+    )
     print(f"[insertion_anchor] CONTROLLER CONFIRMED: gamma={_GAMMA}, R700 "
           f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), "
           f"insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT} s_L={_INSERTION_STATE_ANCHOR_SCALE*1e3}mm, "
-          f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm")
+          f"safety abort at {_insertion_abort_desc}")
     # Gate real solves until the live planner->robot registration is
     # applied (see module docstring's frame-mismatch fix) -- offline
     # replay callers never call this, so this is purely additive for the
@@ -226,7 +234,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "insertion_state_anchor_weight": _INSERTION_STATE_ANCHOR_WEIGHT,
             "insertion_state_anchor_scale_m": _INSERTION_STATE_ANCHOR_SCALE,
             "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
-            "insertion_offset_monitor_disabled": bool(args.disable_insertion_offset_abort),
+            "insertion_offset_monitor_disabled": _INSERTION_OFFSET_ABORT_M is None,
             "state_scale_q_rad": math.radians(0.5),
             "state_scale_L_m": 0.25e-3,
             "input_scale_q_rad_s": 0.05,
@@ -243,6 +251,9 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
             "workspace_xyz_min_m": list(common.WORKSPACE_XYZ_MIN_M),
             "workspace_xyz_max_m": list(common.WORKSPACE_XYZ_MAX_M),
+            "unverified_plan_bypass": _ALLOW_UNVERIFIED_PLAN,
+            # Z4b step 5 (2026-11-11): automatic provenance, additive only.
+            "argv": __import__("sys").argv[:],
         }
         (_LAST_OUTPUT_DIR / "controller_metadata.json").write_text(json.dumps(meta, indent=2))
         print(f"[insertion_anchor] wrote controller_metadata.json -> {_LAST_OUTPUT_DIR} "
@@ -288,72 +299,13 @@ def _wrapped_build_offline_solver(kind, **kwargs):
 pf.build_offline_solver = _wrapped_build_offline_solver
 
 
-def _calibrated_default_initial_poses_for_guard():
-    from proper_research.planning.planning_context import (
-        _calibrated_default_initial_poses,
-    )
-    pivot, _start, _L0, _dt = _calibrated_default_initial_poses()
-    return pivot[:3]
-
-
-def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
-    # 2026-11-05 (Round 27): build_planning_context()'s pivot now matches
-    # the calibrated beam base by default (previously a THIRD stale-
-    # pivot reader, separate from the two already fixed elsewhere).
-    # Verify the plan this schedule is FOR actually recorded the same
-    # beam base its own L1 solve used, and refuse rather than silently
-    # building/loading a schedule for the wrong geometry.
-    current_beam_base = _calibrated_default_initial_poses_for_guard()
-    plan_summary_path = os.path.join(os.path.dirname(plan_dir.rstrip('/')), "plan_shape_summary.json")
-    if os.path.exists(plan_summary_path):
-        with open(plan_summary_path) as _f:
-            _plan_beam_base = json.load(_f).get("beam_base_xyz_m")
-        if _plan_beam_base is not None:
-            _diff = float(np.max(np.abs(np.asarray(_plan_beam_base) - current_beam_base)))
-            if _diff > 1.0e-6:
-                raise RuntimeError(
-                    f"[insertion_anchor] REFUSING to build/load a schedule: plan's own "
-                    f"recorded beam base {_plan_beam_base} differs from the "
-                    f"current build_planning_context() default {current_beam_base.tolist()} "
-                    f"by {_diff*1000:.3f}mm (> 1e-6m). This plan and this schedule "
-                    f"build would be using different geometry."
-                )
-    else:
-        print(f"[insertion_anchor] WARNING: {plan_summary_path} has no beam_base_xyz_m -- "
-              f"cannot verify this schedule matches the plan's own L1 pivot.")
-    meta_path = (cache_path + ".meta.json") if cache_path else None
-    if cache_path and os.path.exists(cache_path) and meta_path and os.path.exists(meta_path):
-        with open(meta_path) as _f:
-            _cached_beam_base = np.asarray(json.load(_f)["beam_base_xyz_m"], dtype=float)
-        if float(np.max(np.abs(_cached_beam_base - current_beam_base))) <= 1.0e-6:
-            print(f"[insertion_anchor] loading cached genuine LTV schedule from {cache_path} "
-                  f"(beam base verified matching)")
-            return np.load(cache_path)
-        print(f"[insertion_anchor] cache at {cache_path} was built with a different beam base "
-              f"({_cached_beam_base.tolist()} vs current {current_beam_base.tolist()}) "
-              f"-- rebuilding, not reusing.")
-    elif cache_path and os.path.exists(cache_path):
-        print(f"[insertion_anchor] cache at {cache_path} has no beam-base metadata (pre-Round-27) "
-              f"-- rebuilding, not reusing.")
-    print("[insertion_anchor] building genuine from_model_bundle Jacobian schedule "
-          "(one beam solve per reference sample, ~90-150s)...")
-    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
-    _, bundle, controller_pack, _ = build_planning_context()
-    jac_provider = from_model_bundle(bundle=bundle, controller_pack=controller_pack, contact=False)
-    schedule = mpc_variants.precompute_schedule(
-        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
-    )
-    if cache_path:
-        np.save(cache_path, schedule)
-        if meta_path:
-            with open(meta_path, "w") as _f:
-                json.dump({"beam_base_xyz_m": current_beam_base.tolist()}, _f)
-        print(f"[insertion_anchor] schedule cached -> {cache_path}")
-    return schedule
+def build_or_load_schedule(plan_dir: str, cache_path: str, allow_unverified: bool = False) -> np.ndarray:
+    # Z4 (2026-11-10): consolidated into common.py -- see its docstring.
+    return common.build_or_load_schedule(plan_dir, cache_path, allow_unverified, label="insertion_anchor")
 
 
 def main() -> None:
-    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M
+    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _ALLOW_UNVERIFIED_PLAN
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
@@ -371,15 +323,28 @@ def main() -> None:
                     help="independent safety monitor: abort/hold if |L-L_ref| exceeds this (mm); "
                          "see module docstring for how the default was chosen")
     p.add_argument("--disable-insertion-offset-abort", action="store_true",
-                    help="turn the insertion-offset monitor off by design (threshold -> None), "
-                         "regardless of --insertion-offset-abort-mm. Prefer this to passing a "
-                         "very large --insertion-offset-abort-mm value: this records "
-                         "insertion_offset_monitor_disabled=true in controller_metadata.json, "
-                         "so provenance shows the monitor was off on purpose, not merely loose.")
+                    help="(no-op since Z4b step 2, 2026-11-11: the monitor now defaults off. "
+                         "Kept for backward-compatible invocations.) turn the insertion-offset "
+                         "monitor off by design (threshold -> None), regardless of "
+                         "--insertion-offset-abort-mm.")
+    p.add_argument("--enable-insertion-offset-abort", action="store_true",
+                    help="Z4b step 2 (2026-11-11): the insertion-offset monitor now defaults "
+                         "OFF (it was never part of the protocol -- Round 4's author decision "
+                         "reclassified it as 'interrupted', not 'failed', and the real safety "
+                         "net is now the tracking-error abort below, on by default). Pass this "
+                         "to opt back in and re-enable it at --insertion-offset-abort-mm. "
+                         "Records insertion_offset_monitor_disabled in controller_metadata.json "
+                         "either way, so provenance always shows which state was used.")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0,
                     help="preflight refuses to proceed unless the camera-measured physical "
                          "insertion is within this of the plan's expected L0 (see common.py's "
                          "check_camera_healthy)")
+    p.add_argument("--max-tracking-error-mm", type=float, default=0.0,
+                    help="Z4b step 2 (2026-11-11): ported from the vessel runner -- stop the "
+                         "run and report failure if the measured beam-tip tracking error ever "
+                         "exceeds this. Default 0.0 means 'let close_loop_path_follow.main() "
+                         "fill in the controller-aware default' (7mm for this MPC path); pass "
+                         "a nonzero value to override.")
     p.add_argument("--disable-tcp-workspace-in-qp", action="store_true",
                     help="disable the linearized TCP Cartesian-workspace constraint wired "
                          "directly into the QP (2026-11-04): keeps the robot's TCP within "
@@ -393,6 +358,12 @@ def main() -> None:
                          "optimizer always acts before the post-hoc monitor would ever "
                          "fire. Default matches the vessel runner's own default for the "
                          "equivalent flag.")
+    p.add_argument("--allow-unverified-plan", action="store_true",
+                    help="bypass the beam-base provenance guard in build_or_load_schedule "
+                         "(missing or mismatched beam_base_xyz_m in the plan's "
+                         "plan_shape_summary.json). Recovery/debugging only -- NEVER pass "
+                         "this for a real campaign run. Logged into controller_metadata.json "
+                         "as unverified_plan_bypass=true so provenance shows it was used.")
     p.add_argument("--dry-run", action="store_true",
                     help="real camera+robot connection, real solves, but no servoJ motion "
                          "-- integration smoke test before committing real robot time")
@@ -400,11 +371,13 @@ def main() -> None:
 
     _DEADLINE_MS = args.deadline_ms
     _INSERTION_OFFSET_ABORT_M = (
-        None if args.disable_insertion_offset_abort
-        else args.insertion_offset_abort_mm * 1e-3
+        args.insertion_offset_abort_mm * 1e-3
+        if (args.enable_insertion_offset_abort and not args.disable_insertion_offset_abort)
+        else None
     )
 
-    schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache)
+    _ALLOW_UNVERIFIED_PLAN = bool(args.allow_unverified_plan)
+    schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache, allow_unverified=args.allow_unverified_plan)
     pf._SCHEDULE_OVERRIDE = schedule
     print(f"[insertion_anchor] schedule: {schedule.shape} "
           f"(nullq_r700 -> +insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT}, "
@@ -470,6 +443,7 @@ def main() -> None:
     # close_loop_path_follow.py's validity gate needed.
     cfg.plan_dir = args.plan_dir
     cfg.reference_source = "plan_dir"
+    cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
     cfg.mpc_prediction_horizon = args.horizon
     cfg.mpc_use_dare_terminal_cost = False  # V_f=0 -- required
 

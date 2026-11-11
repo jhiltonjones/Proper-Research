@@ -1,0 +1,28 @@
+Archived 2026-11-10 (Round 32, AE1).
+
+rectangle_10x15mm_skipglobal_ad2_2026-11-10/ was built via the normal
+plan_shape_path.py CLI (with --use-calibrated-beam-base,
+--magnet-distance-weight 1.0, --tcp-box-weight 1.0, --tcp-box-margin-mm 27).
+It unexpectedly produced a CLOSED 4-sided rectangle, perimeter 48.10mm,
+closed=True.
+
+This does NOT match the real campaign-1 rectangle geometry: every rectangle
+trial in the "rerun1023" hardware campaign (confirmed via plan_dir cross-
+check against real controller_metadata.json logs) used an OPEN, 3-sided
+rectangle (shape_centreline.npz from
+plans/rectangle_10x15mm_skipglobal_zraise30mm_2026-09-24/shape_rectangle/),
+perimeter 38.734163426568784mm, closed=False -- missing one full 10mm side
+and its two corner blends (confirmed by direct point-by-point trace, AD4).
+
+Per the author's explicit instruction ("Keep the open rectangle"), this
+closed-rectangle build is superseded by
+plans/rectangle_10x15mm_skipglobal_ae1_2026-11-10/, built via the same
+bypass method used for triangle-35: loading the EXACT campaign-1
+shape_centreline.npz directly (hash-verified) rather than regenerating
+geometry through the CLI's shape-generation step.
+
+Why the CLI produced a different, closed shape is being investigated
+separately (Round 32, AE2, read-only) -- not resolved here.
+
+This directory is kept, not deleted, in case the closed-shape investigation
+needs to reference it.

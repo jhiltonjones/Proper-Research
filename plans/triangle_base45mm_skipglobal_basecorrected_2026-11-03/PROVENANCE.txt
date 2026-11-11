@@ -1,0 +1,109 @@
+BASE-CORRECTED SHAPE PLAN -- PROVENANCE
+built 2026-11-03
+
+Beam-base override (the fix this plan exists to apply):
+  pivot_point xyz (m)  = [0.670575, -0.719727, -0.039627]
+  start_point xyz (m)  = [0.390575, -0.719727, -0.039627]
+  source               = rig_calibration.BEAM_BASE_XYZ_M, via
+                          plan_shape_path.py's new --use-calibrated-beam-base
+                          flag (_calibrated_initial_poses()), which overrides
+                          only the Z component of initial_conditions.
+                          make_initial_poses()'s stale -0.016567m pivot/start
+                          with the single calibrated rig_calibration value --
+                          same mechanism build_vessel_plan.py uses for the
+                          vessel plans. No raise applied (author confirmed:
+                          the rig was never physically raised during the
+                          shape-tracking campaign).
+
+Gravity:               OFF (build_model_bundle's own default, use_gravity=
+                       False; never overridden by build_planning_context).
+
+Magnetization:         default_magnet_params() / parameters.py defaults,
+                       moment_per_length ~0.688 A*m (printed at build time,
+                       "[COMPOSITE BEAM MAGNETISATION]" block in the build
+                       log), source_dipole_body_axis = rig_calibration.
+                       SOURCE_DIPOLE_BODY_AXIS, source_dipole_yaw_deg=0.0.
+
+Beam model:            bimaterial (nitinol wire + PDMS/iron-particle
+                       composite tip), effective_youngs_modulus=1.60e6 Pa
+                       (composite), wire_youngs_modulus_pa=75.0e9.
+
+Lumen (L1 solve & FD validation): generic straight, wide-bore
+                       (LumenConfig(length=0.06, radius=0.05, bends=()))
+                       -- this is DELIBERATE for the shape conditions (no
+                       real vessel wall; confirmed in planning_context.py's
+                       own comment: a generic lumen is required for the
+                       analytic contact Jacobian to pass FD validation).
+                       Not the same situation as the vessel plans, which
+                       swap in the real digitized vessel geometry.
+
+Magnet-pose convention: pose6 = [x, y, z, rx, ry, rz] rotation VECTOR
+                       (not quaternion), robot-base frame R.
+
+Magnet exclusion:      ON during L1 (source magnet must stay >= 241mm from
+                       the planned tip path, source_magnet_lumen_exclusion_
+                       radius_m=0.2410), and >=230mm from the beam base
+                       (magnet_beam_base_exclusion_radius_m=0.23) -- both
+                       confirmed from this plan's own inverse_configuration_
+                       summary.json.
+
+ACCELERATION SAFETY FACTOR -- DEVIATES FROM THE OTHER 3 PLANS:
+  Used:                acceleration_safety_factor = 0.65 (not the CLI
+                       default 0.80 used by rectangle, triangle-25mm and
+                       triangle-35mm).
+  Why:                 at 0.80, Layer 3 (time-parameterization) raised
+                       "MPC-sampled trajectory violates a state acceleration
+                       limit: maximum ratio=1.206" -- the 45mm triangle's
+                       larger, tighter corners demand more joint
+                       acceleration than the default 80%-of-hardware-limit
+                       budget allows at this path's own time-optimal
+                       duration. 0.8/1.206 ~= 0.663 is the breakeven; 0.65
+                       was chosen as a value just below that with a small
+                       margin, confirmed empirically to succeed (resulting
+                       maximum_acceleration_limit_ratio = 0.9527, i.e. still
+                       within budget, not borderline).
+  Resulting duration:   50.3s (504 samples at dt=0.1s) -- raw (pre-safety-
+                       margin) duration was 45.0s; the time-parameterizer's
+                       own dilation rounds stretched it to fit the limits.
+  Does NOT generalize:  the other 3 plans' own maximum_acceleration_limit_
+                       ratio at factor=0.80 is already close to 1 (rectangle
+                       0.999, triangle-25mm 0.978, triangle-35mm 0.908).
+                       Scaling to factor=0.65 would raise each ratio by
+                       0.80/0.65 ~= 1.231x, giving ~1.23, ~1.20, and ~1.12
+                       respectively -- ALL THREE would become infeasible.
+                       A single shared acceleration-safety-factor across
+                       all four plans is NOT possible with this geometry;
+                       each plan keeps its own CLI default except this one.
+
+Gate (reused P2's own methodology, p2_analyze_plan.py):
+  Tip reproduction (5 L1 nodes): max |diff| = 0.0002mm -- PASS (<=0.1mm).
+  FD-vs-analytic (step=1e-3 rad, 4 samples k=0,168,335,503):
+    0.04%, 30.20%, 32.23%, 1.47% -- the two mid-path samples FAIL badly,
+    consistent with (and worse than) the SAME triangle-specific FD anomaly
+    already found in triangle-25mm (13.6%) and triangle-35mm (21.1%) by
+    the concurrent Q2 investigation -- not a new, separate problem; see
+    Q2's report for the root-cause chase (not attempted here, out of this
+    fork's scope).
+  Condition number: min=9.43 median=21.70 max=397.82 (overall),
+    last-third max=94.47.
+  V_k: min=0.0000 median=0.5944 max=2.0540 (at k=331),
+    last-third max=1.9563.
+  Magnet-to-beam-base exclusion clearance (via controller_pack's
+    magnet_transform, matching plan_shape_path.py's own method, NOT raw
+    robot FK which is missing the TCP-to-magnet offset -- caught and
+    corrected this mistake during this check): min=272.79mm at k=462,
+    median=287.17mm, max=569.20mm -- margin over the 230mm beam-base
+    floor = 42.79mm minimum.
+
+Code change:           proper_research/planning/plan_shape_path.py --
+                       new --use-calibrated-beam-base flag (opt-in, default
+                       off, existing behavior/callers unaffected). Left
+                       UNCOMMITTED in the main checkout for the author's
+                       review, same pattern as this session's other fixes.
+
+Git commit:            NOT RECORDED -- this fork's git operations are
+                       isolated to its own worktree and cannot read the
+                       main checkout's git state; ask the coordinator/
+                       author for the commit this plan's code should be
+                       pinned to once the --use-calibrated-beam-base change
+                       above is committed.

@@ -1,5 +1,13 @@
 # How to run the closed-loop vessel MPC
 
+> **Campaign 2 (2026-11-11):** for the current vessel-plan-B /
+> rectangle / triangle-35 campaign (plan B' and trap paths out of
+> scope), use `../HOWTO_CAMPAIGN2.md` as the single entry point --
+> it has the exact commands, the four-way offline/mock/motion-free/
+> real-motion split, and the flagged shape-MPC-runner ambiguity.
+> This file remains accurate for what it describes below.
+
+
 This covers `run_mpc_delay_aware_vessel.py` -- the live, process-isolated,
 delay-aware MPC controller (exact Q_N=0, R700, contact-aware or no-contact
 Jacobian, d=2 delay compensation) that drives the robot along an offline

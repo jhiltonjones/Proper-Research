@@ -427,11 +427,14 @@ def main() -> None:
                          "magnet actually reaching the beam base.")
 
     p.add_argument("--max-control-steps", type=int, default=1000)
-    p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
+    p.add_argument("--max-tracking-error-mm", type=float, default=0.0,
                     help="stop the run and report failure if the measured beam-tip "
                          "tracking error ever exceeds this -- same PathFollowConfig."
                          "max_tracking_error_m field every other vessel script uses. "
-                         "0 disables.")
+                         "Z4b step 2 (2026-11-11): default 0.0 means 'let close_loop_path_"
+                         "follow.main() fill in the controller-aware default' (15mm for this "
+                         "inverse-Jacobian-family controller); pass a nonzero value to "
+                         "override.")
     p.add_argument("--tcp-protection-margin-mm", type=float, default=15.0,
                     help="2026-10-15: same margin concept as --magnet-protection-margin-mm, "
                          "for the TCP-workspace clip. Default is larger (15mm vs magnet's "

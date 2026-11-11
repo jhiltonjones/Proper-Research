@@ -78,13 +78,18 @@ class OfflineControllerConfig:
     """How the adapter tracks progress and recovers from a bad measurement."""
 
     # "wallclock": control_index = round((t_now - t_first_call) / reference.dt),
-    #   clamped to the reference length plus the terminal hold. This is the
-    #   honest choice for hardware: the reference is a *timed* trajectory and
-    #   control ticks are not guaranteed to land exactly on cfg.dt.
+    #   clamped to the reference length plus the terminal hold. Was the
+    #   honest default for hardware while the control loop's realized period
+    #   could drift from reference.dt.
     # "counter": control_index increments by one every call, matching
-    #   compare_controllers.run_closed_loop's simulation convention. Only
-    #   correct if the runner's control period equals the reference's.
-    progress_mode: str = "wallclock"
+    #   compare_controllers.run_closed_loop's simulation convention. Correct
+    #   when the runner's control period equals the reference's.
+    # Z4b step 1 (2026-11-11): "counter" is now the default everywhere
+    # (vessel, shape, INV-7) -- the K2/J2 streaming fix made the realized
+    # loop period match the reference's dt (confirmed 100.0ms in the mocked
+    # dry run), removing the drift "wallclock" existed to guard against.
+    # Still overridable per call site.
+    progress_mode: str = "counter"
     terminal_hold_steps: int = 50
     # A controller step reporting success=False produces a zero command
     # rather than whatever it computed (mirrors OnlineMPCRunner's own

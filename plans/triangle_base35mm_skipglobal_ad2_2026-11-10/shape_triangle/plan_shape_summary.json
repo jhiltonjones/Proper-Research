@@ -1,0 +1,55 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "centreline_points": 161,
+  "perimeter_mm": 77.21082666941352,
+  "time_param_samples": 412,
+  "time_param_duration_s": 131.30625110678375,
+  "time_param_dir": "/home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_ad2_2026-11-10/time_parameterized_configuration_path",
+  "note": "2026-11-10 (AD2): bypass build from the exact pre-existing shape_centreline.npz (base 33.578mm, not nominal 35mm -- AB1), with the TCP-box L1 term's activation threshold raised to 27mm while the 25mm validation gate is unchanged (Round 31/AD2).",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "tcp_box_activation_margin_m": 0.027,
+  "tcp_box_gate_margin_m": 0.025,
+  "workspace_box_xyz_min_m": [
+    0.24469,
+    -0.89361,
+    0.36544
+  ],
+  "workspace_box_xyz_max_m": [
+    0.58971,
+    -0.49576,
+    0.46496
+  ],
+  "source_centreline_file": "/home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_ad2_2026-11-10/shape_triangle/shape_centreline.npz",
+  "source_centreline_sha256": "e78518abc88866ce730e232b7b86b131cafdcfe6fce26adf506c66a3aa6ccba4",
+  "source_centreline_note": "Triangle-35 is a newly-generated shape (not a real hardware campaign replay like the rectangle); this is its own, directly-generated centreline file -- there is no separate upstream 'campaign-1' source to trace to. Path + hash recorded here (Round 33, AF2) so the file backing this plan's geometry is pinned and auditable, same as the rectangle's provenance.",
+  "start_pose_exception": {
+    "node": 0,
+    "face": "z_min",
+    "clearance_mm": 24.7336,
+    "gate_mm": 25.0,
+    "shortfall_mm": 0.2664,
+    "reason": "Node 0 is the shared, hardware-fixed shape-start pose used by every shape plan. In L1 its termination reason is 'fixed_initial_state_feasible_and_committed': its state is the real, measured hardware pose, not solved for, so this face's residual is never evaluated and no planner weight can move it. Accepted as a known, documented, one-time exception specific to this node; the general 25mm gate is unchanged for every other node.",
+    "decided": "2026-11-10, Round 33 AF1 (revert chosen over loosening the box)"
+  }
+}

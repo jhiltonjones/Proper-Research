@@ -449,7 +449,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
             "input_increment_weight": _INPUT_INCREMENT_WEIGHT,
             "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
-            "insertion_offset_monitor_disabled": bool(args.disable_insertion_offset_abort),
+            "insertion_offset_monitor_disabled": _INSERTION_OFFSET_ABORT_M is None,
             "max_tracking_error_m": float(cfg.max_tracking_error_m),
             "state_scale_q_rad": math.radians(0.5),
             "state_scale_L_m": 0.25e-3,
@@ -575,7 +575,41 @@ def compute_magnet_exclusion(*, reference_joints_path: str | None = None):
 def build_or_load_schedule(
     plan_dir: str, cache_path: str, *, lumen_file: str, insertion_max_mm: float, contact: bool,
 ) -> np.ndarray:
+    # Z4b step 3 (2026-11-11): beam-base guard, mirroring the rectangle-side
+    # consolidated build_or_load_schedule's cache-metadata check (common.py)
+    # -- vessel plans don't carry a plan_shape_summary.json with a
+    # beam_base_xyz_m field the way shape plans do (load_configuration_
+    # reference/build_vessel_planning_context is a different pipeline), so
+    # this checks the CACHE's own recorded beam base against the current
+    # build_vessel_planning_context() default instead of a plan-level
+    # field. "No solve changes" constraint: an EXISTING cache with no
+    # metadata file yet is still loaded exactly as before (no forced
+    # rebuild) -- this only verifies-and-warns when metadata IS present,
+    # and backfills metadata for a cache that doesn't have it yet, so a
+    # future run's guard has something to check against.
+    current_beam_base = np.asarray(_recalibrated_make_initial_poses()[0], dtype=float)[:3]
+    meta_path = (cache_path + ".meta.json") if cache_path else None
     if cache_path and os.path.exists(cache_path):
+        if meta_path and os.path.exists(meta_path):
+            with open(meta_path) as _f:
+                _cached_beam_base = np.asarray(json.load(_f)["beam_base_xyz_m"], dtype=float)
+            _diff = float(np.max(np.abs(_cached_beam_base - current_beam_base)))
+            if _diff <= 1.0e-6:
+                print(f"[vessel-mpc] beam-base check PASSED: cache={cache_path}, "
+                      f"value={_cached_beam_base.tolist()}, ref={current_beam_base.tolist()}")
+            else:
+                print(f"[vessel-mpc] WARNING: cache at {cache_path} was built with a "
+                      f"different beam base ({_cached_beam_base.tolist()} vs current "
+                      f"{current_beam_base.tolist()}, diff={_diff*1000:.3f}mm) -- loading "
+                      f"it anyway (no --allow-unverified-plan gate exists for vessel yet), "
+                      f"but this schedule may not match the current rig geometry.")
+        else:
+            print(f"[vessel-mpc] cache at {cache_path} has no beam-base metadata yet "
+                  f"(pre-Z4b-step-3) -- loading it as before and backfilling metadata "
+                  f"now so a future run's guard has something to check against.")
+            if meta_path:
+                with open(meta_path, "w") as _f:
+                    json.dump({"beam_base_xyz_m": current_beam_base.tolist()}, _f)
         print(f"[vessel-mpc] loading cached schedule from {cache_path}")
         return np.load(cache_path)
     # 2026-10-07: dropped the old "~90-150s" estimate -- confirmed live it
@@ -612,7 +646,11 @@ def build_or_load_schedule(
     )
     if cache_path:
         np.save(cache_path, schedule)
-        print(f"[vessel-mpc] schedule cached -> {cache_path}")
+        if meta_path:
+            with open(meta_path, "w") as _f:
+                json.dump({"beam_base_xyz_m": current_beam_base.tolist()}, _f)
+        print(f"[vessel-mpc] schedule cached -> {cache_path} (beam_base_xyz_m="
+              f"{current_beam_base.tolist()} recorded in {meta_path})")
     return schedule
 
 
@@ -741,22 +779,28 @@ def main() -> None:
                          "to not passing this flag at all.")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0)
     p.add_argument("--disable-insertion-offset-abort", action="store_true",
-                    help="turn the insertion-offset monitor off by design (threshold -> None), "
-                         "regardless of --insertion-offset-abort-mm. Prefer this to passing a "
-                         "very large --insertion-offset-abort-mm value: this records "
-                         "insertion_offset_monitor_disabled=true in controller_metadata.json, "
-                         "so provenance shows the monitor was off on purpose, not merely loose.")
+                    help="(no-op since Z4b step 2, 2026-11-11: the monitor now defaults off. "
+                         "Kept for backward-compatible invocations.) turn the insertion-offset "
+                         "monitor off by design (threshold -> None), regardless of "
+                         "--insertion-offset-abort-mm.")
+    p.add_argument("--enable-insertion-offset-abort", action="store_true",
+                    help="Z4b step 2 (2026-11-11): the insertion-offset monitor now defaults "
+                         "OFF (it was never part of the protocol -- Round 4's author decision "
+                         "reclassified it as 'interrupted', not 'failed', and the real safety "
+                         "net is now the tracking-error abort above, on by default). Pass this "
+                         "to opt back in and re-enable it at --insertion-offset-abort-mm. "
+                         "Records insertion_offset_monitor_disabled in controller_metadata.json "
+                         "either way, so provenance always shows which state was used.")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0)
-    p.add_argument("--max-tracking-error-mm", type=float, default=5.0,
+    p.add_argument("--max-tracking-error-mm", type=float, default=0.0,
                     help="2026-10-07: same direct beam-tracking-error abort "
                          "run_open_loop_vessel.py uses (PathFollowConfig.max_tracking_error_m, "
                          "checked every control tick regardless of controller_kind) -- stop the "
                          "run and report failure (stop_reason in summary.json) if the measured "
-                         "beam-tip tracking error ||desired-tip|| ever exceeds this. 0 disables "
-                         "the check. Default 5mm -- the same explicit safety gate used for the "
-                         "open-loop contact-vs-no-contact comparison, applied here so the "
-                         "closed-loop contact-vs-no-contact runs are stopped under the same "
-                         "criterion.")
+                         "beam-tip tracking error ||desired-tip|| ever exceeds this. "
+                         "Z4b step 2 (2026-11-11): default 0.0 means 'let close_loop_path_"
+                         "follow.main() fill in the controller-aware default' (7mm for MPC, "
+                         "which this runner is); pass a nonzero value here to override that.")
     p.add_argument("--magnet-rise-limit-mm", type=float, default=_MAGNET_RISE_LIMIT_M * 1e3,
                     help="independent safety monitor: abort if the magnet's own FK-computed z "
                          "rises more than this above its start position -- see module "
@@ -948,8 +992,9 @@ def main() -> None:
 
     _DEADLINE_MS = args.deadline_ms
     _INSERTION_OFFSET_ABORT_M = (
-        None if args.disable_insertion_offset_abort
-        else args.insertion_offset_abort_mm * 1e-3
+        args.insertion_offset_abort_mm * 1e-3
+        if (args.enable_insertion_offset_abort and not args.disable_insertion_offset_abort)
+        else None
     )
     _CONTACT = bool(args.contact)
 

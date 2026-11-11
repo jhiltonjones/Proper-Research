@@ -53,21 +53,8 @@ from . import common
 
 
 def build_or_load_schedule(plan_dir: str, cache_path: str) -> np.ndarray:
-    if cache_path and os.path.exists(cache_path):
-        print(f"[inv_2dof_trim] loading cached genuine LTV schedule from {cache_path}")
-        return np.load(cache_path)
-    print("[inv_2dof_trim] building genuine from_model_bundle Jacobian schedule "
-          "(one beam solve per reference sample, ~90-150s)...")
-    reference = load_configuration_reference(plan_dir, require_planned_beam_feasible=False)
-    _, bundle, controller_pack, _ = build_planning_context()
-    jac_provider = from_model_bundle(bundle=bundle, controller_pack=controller_pack, contact=False)
-    schedule = mpc_variants.precompute_schedule(
-        reference=reference, jacobian_provider=jac_provider, allow_undeclared_jacobian=True,
-    )
-    if cache_path:
-        np.save(cache_path, schedule)
-        print(f"[inv_2dof_trim] schedule cached -> {cache_path}")
-    return schedule
+    # Z4 (2026-11-10): consolidated into common.py -- see its docstring.
+    return common.build_or_load_schedule(plan_dir, cache_path, label="inv_2dof_trim")
 
 
 def main() -> None:

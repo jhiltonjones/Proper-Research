@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import math
+import queue
 import signal
 import threading
 import time
@@ -108,6 +109,20 @@ class BackgroundArmStreamer:
     No target is sent until update_target() is called at least once
     (self._target starts as None) -- this avoids streaming a stale/zero
     target before the control loop has computed its first real one.
+
+    2026-11-14 instrumentation (K2 re-verification follow-up): every prior
+    K2 run logged NOTHING about this thread's own real behaviour --
+    last_servo_ms/calls were computed and silently discarded. This adds a
+    per-cycle event log (sequence number, publish time, pickup time,
+    servo_j start/end, whether this cycle's target was new vs. repeated,
+    the realized cycle-to-cycle interval) so the REALIZED rate and
+    pickup/publish latency can finally be measured instead of assumed from
+    the configured 20ms/50Hz interval. Writes go through a queue.Queue
+    drained by a separate writer thread -- the streaming thread itself
+    never touches disk, so this instrumentation cannot distort the timing
+    it measures. Call enable_event_log(path) before start() to activate;
+    with no log path, behaviour (including performance) is unchanged from
+    before this patch.
     """
 
     def __init__(
@@ -125,23 +140,81 @@ class BackgroundArmStreamer:
         self._stream_interval_s = float(stream_interval_s)
         self._lock = threading.Lock()
         self._target: np.ndarray | None = None
+        self._target_seq = 0
+        self._target_publish_time: float | None = None
+        self._target_state_age_s: float | None = None
         self._running = False
         self._thread: threading.Thread | None = None
         self.last_servo_ms = 0.0
         self.last_servo_error: BaseException | None = None
         self.calls = 0
+        # -- event logging (optional; off unless enable_event_log() is called) --
+        self._event_queue: "queue.Queue[dict] | None" = None
+        self._event_log_path: Path | None = None
+        self._writer_thread: threading.Thread | None = None
+        self._writer_running = False
 
-    def update_target(self, q_target) -> float:
-        """Thread-safe handoff of the next joint target. Returns elapsed ms."""
+    def enable_event_log(self, path) -> None:
+        """Turn on per-cycle event logging to `path` (JSONL, one event per
+        line). Must be called before start(). The streaming thread only
+        ever does a non-blocking queue.put() -- all file I/O happens on a
+        separate writer thread drained by _writer_loop()."""
+        self._event_log_path = Path(path)
+        self._event_queue = queue.Queue()
+
+    def _emit(self, event: dict) -> None:
+        if self._event_queue is not None:
+            event["t_s"] = now_monotonic()
+            self._event_queue.put_nowait(event)
+
+    def _writer_loop(self) -> None:
+        assert self._event_log_path is not None
+        with open(self._event_log_path, "a") as fh:
+            while self._writer_running or not self._event_queue.empty():
+                try:
+                    event = self._event_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                fh.write(json.dumps(event) + "\n")
+                fh.flush()
+
+    def update_target(self, q_target, state_age_s: float | None = None) -> float:
+        """Thread-safe handoff of the next joint target. Returns elapsed ms.
+
+        2026-11-15 fix: the elapsed-time measurement is computed BEFORE the
+        event-log emit call below (not after, as an earlier pass of this
+        instrumentation had it) -- the earlier ordering meant the returned/
+        logged `target_update_ms` included the emit call's own overhead
+        (dict construction + queue.put_nowait), silently changing what that
+        pre-existing metric measured. With this ordering, `target_update_ms`
+        is restored to its ORIGINAL meaning exactly: lock acquisition + the
+        6-vector copy, nothing else. Measured effect of this fix: see
+        test_close_loop_path_follow_streamer.py's handoff-overhead check.
+        """
         t0 = now_monotonic()
         target = np.asarray(q_target, dtype=float).reshape(6).copy()
         with self._lock:
             self._target = target
-        return (now_monotonic() - t0) * 1e3
+            self._target_seq += 1
+            seq = self._target_seq
+            self._target_publish_time = t0
+            self._target_state_age_s = state_age_s
+        elapsed_ms = (now_monotonic() - t0) * 1e3
+        self._emit({
+            "event": "publish", "seq": seq, "publish_time_s": t0,
+            "state_age_s": state_age_s,
+        })
+        return elapsed_ms
 
     def start(self) -> None:
         assert self._thread is None, "BackgroundArmStreamer already started"
         self._running = True
+        if self._event_queue is not None:
+            self._writer_running = True
+            self._writer_thread = threading.Thread(
+                target=self._writer_loop, name="arm-streamer-writer", daemon=True
+            )
+            self._writer_thread.start()
         self._thread = threading.Thread(
             target=self._run, name="arm-streamer", daemon=True
         )
@@ -149,13 +222,38 @@ class BackgroundArmStreamer:
 
     def _run(self) -> None:
         next_cycle = now_monotonic()
+        last_cycle_start: float | None = None
+        last_picked_seq: int | None = None
         while self._running:
+            cycle_start = now_monotonic()
+            realized_interval_s = (
+                None if last_cycle_start is None else cycle_start - last_cycle_start
+            )
+            last_cycle_start = cycle_start
             with self._lock:
                 target = None if self._target is None else self._target.copy()
+                seq = self._target_seq
+                publish_time = self._target_publish_time
+                state_age_s = self._target_state_age_s
             if target is None:
+                self._emit({
+                    "event": "idle_no_target", "realized_interval_s": realized_interval_s,
+                })
                 time.sleep(0.005)
                 next_cycle = now_monotonic()
                 continue
+            is_new_target = seq != last_picked_seq
+            pickup_time = now_monotonic()
+            self._emit({
+                "event": "pickup", "seq": seq, "is_new_target": is_new_target,
+                "pickup_time_s": pickup_time,
+                "pickup_latency_s": (
+                    None if publish_time is None else pickup_time - publish_time
+                ),
+                "state_age_s": state_age_s,
+                "realized_interval_s": realized_interval_s,
+            })
+            last_picked_seq = seq
             t0 = now_monotonic()
             try:
                 self._robot.servo_j(
@@ -165,13 +263,22 @@ class BackgroundArmStreamer:
                     gain=self._gain,
                 )
                 self.last_servo_error = None
+                servo_error_repr = None
             except Exception as exc:  # noqa: BLE001
                 # Don't let a transient servo_j error kill the streaming
                 # thread silently -- record it so the main loop can notice
                 # and abort, same as a direct-call failure would surface.
                 self.last_servo_error = exc
-            self.last_servo_ms = (now_monotonic() - t0) * 1e3
+                servo_error_repr = repr(exc)
+            t1 = now_monotonic()
+            self.last_servo_ms = (t1 - t0) * 1e3
             self.calls += 1
+            self._emit({
+                "event": "servo_j_call", "seq": seq,
+                "servo_start_s": t0, "servo_end_s": t1,
+                "servo_duration_ms": (t1 - t0) * 1e3,
+                "error": servo_error_repr,
+            })
             # K1 fix: pace this loop with an explicit scheduler (same
             # pattern as the main control loop's next_tick += dt below),
             # not by however long servo_j() itself took. This guarantees a
@@ -190,6 +297,10 @@ class BackgroundArmStreamer:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             self._thread = None
+        if self._writer_thread is not None:
+            self._writer_running = False
+            self._writer_thread.join(timeout=timeout)
+            self._writer_thread = None
 
 
 # =============================================================================
@@ -1174,7 +1285,11 @@ def main() -> None:
             pivot_hint=tuple(stream_cfg.pivot_hint_px),
         ),
         pivot_point_pose6=np.asarray(stream_cfg.T_robot_beam_pose6, dtype=float),
-        robot_joints_getter=lambda: reader.latest_joints(cfg.robot_max_age_s),
+        # 2026-11-16: atomic (joints, timestamp) getter -- replaces the
+        # bare-vector robot_joints_getter for THIS runner only (the other 3
+        # CameraSource callers are unaffected, unchanged). Guarantees
+        # q_meas_rad and its own age are the SAME underlying sample.
+        robot_joints_with_timestamp_getter=lambda: reader.latest_joints_with_timestamp(cfg.robot_max_age_s),
         robot_pose_getter=lambda: reader.latest_pose(cfg.robot_max_age_s),
         insertion_length_getter=lambda: insertion_m,
         frame_processor=mapper,
@@ -1827,8 +1942,12 @@ def main() -> None:
                 lookahead_time=cfg.servo_lookahead_s,
                 gain=cfg.servo_gain,
             )
+            # 2026-11-14: per-cycle streamer event log, separate file so the
+            # existing path_follow.jsonl row schema/size is untouched.
+            arm_streamer.enable_event_log(output_dir / "arm_streamer_events.jsonl")
             arm_streamer.start()
-            print("[path] background arm-streaming thread started")
+            print("[path] background arm-streaming thread started "
+                  f"(event log -> {output_dir / 'arm_streamer_events.jsonl'})")
 
         safety_check_every = max(1, int(round(cfg.control_hz)))
         next_tick = now_monotonic()
@@ -1938,6 +2057,18 @@ def main() -> None:
                 )
                 break
             q = np.asarray(estimate.robot_joints, dtype=float).reshape(6)
+            # 2026-11-16 corrected: age computed from estimate.robot_joints_stamp
+            # -- the SAME atomic read that produced q above (see StateEstimate.
+            # robot_joints_age() / CameraSource's robot_joints_with_timestamp_
+            # getter). NOT a second, separate call to the joint stream, which
+            # could have returned a newer sample than the one in `q` (that was
+            # the real bug in the prior pass of this instrumentation).
+            # Two distinct moments are measured, both from this one stamp:
+            # at controller-use time (here) and again at logging time (below,
+            # right before the row dict is built) -- these can differ given
+            # everything that happens in between (tracking-error check, QP
+            # solve, etc.), so they are kept as two separate, named fields.
+            joint_sample_age_at_use_s = estimate.robot_joints_age()
 
             ref_state = np.asarray(reference.state, dtype=float)
             ref_input = np.asarray(reference.input, dtype=float)
@@ -2039,7 +2170,7 @@ def main() -> None:
                     # Background thread owns every servo_j() call now; the
                     # loop only hands off the new target (lock-protected
                     # copy, microseconds -- see BackgroundArmStreamer).
-                    target_update_ms = arm_streamer.update_target(q_target)
+                    target_update_ms = arm_streamer.update_target(q_target, state_age_s=float(age))
                     if arm_streamer.last_servo_error is not None:
                         abort_reason = (
                             f"arm_streamer_servo_error: "
@@ -2112,6 +2243,23 @@ def main() -> None:
                 "insertion_length_m": round(float(insertion_m), 5),
                 "q_meas_rad": [round(float(v), 6) for v in q],
                 "q_target_delta_rad": [round(float(v), 6) for v in delta_q],
+                # 2026-11-15: three distinct, separately-sourced age fields
+                # -- see K2_REVISED_PROCEDURE_DRAFT.md's schema table for
+                # the full file:line provenance of each.
+                "camera_vision_age_s": round(float(age), 4),
+                "joint_sample_age_at_use_s": (
+                    None if joint_sample_age_at_use_s is None
+                    else round(float(joint_sample_age_at_use_s), 4)
+                ),
+                "joint_sample_age_at_log_s": (
+                    None if estimate.robot_joints_stamp is None
+                    else round(float(estimate.robot_joints_age()), 4)
+                ),
+                "robot_acquisition_age_s": None,  # NOT AVAILABLE: rtde_receive.RTDEReceiveInterface
+                                                   # has its own getTimestamp(), but this codebase's
+                                                   # RobotJointStream._poll_body() never calls it --
+                                                   # confirmed by reading that method directly. Left
+                                                   # as an explicit None rather than fabricated.
                 # 2026-09-17: absolute applied joint target (not just the
                 # delta) -- needed for the r_seam audit metric, since in FF
                 # mode q_target is anchored to ref_state[target_index], not to

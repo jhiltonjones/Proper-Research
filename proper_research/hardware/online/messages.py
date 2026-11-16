@@ -80,6 +80,30 @@ class LatestSlot(Generic[T]):
             return None, age
         return value, age
 
+    def get_with_timestamp(
+        self, max_age_s: Optional[float] = None
+    ) -> Tuple[Optional[T], Optional[float]]:
+        """Atomic (value, raw_stamp) read -- same single-lock-acquisition
+        atomicity as get(), but returns the raw monotonic timestamp instead
+        of a pre-computed age. 2026-11-16: added because get()'s age is
+        frozen at THIS call's moment; a caller needing age at a LATER
+        moment (e.g. "age when the controller used this sample" vs. "age
+        when the row was logged") would otherwise have to call get() again
+        -- a second, separate read of the slot that can return a DIFFERENT
+        (newer) sample if the writer updated it in between. Returning the
+        raw stamp lets any number of later call sites compute
+        `now_monotonic() - stamp` themselves, all describing the exact
+        same underlying sample.
+        """
+        with self._lock:
+            value = self._value
+            stamp = self._stamp
+        if value is None or stamp is None:
+            return None, None
+        if max_age_s is not None and (now_monotonic() - stamp) > float(max_age_s):
+            return None, stamp
+        return value, stamp
+
     def peek(self) -> Tuple[Optional[T], int]:
         """Return ``(value, sequence)`` ignoring age (sequence increments per set)."""
         with self._lock:
@@ -192,6 +216,17 @@ class StateEstimate:
     insertion_length_m: float = float("nan")
     robot_pose6: Optional[np.ndarray] = None
     robot_joints: Optional[np.ndarray] = None
+    # 2026-11-16: paired with robot_joints -- the raw monotonic timestamp of
+    # the SAME atomic read that produced robot_joints (via
+    # RobotJointStream.latest_joints_with_timestamp(), when the producer
+    # passes a robot_joints_with_timestamp_getter to CameraSource). None
+    # when the producer only has the legacy bare-vector robot_joints_getter
+    # (the other 3 existing CameraSource callers), since no timestamp is
+    # available in that path -- never fabricated. Use
+    # robot_joints_age(ref=...) below to compute age from this at whatever
+    # later moment a caller needs, without a second read of the joint
+    # stream (which could observe a newer, different sample).
+    robot_joints_stamp: Optional[float] = None
     source: str = "vision"
     frame_index: int = -1
     valid: bool = True
@@ -199,6 +234,16 @@ class StateEstimate:
 
     def age(self, ref: Optional[float] = None) -> float:
         return (now_monotonic() if ref is None else ref) - self.t_monotonic
+
+    def robot_joints_age(self, ref: Optional[float] = None) -> Optional[float]:
+        """Age of robot_joints at `ref` (default: now), computed from the
+        SAME timestamp paired with it at acquisition time -- call this as
+        many times as needed (e.g. once at controller-use time, again at
+        logging time) without re-reading the joint stream. Returns None if
+        robot_joints_stamp isn't available (legacy getter path)."""
+        if self.robot_joints_stamp is None:
+            return None
+        return (now_monotonic() if ref is None else ref) - self.robot_joints_stamp
 
 
 @dataclass(frozen=True)

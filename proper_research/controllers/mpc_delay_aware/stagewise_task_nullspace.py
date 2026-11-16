@@ -78,6 +78,46 @@ class StagewiseTaskNullspaceDelayAwareMPC(dam.DelayAwareBeamOutputTrackingMPC):
         self.gamma = float(gamma)
         self._C = build_beam_plane_projection(axial_axis_R=axial_axis_R, normal_axis_R=normal_axis_R)
         self._state_error_scale = np.asarray(self.config.state_error_scale, dtype=float).reshape(7)
+        # 2026-11-16 (performance, no numerical change -- verified bit-
+        # identical against the uncached path): the per-stage SVD/projector
+        # in build_stagewise_projectors depends ONLY on
+        # (self.reference_position_jacobians[ref_index], self._C,
+        # self._state_error_scale) -- all fixed for this controller
+        # instance's lifetime, never live state. Consecutive ticks' 15-
+        # sample windows overlap in 14/15 positions (profiled: this
+        # function was the single largest self-time contributor in
+        # matrix-build, 15 np.linalg.svd calls/tick). Caching per
+        # ref_index eliminates ~93% of that redundant SVD work after the
+        # first ~N ticks, with zero effect on the computed values.
+        self._stagewise_projector_cache: dict[int, tuple] = {}
+
+    def _cached_stagewise_projectors(self, indices):
+        """Returns the SAME (P_R, P_N, ranks) arrays build_stagewise_
+        projectors(J_schedule=reference_position_jacobians[indices], ...)
+        would, computing each ref_index's own SVD/projector at most ONCE
+        per controller instance (see __init__'s cache-rationale comment).
+        Assembled in the SAME order as `indices` -- bit-identical to the
+        uncached call for any given index, verified directly."""
+        missing = sorted(set(int(i) for i in indices) - self._stagewise_projector_cache.keys())
+        if missing:
+            J_missing = np.asarray(self.reference_position_jacobians, dtype=float)[missing]
+            P_R_m, P_N_m, ranks_m = build_stagewise_projectors(
+                J_schedule=J_missing, C=self._C, state_error_scale=self._state_error_scale,
+            )
+            for local_j, ref_idx in enumerate(missing):
+                self._stagewise_projector_cache[ref_idx] = (
+                    P_R_m[local_j], P_N_m[local_j], int(ranks_m[local_j]),
+                )
+        N = len(indices)
+        P_R = np.empty((N, 7, 7), dtype=float)
+        P_N = np.empty((N, 7, 7), dtype=float)
+        ranks = np.empty(N, dtype=int)
+        for local_j, ref_idx in enumerate(indices):
+            pr, pn, rank = self._stagewise_projector_cache[int(ref_idx)]
+            P_R[local_j] = pr
+            P_N[local_j] = pn
+            ranks[local_j] = rank
+        return P_R, P_N, ranks
 
     def _dynamic_qp_terms_exec(
         self, *, x_exec: Array, previous_input: Array, control_index: int,
@@ -87,10 +127,7 @@ class StagewiseTaskNullspaceDelayAwareMPC(dam.DelayAwareBeamOutputTrackingMPC):
         input_reference = self.reference.input_window(control_index, self.N)
 
         indices = self._reference_indices(control_index, future=True)
-        J_schedule = np.asarray(self.reference_position_jacobians, dtype=float)[indices]
-        P_R, P_N, ranks = build_stagewise_projectors(
-            J_schedule=J_schedule, C=self._C, state_error_scale=self._state_error_scale,
-        )
+        P_R, P_N, ranks = self._cached_stagewise_projectors(indices)
         S_z = self._state_error_scale
         M = np.diag(1.0 / S_z)  # S_z^{-1}
         n = self.n

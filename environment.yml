@@ -139,6 +139,7 @@ dependencies:
   - sqlite=3.53.2
   - svt-av1=3.1.2
   - tesseract=5.5.2
+  - threadpoolctl=3.6.0
   - tk=8.6.15
   - tornado=6.5.7
   - tzdata=2026c

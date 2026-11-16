@@ -1,0 +1,44 @@
+{
+  "shape": "rectangle",
+  "size_mm": [
+    15.0,
+    10.0
+  ],
+  "closed": false,
+  "centreline_points": 81,
+  "perimeter_mm": 38.73416342656874,
+  "time_param_samples": 214,
+  "time_param_duration_s": 69.64525613747537,
+  "time_param_dir": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path",
+  "note": "Z4b step 6 (2026-11-11): executed rebuild from the current (post-Z4b) code, verbatim AE1 recipe, new campaign directory.",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "tcp_box_activation_margin_m": 0.027,
+  "tcp_box_gate_margin_m": 0.025,
+  "source_centreline_file": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/rectangle_10x15mm_skipglobal_zraise30mm_2026-09-24/shape_rectangle/shape_centreline.npz",
+  "source_centreline_sha256": "721ebb01ebf07517478690149a1923bbf75c2c2b21cd555d67888a05b5df70a5",
+  "reanchor_delta_m": [
+    0.14499439244603995,
+    -0.05000490056907936,
+    -0.053164805066801823
+  ],
+  "reanchor_delta_mm": 162.32794096984904
+}

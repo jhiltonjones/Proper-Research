@@ -286,6 +286,55 @@ class RobotJointStream:
         value, _age = self.joints_slot.get(max_age_s)
         return value
 
+    def latest_joints_with_age(
+        self, max_age_s: Optional[float] = None
+    ) -> "tuple[Optional[np.ndarray], float]":
+        """Same as latest_joints(), but also returns the age (seconds, host
+        monotonic clock) of the joint reading -- previously computed inside
+        joints_slot.get() and silently discarded by latest_joints() (the
+        same class of gap already fixed for BackgroundArmStreamer's
+        servo_j() duration).
+
+        2026-11-16 superseded for the K2 instrumentation path: calling this
+        SEPARATELY from whatever produced an existing StateEstimate's
+        robot_joints (e.g. from CameraSource's own internal
+        robot_joints_getter() call) is a SECOND, LATER read of this same
+        slot -- it can return a newer sample than the one already baked
+        into that estimate (confirmed as a real gap, not hypothetical, in
+        this investigation). Left here unchanged as a standalone utility
+        for callers that genuinely want "the freshest joint reading right
+        now" with no existing estimate to pair with. For anything that
+        must describe the SAME sample as an existing StateEstimate.
+        robot_joints, use latest_joints_with_timestamp() instead (below) and
+        thread the result through CameraSource's robot_joints_with_timestamp_
+        getter, not this method.
+
+        Note on provenance: this is the HOST's receipt timestamp (when this
+        process's polling loop wrote the value into joints_slot), not a
+        robot/RTDE-side acquisition timestamp. `rtde_receive.
+        RTDEReceiveInterface` exposes its own `getTimestamp()` in the real
+        RTDE API, but this codebase's `_poll_body()` never calls it --
+        confirmed by reading `_poll_body()` directly (only `getActualQ()`/
+        `getActualTCPPose()` are called). Exposing a true robot-side
+        timestamp would need that added and verified against real
+        hardware; not done here (no robot connection available), and not
+        fabricated -- callers that need "robot acquisition age" specifically
+        should treat it as genuinely unavailable until that is added.
+        """
+        return self.joints_slot.get(max_age_s)
+
+    def latest_joints_with_timestamp(
+        self, max_age_s: Optional[float] = None
+    ) -> "tuple[Optional[np.ndarray], Optional[float]]":
+        """Atomic (joints, raw_monotonic_timestamp) read -- see
+        LatestSlot.get_with_timestamp() for the atomicity guarantee. This is
+        the method CameraSource's frame-processing code uses (via the new
+        robot_joints_with_timestamp_getter parameter) so the joint vector
+        baked into a StateEstimate and its own timestamp come from ONE
+        indivisible read, not two.
+        """
+        return self.joints_slot.get_with_timestamp(max_age_s)
+
     def latest_pose(self, max_age_s: Optional[float] = None) -> Optional[np.ndarray]:
         value, _age = self.pose_slot.get(max_age_s)
         return value

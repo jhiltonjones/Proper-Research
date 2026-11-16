@@ -32,6 +32,63 @@ import numpy as np
 
 ROBOT_IP = "192.168.56.101"
 
+
+def capture_code_provenance(source_files: "list[str] | None" = None) -> dict:
+    """Git commit + dirty-tree status, with a source-file-hash fallback for
+    when git itself isn't usable (e.g. a deployed copy with no .git, or a
+    sandboxed/CI environment). Runs `git rev-parse HEAD` / `git status
+    --porcelain` as a SUBPROCESS from inside the deployed script at its
+    own runtime -- this is the running code checking itself, not an
+    orchestrating session issuing git commands, and is safe to call from
+    any environment with a working `git` binary and a real checkout.
+
+    2026-11-14: added because neither K2 run's controller_metadata.json
+    recorded a commit hash at all -- the earlier "automatic provenance"
+    claim (Z4b step 5) was INCOMPLETE, not just missing a nice-to-have.
+    This closes the gap for every run FROM NOW ON; the two existing K2
+    runs remain permanently without this field (nothing can retroactively
+    add a commit hash to a log that already exists).
+    """
+    import hashlib
+    import subprocess
+
+    info: dict = {"git_commit": None, "git_dirty": None, "git_error": None,
+                  "source_file_sha256": {}}
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            cwd=Path(__file__).resolve().parent, timeout=5,
+        )
+        if commit.returncode == 0:
+            info["git_commit"] = commit.stdout.strip()
+        else:
+            info["git_error"] = commit.stderr.strip()
+    except Exception as exc:  # noqa: BLE001
+        info["git_error"] = repr(exc)
+
+    if info["git_commit"] is not None:
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"], capture_output=True, text=True,
+                cwd=Path(__file__).resolve().parent, timeout=5,
+            )
+            if status.returncode == 0:
+                info["git_dirty"] = bool(status.stdout.strip())
+        except Exception as exc:  # noqa: BLE001
+            info["git_error"] = (info["git_error"] or "") + f" | status failed: {exc!r}"
+
+    # Source-hash fallback always computed too (cheap, and useful even
+    # when git_commit succeeds, since it also catches uncommitted edits
+    # to these SPECIFIC files even if `git status` is unavailable).
+    for f in (source_files or []):
+        try:
+            h = hashlib.sha256()
+            h.update(Path(f).read_bytes())
+            info["source_file_sha256"][f] = h.hexdigest()
+        except Exception as exc:  # noqa: BLE001
+            info["source_file_sha256"][f] = f"ERROR: {exc!r}"
+    return info
+
 # Execution layer "C" (2026-09-17 A/B/C identification test): accumulator
 # seam (controller-owned q_cmd, not reset from q_meas or anchored to
 # q_ref+trim) + 50Hz interpolated servoJ streaming between outer 10Hz ticks.

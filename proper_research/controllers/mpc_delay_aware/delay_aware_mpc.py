@@ -1227,7 +1227,31 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         if self.backend == "osqp":
             assert self._solver is not None
             update_kwargs = dict(Px=self._upper_values(hessian), q=linear_cost, l=lower, u=upper)
-            if self._magnet_excl_radius is not None or self._magnet_ws_z_min is not None:
+            # 2026-11-16 fix: this condition previously omitted
+            # `self._tcp_ws_min is not None`, so a TCP-workspace-only
+            # configuration (no magnet constraints) never pushed its
+            # per-tick-relinearized Jacobian rows into OSQP's actual A
+            # matrix -- those rows stayed at their `_configure_tcp_
+            # workspace`-time 1e-30 placeholder values forever (the
+            # placeholder itself correctly keeps the CSC sparsity pattern
+            # from collapsing those positions out -- see that method's own
+            # "force full sparsity" comment -- but with Ax never sent, the
+            # placeholder's tiny magnitude is all OSQP ever saw). A
+            # structurally-allocated-but-near-zero A row makes that row's
+            # bound degenerate to checking whether 0 in [l,u], independent
+            # of the decision vector -- once a tick's real TCP bound no
+            # longer straddled zero, that row became unconditionally
+            # infeasible no matter what, which is what the 2026-11-16
+            # K2 marginfix-plan diagnostic repeat hit at ref_index=210.
+            # Condition now matches the combined check `_setup_osqp_with_
+            # magnet_exclusion`'s own trigger already uses (see __init__,
+            # ~line 244-246) -- every mechanism that appends dynamic rows
+            # to self.A is included here too, not just the two magnet ones.
+            if (
+                self._magnet_excl_radius is not None
+                or self._magnet_ws_z_min is not None
+                or self._tcp_ws_min is not None
+            ):
                 update_kwargs["Ax"] = self._a_values(self.A)
             self._solver.update(**update_kwargs)
             self._solver.warm_start(x=warm_start)

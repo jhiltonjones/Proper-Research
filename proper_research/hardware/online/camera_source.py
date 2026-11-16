@@ -102,6 +102,9 @@ class CameraSource:
         robot_pose_getter: Optional[Callable[[], Optional[np.ndarray]]] = None,
         insertion_length_getter: Optional[Callable[[], float]] = None,
         robot_joints_getter: Optional[Callable[[], Optional[np.ndarray]]] = None,
+        robot_joints_with_timestamp_getter: Optional[
+            Callable[[], "tuple[Optional[np.ndarray], Optional[float]]"]
+        ] = None,
         frame_processor: Optional[Callable[[np.ndarray], Optional[np.ndarray]]] = None,
         on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
@@ -122,6 +125,14 @@ class CameraSource:
         self._robot_pose_getter = robot_pose_getter
         self._insertion_length_getter = insertion_length_getter
         self._robot_joints_getter = robot_joints_getter
+        # 2026-11-16: opt-in atomic (joints, timestamp) getter. When set,
+        # this is used INSTEAD of robot_joints_getter below -- the two are
+        # mutually exclusive on purpose, so a caller can't accidentally mix
+        # a bare-vector read with a stale/unrelated timestamp. robot_joints_
+        # getter's contract and all 3 of its other existing callers
+        # (close_loop_tip_control.py, state_stream.py, and the third
+        # existing use) are completely unaffected by this addition.
+        self._robot_joints_with_timestamp_getter = robot_joints_with_timestamp_getter
         self._on_error = on_error
 
         self.state_slot: LatestSlot[StateEstimate] = LatestSlot()
@@ -366,7 +377,17 @@ class CameraSource:
                 insertion_m = float("nan")
 
         robot_joints = None
-        if self._robot_joints_getter is not None:
+        robot_joints_stamp = None
+        if self._robot_joints_with_timestamp_getter is not None:
+            try:
+                joints, stamp = self._robot_joints_with_timestamp_getter()
+                if joints is not None:
+                    robot_joints = np.asarray(joints, dtype=float).reshape(6)
+                    robot_joints_stamp = stamp
+            except Exception:
+                robot_joints = None
+                robot_joints_stamp = None
+        elif self._robot_joints_getter is not None:
             try:
                 joints = self._robot_joints_getter()
                 if joints is not None:
@@ -393,6 +414,7 @@ class CameraSource:
             insertion_length_m=insertion_m,
             robot_pose6=robot_pose6,
             robot_joints=robot_joints,
+            robot_joints_stamp=robot_joints_stamp,
             source="vision",
             frame_index=self.frames_reconstructed,
             valid=True,

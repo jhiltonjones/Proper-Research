@@ -74,6 +74,7 @@ Usage
 """
 import argparse
 import json
+import hashlib
 import math
 import os
 import glob
@@ -136,6 +137,7 @@ _DEADLINE_MS = 70.0
 _INSERTION_OFFSET_ABORT_M = 0.02  # 5mm, see module docstring for rationale
 _WORKER: MPCWorkerHandle | None = None
 _ALLOW_UNVERIFIED_PLAN = False
+_SCHEDULE_CACHE_PATH: str | None = None
 # 2026-11-04: in-QP TCP-workspace constraint, same mechanism as the vessel
 # runner's --disable-tcp-workspace-in-qp/--tcp-workspace-robust-margin-mm.
 # Reads the SAME box the post-hoc tcp_out_of_workspace monitor uses
@@ -254,10 +256,44 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "unverified_plan_bypass": _ALLOW_UNVERIFIED_PLAN,
             # Z4b step 5 (2026-11-11): automatic provenance, additive only.
             "argv": __import__("sys").argv[:],
+            # 2026-11-14: provenance repair -- Z4b step 5's "automatic
+            # provenance" never actually recorded a commit hash (confirmed
+            # absent from both K2 runs' controller_metadata.json). This was
+            # a real gap, not a minor omission -- closing it here, for
+            # every run from now on. The two existing K2 runs remain
+            # permanently without this field; nothing can add it
+            # retroactively to a log that already exists.
+            "code_provenance": common.capture_code_provenance(source_files=[
+                __file__,
+                str(Path(common.__file__)),
+            ]),
+            "plan_file_sha256": {
+                str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(Path(cfg.plan_dir).glob("*.npz"))
+            },
+            "schedule_cache_sha256": (
+                hashlib.sha256(Path(_SCHEDULE_CACHE_PATH).read_bytes()).hexdigest()
+                if _SCHEDULE_CACHE_PATH and Path(_SCHEDULE_CACHE_PATH).exists() else None
+            ),
+            "schedule_cache_path": _SCHEDULE_CACHE_PATH,
+            # NOTE on "resolved settings": gamma/input_tracking_weight/
+            # insertion_state_anchor_weight/horizon/etc. above are already
+            # the POST-DEFAULT-RESOLUTION values the worker actually
+            # constructed with (not raw CLI flags) -- this dict's other
+            # fields already satisfy that requirement; no separate
+            # duplicate field is added here. summary.json's own "config"
+            # section separately captures the full resolved PathFollowConfig.
         }
         (_LAST_OUTPUT_DIR / "controller_metadata.json").write_text(json.dumps(meta, indent=2))
         print(f"[insertion_anchor] wrote controller_metadata.json -> {_LAST_OUTPUT_DIR} "
               f"(includes planner->live R_fit/t_fit, |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm)")
+        # 2026-11-16: explicit console confirmation that code_provenance
+        # actually ran and captured something real -- the field was already
+        # written into the JSON above, but nothing printed it, so a dry
+        # read of the console alone couldn't confirm it fired.
+        _cp = meta["code_provenance"]
+        print(f"[insertion_anchor] code provenance: commit={_cp['git_commit']} "
+              f"dirty={_cp['git_dirty']} error={_cp['git_error']}")
         _METADATA_WRITTEN = True
 
     adapter = ProcessIsolatedDelayAwareAdapter(
@@ -305,7 +341,7 @@ def build_or_load_schedule(plan_dir: str, cache_path: str, allow_unverified: boo
 
 
 def main() -> None:
-    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _ALLOW_UNVERIFIED_PLAN
+    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _ALLOW_UNVERIFIED_PLAN, _SCHEDULE_CACHE_PATH
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--plan-dir", required=True)
     p.add_argument("--out-dir", required=True)
@@ -377,6 +413,7 @@ def main() -> None:
     )
 
     _ALLOW_UNVERIFIED_PLAN = bool(args.allow_unverified_plan)
+    _SCHEDULE_CACHE_PATH = str(args.schedule_cache)
     schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache, allow_unverified=args.allow_unverified_plan)
     pf._SCHEDULE_OVERRIDE = schedule
     print(f"[insertion_anchor] schedule: {schedule.shape} "

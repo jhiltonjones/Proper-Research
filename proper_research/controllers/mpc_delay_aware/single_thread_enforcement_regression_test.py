@@ -1,11 +1,10 @@
-"""Regression test for the PROPOSED `_force_single_threaded_blas()`
-replacement -- still NOT adopted as the production default. Exercises the
-proposed mechanism (threadpoolctl.threadpool_limits(1), applied
-post-import) via the EXISTING, already-production opt-in
-MPC_WORKER_VERIFIED_SINGLE_THREAD=1 toggle, which already implements the
-IDENTICAL function body being proposed -- this genuinely exercises the
-mechanism in a REAL spawned worker subprocess, not a same-process
-simulation.
+"""Regression test for the ADOPTED, PRODUCTION `_force_single_threaded_blas()`
+(2026-11-16) -- exercises the real, final production code path directly:
+`single_threaded=True` alone, with NO experimental env var (the
+MPC_WORKER_VERIFIED_SINGLE_THREAD gate has been removed from production
+entirely; its job -- proving the mechanism works in a real spawned
+worker before adoption -- is done). This is the regression that gates
+the adopted default, not a proposal check.
 
 No hardware connection anywhere in this file (hardware guard below).
 """
@@ -108,10 +107,11 @@ def test_real_spawned_worker_single_thread_enforcement():
     if os.path.exists(timing_log_path):
         raise FileExistsError(f"REFUSING TO OVERWRITE: {timing_log_path} already exists.")
     os.environ["MPC_WORKER_TIMING_LOG"] = timing_log_path
-    os.environ["MPC_WORKER_VERIFIED_SINGLE_THREAD"] = "1"  # exercises the EXACT mechanism being proposed
+    # NO experimental env var -- single_threaded=True alone must now
+    # enforce this, unconditionally, as the real production default.
 
-    print("[test] spawning REAL worker subprocess with single_threaded=True and the proposed "
-          "mechanism active (via the existing opt-in toggle, same function body as proposed)...")
+    print("[test] spawning REAL worker subprocess with single_threaded=True -- "
+          "the FINAL PRODUCTION code path, no experimental flag involved...")
     worker = MPCWorkerHandle(
         plan_dir=PLAN_DIR, schedule_path=SCHEDULE_PATH,
         mpc_config_kwargs=mpc_config_kwargs, beam_config_kwargs=beam_config_kwargs,

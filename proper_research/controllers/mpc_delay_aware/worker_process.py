@@ -126,6 +126,7 @@ def _force_single_threaded_blas() -> None:
             f"effect (or no backend was detected at all, which must also be treated as a "
             f"failure, not a pass): {info}. Refusing to proceed silently-unlimited."
         )
+    print(f"[worker] single_threaded=True: VERIFIED num_threads=1 for all backends: {info}")
 
 
 def _worker_main(

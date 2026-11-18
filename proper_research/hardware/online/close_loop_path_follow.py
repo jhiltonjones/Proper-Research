@@ -750,6 +750,11 @@ class PathFollowConfig:
     # --- robot / vision (mirrors StateStreamConfig) ----------
     robot_ip: str = "192.168.56.101"
     reader_poll_hz: float = 60.0
+    # 2026-11-17: additive, observation-only diagnostic logging on the
+    # existing reader (RobotJointStream) RTDE receive connection -- see
+    # ROBOT_JOINT_STREAM_DIAGNOSTIC_INTEGRATION_2026-11-17.md. Off by
+    # default (zero behaviour/output change for every existing caller).
+    reader_diagnostic_log: bool = False
     robot_max_age_s: float = 0.15
     # Must equal initial_conditions.make_initial_poses()[2] (the offline planner
     # start length).  2026-09-10 bigger-square study: 30 mm.
@@ -1257,62 +1262,125 @@ def main() -> None:
 
     from proper_research.hardware.ur_rtde_robot import URRTDERobot
 
-    robot = URRTDERobot(cfg.robot_ip, frequency=500.0)
-    reader = RobotJointStream(cfg.robot_ip, poll_hz=cfg.reader_poll_hz, receive_only=True)
-
-    def _assert_robot_ready() -> None:
-        mode_ = robot.get_robot_mode()
-        safety = robot.get_safety_mode()
-        pstop = robot.is_protective_stopped()
-        if pstop or mode_ != 7 or safety not in (1, 2):
-            raise RuntimeError(
-                f"robot not ready (mode={mode_}, safety={safety}, protective_stop={pstop}). "
-                "Clear any protective stop on the pendant (Remote Control), then retry."
-            )
-
-    insertion_m = float(cfg.initial_insertion_m)
-
-    camera = CameraSource(
-        CameraConfig(
-            cam_index=cfg.cam_index,
-            exposure=cfg.exposure,
-            gain=cfg.gain,
-            grab_period_s=cfg.grab_period_s,
-            reconstruct_period_s=cfg.reconstruct_period_s,
-            image_filename=cfg.image_filename,
-            roi_polygon_path=stream_cfg.roi_polygon_path,
-            manual_boundary_path=stream_cfg.manual_boundary_path,
-            pivot_hint=tuple(stream_cfg.pivot_hint_px),
-        ),
-        pivot_point_pose6=np.asarray(stream_cfg.T_robot_beam_pose6, dtype=float),
-        # 2026-11-16: atomic (joints, timestamp) getter -- replaces the
-        # bare-vector robot_joints_getter for THIS runner only (the other 3
-        # CameraSource callers are unaffected, unchanged). Guarantees
-        # q_meas_rad and its own age are the SAME underlying sample.
-        robot_joints_with_timestamp_getter=lambda: reader.latest_joints_with_timestamp(cfg.robot_max_age_s),
-        robot_pose_getter=lambda: reader.latest_pose(cfg.robot_max_age_s),
-        insertion_length_getter=lambda: insertion_m,
-        frame_processor=mapper,
-    )
-
+    # 2026-11-17: robot/reader/camera/advancer construction below opens real
+    # RTDE/camera/serial connections but previously had NO cleanup path of
+    # its own -- the main try/finally (further down) only covers code AFTER
+    # this block, so an exception during construction (e.g. a bad camera
+    # config, a reader connection race) used to leave whichever of these
+    # had already connected with no disconnect() ever called. Wrapped here
+    # so any exception during construction tears down everything already
+    # built before re-raising, instead of leaking an open RTDE/camera/
+    # serial connection into the next run attempt.
+    robot = None
+    reader = None
+    camera = None
     advancer = None
-    if cfg.control_insertion:
-        from proper_research.hardware.online.advancer_sink import (
-            AdvancerSink,
-            AdvancerSinkConfig,
+    try:
+        robot = URRTDERobot(cfg.robot_ip, frequency=500.0)
+        _reader_diag_log_path = (
+            str(output_dir / "robot_joint_stream_diagnostics.jsonl")
+            if cfg.reader_diagnostic_log
+            else None
+        )
+        if cfg.reader_diagnostic_log:
+            from proper_research.hardware.online.servo_diagnostic_logging_prep import (
+                effective_servo_args,
+            )
+            _reader_diag_servo_args = effective_servo_args(
+                time_s=2.0 * _STREAM_INTERVAL_S,
+                lookahead_time=cfg.servo_lookahead_s,
+                gain=cfg.servo_gain,
+            )
+            print(f"[path] reader_diagnostic_log=True -> {_reader_diag_log_path}")
+        else:
+            _reader_diag_servo_args = None
+        reader = RobotJointStream(
+            cfg.robot_ip,
+            poll_hz=cfg.reader_poll_hz,
+            receive_only=True,
+            enable_diagnostic_log=cfg.reader_diagnostic_log,
+            diagnostic_log_path=_reader_diag_log_path,
+            diagnostic_effective_servo_args=_reader_diag_servo_args,
         )
 
-        advancer = AdvancerSink(
-            AdvancerSinkConfig(
-                port=cfg.advancer_port,
-                dry_run=cfg.advancer_dry_run,
-                max_rate_m_s=cfg.insertion_rate_limit_m_s,
+        def _assert_robot_ready() -> None:
+            mode_ = robot.get_robot_mode()
+            safety = robot.get_safety_mode()
+            pstop = robot.is_protective_stopped()
+            if pstop or mode_ != 7 or safety not in (1, 2):
+                raise RuntimeError(
+                    f"robot not ready (mode={mode_}, safety={safety}, protective_stop={pstop}). "
+                    "Clear any protective stop on the pendant (Remote Control), then retry."
+                )
+
+        insertion_m = float(cfg.initial_insertion_m)
+
+        camera = CameraSource(
+            CameraConfig(
+                cam_index=cfg.cam_index,
+                exposure=cfg.exposure,
+                gain=cfg.gain,
+                grab_period_s=cfg.grab_period_s,
+                reconstruct_period_s=cfg.reconstruct_period_s,
+                image_filename=cfg.image_filename,
+                roi_polygon_path=stream_cfg.roi_polygon_path,
+                manual_boundary_path=stream_cfg.manual_boundary_path,
+                pivot_hint=tuple(stream_cfg.pivot_hint_px),
+            ),
+            pivot_point_pose6=np.asarray(stream_cfg.T_robot_beam_pose6, dtype=float),
+            # 2026-11-16: atomic (joints, timestamp) getter -- replaces the
+            # bare-vector robot_joints_getter for THIS runner only (the other 3
+            # CameraSource callers are unaffected, unchanged). Guarantees
+            # q_meas_rad and its own age are the SAME underlying sample.
+            robot_joints_with_timestamp_getter=lambda: reader.latest_joints_with_timestamp(cfg.robot_max_age_s),
+            robot_pose_getter=lambda: reader.latest_pose(cfg.robot_max_age_s),
+            insertion_length_getter=lambda: insertion_m,
+            frame_processor=mapper,
+        )
+
+        if cfg.control_insertion:
+            from proper_research.hardware.online.advancer_sink import (
+                AdvancerSink,
+                AdvancerSinkConfig,
             )
-        )
-        print(
-            f"[path] advancer {'(dry-run)' if cfg.advancer_dry_run else 'LIVE'} "
-            f"on {cfg.advancer_port}"
-        )
+
+            advancer = AdvancerSink(
+                AdvancerSinkConfig(
+                    port=cfg.advancer_port,
+                    dry_run=cfg.advancer_dry_run,
+                    max_rate_m_s=cfg.insertion_rate_limit_m_s,
+                )
+            )
+            print(
+                f"[path] advancer {'(dry-run)' if cfg.advancer_dry_run else 'LIVE'} "
+                f"on {cfg.advancer_port}"
+            )
+    except Exception:
+        # Construction-phase cleanup: tear down whatever already connected
+        # before re-raising, so a failure here (camera config error, reader
+        # connection race, etc.) can never leave an RTDE/camera/serial
+        # connection open with nothing to close it.
+        if advancer is not None:
+            try:
+                advancer.stop()
+            except Exception:
+                pass
+        if camera is not None:
+            try:
+                camera.stop()
+            except Exception:
+                pass
+        if reader is not None:
+            try:
+                reader.stop()
+            except Exception:
+                pass
+        if robot is not None:
+            try:
+                robot.close()
+            except Exception:
+                pass
+        raise
 
     stop_flag = {"stop": False}
     prev_handler = signal.signal(

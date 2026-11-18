@@ -1,0 +1,87 @@
+{
+  "controller_variant": "nullspace_Q_R700_frame_fix",
+  "gamma": 0.0,
+  "input_tracking_weight": 7.0,
+  "input_increment_weight": 0.001,
+  "insertion_state_anchor_weight": 0.0,
+  "insertion_state_anchor_scale_m": 0.00025,
+  "insertion_offset_abort_m": null,
+  "insertion_offset_monitor_disabled": true,
+  "state_scale_q_rad": 0.008726646259971648,
+  "state_scale_L_m": 0.00025,
+  "input_scale_q_rad_s": 0.05,
+  "input_scale_L_m_s": 0.005,
+  "delay_samples": 2,
+  "beta_d": 1.0,
+  "horizon": 15,
+  "terminal_cost": false,
+  "insertion_rate_limit_m_s": 0.002,
+  "plan_dir": "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/time_parameterized_configuration_path",
+  "planner_to_live_R_fit": [
+    [
+      0.9999999999989999,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.9999999999989999,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.9999999999979998
+    ]
+  ],
+  "planner_to_live_t_fit_m": [
+    0.017089580728834708,
+    0.0008175628414981428,
+    0.02315624817753826
+  ],
+  "planner_to_live_t_fit_norm_m": 0.028791214079071085,
+  "tcp_workspace_in_qp": true,
+  "workspace_xyz_min_m": [
+    0.24469,
+    -0.89361,
+    0.36544
+  ],
+  "workspace_xyz_max_m": [
+    0.58971,
+    -0.49576,
+    0.46496
+  ],
+  "unverified_plan_bypass": false,
+  "argv": [
+    "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py",
+    "--plan-dir",
+    "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/time_parameterized_configuration_path",
+    "--out-dir",
+    "close_loop_logs/myrun",
+    "--schedule-cache",
+    "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/jacobian_schedule_insertion_anchor.npy",
+    "--run-name",
+    "k2_servo_telemetry_20261117T152357Z",
+    "--horizon",
+    "15",
+    "--max-tracking-error-mm",
+    "7",
+    "--tcp-workspace-robust-margin-mm",
+    "15",
+    "--enable-reader-diagnostic-log"
+  ],
+  "code_provenance": {
+    "git_commit": "8304c8f140e4b76a67d317804b5c9782e3642522",
+    "git_dirty": true,
+    "git_error": null,
+    "source_file_sha256": {
+      "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py": "95e88b94f7092f2baf8c03a19b1d64fa5a5cd73c5a5d79dee3f6bb9f9b568d45",
+      "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/common.py": "a83a2dbc060b4cc9fe909bcda30723acc84c1c85c734f90f794b7b63a3437ba3"
+    }
+  },
+  "plan_file_sha256": {
+    "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz": "4f00089bf3592bdc9c1f4bdd74827de221fc3152aeb7ed5665499299db443274"
+  },
+  "schedule_cache_sha256": "f9af9acdcff171405e6a22a23fa18e36b7106f5ad2f5ade4b5f2ae800e562dee",
+  "schedule_cache_path": "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/jacobian_schedule_insertion_anchor.npy"
+}

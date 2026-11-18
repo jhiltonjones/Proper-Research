@@ -384,6 +384,7 @@ def check_robot_safe(robot_ip: str = ROBOT_IP) -> None:
 def check_camera_healthy(
     min_valid_fraction: float = 0.8, n_frames: int = 20,
     *, expected_insertion_m: float | None = None, insertion_tol_mm: float = 3.0,
+    auto_retract: bool = True, auto_retract_max_iters: int = 5,
 ) -> None:
     """Raise if the camera/vision pipeline can't reliably find the tip.
 
@@ -407,58 +408,87 @@ def check_camera_healthy(
     live pipeline (NewFrameTipMapper's frame_processor fast path) never
     actually populates -- confirmed empirically (0/20 valid readings
     despite 20/20 valid tip detections in the same frames).
+
+    2026-11-17: the raw chord length is now passed through
+    `measure_l0.apply_affine_insertion_correction` (same function
+    `measure_l0.measure_l_mm` and `reset_insertion.py` use) before any
+    tolerance comparison, since the raw reading was found to disagree
+    with physical ground truth by a 3D-pivot-location-shaped error that a
+    2D pixel-scale recalibration couldn't fix -- see that function's
+    docstring for the real data points the correction was fit from.
+
+    2026-11-17: `auto_retract=True` (default) -- if the insertion-length
+    check finds a mismatch, this now AUTOMATICALLY drives the advancer
+    back to the plan's expected L0 (reusing
+    `advancer_excitation.reset_insertion.reset_insertion()` directly, not
+    a reimplementation) and re-measures, instead of only raising and
+    requiring a separate manual reset-tool run. This is real, automatic
+    advancer motion triggered by this health check itself -- set
+    `auto_retract=False` to keep the old raise-only behaviour.
     """
     from proper_research.hardware.online.state_stream import NewFrameTipMapper, StateStreamConfig
     from proper_research.hardware.online.camera_source import CameraConfig, CameraSource
-    from proper_research.hardware.online.advancer_excitation.measure_l0 import PIVOT_XYZ
-
-    scfg = StateStreamConfig(exposure=29.0, marker_min_count=2)
-    mapper = NewFrameTipMapper(scfg)
-    camera = CameraSource(
-        CameraConfig(
-            cam_index=0, exposure=29.0, image_filename="/dev/shm/stage_a_camera_check.png",
-            roi_polygon_path=scfg.roi_polygon_path, manual_boundary_path=scfg.manual_boundary_path,
-            pivot_hint=tuple(scfg.pivot_hint_px),
-        ),
-        pivot_point_pose6=np.asarray(scfg.T_robot_beam_pose6),
-        robot_joints_getter=lambda: None, robot_pose_getter=lambda: None,
-        insertion_length_getter=lambda: 0.02, frame_processor=mapper,
+    from proper_research.hardware.online.advancer_excitation.measure_l0 import (
+        PIVOT_XYZ,
+        apply_affine_insertion_correction,
     )
-    camera.start()
-    try:
-        time.sleep(1.0)
-        found = 0
-        lengths_mm: list[float] = []
-        for _ in range(n_frames):
-            est, _age = camera.latest(0.5)
-            if est is not None:
-                found += 1
-                tip = np.asarray(est.tip_position_m, dtype=float)
-                if np.all(np.isfinite(tip)):
-                    lengths_mm.append(float(np.linalg.norm(tip - PIVOT_XYZ)) * 1e3)
-            time.sleep(0.1)
-        frac = found / n_frames
-        print(f"[health] camera: {found}/{n_frames} frames had a valid tip estimate")
-        if frac < min_valid_fraction:
+
+    def _measure_once() -> tuple[int, list[float]]:
+        """One camera session: n_frames tip readings. Caller owns start/stop."""
+        scfg = StateStreamConfig(exposure=29.0, marker_min_count=2)
+        mapper = NewFrameTipMapper(scfg)
+        camera = CameraSource(
+            CameraConfig(
+                cam_index=0, exposure=29.0, image_filename="/dev/shm/stage_a_camera_check.png",
+                roi_polygon_path=scfg.roi_polygon_path, manual_boundary_path=scfg.manual_boundary_path,
+                pivot_hint=tuple(scfg.pivot_hint_px),
+            ),
+            pivot_point_pose6=np.asarray(scfg.T_robot_beam_pose6),
+            robot_joints_getter=lambda: None, robot_pose_getter=lambda: None,
+            insertion_length_getter=lambda: 0.02, frame_processor=mapper,
+        )
+        camera.start()
+        try:
+            time.sleep(1.0)
+            found = 0
+            lengths_mm: list[float] = []
+            for _ in range(n_frames):
+                est, _age = camera.latest(0.5)
+                if est is not None:
+                    found += 1
+                    tip = np.asarray(est.tip_position_m, dtype=float)
+                    if np.all(np.isfinite(tip)):
+                        raw_mm = float(np.linalg.norm(tip - PIVOT_XYZ)) * 1e3
+                        lengths_mm.append(apply_affine_insertion_correction(raw_mm))
+                time.sleep(0.1)
+            return found, lengths_mm
+        finally:
+            camera.stop()
+
+    found, lengths_mm = _measure_once()
+    frac = found / n_frames
+    print(f"[health] camera: {found}/{n_frames} frames had a valid tip estimate")
+    if frac < min_valid_fraction:
+        raise RuntimeError(
+            f"camera unhealthy: only {found}/{n_frames} frames found the tip "
+            f"(need >= {min_valid_fraction:.0%})"
+        )
+    if expected_insertion_m is not None:
+        expected_mm = expected_insertion_m * 1000.0
+        if len(lengths_mm) < int(min_valid_fraction * n_frames):
             raise RuntimeError(
-                f"camera unhealthy: only {found}/{n_frames} frames found the tip "
-                f"(need >= {min_valid_fraction:.0%})"
+                f"insertion-length check: only {len(lengths_mm)}/{n_frames} frames had a "
+                f"valid vision_beam_length_mm reading -- cannot verify physical insertion "
+                f"against the plan's expected L0={expected_mm:.1f}mm. Refusing to proceed "
+                f"rather than assume the software accumulator's value is correct."
             )
-        if expected_insertion_m is not None:
-            expected_mm = expected_insertion_m * 1000.0
-            if len(lengths_mm) < int(min_valid_fraction * n_frames):
-                raise RuntimeError(
-                    f"insertion-length check: only {len(lengths_mm)}/{n_frames} frames had a "
-                    f"valid vision_beam_length_mm reading -- cannot verify physical insertion "
-                    f"against the plan's expected L0={expected_mm:.1f}mm. Refusing to proceed "
-                    f"rather than assume the software accumulator's value is correct."
-                )
-            measured_mm = float(np.median(lengths_mm))
-            diff_mm = abs(measured_mm - expected_mm)
-            print(f"[health] insertion length: measured={measured_mm:.1f}mm "
-                  f"(median of {len(lengths_mm)} frames) expected={expected_mm:.1f}mm "
-                  f"diff={diff_mm:.1f}mm")
-            if diff_mm > insertion_tol_mm:
+        measured_mm = float(np.median(lengths_mm))
+        diff_mm = abs(measured_mm - expected_mm)
+        print(f"[health] insertion length: measured={measured_mm:.1f}mm "
+              f"(median of {len(lengths_mm)} frames) expected={expected_mm:.1f}mm "
+              f"diff={diff_mm:.1f}mm")
+        if diff_mm > insertion_tol_mm:
+            if not auto_retract:
                 raise RuntimeError(
                     f"insertion mismatch: camera-measured physical length {measured_mm:.1f}mm "
                     f"differs from the plan's expected L0={expected_mm:.1f}mm by {diff_mm:.1f}mm "
@@ -466,8 +496,40 @@ def check_camera_healthy(
                     f"extension from a previous run -- physically retract/re-home it to the "
                     f"plan's start before proceeding."
                 )
-    finally:
-        camera.stop()
+            print(
+                f"[health] insertion mismatch ({diff_mm:.1f}mm > {insertion_tol_mm:.1f}mm "
+                f"tolerance) -- auto-retract triggered: driving advancer to "
+                f"target={expected_mm:.2f}mm (tolerance={insertion_tol_mm:.2f}mm, "
+                f"max_iters={auto_retract_max_iters})"
+            )
+            from proper_research.hardware.online.advancer_excitation.reset_insertion import (
+                reset_insertion,
+            )
+            final_mm = reset_insertion(
+                expected_mm, live=True, tolerance_mm=insertion_tol_mm,
+                max_iters=auto_retract_max_iters,
+            )
+            print(f"[health] auto-retract finished: reset_insertion reported final L={final_mm:.2f}mm "
+                  f"-- re-measuring to confirm before proceeding")
+            found2, lengths_mm2 = _measure_once()
+            if len(lengths_mm2) < int(min_valid_fraction * n_frames):
+                raise RuntimeError(
+                    f"insertion-length re-check after auto-retract: only "
+                    f"{len(lengths_mm2)}/{n_frames} frames had a valid reading -- refusing "
+                    f"to proceed without a confirmed post-retract measurement."
+                )
+            measured_mm2 = float(np.median(lengths_mm2))
+            diff_mm2 = abs(measured_mm2 - expected_mm)
+            print(f"[health] post-retract insertion length: measured={measured_mm2:.1f}mm "
+                  f"expected={expected_mm:.1f}mm diff={diff_mm2:.1f}mm")
+            if diff_mm2 > insertion_tol_mm:
+                raise RuntimeError(
+                    f"auto-retract did not converge: after reset_insertion (max_iters="
+                    f"{auto_retract_max_iters}), camera-measured length {measured_mm2:.1f}mm "
+                    f"still differs from expected L0={expected_mm:.1f}mm by {diff_mm2:.1f}mm "
+                    f"(tolerance {insertion_tol_mm:.1f}mm). Refusing to proceed with an "
+                    f"unconfirmed insertion length -- retract/re-home the advancer manually."
+                )
 
 
 def preflight(

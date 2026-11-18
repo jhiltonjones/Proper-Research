@@ -41,25 +41,33 @@ from proper_research.hardware.online.messages import (
     LatestSlot,
     now_monotonic,
 )
+from proper_research.hardware.online.servo_diagnostic_logging_prep import (
+    DiagnosticLogSink,
+    _safe_optional_call,
+    runtime_environment_snapshot,
+)
 from proper_research.rig_calibration import BEAM_BASE_XYZ_M
 
-# This file's own Z convention (-0.016567) predates and differs from
-# rig_calibration.BEAM_BASE_XYZ_M's Z (-0.039627, the unraised-rig value
-# recalibrated 2026-10-02) -- kept as this file's own value since that
-# difference hasn't been investigated, but X/Y now share the single
-# canonical source (see rig_calibration.py's docstring for why this
-# duplication was a problem).
-# FIXED 2026-11-11 (K2 live run on rectangle stage A): z was hardcoded at
-# -0.016567, the stale pre-recalibration pivot height documented throughout
-# this project's Round 10-14 history (23.06mm above the real calibrated
-# base) -- x/y already correctly pulled from BEAM_BASE_XYZ_M but z never
-# did. patch_state_stream_config_two_markers() (rectangle_stage_a/common.py)
-# deliberately does NOT touch T_robot_beam_pose6, on the documented (and
-# incorrect) assumption that this default was "independently validated" --
-# it was not. Any rectangle_stage_a script that does not explicitly override
-# T_robot_beam_pose6 inherited this stale pivot. Vessel scripts are
-# unaffected -- they explicitly set it via their own recalibrated-rig
-# factory (vessel_stage_a/common.py's raised_state_stream_config_factory).
+# 2026-11-17: Z now shares the single canonical BEAM_BASE_XYZ_M source too
+# (X/Y already did). This file's own Z used to be a separate hardcoded
+# -0.016567 -- the pre-2026-10-02-remount value, already documented as
+# stale and fixed in planning_context.py's _calibrated_default_initial_
+# poses(), plan_shape_path.py, _bend_axes_R(), and
+# robotics_frame_measurement_validation.py (see those files' own comments
+# for the physical remount/live-FK-recalibration evidence). This was the
+# one remaining unpatched call site of that same staleness: it fed
+# start_tip_R in close_loop_path_follow.py's _fit_planner_to_robot(),
+# producing a live/planner registration offset (controller_metadata.json's
+# planner_to_live_t_fit_m) with a spurious ~23.06mm Z component on live
+# rectangle runs taken after this file's own last Z edit -- confirmed by
+# recomputing t_fit_z for those runs with this corrected value: landed at
+# 0.096mm, matching the known-good pre-edit baseline run's own t_fit_z
+# exactly. Checked for double-correction first: _fit_planner_to_robot()
+# does an unconditional rigid-fit registration with no special-casing for
+# this gap, so fixing the root default just makes that registration small
+# again, not doubly-adjusted; the vessel rig is unaffected (it builds its
+# own self-contained PivotConfig via raised_state_stream_config_factory /
+# _raised_pivot_config(), never reading this constant at all).
 _DEFAULT_T_ROBOT_BEAM_POSE6 = (
     float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), float(BEAM_BASE_XYZ_M[2]), 0.0, -1.5707963, 0.0,
 )
@@ -127,6 +135,47 @@ class StateStreamConfig:
     # Agrees with the old 38.0mm hand-clicked estimate to ~0.4% once measured
     # the same (diagonal, not naively-averaged) way -- a precision
     # refinement, not a correction of a real error.
+    # SUPERSEDED 2026-11-17: the 80.62257748298549mm value above was found
+    # stale (camera zoom/focus/position had changed since the 2026-09-14
+    # capture) -- see calibration_points.json's "source" field for the
+    # full recalibration writeup. This constant MUST be kept in sync with
+    # calibration_points.json's own "known_distance_mm" field by hand --
+    # NewFrameTipMapper only reads "points_px" from that JSON file; it
+    # does NOT read "known_distance_mm" from it (confirmed by direct code
+    # read of __init__: `known_calibration_distance_mm` always comes from
+    # THIS Python default, never from the JSON). Updating only the JSON's
+    # points without updating this constant combines NEW (closer-spaced)
+    # points with the OLD (stale, larger) known-distance value, producing
+    # an even MORE inflated scale than before the JSON update -- this is
+    # exactly the bug caught live on 2026-11-17 (a post-recalibration
+    # check read 38.51mm, worse than the original 34.0mm, until this
+    # constant was corrected to match).
+    #
+    # SECOND SUPERSESSION, same day: the checkerboard-geometry-derived
+    # value immediately above (50.99019513592785) was itself abandoned --
+    # the board's residual top-bottom tilt (~3.7% CV, never fully
+    # resolved despite two reposition attempts) made it unreliable at the
+    # <5mm precision needed here. Replaced by a value back-solved
+    # directly from a known physical ground truth (24.0mm measured
+    # insertion length) instead of board geometry -- see
+    # calibration_points.json's "source" field for the exact derivation
+    # (correction_factor = 24.0 / 30.19 applied to the prior constant).
+    # Keep this in sync with calibration_points.json's "known_distance_mm"
+    # by hand, same caveat as above.
+    # FOURTH SUPERSESSION, 2026-11-17: back-solved from a fresh 33.731mm
+    # live reading against a new 41.0mm ground truth, after the advancer-
+    # motion hypothesis was investigated and ruled out by code trace (see
+    # calibration_points.json's "source" field for the full writeup,
+    # including the flagged, unresolved discrepancy against an earlier
+    # 26.3mm/~25mm reading from before the run's own move_j reset).
+    # REVERTED 2026-11-17: back to the original 2026-09-14 value, per the
+    # user's explicit decision to stop this session's recalibration
+    # process. Not a finding that this value is more accurate -- live
+    # measurements swung across many different values today regardless of
+    # which calibration was active; see calibration_points.json's "source"
+    # field. Kept in sync with that file's "known_distance_mm" by hand, as
+    # always -- this is the exact field whose drift caused a real bug two
+    # rounds earlier in this same session.
     known_calibration_distance_mm: float = 80.62257748298549
     saved_axis_signs_for_positive_beam_xy: tuple[float, float] = (-1.0, 1.0)
     saved_axis_convention: str = "image_cartesian"
@@ -160,13 +209,35 @@ class RobotJointStream:
     """
 
     def __init__(
-        self, ip: str, *, poll_hz: float = 125.0, receive_only: bool = True
+        self,
+        ip: str,
+        *,
+        poll_hz: float = 125.0,
+        receive_only: bool = True,
+        enable_diagnostic_log: bool = False,
+        diagnostic_log_path: Optional[str] = None,
+        diagnostic_stall_threshold_s: Optional[float] = None,
+        diagnostic_effective_servo_args: Optional[dict] = None,
+        _test_rtde_r: Any = None,
     ) -> None:
         self._ip = str(ip)
         self._receive_only = bool(receive_only)
         self._robot = None
         self._rtde_r = None
-        if self._receive_only:
+        if _test_rtde_r is not None:
+            # Test-only injection point. Used ONLY by
+            # test_robot_joint_stream_diagnostic_integration.py to exercise
+            # this REAL class/real _poll_body() against a mocked RTDE
+            # receive object, with NO real `rtde_receive.
+            # RTDEReceiveInterface` (and therefore no real hardware
+            # connection) ever constructed. No production caller passes
+            # this argument.
+            if not receive_only:
+                raise ValueError(
+                    "_test_rtde_r injection only supported for receive_only=True"
+                )
+            self._rtde_r = _test_rtde_r
+        elif self._receive_only:
             import rtde_receive
 
             self._rtde_r = rtde_receive.RTDEReceiveInterface(ip)
@@ -195,6 +266,42 @@ class RobotJointStream:
         self._last_raw_joints: Optional[np.ndarray] = None
         self._last_raw_pose: Optional[np.ndarray] = None
         self.stale_repeats = 0
+
+        # --- 2026-11-17: additive, observation-only diagnostic logging ---
+        # (SERVO_DIAGNOSTIC_LOGGING_V2_CORRECTIONS_2026-11-17.md). None of
+        # this is read by, or can influence, _poll_body()'s existing
+        # control-relevant logic above (joints/pose/reads/read_failures/
+        # stale_repeats/last_error) -- it is appended strictly after that
+        # logic, in its own attributes, wrapped in its own total
+        # exception guard (_diagnostic_tick()).
+        self._diagnostic_enabled = bool(enable_diagnostic_log) and self._receive_only
+        self._diag_sink: Optional[DiagnosticLogSink] = None
+        self._diag_log_path = diagnostic_log_path
+        if self._diagnostic_enabled and diagnostic_log_path:
+            self._diag_sink = DiagnosticLogSink(diagnostic_log_path)
+            self._diag_sink.start()
+            # Item C: library/version identity, servo args, and poll rate
+            # must land in the REAL SAVED FILE, not just in-memory state --
+            # written once, here, as the first row.
+            startup_event = {"event": "startup", "poll_hz": self._poll_hz}
+            startup_event.update(runtime_environment_snapshot())
+            if diagnostic_effective_servo_args is not None:
+                startup_event["effective_servo_args"] = diagnostic_effective_servo_args
+            self._diag_sink.emit(startup_event)
+        # elapsed-HOST-time basis for duplicate-packet vs. sustained-stall
+        # (host monotonic time of the last OBSERVED robot-timestamp change)
+        self._diag_last_ts_value: Optional[float] = None
+        self._diag_last_ts_change_host_time: Optional[float] = None
+        self._diag_stall_threshold_s = (
+            float(diagnostic_stall_threshold_s)
+            if diagnostic_stall_threshold_s is not None
+            else max(0.5, 10.0 / self._poll_hz)
+        )
+        self.diag_ticks = 0
+        self.diag_internal_errors = 0  # the diagnostic tick itself raised
+        self.diag_duplicate_packets = 0
+        self.diag_sustained_stalls = 0
+        self.diag_shutdown_drained_cleanly: Optional[bool] = None
 
     def start(self) -> None:
         self._loop = HeartbeatLoop(
@@ -272,6 +379,98 @@ class RobotJointStream:
                 self.pose_slot.set(pose_arr)
         self.reads += 1
 
+        # Strictly additive from here down: nothing above this line is
+        # read, and nothing below this line writes to joints_slot/
+        # pose_slot/reads/read_failures/stale_repeats/last_error. A
+        # failure anywhere in this block can set diag_internal_errors but
+        # can never raise out of _poll_body() or alter what was already
+        # computed above.
+        if self._diagnostic_enabled:
+            try:
+                self._diagnostic_tick()
+            except Exception:  # noqa: BLE001
+                self.diag_internal_errors += 1
+
+    def _diagnostic_tick(self) -> None:
+        """Observation-only. Reads getTimestamp/getTargetQ/getSpeedScaling/
+        getSpeedScalingCombined from the SAME already-open `self._rtde_r`
+        connection `_poll_body()` already uses for getActualQ() -- no
+        additional RTDE connection. Guards both attribute lookup and
+        invocation per-field (`_safe_optional_call`) so a missing method on
+        an older library/firmware build degrades that one field to None
+        with a logged reason, not a crash."""
+        host_before = now_monotonic()
+        failures: list = []
+        ts_before = _safe_optional_call(self._rtde_r, "getTimestamp", failures)
+        # Diagnostic-only SECOND read of actual_q, bracketed by the SAME
+        # ts_before/ts_after pair as target_q below -- deliberately named
+        # distinctly from _poll_body()'s own `joints` variable (the one
+        # control code actually consumes via joints_slot/_last_raw_joints).
+        # This read's result is NEVER assigned to joints_slot or
+        # _last_raw_joints -- see
+        # test_actual_q_diagnostic_read_never_reaches_control_slot for the
+        # verification of that separation.
+        actual_q_diagnostic_second_read = _safe_optional_call(
+            self._rtde_r, "getActualQ", failures
+        )
+        target_q = _safe_optional_call(self._rtde_r, "getTargetQ", failures)
+        speed_scaling = _safe_optional_call(self._rtde_r, "getSpeedScaling", failures)
+        speed_scaling_combined = _safe_optional_call(
+            self._rtde_r, "getSpeedScalingCombined", failures
+        )
+        ts_after = _safe_optional_call(self._rtde_r, "getTimestamp", failures)
+        host_after = now_monotonic()
+
+        if ts_before is None or ts_after is None:
+            consistency = "unknown"
+        elif ts_before != ts_after:
+            consistency = "changed"
+        else:
+            consistency = "unchanged"  # consistent WITH atomicity, not proof of it
+
+        # Duplicate-packet vs. sustained-timestamp-stall: based on ELAPSED
+        # HOST WALL-CLOCK TIME since the robot timestamp last genuinely
+        # changed, not a repeat-count heuristic. A handful of repeats in a
+        # few milliseconds (packets arriving faster than they refresh) is
+        # benign; the SAME value holding for longer than
+        # `_diag_stall_threshold_s` of real elapsed host time is reported
+        # as a sustained stall.
+        duplicate_or_stall = None
+        if ts_after is not None:
+            if self._diag_last_ts_value is None or ts_after != self._diag_last_ts_value:
+                self._diag_last_ts_value = ts_after
+                self._diag_last_ts_change_host_time = host_after
+            else:
+                elapsed = host_after - (self._diag_last_ts_change_host_time or host_after)
+                if elapsed >= self._diag_stall_threshold_s:
+                    duplicate_or_stall = "sustained_timestamp_stall"
+                    self.diag_sustained_stalls += 1
+                else:
+                    duplicate_or_stall = "duplicate_packet"
+                    self.diag_duplicate_packets += 1
+
+        self.diag_ticks += 1
+
+        if self._diag_sink is not None:
+            self._diag_sink.emit({
+                "event": "tick",
+                "host_time_before_s": host_before,
+                "host_time_after_s": host_after,
+                "robot_timestamp_before_raw": ts_before,
+                "robot_timestamp_after_raw": ts_after,
+                # Diagnostic-only second read -- NEVER the value joints_slot/
+                # _last_raw_joints hold; same within_snapshot_consistency
+                # bracket as target_q, since both are read between the
+                # same ts_before/ts_after pair above.
+                "actual_q_diagnostic_second_read": actual_q_diagnostic_second_read,
+                "target_q_raw_semantics_unverified": target_q,
+                "speed_scaling": speed_scaling,
+                "speed_scaling_combined": speed_scaling_combined,
+                "within_snapshot_consistency": consistency,
+                "duplicate_or_stall": duplicate_or_stall,
+                "read_failures": failures,
+            })
+
     @property
     def robot(self) -> Any:
         """The live ``robot_class.URRtde`` session (for speed_j / speed_l)."""
@@ -289,7 +488,20 @@ class RobotJointStream:
     def latest_joints_with_age(
         self, max_age_s: Optional[float] = None
     ) -> "tuple[Optional[np.ndarray], float]":
-        """Same as latest_joints(), but also returns the age (seconds, host
+        """RESTORED 2026-11-17: this method (and latest_joints_with_timestamp
+        below) was accidentally deleted during this session's earlier
+        diagnostic-logging edits to this class -- confirmed the real,
+        reproducible root cause of two live hardware warmup failures
+        ("no fresh tip+joints within warmup_timeout_s"): with this method
+        missing, CameraSource's robot_joints_with_timestamp_getter lambda
+        raised AttributeError on every call, silently caught by
+        camera_source.py's own try/except, so estimate.robot_joints was
+        always None regardless of how fresh the underlying RTDE stream
+        actually was (confirmed healthy via robot_joint_stream_diagnostics.
+        jsonl from the exact failed run: 1470/1470 ticks, 0 stalls, 0
+        failures, continuously advancing timestamps).
+
+        Same as latest_joints(), but also returns the age (seconds, host
         monotonic clock) of the joint reading -- previously computed inside
         joints_slot.get() and silently discarded by latest_joints() (the
         same class of gap already fixed for BackgroundArmStreamer's
@@ -371,6 +583,36 @@ class RobotJointStream:
                 self._rtde_r.disconnect()
             except Exception:
                 pass
+        # Additive: shut down the diagnostic sink AFTER the control-
+        # relevant teardown above. The real drained/joined result is
+        # recorded, not assumed.
+        if self._diag_sink is not None:
+            dropped_before_stop = self._diag_sink.dropped_count
+            write_failures_before_stop = self._diag_sink.write_failure_count
+            self.diag_shutdown_drained_cleanly = self._diag_sink.stop(timeout=2.0)
+            # Item C: the shutdown outcome and final counts must land in
+            # the REAL SAVED FILE. The writer thread has already stopped
+            # by this point (stop() joined it), so this is a direct,
+            # separate append -- not routed through the (now-stopped)
+            # queue/writer-thread pair.
+            if self._diag_log_path:
+                try:
+                    with open(self._diag_log_path, "a") as fh:
+                        fh.write(json.dumps({
+                            "event": "shutdown",
+                            "diag_ticks": self.diag_ticks,
+                            "diag_internal_errors": self.diag_internal_errors,
+                            "diag_duplicate_packets": self.diag_duplicate_packets,
+                            "diag_sustained_stalls": self.diag_sustained_stalls,
+                            "dropped_count": self._diag_sink.dropped_count,
+                            "write_failure_count": self._diag_sink.write_failure_count,
+                            "dropped_count_before_stop": dropped_before_stop,
+                            "write_failure_count_before_stop": write_failures_before_stop,
+                            "drained_cleanly": self.diag_shutdown_drained_cleanly,
+                        }) + "\n")
+                        fh.flush()
+                except Exception:  # noqa: BLE001 -- shutdown logging must never raise
+                    pass
 
 
 # =============================================================================

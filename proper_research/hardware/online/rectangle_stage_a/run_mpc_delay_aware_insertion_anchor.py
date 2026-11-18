@@ -353,6 +353,12 @@ def main() -> None:
     p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
+    p.add_argument(
+        "--enable-reader-diagnostic-log", action="store_true",
+        help="additive, observation-only RobotJointStream RTDE diagnostic "
+             "logging to <out-dir>/robot_joint_stream_diagnostics.jsonl "
+             "(off by default; zero control-path effect)",
+    )
     p.add_argument("--deadline-ms", type=float, default=70.0,
                     help="process-isolated worker solve deadline; miss -> hold q_cmd (u=0) for that tick")
     p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0,
@@ -487,6 +493,7 @@ def main() -> None:
     cfg.feedforward_joint_trajectory = False
     cfg.accumulator_seam = True
     cfg.servo_stream_hz = args.servo_stream_hz
+    cfg.reader_diagnostic_log = args.enable_reader_diagnostic_log
     cfg.force_mpc_feedforward = False
 
     cfg.joint_velocity_limit_rad_s = args.joint_velocity_limit_rad_s

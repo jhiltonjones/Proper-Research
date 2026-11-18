@@ -95,8 +95,27 @@ from proper_research.simulation.simulations.simulate_time_parameterized_configur
     load_configuration_reference,
 )
 from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    _resolve_robot_kinematics,
+)
+from proper_research.planning.planning_context import make_robot_config
 
 from . import common
+
+# 2026-11-18: magnet-to-beam-base hard keep-out + dipole-to-beam-base
+# alignment preference, ported from the vessel runner's own magnet_
+# exclusion/dipole_alignment_preference wiring (both already generic,
+# fixed-point mechanisms in delay_aware_mpc.py -- the vessel runner's
+# "vessel-centreline" exclusion was itself repurposed to a single fixed
+# beam-base point back on 2026-09-28, so there is no vessel-specific
+# geometry left to port, only the plumbing). _robot_kin.dh/T_F_M (NOT
+# urik.CONFIG's own dh/T_F_TCP, which this file's existing TCP-workspace
+# block uses for the literal UR TCP point) is the magnet-mount forward-
+# kinematics model both new blocks below need -- same factory call the
+# vessel runner uses, with the same corrected tcp_to_magnet_pose6 (a bare
+# JointSpaceRobotConfig() would silently fall back to a stale 0.47m tool
+# offset -- see that class's own docstring warning).
+_robot_kin = _resolve_robot_kinematics(make_robot_config())
 
 # 2026-10-23: physical rig's middle marker is permanently gone (removed
 # 2026-09-29, see common.py's patch_state_stream_config_two_markers) --
@@ -144,6 +163,27 @@ _SCHEDULE_CACHE_PATH: str | None = None
 # (common.WORKSPACE_XYZ_MIN_M/MAX_M), so the QP always acts before that
 # monitor would ever fire. Set in main(); logged into controller_metadata.json.
 _TCP_WORKSPACE_IN_QP: bool = False
+# 2026-11-18: same provenance pattern, for the two new optional QP terms.
+_MAGNET_EXCLUSION_IN_QP: bool = False
+_DIPOLE_ALIGNMENT_WEIGHT: float = 0.0
+
+
+def build_magnet_exclusion_schedule(reference) -> tuple[np.ndarray, np.ndarray]:
+    """Analytic magnet-position Jacobian + nominal magnet position at every
+    reference sample -- the schedule the in-QP magnet-exclusion constraint
+    linearizes about (see `delay_aware_mpc.py`'s `_configure_magnet_
+    exclusion` docstring). Identical in construction to the vessel runner's
+    own `build_magnet_exclusion_schedule` (position Jacobian only, rows 0:3
+    of the 6x6 spatial Jacobian -- the magnet is rigidly on the end
+    effector, its position never depends on insertion L)."""
+    q = np.asarray(reference.state[:, :6], dtype=float)
+    jacobians = np.empty((q.shape[0], 3, 6), dtype=float)
+    positions = np.empty((q.shape[0], 3), dtype=float)
+    for i in range(q.shape[0]):
+        fk = urik.forward_kinematics(q[i], _robot_kin.dh, _robot_kin.T_F_M)
+        positions[i] = fk.T_R_target[:3, 3]
+        jacobians[i] = urik.geometric_jacobian(q[i], _robot_kin.dh, _robot_kin.T_F_M)[:3, :]
+    return jacobians, positions
 
 
 def spawn_and_warm_worker(
@@ -152,6 +192,8 @@ def spawn_and_warm_worker(
     joint_acceleration_limit_rad_s2: float, position_error_scale_mm: float,
     position_tracking_weight: float,
     tcp_workspace_kwargs: dict | None = None,
+    magnet_exclusion_kwargs: dict | None = None,
+    dipole_alignment_preference_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
     identical lifecycle ordering to nullq_r700's runner."""
@@ -186,6 +228,8 @@ def spawn_and_warm_worker(
         nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
         insertion_state_anchor_weight=_INSERTION_STATE_ANCHOR_WEIGHT,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -251,6 +295,8 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "planner_to_live_t_fit_m": t_fit.tolist(),
             "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
             "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
+            "magnet_exclusion_in_qp": _MAGNET_EXCLUSION_IN_QP,
+            "dipole_alignment_weight": _DIPOLE_ALIGNMENT_WEIGHT,
             "workspace_xyz_min_m": list(common.WORKSPACE_XYZ_MIN_M),
             "workspace_xyz_max_m": list(common.WORKSPACE_XYZ_MAX_M),
             "unverified_plan_bypass": _ALLOW_UNVERIFIED_PLAN,
@@ -400,6 +446,39 @@ def main() -> None:
                          "optimizer always acts before the post-hoc monitor would ever "
                          "fire. Default matches the vessel runner's own default for the "
                          "equivalent flag.")
+    p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
+                    help="disable the linearized magnet-to-beam-base keep-out sphere wired "
+                         "directly into the QP (hard constraint: magnet stays >= "
+                         "--beam-base-exclusion-floor-mm + --magnet-exclusion-robust-margin-mm "
+                         "from the beam base at all times). ON by default (same convention as "
+                         "--disable-tcp-workspace-in-qp above); pass this flag to turn it off. "
+                         "Same mechanism as the vessel runner's own flag of the same name, "
+                         "ported here fresh rather than inherited from any shared default -- "
+                         "see delay_aware_mpc.py's _configure_magnet_exclusion docstring.")
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=97.0,
+                    help="hard keep-out radius (mm) around the beam base the magnet must never "
+                         "violate in the QP's own constraint set. Default matches the vessel "
+                         "runner's own default for the equivalent flag.")
+    p.add_argument("--magnet-exclusion-robust-margin-mm", type=float, default=3.0,
+                    help="extra margin (mm) added on top of --beam-base-exclusion-floor-mm "
+                         "before becoming the QP's hard bound, covering commanded-vs-measured "
+                         "joint drift between ticks (same rationale as --tcp-workspace-robust-"
+                         "margin-mm above, smaller because this constraint's own FK -- urik's "
+                         "calibrated DH -- is known to ~0.11mm, not the TCP constraint's few-mm "
+                         "agreement; see that flag's own help text).")
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="soft actuation-preference cost weight: encourages the source "
+                         "magnet's own dipole moment to point TOWARD the beam base. PURE "
+                         "KINEMATIC alignment (controllers.dipole_alignment: residual is "
+                         "m_hat - u_hat, both unit vectors -- zero only at genuine alignment, "
+                         "distance-blind by construction), deliberately NOT a torque-"
+                         "minimization term: minimizing m x B can be satisfied by moving the "
+                         "magnet FARTHER away (B -> 0) just as well as by genuine alignment, "
+                         "so that term cannot be used here -- see that module's docstring for "
+                         "the full comparison. 0.0 (default) disables this term entirely.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the beam base. -1.0: away "
+                         "from it. Ignored when --dipole-alignment-weight is 0.0.")
     p.add_argument("--allow-unverified-plan", action="store_true",
                     help="bypass the beam-base provenance guard in build_or_load_schedule "
                          "(missing or mismatched beam_base_xyz_m in the plan's "
@@ -465,6 +544,52 @@ def main() -> None:
         print("[insertion_anchor] --disable-tcp-workspace-in-qp set: tcp_out_of_workspace "
               "stays ONLY a post-hoc monitor, not visible to the optimizer")
 
+    global _MAGNET_EXCLUSION_IN_QP, _DIPOLE_ALIGNMENT_WEIGHT
+    magnet_exclusion_kwargs = None
+    _MAGNET_EXCLUSION_IN_QP = not args.disable_magnet_exclusion_in_qp
+    _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
+    if not args.disable_magnet_exclusion_in_qp:
+        _magnet_reference = load_configuration_reference(args.plan_dir, require_planned_beam_feasible=False)
+        _magnet_jacobians, _magnet_positions = build_magnet_exclusion_schedule(_magnet_reference)
+        _magnet_floor_m = args.beam_base_exclusion_floor_mm * 1.0e-3
+        _magnet_margin_m = args.magnet_exclusion_robust_margin_mm * 1.0e-3
+        _magnet_radius_m = _magnet_floor_m + _magnet_margin_m
+        magnet_exclusion_kwargs = dict(
+            position_jacobians=_magnet_jacobians, nominal_positions_m=_magnet_positions,
+            lumen_C_m=_beam_base_xyz_r, radius_m=_magnet_radius_m,
+        )
+        print(f"[insertion_anchor] magnet-to-beam-base exclusion constraint will be wired "
+              f"INTO the QP (beam_base_xyz_r={_beam_base_xyz_r[0].tolist()}, "
+              f"floor={args.beam_base_exclusion_floor_mm:.1f}mm + "
+              f"{args.magnet_exclusion_robust_margin_mm:.1f}mm robust margin = "
+              f"{_magnet_radius_m*1e3:.1f}mm hard radius) -- pass "
+              f"--disable-magnet-exclusion-in-qp to turn this off")
+    else:
+        print("[insertion_anchor] --disable-magnet-exclusion-in-qp set: no magnet-to-beam-base "
+              "keep-out constraint visible to the optimizer")
+
+    _DIPOLE_ALIGNMENT_WEIGHT = float(args.dipole_alignment_weight)
+    dipole_alignment_preference_kwargs = None
+    if args.dipole_alignment_weight > 0.0:
+        print("[insertion_anchor] building model bundle once to read the calibrated "
+              "source-magnet dipole moment (m_body) for --dipole-alignment-weight ...")
+        _, _dipole_bundle, _dipole_controller_pack, _ = build_planning_context()
+        _dipole_m_body = np.asarray(
+            _dipole_controller_pack["plant_diagnostic_joint_adapter"].model.m_body, dtype=float,
+        ).reshape(3)
+        _dipole_target = _beam_base_xyz_r.reshape(3)
+        dipole_alignment_preference_kwargs = dict(
+            dh=_robot_kin.dh, T_F_M=_robot_kin.T_F_M, m_body=_dipole_m_body,
+            target_point_m=_dipole_target, weight=float(args.dipole_alignment_weight),
+            sign=float(args.dipole_alignment_sign),
+        )
+        print(f"[insertion_anchor] dipole-to-beam-base alignment PREFERENCE requested "
+              f"(target_point_m={_dipole_target.tolist()}, weight={args.dipole_alignment_weight:.3g}, "
+              f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
+              f"PURE KINEMATIC alignment (m_hat vs u_hat unit-vector residual, distance-blind "
+              f"by construction), NOT torque minimization -- live-relinearized every solve, "
+              f"wired INTO the QP cost, no schedule file")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -473,6 +598,8 @@ def main() -> None:
         joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
         position_error_scale_mm=0.5, position_tracking_weight=1.0,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
     )
 
     if args.skip_preflight:

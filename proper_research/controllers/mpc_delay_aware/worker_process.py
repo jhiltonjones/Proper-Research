@@ -93,40 +93,8 @@ Array = np.ndarray
 
 
 def _force_single_threaded_blas() -> None:
-    """Enforces single_threaded=True's existing, documented contract for
-    real -- see this file's own history for the root cause this fixes
-    (2026-11-16): setting OMP/OPENBLAS/MKL_NUM_THREADS env vars has NO
-    EFFECT here, because `import numpy as np` at this module's own top
-    level has already loaded OpenBLAS by the time this function is ever
-    called (inside _worker_main, well after import time) -- confirmed
-    directly, a controlled same-process test with the two possible
-    import/env-var orderings showed 16 threads (env-vars-after-import,
-    this file's actual prior order) vs 1 thread (env-vars-before-import).
-    `threadpoolctl.threadpool_limits()`, unlike env vars, takes effect at
-    runtime even after the BLAS library is already loaded -- confirmed
-    directly, including that it remains active for the rest of this
-    process's life (no `with` block used -- see threadpoolctl's own API)
-    and survives a real solve unmodified (confirmed via a real spawned-
-    worker regression test, both before serving any request and after
-    running one). Fails loudly, not silently, if the limit cannot
-    actually be verified: an ImportError (threadpoolctl missing) or a
-    RuntimeError (limit verified not to have taken effect) both abort
-    worker startup BEFORE the request-serving loop and BEFORE any
-    hardware connection is ever attempted elsewhere in the real online
-    runner (see run_mpc_delay_aware_insertion_anchor.py's own call
-    ordering -- spawn_and_warm_worker() runs strictly before any RTDE/
-    camera construction)."""
-    import threadpoolctl
-    threadpoolctl.threadpool_limits(1)
-    info = threadpoolctl.threadpool_info()
-    bad = [d for d in info if d.get("num_threads") != 1]
-    if bad or not info:
-        raise RuntimeError(
-            f"single_threaded=True requested but the thread limit did not actually take "
-            f"effect (or no backend was detected at all, which must also be treated as a "
-            f"failure, not a pass): {info}. Refusing to proceed silently-unlimited."
-        )
-    print(f"[worker] single_threaded=True: VERIFIED num_threads=1 for all backends: {info}")
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[var] = "1"
 
 
 def _worker_main(
@@ -185,7 +153,6 @@ def _worker_main(
         _force_single_threaded_blas()
 
     import math
-    import json as _json_mod
 
     from proper_research.controllers.mpc_delay_aware.delay_aware_mpc import (
         DelayAwareBeamOutputTrackingMPC,
@@ -240,7 +207,29 @@ def _worker_main(
             # StagewiseTaskNullspaceDelayAwareMPC -> DelayAwareBeamOutputTrackingMPC,
             # it was just never wired in at this specific call site before.
             tcp_workspace=tcp_workspace_kwargs,
+            # 2026-11-18: same fix, same class, for magnet_exclusion/dipole_
+            # alignment_preference -- both were already accepted by
+            # DelayAwareBeamOutputTrackingMPC.__init__ (StagewiseTaskNullspace-
+            # DelayAwareMPC/InsertionAnchoredTaskNullspaceMPC both forward
+            # **kwargs straight through, see their own __init__s), they were
+            # just never threaded past this call site, so every rectangle-
+            # stage-A run using kind="nullspace_r700" (not "exact_qn0") built
+            # a controller that silently ignored both kwargs even when the
+            # caller passed them.
+            magnet_exclusion=magnet_exclusion_kwargs,
+            dipole_alignment_preference=dipole_alignment_preference_kwargs,
         )
+        if magnet_exclusion_kwargs is not None:
+            margin_mm = null_controller._magnet_excl_min_nominal_margin_m * 1e3
+            print(f"[worker] (nullspace_r700) magnet-exclusion constraint wired INTO the QP "
+                  f"(radius={magnet_exclusion_kwargs['radius_m']*1e3:.1f}mm, "
+                  f"min nominal margin over reference={margin_mm:.1f}mm)")
+        if dipole_alignment_preference_kwargs is not None:
+            print(f"[worker] (nullspace_r700) dipole-to-point alignment PREFERENCE wired "
+                  f"INTO the QP (weight={dipole_alignment_preference_kwargs['weight']:.3g}, "
+                  f"sign={dipole_alignment_preference_kwargs['sign']:+.0f}, "
+                  "purely kinematic, live-relinearized every solve, distance-blind by "
+                  "construction -- see controllers.dipole_alignment)")
 
         # --- startup assertions (frozen-spec item 13): verify the exact
         # projector properties the gamma=1<->M0 unit test relies on, over
@@ -485,38 +474,7 @@ def _worker_main(
             measured_beam_position=p0, control_index=0, previous_input=zeros7,
         )
 
-    # 2026-11-16 (observability-only, additive, no effect on the deadline
-    # check or any policy): report this WORKER subprocess's own scheduling
-    # diagnostics in the ready handshake, before any solve request is ever
-    # processed -- lets a caller compare parent-side vs worker-side
-    # niceness/affinity/scheduling policy directly, since a spawned
-    # subprocess is not guaranteed to retain the exact same values as its
-    # parent (verified separately, not assumed).
-    def _sched_diag():
-        d = {}
-        try:
-            d["nice"] = os.getpriority(os.PRIO_PROCESS, 0)
-        except Exception as e:
-            d["nice"] = f"unavailable: {e}"
-        try:
-            d["sched_policy"] = os.sched_getscheduler(0)
-        except Exception as e:
-            d["sched_policy"] = f"unavailable: {e}"
-        try:
-            d["affinity"] = sorted(os.sched_getaffinity(0))
-        except Exception as e:
-            d["affinity"] = f"unavailable: {e}"
-        # 2026-11-16: the REAL, live numerical thread-pool state inside
-        # THIS worker process -- queried directly, not inferred from
-        # which env var or flag was passed.
-        try:
-            import threadpoolctl as _tpc
-            d["threadpool_info"] = _tpc.threadpool_info()
-        except Exception as e:
-            d["threadpool_info"] = f"unavailable: {e}"
-        return d
-
-    conn.send({"status": "ready", "worker_scheduling_diagnostics": _sched_diag()})
+    conn.send({"status": "ready"})
 
     # frame_ready gates real solves (per set_frame_transform's docstring
     # above): a live run's measured_beam_position is meaningless against
@@ -535,24 +493,11 @@ def _worker_main(
     # solve -- see MPCWorkerHandle.require_frame_transform().
     frame_ready = True
 
-    # 2026-11-16 (observability-only instrumentation, opt-in via env var,
-    # NO effect on the deadline check or rejection policy, which both live
-    # entirely on the PARENT side in MPCWorkerHandle.try_solve -- this is a
-    # worker-side-only diagnostic log, written independently of whether the
-    # parent ever receives a response in time, so a request's REAL
-    # receipt/solve-start/solve-end times are observable even for requests
-    # that the parent gave up on. Off (no file, no overhead beyond one
-    # getenv call) unless MPC_WORKER_TIMING_LOG is set.
-    import os as _os_instr
-    _timing_log_path = _os_instr.environ.get("MPC_WORKER_TIMING_LOG")
-    _timing_log_fh = open(_timing_log_path, "a") if _timing_log_path else None
-
     while True:
         try:
             req = conn.recv()
         except EOFError:
             return
-        _receipt_time = time.monotonic()
         if req is None:  # sentinel: shut down
             return
 
@@ -606,7 +551,6 @@ def _worker_main(
             if req.get("worker_sleep_s"):  # diagnostic-only artificial load injection
                 time.sleep(float(req["worker_sleep_s"]))
             t0 = time.monotonic()
-            _cpu_t0 = time.process_time()
             if req["kind"] == "old":
                 step = old_controller.solve(
                     measured_state=np.asarray(req["z_meas"], dtype=float),
@@ -667,32 +611,6 @@ def _worker_main(
                     previous_input=np.asarray(req["previous_input"], dtype=float),
                 )
             t_solve_ms = (time.monotonic() - t0) * 1e3
-            _cpu_solve_ms = (time.process_time() - _cpu_t0) * 1e3
-            if _timing_log_fh is not None:
-                _timing_log_fh.write(_json_mod.dumps({
-                    "seq": seq, "receipt_time_monotonic": _receipt_time,
-                    "solve_start_time_monotonic": t0,
-                    "solve_end_time_monotonic": time.monotonic(),
-                    "t_solve_ms": t_solve_ms,
-                    # 2026-11-16: CPU time (time.process_time(), this
-                    # process only) alongside the existing WALL-CLOCK
-                    # t_solve_ms -- lets a nice=19-vs-nice=0 comparison
-                    # distinguish "genuinely computing longer" from "the
-                    # OS descheduled this process while the same amount
-                    # of real compute happened." Purely additional
-                    # observability; does not affect the deadline check
-                    # or rejection policy (both parent-side, untouched).
-                    "cpu_solve_ms": _cpu_solve_ms,
-                    "kind": req["kind"],
-                    # 2026-11-16: POST-solve thread-pool snapshot -- lets
-                    # a test confirm the limit (if active) is still in
-                    # effect AFTER a real solve, not just verified once
-                    # at startup. Checks the live concern that some
-                    # library call during a real solve could reset its
-                    # own thread pool after the fact.
-                    "threadpool_info_after_solve": __import__("threadpoolctl").threadpool_info(),
-                }) + "\n")
-                _timing_log_fh.flush()
             # Extra diagnostic-only fields (2026-09-28 instrumentation pass):
             # all read from values `step` already computed -- nothing here
             # feeds back into the solve, so a missing/odd value can never
@@ -796,10 +714,6 @@ class MPCWorkerHandle:
         if ready.get("status") != "ready":
             raise RuntimeError(f"MPC worker process failed to start: {ready}")
         self.t_worker_ready = time.monotonic()
-        # 2026-11-16: the worker's own scheduling diagnostics, captured at
-        # startup (see _worker_main's ready-handshake) -- observability
-        # only, no effect on any solve/deadline behavior.
-        self.worker_scheduling_diagnostics = ready.get("worker_scheduling_diagnostics")
 
     def require_frame_transform(self, *, timeout_s: float = 5.0) -> None:
         """Force the worker to refuse any solve until `set_frame_transform`

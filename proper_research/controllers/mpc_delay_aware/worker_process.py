@@ -119,6 +119,7 @@ def _worker_main(
     tcp_workspace_kwargs: Optional[dict] = None,
     magnetic_force_preference_kwargs: Optional[dict] = None,
     dipole_alignment_preference_kwargs: Optional[dict] = None,
+    jacobian_adaptation_kwargs: Optional[dict] = None,
     right_shift_m: float = 0.0,
     jacobian_source_kwargs: Optional[dict] = None,
 ) -> None:
@@ -218,7 +219,11 @@ def _worker_main(
             # caller passed them.
             magnet_exclusion=magnet_exclusion_kwargs,
             dipole_alignment_preference=dipole_alignment_preference_kwargs,
+            jacobian_adaptation=jacobian_adaptation_kwargs,
         )
+        if jacobian_adaptation_kwargs is not None:
+            print(f"[worker] (nullspace_r700) jacobian adaptation mode="
+                  f"{jacobian_adaptation_kwargs.get('mode')!r}")
         if magnet_exclusion_kwargs is not None:
             margin_mm = null_controller._magnet_excl_min_nominal_margin_m * 1e3
             print(f"[worker] (nullspace_r700) magnet-exclusion constraint wired INTO the QP "
@@ -289,6 +294,7 @@ def _worker_main(
             tcp_workspace=tcp_workspace_kwargs,
             magnetic_force_preference=magnetic_force_preference_kwargs,
             dipole_alignment_preference=dipole_alignment_preference_kwargs,
+            jacobian_adaptation=jacobian_adaptation_kwargs,
         )
         print("[worker] exact Q_N=0 controller built (P_N=P_R=0 at every stage, "
               f"input_tracking_weight={exact_qn0_mpc_config.input_tracking_weight})")
@@ -506,6 +512,15 @@ def _worker_main(
             frame_ready = False
             conn.send({"cmd_ack": "require_frame_transform", "status": "ok"})
             continue
+        if cmd == "reset_jacobian_adaptation":
+            # 2026-11-18: explicit reset required between unrelated runs
+            # sharing one long-lived worker process -- see delay_aware_
+            # mpc.py's `reset_jacobian_adaptation` docstring.
+            for _c in (null_controller, exact_qn0_controller):
+                if _c is not None and hasattr(_c, "reset_jacobian_adaptation"):
+                    _c.reset_jacobian_adaptation()
+            conn.send({"cmd_ack": "reset_jacobian_adaptation", "status": "ok"})
+            continue
         if cmd == "set_frame_transform":
             R_fit = np.asarray(req["R_fit"], dtype=float).reshape(3, 3)
             t_fit = np.asarray(req["t_fit"], dtype=float).reshape(3)
@@ -572,6 +587,8 @@ def _worker_main(
                     measured_beam_position=np.asarray(req["measured_beam_position"], dtype=float),
                     control_index=int(req["control_index"]),
                     previous_input=np.asarray(req["previous_input"], dtype=float),
+                    measurement_frame_index=req.get("measurement_frame_index"),
+                    measurement_age_s=req.get("measurement_age_s"),
                 )
             elif req["kind"] == "exact_qn0":
                 if exact_qn0_controller is None:
@@ -599,6 +616,8 @@ def _worker_main(
                     measured_beam_position=np.asarray(req["measured_beam_position"], dtype=float),
                     control_index=int(req["control_index"]),
                     previous_input=np.asarray(req["previous_input"], dtype=float),
+                    measurement_frame_index=req.get("measurement_frame_index"),
+                    measurement_age_s=req.get("measurement_age_s"),
                 )
             else:
                 step = new_controller.solve_delay_aware(
@@ -636,6 +655,8 @@ def _worker_main(
                     None if getattr(step, "dual_y", None) is None
                     else np.asarray(step.dual_y, dtype=float)
                 ),
+                "jacobian_adaptation_diagnostics": getattr(step, "jacobian_adaptation_diagnostics", None),
+                "jacobian_scale_applied": float(getattr(step, "jacobian_scale_applied", 0.0)),
             })
         except Exception as exc:  # noqa: BLE001 -- must never crash silently, always reply
             conn.send({
@@ -645,6 +666,7 @@ def _worker_main(
                 "qp_success": False, "qp_iterations": 0, "qp_solve_time_s": float("nan"),
                 "qp_primal_residual": float("nan"), "qp_dual_residual": float("nan"),
                 "jacobian_used": None, "dual_y": None,
+                "jacobian_adaptation_diagnostics": None, "jacobian_scale_applied": 0.0,
             })
 
 
@@ -677,6 +699,7 @@ class MPCWorkerHandle:
         tcp_workspace_kwargs: Optional[dict] = None,
         magnetic_force_preference_kwargs: Optional[dict] = None,
         dipole_alignment_preference_kwargs: Optional[dict] = None,
+        jacobian_adaptation_kwargs: Optional[dict] = None,
         right_shift_m: float = 0.0,
         jacobian_source_kwargs: Optional[dict] = None,
     ) -> None:
@@ -701,6 +724,7 @@ class MPCWorkerHandle:
                 tcp_workspace_kwargs=tcp_workspace_kwargs,
                 magnetic_force_preference_kwargs=magnetic_force_preference_kwargs,
                 dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+                jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
                 right_shift_m=right_shift_m,
                 jacobian_source_kwargs=jacobian_source_kwargs,
             ),
@@ -752,11 +776,27 @@ class MPCWorkerHandle:
         if resp.get("status") != "ok":
             raise RuntimeError(f"set_frame_transform failed: {resp}")
 
+    def reset_jacobian_adaptation(self, *, timeout_s: float = 5.0) -> None:
+        """Explicit, blocking reset of the jacobian-adaptation estimator's
+        accumulated state in whichever real controller(s) the worker built
+        -- see delay_aware_mpc.py's `reset_jacobian_adaptation`. Call this
+        between unrelated runs sharing one long-lived worker process (the
+        offline test harness does; a fresh live run's own fresh
+        MPCWorkerHandle never needs it). Must not be called concurrently
+        with `try_solve`, same constraint as `set_frame_transform`."""
+        self._parent_conn.send({"cmd": "reset_jacobian_adaptation"})
+        if not self._parent_conn.poll(timeout_s):
+            raise RuntimeError("worker did not ack reset_jacobian_adaptation in time")
+        resp = self._parent_conn.recv()
+        if resp.get("status") != "ok":
+            raise RuntimeError(f"reset_jacobian_adaptation failed: {resp}")
+
     def try_solve(
         self, *, kind: str, z_meas: Array, measured_beam_position: Array,
         control_index: int, previous_input: Array, deadline_s: float,
         q_cmd: Optional[Array] = None, q_cmd_prev: Optional[Array] = None,
         insertion_cmd: Optional[float] = None, worker_sleep_s: float = 0.0,
+        measurement_frame_index: Optional[int] = None, measurement_age_s: Optional[float] = None,
     ) -> Optional[dict]:
         """Enforces AT MOST ONE outstanding request at a time (a QP solved
         against a stale snapshot is worse than not solving at all -- see
@@ -802,6 +842,8 @@ class MPCWorkerHandle:
             "control_index": int(control_index),
             "previous_input": np.asarray(previous_input, dtype=float),
             "worker_sleep_s": float(worker_sleep_s),
+            "measurement_frame_index": measurement_frame_index,
+            "measurement_age_s": measurement_age_s,
         })
 
         if not self._parent_conn.poll(deadline_s):

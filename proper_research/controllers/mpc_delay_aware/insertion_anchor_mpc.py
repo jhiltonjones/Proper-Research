@@ -53,11 +53,13 @@ class InsertionAnchoredTaskNullspaceMPC(StagewiseTaskNullspaceDelayAwareMPC):
 
     def _dynamic_qp_terms_exec(
         self, *, x_exec: Array, previous_input: Array, control_index: int,
-        estimated_residual: Array,
+        estimated_residual: Array, jacobian_adaptation_g: float = 0.0,
+        jacobian_adaptation_q_meas6: Array | None = None,
     ) -> tuple[Array, Array, dict[str, Array]]:
         hessian, linear, terms = super()._dynamic_qp_terms_exec(
             x_exec=x_exec, previous_input=previous_input, control_index=control_index,
-            estimated_residual=estimated_residual,
+            estimated_residual=estimated_residual, jacobian_adaptation_g=jacobian_adaptation_g,
+            jacobian_adaptation_q_meas6=jacobian_adaptation_q_meas6,
         )
         w_L = self.insertion_state_anchor_weight
         if w_L == 0.0:

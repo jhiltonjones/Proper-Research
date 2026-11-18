@@ -78,56 +78,27 @@ class StagewiseTaskNullspaceDelayAwareMPC(dam.DelayAwareBeamOutputTrackingMPC):
         self.gamma = float(gamma)
         self._C = build_beam_plane_projection(axial_axis_R=axial_axis_R, normal_axis_R=normal_axis_R)
         self._state_error_scale = np.asarray(self.config.state_error_scale, dtype=float).reshape(7)
-        # 2026-11-16 (performance, no numerical change -- verified bit-
-        # identical against the uncached path): the per-stage SVD/projector
-        # in build_stagewise_projectors depends ONLY on
-        # (self.reference_position_jacobians[ref_index], self._C,
-        # self._state_error_scale) -- all fixed for this controller
-        # instance's lifetime, never live state. Consecutive ticks' 15-
-        # sample windows overlap in 14/15 positions (profiled: this
-        # function was the single largest self-time contributor in
-        # matrix-build, 15 np.linalg.svd calls/tick). Caching per
-        # ref_index eliminates ~93% of that redundant SVD work after the
-        # first ~N ticks, with zero effect on the computed values.
-        self._stagewise_projector_cache: dict[int, tuple] = {}
-
-    def _cached_stagewise_projectors(self, indices):
-        """Returns the SAME (P_R, P_N, ranks) arrays build_stagewise_
-        projectors(J_schedule=reference_position_jacobians[indices], ...)
-        would, computing each ref_index's own SVD/projector at most ONCE
-        per controller instance (see __init__'s cache-rationale comment).
-        Assembled in the SAME order as `indices` -- bit-identical to the
-        uncached call for any given index, verified directly."""
-        missing = sorted(set(int(i) for i in indices) - self._stagewise_projector_cache.keys())
-        if missing:
-            J_missing = np.asarray(self.reference_position_jacobians, dtype=float)[missing]
-            P_R_m, P_N_m, ranks_m = build_stagewise_projectors(
-                J_schedule=J_missing, C=self._C, state_error_scale=self._state_error_scale,
-            )
-            for local_j, ref_idx in enumerate(missing):
-                self._stagewise_projector_cache[ref_idx] = (
-                    P_R_m[local_j], P_N_m[local_j], int(ranks_m[local_j]),
-                )
-        N = len(indices)
-        P_R = np.empty((N, 7, 7), dtype=float)
-        P_N = np.empty((N, 7, 7), dtype=float)
-        ranks = np.empty(N, dtype=int)
-        for local_j, ref_idx in enumerate(indices):
-            pr, pn, rank = self._stagewise_projector_cache[int(ref_idx)]
-            P_R[local_j] = pr
-            P_N[local_j] = pn
-            ranks[local_j] = rank
-        return P_R, P_N, ranks
 
     def _dynamic_qp_terms_exec(
         self, *, x_exec: Array, previous_input: Array, control_index: int,
-        estimated_residual: Array,
+        estimated_residual: Array, jacobian_adaptation_g: float = 0.0,
+        jacobian_adaptation_q_meas6: Array | None = None,
     ) -> tuple[Array, Array, dict[str, Array]]:
+        # jacobian_adaptation_g/_q_meas6: see delay_aware_mpc.py's `_beam_prediction_terms_
+        # exec` docstring -- the online joint-Jacobian adaptation scale,
+        # applied ONLY to the beam-tip tracking linearization (G/Jbar)
+        # below, deliberately NOT to the task-nullspace projector (P_R/P_N,
+        # built from J_schedule just below, offline/nominal, unchanged) --
+        # "retain the horizon-varying nominal schedule" for the posture
+        # term; only the primary task-tracking cost adapts.
         state_reference = self.reference.state_window(control_index, self.N)
         input_reference = self.reference.input_window(control_index, self.N)
 
         indices = self._reference_indices(control_index, future=True)
-        P_R, P_N, ranks = self._cached_stagewise_projectors(indices)
+        J_schedule = np.asarray(self.reference_position_jacobians, dtype=float)[indices]
+        P_R, P_N, ranks = build_stagewise_projectors(
+            J_schedule=J_schedule, C=self._C, state_error_scale=self._state_error_scale,
+        )
         S_z = self._state_error_scale
         M = np.diag(1.0 / S_z)  # S_z^{-1}
         n = self.n
@@ -141,6 +112,22 @@ class StagewiseTaskNullspaceDelayAwareMPC(dam.DelayAwareBeamOutputTrackingMPC):
         free_state = self.Ep @ x_exec
         state_reference_vector = state_reference.reshape(self.nu)
         input_reference_vector = input_reference.reshape(self.nu)
+        # 2026-11-18 fix: `diagnostic_zero_input_reference_in_R` (see
+        # ConfigurationMPCConfig's own docstring comment) was checked only
+        # in the UNDELAYED base class's `_linear_cost` -- this method
+        # builds the R-term's linear contribution independently (not via
+        # `_linear_cost_exec` either), so every real run through this
+        # class or its subclasses (InsertionAnchoredTaskNullspaceMPC,
+        # ExactQNZeroTaskNullspaceDelayAwareMPC -- i.e. every rectangle
+        # and vessel live run that has ever used this flag) silently
+        # ignored it: confirmed by grep, zero matches for
+        # "zero_input_reference" anywhere else in this package. The CLI
+        # flag reached the worker and set the config field correctly; the
+        # controller class actually used never read it. Fixed here, once,
+        # at the base of the nullspace family, rather than duplicating the
+        # check in each subclass.
+        if getattr(self.config, "diagnostic_zero_input_reference_in_R", False):
+            input_reference_vector = np.zeros_like(input_reference_vector)
         previous_vector = np.zeros(self.nu, dtype=float)
         previous_vector[: self.m] = previous_input
 
@@ -156,7 +143,8 @@ class StagewiseTaskNullspaceDelayAwareMPC(dam.DelayAwareBeamOutputTrackingMPC):
         G, constant_error, _, desired_position, nominal_position, Jbar = (
             self._beam_prediction_terms_exec(
                 x_exec=x_exec, control_index=control_index,
-                estimated_residual=estimated_residual,
+                estimated_residual=estimated_residual, jacobian_adaptation_g=jacobian_adaptation_g,
+                jacobian_adaptation_q_meas6=jacobian_adaptation_q_meas6,
             )
         )
         hessian = base_hessian + 2.0 * (G.T @ self.Qpbar @ G)

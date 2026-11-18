@@ -37,7 +37,8 @@ __all__ = ["ExactQNZeroTaskNullspaceDelayAwareMPC"]
 class ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC):
     def _dynamic_qp_terms_exec(
         self, *, x_exec: Array, previous_input: Array, control_index: int,
-        estimated_residual: Array,
+        estimated_residual: Array, jacobian_adaptation_g: float = 0.0,
+        jacobian_adaptation_q_meas6: Array | None = None,
     ) -> tuple[Array, Array, dict[str, Array]]:
         input_reference = self.reference.input_window(control_index, self.N)
         n = self.n
@@ -45,6 +46,14 @@ class ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC)
         previous_vector = np.zeros(self.nu, dtype=float)
         previous_vector[: self.m] = previous_input
         input_reference_vector = input_reference.reshape(self.nu)
+        # 2026-11-18: same dead-flag fix as stagewise_task_nullspace.py's
+        # own override -- this class rebuilds input_reference_vector
+        # independently (does not call super()), so it had the identical
+        # gap: diagnostic_zero_input_reference_in_R reached the config but
+        # was never read here, the class the live vessel controller
+        # actually uses.
+        if getattr(self.config, "diagnostic_zero_input_reference_in_R", False):
+            input_reference_vector = np.zeros_like(input_reference_vector)
 
         # Q_N/Q_R term exactly zero (H_Q=f_Q=0), not merely gamma-weighted --
         # see module docstring.
@@ -58,7 +67,8 @@ class ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC)
         G, constant_error, _, desired_position, nominal_position, Jbar = (
             self._beam_prediction_terms_exec(
                 x_exec=x_exec, control_index=control_index,
-                estimated_residual=estimated_residual,
+                estimated_residual=estimated_residual, jacobian_adaptation_g=jacobian_adaptation_g,
+                jacobian_adaptation_q_meas6=jacobian_adaptation_q_meas6,
             )
         )
         hessian = base_hessian + 2.0 * (G.T @ self.Qpbar @ G)

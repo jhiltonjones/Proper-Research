@@ -166,6 +166,8 @@ _TCP_WORKSPACE_IN_QP: bool = False
 # 2026-11-18: same provenance pattern, for the two new optional QP terms.
 _MAGNET_EXCLUSION_IN_QP: bool = False
 _DIPOLE_ALIGNMENT_WEIGHT: float = 0.0
+_INPUT_PENALTY_MODE: str = "planned"
+_JACOBIAN_ADAPTATION_MODE: str = "off"
 
 
 def build_magnet_exclusion_schedule(reference) -> tuple[np.ndarray, np.ndarray]:
@@ -194,6 +196,8 @@ def spawn_and_warm_worker(
     tcp_workspace_kwargs: dict | None = None,
     magnet_exclusion_kwargs: dict | None = None,
     dipole_alignment_preference_kwargs: dict | None = None,
+    zero_centered_input_penalty: bool = False,
+    jacobian_adaptation_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
     identical lifecycle ordering to nullq_r700's runner."""
@@ -203,6 +207,11 @@ def spawn_and_warm_worker(
         state_min=tuple([-2.0 * math.pi] * 6 + [-0.05]), state_max=tuple([2.0 * math.pi] * 6 + [0.20]),
         velocity_limit=tuple([joint_velocity_limit_rad_s] * 6 + [insertion_rate_limit_m_s]),
         acceleration_limit=tuple([joint_acceleration_limit_rad_s2] * 6 + [10.0 * insertion_rate_limit_m_s]),
+        # 2026-11-18: real fix, see stagewise_task_nullspace.py/delay_aware_
+        # mpc.py's own 2026-11-18 comments -- this field previously reached
+        # ConfigurationMPCConfig correctly but was never read by the QP-
+        # construction code any real rectangle/vessel run actually used.
+        diagnostic_zero_input_reference_in_R=bool(zero_centered_input_penalty),
     )
     increment_scale = tuple(
         dt * a for a in ([joint_acceleration_limit_rad_s2] * 6 + [10.0 * insertion_rate_limit_m_s])
@@ -230,6 +239,7 @@ def spawn_and_warm_worker(
         tcp_workspace_kwargs=tcp_workspace_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
@@ -297,6 +307,8 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
             "magnet_exclusion_in_qp": _MAGNET_EXCLUSION_IN_QP,
             "dipole_alignment_weight": _DIPOLE_ALIGNMENT_WEIGHT,
+            "input_penalty_mode": _INPUT_PENALTY_MODE,
+            "jacobian_adaptation_mode": _JACOBIAN_ADAPTATION_MODE,
             "workspace_xyz_min_m": list(common.WORKSPACE_XYZ_MIN_M),
             "workspace_xyz_max_m": list(common.WORKSPACE_XYZ_MAX_M),
             "unverified_plan_bypass": _ALLOW_UNVERIFIED_PLAN,
@@ -488,6 +500,39 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true",
                     help="real camera+robot connection, real solves, but no servoJ motion "
                          "-- integration smoke test before committing real robot time")
+    p.add_argument("--input-penalty", choices=("planned", "zero_centered"), default="planned",
+                    help="2026-11-18 (EXPERIMENTAL, default='planned'=baseline, UNCHANGED "
+                         "behaviour): 'planned' is the existing (u-u_ref)^T R (u-u_ref) cost "
+                         "(u_ref = the offline plan's own recorded input) -- what every real "
+                         "run to date has used. 'zero_centered' sets u_ref=0 in the R-term "
+                         "ONLY (cost becomes u^T R u), reusing ConfigurationMPCConfig's "
+                         "existing diagnostic_zero_input_reference_in_R field -- this flag was "
+                         "previously a dead no-op for this controller class (see delay_aware_"
+                         "mpc.py/stagewise_task_nullspace.py's 2026-11-18 fix comments: the "
+                         "field reached the worker correctly but the QP-construction code this "
+                         "runner actually uses never read it). Q's state-tracking, Rd's input-"
+                         "increment penalty, the beam-tip tracking cost, the reference schedule "
+                         "and all constraints are UNCHANGED either way. Recorded into "
+                         "controller_metadata.json as input_penalty_mode.")
+    p.add_argument("--jacobian-adaptation-mode", choices=("off", "shadow", "active"), default="off",
+                    help="2026-11-18 (EXPERIMENTAL, default='off'=baseline, UNCHANGED "
+                         "behaviour): online joint-Jacobian scalar correction (see "
+                         "controllers.mpc_delay_aware.jacobian_adaptation's module docstring "
+                         "for the full derivation and why it is a single bounded scalar, not "
+                         "an unconstrained 21-parameter Jacobian). 'off': feature fully inert, "
+                         "no estimator object constructed, bit-identical to baseline. "
+                         "'shadow': the estimator updates and logs every tick but its result "
+                         "can never reach the QP (g_used forced to 0.0) -- commands are "
+                         "therefore identical to 'off'. 'active': the estimator's current "
+                         "bounded g_hat IS applied to the joint columns of every horizon-stage "
+                         "schedule Jacobian this tick (insertion column NEVER adapted -- this "
+                         "rig has no independent insertion sensor, see this script's module "
+                         "docstring / the 2026-11-18 audit trail). Recorded into "
+                         "controller_metadata.json as jacobian_adaptation_mode.")
+    p.add_argument("--jacobian-adaptation-g-min", type=float, default=-0.3,
+                    help="lower bound on the adaptation scalar g (dimensionless). Default -0.3.")
+    p.add_argument("--jacobian-adaptation-g-max", type=float, default=0.5,
+                    help="upper bound on the adaptation scalar g (dimensionless). Default 0.5.")
     args = p.parse_args()
 
     _DEADLINE_MS = args.deadline_ms
@@ -590,6 +635,19 @@ def main() -> None:
               f"by construction), NOT torque minimization -- live-relinearized every solve, "
               f"wired INTO the QP cost, no schedule file")
 
+    global _INPUT_PENALTY_MODE, _JACOBIAN_ADAPTATION_MODE
+    _INPUT_PENALTY_MODE = args.input_penalty
+    _JACOBIAN_ADAPTATION_MODE = args.jacobian_adaptation_mode
+    jacobian_adaptation_kwargs = None
+    if args.jacobian_adaptation_mode != "off":
+        jacobian_adaptation_kwargs = dict(
+            mode=args.jacobian_adaptation_mode,
+            g_min=args.jacobian_adaptation_g_min, g_max=args.jacobian_adaptation_g_max,
+        )
+    print(f"[insertion_anchor] input_penalty={_INPUT_PENALTY_MODE!r} "
+          f"jacobian_adaptation_mode={_JACOBIAN_ADAPTATION_MODE!r} (both default/baseline "
+          f"unless explicitly requested above)")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
@@ -600,6 +658,8 @@ def main() -> None:
         tcp_workspace_kwargs=tcp_workspace_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        zero_centered_input_penalty=(args.input_penalty == "zero_centered"),
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
     )
 
     if args.skip_preflight:

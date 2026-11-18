@@ -344,6 +344,13 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             insertion_cmd=self._ins_cmd, measured_beam_position=measured_beam_position,
             control_index=reference_index, previous_input=self._prev_input,
             deadline_s=self._deadline_s,
+            # 2026-11-18: feeds ONLY the jacobian-adaptation estimator's
+            # staleness/duplicate-sample gates (see jacobian_adaptation.py);
+            # a no-op for every other controller kind/config.
+            measurement_frame_index=getattr(estimate, "frame_index", None),
+            measurement_age_s=(
+                estimate.robot_joints_age() if hasattr(estimate, "robot_joints_age") else None
+            ),
         )
         round_trip_ms = (time.monotonic() - _ipc_t0) * 1e3
 
@@ -401,6 +408,10 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                     None if resp is None or resp.get("dual_y") is None
                     else np.asarray(resp["dual_y"], dtype=float).tolist()
                 ),
+                # 2026-11-19 fix (post-review): same gap as the `info` dict
+                # above -- present in `resp`, never persisted here either.
+                "jacobian_adaptation_diagnostics": None if resp is None else resp.get("jacobian_adaptation_diagnostics"),
+                "jacobian_scale_applied": 0.0 if resp is None else resp.get("jacobian_scale_applied", 0.0),
             }
             self._log_fh.write(json.dumps(row) + "\n")
             self._log_fh.flush()
@@ -486,6 +497,15 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             # path_follow.jsonl (see close_loop_path_follow.py's row dict).
             # Does not change `command`/`success`/control flow.
             "qp_status": None if resp is None else resp.get("qp_status"),
+            # 2026-11-19 fix (post-review): these reached the worker's
+            # response correctly but were never forwarded into `info`, so
+            # close_loop_path_follow.py's row writer -- the ONLY thing
+            # that persists per-tick data to path_follow.jsonl -- never
+            # saw them. Present in the IPC response is not the same as
+            # saved to disk; this closes that gap. Logging-only, no
+            # effect on command/success/control flow.
+            "jacobian_adaptation_diagnostics": None if resp is None else resp.get("jacobian_adaptation_diagnostics"),
+            "jacobian_scale_applied": 0.0 if resp is None else resp.get("jacobian_scale_applied", 0.0),
             "objective": None if resp is None else resp.get("qp_objective"),
             "primal_residual": None if resp is None else resp.get("qp_primal_residual"),
             "dual_residual": None if resp is None else resp.get("qp_dual_residual"),

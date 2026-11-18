@@ -1,0 +1,116 @@
+[
+  {
+    "repetition": 1,
+    "n_ticks": 212,
+    "n_misses": 3,
+    "misses": [
+      {
+        "tick": 73,
+        "solve_time_s": NaN,
+        "consecutive_deadline_misses": 1,
+        "q_cmd_before_miss": [
+          -0.8523288947016592,
+          -1.9282146485486897,
+          -1.7470422569196977,
+          -1.0876858670112795,
+          1.5641094298488452,
+          -2.058341360631294
+        ],
+        "q_cmd_after_miss": [
+          -0.8523288947016592,
+          -1.9282146485486897,
+          -1.7470422569196977,
+          -1.0876858670112795,
+          1.5641094298488452,
+          -2.058341360631294
+        ]
+      },
+      {
+        "tick": 74,
+        "solve_time_s": NaN,
+        "consecutive_deadline_misses": 2,
+        "q_cmd_before_miss": [
+          -0.8523288947016592,
+          -1.9282146485486897,
+          -1.7470422569196977,
+          -1.0876858670112795,
+          1.5641094298488452,
+          -2.058341360631294
+        ],
+        "q_cmd_after_miss": [
+          -0.8523288947016592,
+          -1.9282146485486897,
+          -1.7470422569196977,
+          -1.0876858670112795,
+          1.5641094298488452,
+          -2.058341360631294
+        ]
+      },
+      {
+        "tick": 174,
+        "solve_time_s": NaN,
+        "consecutive_deadline_misses": 1,
+        "q_cmd_before_miss": [
+          -0.7800401082368057,
+          -1.8539329584572268,
+          -1.8337163702193944,
+          -1.1915665940120717,
+          1.6423433813151842,
+          -2.0406326814429705
+        ],
+        "q_cmd_after_miss": [
+          -0.7800401082368057,
+          -1.8539329584572268,
+          -1.8337163702193944,
+          -1.1915665940120717,
+          1.6423433813151842,
+          -2.0406326814429705
+        ]
+      }
+    ],
+    "max_consecutive_deadline_misses": 2,
+    "would_have_aborted(>=5 consecutive)": false,
+    "abort_reasons": [],
+    "hold_policy_correct_for_every_miss": true
+  },
+  {
+    "repetition": 2,
+    "n_ticks": 212,
+    "n_misses": 0,
+    "misses": [],
+    "max_consecutive_deadline_misses": 0,
+    "would_have_aborted(>=5 consecutive)": false,
+    "abort_reasons": [],
+    "hold_policy_correct_for_every_miss": true
+  },
+  {
+    "repetition": 3,
+    "n_ticks": 212,
+    "n_misses": 0,
+    "misses": [],
+    "max_consecutive_deadline_misses": 0,
+    "would_have_aborted(>=5 consecutive)": false,
+    "abort_reasons": [],
+    "hold_policy_correct_for_every_miss": true
+  },
+  {
+    "repetition": 4,
+    "n_ticks": 212,
+    "n_misses": 0,
+    "misses": [],
+    "max_consecutive_deadline_misses": 0,
+    "would_have_aborted(>=5 consecutive)": false,
+    "abort_reasons": [],
+    "hold_policy_correct_for_every_miss": true
+  },
+  {
+    "repetition": 5,
+    "n_ticks": 212,
+    "n_misses": 0,
+    "misses": [],
+    "max_consecutive_deadline_misses": 0,
+    "would_have_aborted(>=5 consecutive)": false,
+    "abort_reasons": [],
+    "hold_policy_correct_for_every_miss": true
+  }
+]

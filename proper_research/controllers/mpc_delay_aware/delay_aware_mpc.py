@@ -83,6 +83,13 @@ class DelayAwareBeamOutputMPCStep(beam_module.BeamOutputMPCStep):
     # (2026-09-28) raw OSQP dual vector for this solve, or None off the osqp
     # backend / on solver failure -- see `solve_delay_aware`'s osqp branch.
     dual_y: Array = None
+    # (2026-11-18) full diagnostics dict from ScalarJacobianAdaptation.step()
+    # for this tick, or None when jacobian_adaptation was never configured
+    # (mode="off"). See jacobian_adaptation.py's `_diag` for the schema.
+    jacobian_adaptation_diagnostics: dict | None = None
+    # (2026-11-18) the frozen scalar actually applied to the Jacobian this
+    # solve -- 0.0 unless mode="active" and a sample was accepted.
+    jacobian_scale_applied: float = 0.0
 
 
 class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
@@ -111,6 +118,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         tcp_workspace: dict | None = None,
         magnetic_force_preference: dict | None = None,
         dipole_alignment_preference: dict | None = None,
+        jacobian_adaptation: dict | None = None,
     ) -> None:
         if beam_config.use_dare_terminal_cost:
             raise ValueError(
@@ -214,6 +222,24 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._dipole_align_weight: float = 0.0
         if dipole_alignment_preference is not None:
             self._configure_dipole_alignment_preference(**dipole_alignment_preference)
+
+        # 2026-11-18: online joint-Jacobian adaptation -- see jacobian_
+        # adaptation.py's module docstring for the full derivation. None
+        # (default) or mode="off" -> self._jac_adapt stays None and every
+        # solve uses jacobian_scale=0.0 (bit-identical to baseline, no
+        # estimator object even constructed). "shadow"/"active" build a
+        # real ScalarJacobianAdaptation instance that updates every tick;
+        # only "active" lets its bounded g_hat actually reach the QP.
+        self._jac_adapt = None
+        if jacobian_adaptation is not None:
+            from .jacobian_adaptation import JacobianAdaptationConfig, ScalarJacobianAdaptation
+
+            jac_cfg = JacobianAdaptationConfig(**jacobian_adaptation)
+            if jac_cfg.mode != "off":
+                self._jac_adapt = ScalarJacobianAdaptation(
+                    jac_cfg, disturbance_filter_alpha=float(beam_config.disturbance_filter_alpha),
+                )
+        self.last_jacobian_adaptation_diagnostics: dict | None = None
 
         self.Ep, self.Sp = build_delay_prediction_matrices(
             N=self.N, dt=self.dt, delay_samples=self.delay_samples, n_joints=n_joints,
@@ -1106,6 +1132,11 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         free_state = self.Ep @ x_exec  # PHYSICAL stack, not command stack
         state_reference_vector = state_reference.reshape(self.nu)
         input_reference_vector = input_reference.reshape(self.nu)
+        # 2026-11-18: same dead-flag fix as stagewise_task_nullspace.py's
+        # `_dynamic_qp_terms_exec` -- this method, not the base class's
+        # `_linear_cost`, is what every delay-aware solve actually calls.
+        if getattr(self.config, "diagnostic_zero_input_reference_in_R", False):
+            input_reference_vector = np.zeros_like(input_reference_vector)
         previous_vector = np.zeros(self.nu, dtype=float)
         previous_vector[: self.m] = previous_input
         return 2.0 * (
@@ -1116,12 +1147,54 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
 
     def _beam_prediction_terms_exec(
         self, *, x_exec: Array, control_index: int, estimated_residual: Array,
+        jacobian_adaptation_g: float = 0.0, jacobian_adaptation_q_meas6: Array | None = None,
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """`jacobian_adaptation_g`/`jacobian_adaptation_q_meas6`: the
+        (2026-11-18, re-anchored 2026-11-19 after review) online joint-
+        Jacobian adaptation's frozen, bounded scalar correction and this
+        tick's MEASURED joints, for THIS solve. g=0.0 (default) reproduces
+        baseline exactly.
+
+        ANCHORING (this is the part that changed in the 2026-11-19
+        correction): the correction is an ADDITIVE term anchored at the
+        MEASURED configuration `q_meas6`, not the schedule's own nominal
+        q_ref -- `correction_j = g * J_nom[idx_j][:,:6] @ (q_phys_j -
+        q_meas6)`, where `q_phys_j` is the predicted PHYSICAL joint stack
+        for horizon stage j. This is EXACTLY ZERO whenever the predicted
+        physical configuration at a stage equals the measured
+        configuration this tick, REGARDLESS of how far q_meas6 itself is
+        from q_ref -- verified directly in
+        test_anchoring_zero_at_measured_state.py. The OLD (2026-11-18)
+        version instead scaled J around q_ref, so its adaptive
+        contribution was zero only when the PREDICTED state matched the
+        SCHEDULE's nominal, not the actual measurement -- a real anchoring
+        bug, not a stylistic difference (it let the correction extrapolate
+        in directions never validated by data, "silently adapting the
+        unobserved direction").
+
+        The EFFECTIVE JACOBIAN (slope d(prediction)/d(q_phys)) is
+        UNCHANGED by this re-anchoring: both the old and new formulations
+        give (1+g)*J_nom[idx_j][:,:6] on the joint columns and
+        J_nom[idx_j][:,6] (untouched) on the insertion column -- re-
+        anchoring only changes the AFFINE OFFSET (constant_error), not the
+        slope (G/Jbar). Both quantities are returned here for independent
+        inspection, per the 2026-11-19 review's explicit request to "show
+        the effective Jacobian AND affine offset passed into QP
+        construction."
+
+        Column 6 (insertion) is NEVER touched by the g-correction -- no
+        independent insertion measurement exists in this rig (see
+        jacobian_adaptation.py's module docstring). The caller
+        (`solve_delay_aware`) is solely responsible for computing and
+        freezing g/q_meas6 before the QP is built; this method treats
+        them as pure, already-decided inputs, so "frozen during each QP
+        solve" reduces to "this method is a pure function of its
+        arguments," independently checkable."""
         indices = self._reference_indices(control_index, future=True)
         state_reference = np.asarray(self.reference.state, dtype=float)[indices]
         desired_position = np.asarray(self.reference.desired_position_m, dtype=float)[indices]
         nominal_position = self.nominal_reference_positions_m[indices]
-        jacobians = self.reference_position_jacobians[indices]
+        jacobians = np.asarray(self.reference_position_jacobians[indices], dtype=float)
         Jbar = sp.block_diag(list(jacobians), format="csc").toarray()
         state_reference_vector = state_reference.reshape(self.nu)
         free_state = self.Ep @ x_exec  # PHYSICAL stack
@@ -1132,11 +1205,22 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             + Jbar @ (free_state - state_reference_vector)
             + self.beta_d * np.tile(estimated_residual, self.N)
         )
+        if jacobian_adaptation_g:
+            g = float(jacobian_adaptation_g)
+            q_meas6 = np.asarray(jacobian_adaptation_q_meas6, dtype=float).reshape(6)
+            joint_only = jacobians.copy()
+            joint_only[:, :, 6] = 0.0  # insertion column excluded from the correction, by construction
+            Jg_bar = sp.block_diag(list(joint_only), format="csc").toarray()
+            anchor_vector = np.tile(np.concatenate([q_meas6, [0.0]]), self.N)
+            G = G + g * (Jg_bar @ self.Sp)
+            constant_error = constant_error + g * (Jg_bar @ (free_state - anchor_vector))
+            Jbar = Jbar + g * Jg_bar  # effective slope: (1+g)*joint cols, insertion col untouched (see docstring)
         return G, constant_error, state_reference, desired_position, nominal_position, Jbar
 
     def _dynamic_qp_terms_exec(
         self, *, x_exec: Array, previous_input: Array, control_index: int,
-        estimated_residual: Array,
+        estimated_residual: Array, jacobian_adaptation_g: float = 0.0,
+        jacobian_adaptation_q_meas6: Array | None = None,
     ) -> tuple[Array, Array, dict[str, Array]]:
         state_reference = self.reference.state_window(control_index, self.N)
         input_reference = self.reference.input_window(control_index, self.N)
@@ -1148,6 +1232,8 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             self._beam_prediction_terms_exec(
                 x_exec=x_exec, control_index=control_index,
                 estimated_residual=estimated_residual,
+                jacobian_adaptation_g=jacobian_adaptation_g,
+                jacobian_adaptation_q_meas6=jacobian_adaptation_q_meas6,
             )
         )
         hessian = self._base_hessian + 2.0 * (G.T @ self.Qpbar @ G)
@@ -1186,6 +1272,17 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
     # ------------------------------------------------------------------
     # public entry point -- deliberately NOT `measured_state` alone
     # ------------------------------------------------------------------
+    def reset_jacobian_adaptation(self) -> None:
+        """Explicit reset of the jacobian-adaptation estimator's
+        accumulated state (RLS energy, g_hat, dedup/staleness bookkeeping)
+        -- required between unrelated runs that share one long-lived
+        worker process, so a new run never silently inherits a prior
+        run's learned g_hat. No-op if jacobian_adaptation was never
+        configured."""
+        if self._jac_adapt is not None:
+            self._jac_adapt.reset()
+        self.last_jacobian_adaptation_diagnostics = None
+
     def solve_delay_aware(
         self,
         *,
@@ -1196,11 +1293,18 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         measured_beam_position: Any,
         control_index: int,
         previous_input: Any,
+        measurement_frame_index: int | None = None,
+        measurement_age_s: float | None = None,
     ) -> DelayAwareBeamOutputMPCStep:
         """`z_meas`: [q_meas(6), L(1)] -- feeds ONLY the disturbance estimate.
         `q_cmd`/`q_cmd_prev`: the execution-C accumulator's OWN current and
         previous commanded joints -- feeds ONLY the prediction, via x_exec.
-        `previous_input`: u_applied,k-1 -- feeds ONLY rate continuity."""
+        `previous_input`: u_applied,k-1 -- feeds ONLY rate continuity.
+        `measurement_frame_index`/`measurement_age_s`: OPTIONAL, used ONLY by
+        the jacobian-adaptation estimator's staleness/duplicate-sample
+        gates (see jacobian_adaptation.py) -- every other existing caller
+        that omits them is completely unaffected (those specific gates
+        simply stay inactive, logged as such)."""
         z_meas = _finite_vector(z_meas, 7, "z_meas")
         q_cmd = _finite_vector(q_cmd, 6, "q_cmd")
         q_cmd_prev = _finite_vector(q_cmd_prev, 6, "q_cmd_prev")
@@ -1208,13 +1312,33 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         previous = _finite_vector(previous_input, 7, "previous_input")
         x_exec = np.concatenate([q_cmd, q_cmd_prev, [float(insertion_m)]])
 
+        # 2026-11-19 correction: the estimator now differences against its
+        # OWN last-accepted raw sample internally (see jacobian_
+        # adaptation.py's corrected derivation) -- it no longer needs (or
+        # accepts) a "previous EMA bias" argument from here; passing the
+        # filtered bias in was the OLD, incorrect design.
         instantaneous, estimated = self._estimate_output_residual(
             measured_state=z_meas, measured_beam_position=beam_position,
             control_index=control_index,
         )
+        jac_g = 0.0
+        q_meas6 = z_meas[:6].copy()  # THIS tick's measured joints -- the correction's anchor point
+        if self._jac_adapt is not None:
+            idx_meas = int(np.clip(control_index, 0, self.reference.sample_count - 1))
+            q_ref6 = np.asarray(self.reference.state, dtype=float)[idx_meas, :6]
+            delta_q6 = q_meas6 - q_ref6
+            j_nominal6 = np.asarray(self.reference_position_jacobians[idx_meas], dtype=float)[:, :6]
+            diag = self._jac_adapt.step(
+                instantaneous_residual=instantaneous,
+                delta_q6=delta_q6, j_nominal6=j_nominal6,
+                frame_index=measurement_frame_index, sample_age_s=measurement_age_s,
+            )
+            self.last_jacobian_adaptation_diagnostics = diag
+            jac_g = float(diag["g_used"])  # frozen for the rest of this solve
         hessian, linear_cost, beam_terms = self._dynamic_qp_terms_exec(
             x_exec=x_exec, previous_input=previous, control_index=control_index,
             estimated_residual=estimated,
+            jacobian_adaptation_g=jac_g, jacobian_adaptation_q_meas6=q_meas6,
         )
         input_reference = beam_terms["input_reference"]
         lower, upper = self._constraint_bounds_exec(
@@ -1339,4 +1463,8 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             predicted_beam_positions=predicted_beam,
             predicted_beam_errors=predicted_error,
             first_predicted_beam_error_m=first_error,
+            jacobian_adaptation_diagnostics=(
+                None if self._jac_adapt is None else self.last_jacobian_adaptation_diagnostics
+            ),
+            jacobian_scale_applied=jac_g,
         )

@@ -2386,6 +2386,14 @@ def main() -> None:
                 "predicted_beam_error_0_m": info.get("predicted_beam_error_0_m"),
                 "horizon_len": info.get("horizon_len"),
                 "jacobian_condition": round(float(jac_provider.last_condition), 2),
+                # 2026-11-19 fix (post-review): this is the ONE place that
+                # actually persists path_follow.jsonl -- these were
+                # reaching process_isolated_adapter.py's `info` dict but
+                # were never read here, so a real shadow-mode (or active)
+                # run would have had zero saved record of estimator
+                # behaviour despite it being fully present in-memory.
+                "jacobian_adaptation_diagnostics": info.get("jacobian_adaptation_diagnostics"),
+                "jacobian_scale_applied": info.get("jacobian_scale_applied"),
             }
             log_file.write(json.dumps(row) + "\n")
             log_file.flush()

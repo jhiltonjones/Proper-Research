@@ -151,6 +151,57 @@ JOINT_ACCELERATION_LIMIT_RAD_S2 = 0.40
 WORKSPACE_XYZ_MIN_M: tuple[float, float, float] = (0.24469, -0.89361, 0.36544)
 WORKSPACE_XYZ_MAX_M: tuple[float, float, float] = (0.58971, -0.49576, 0.46496)
 
+# 2026-11-19 (stale-default correction): ONE shared definition of the
+# rectangle plan family's magnet-to-beam-base exclusion boundary and its
+# provisional commanded-clearance margin, used identically by the offline
+# planner's own default, this package's online QP constraint, and any
+# preflight/measured-clearance check -- avoids each site carrying its own
+# (and in the online runner's case, silently stale) copy.
+#
+# MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM is the reviewed exclusion boundary
+# established after a documented live breach (see
+# offline_inverse_configuration_head_exclusion.py's
+# magnet_beam_base_exclusion_radius_m docstring: "a circle plan without
+# this breached the documented >=230mm floor ... at 214mm"). It is NOT a
+# measured collision radius, and no document decomposing it into a
+# reviewed-boundary-plus-margin was found -- treat it as the reviewed
+# boundary itself, not as a pre-margined convenience value.
+#
+# MAGNET_EXCLUSION_ROBUST_MARGIN_MM is a SEPARATE, PROVISIONAL additional
+# commanded-clearance margin on top of the floor (covering commanded-vs-
+# measured joint drift between ticks). It is not shown to guarantee
+# measured clearance -- see magnet_clearance_signed_error.py's real-run
+# signed clearance-error results before relying on it as a bound.
+#
+# The online QP's hard commanded radius is FLOOR + MARGIN = 233.0mm by
+# default. The offline planner's own node constraint uses FLOOR alone
+# (230.0mm, no margin added) -- this is a deliberate, stated asymmetry
+# (the offline solver's own per-node tolerances already bound its own
+# node-to-node deviation; adding the online execution margin there too
+# would double-count a different mechanism's own slack), not an
+# oversight. The previous online default here was 97.0mm + 3.0mm, a
+# value correctly derived for a DIFFERENT, older vessel campaign (own
+# start position ~101.8mm from the beam base) that was never updated for
+# this plan family after the vessel runner's own equivalent default was
+# corrected on 2026-10-07.
+MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM: float = 230.0
+MAGNET_EXCLUSION_ROBUST_MARGIN_MM: float = 3.0
+
+# 2026-11-19: SEPARATE, PROVISIONAL measured-clearance protective-stop
+# radius, deliberately NOT the QP's own 233mm (230+3) value -- the QP
+# margin covers a different failure mode (commanded-vs-measured drift in
+# the LINEARIZED constraint), not the real robot's stopping distance
+# after a protective-stop is triggered. From real recorded runs: the
+# worst observed negative (unsafe-direction) signed radial clearance
+# error (measured minus commanded, same tick) was -8.8mm; this value
+# rounds that up and adds an explicit, UNVERIFIED placeholder allowance
+# for servo-lookahead/stop-ramp travel after trigger (see
+# magnet_clearance_signed_error.py and the operator-procedure writeup --
+# the stopping-distance component has NOT been derived from a rigorous
+# kinematic/deceleration-profile bound and must be reviewed before any
+# hardware use, not treated as validated).
+MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM: float = 250.0
+
 
 def _calibrated_default_initial_poses_for_guard() -> np.ndarray:
     from proper_research.planning.planning_context import (
@@ -158,6 +209,18 @@ def _calibrated_default_initial_poses_for_guard() -> np.ndarray:
     )
     pivot, _start, _L0, _dt = _calibrated_default_initial_poses()
     return pivot[:3]
+
+
+# 2026-11-19: check_measured_external_safety moved to
+# proper_research.controllers.mpc_delay_aware.external_safety_check so that
+# BOTH this hardware-script layer and the lower-level controllers layer
+# (process_isolated_adapter.py) can import it without a backwards layering
+# dependency (hardware scripts already import from controllers; the reverse
+# would not be importable without a cycle risk). Re-exported here for any
+# existing caller of common.check_measured_external_safety.
+from proper_research.controllers.mpc_delay_aware.external_safety_check import (  # noqa: E402
+    check_measured_external_safety,
+)
 
 
 def build_or_load_schedule(

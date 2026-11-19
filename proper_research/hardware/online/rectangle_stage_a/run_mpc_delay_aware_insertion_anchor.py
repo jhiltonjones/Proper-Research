@@ -165,6 +165,24 @@ _SCHEDULE_CACHE_PATH: str | None = None
 _TCP_WORKSPACE_IN_QP: bool = False
 # 2026-11-18: same provenance pattern, for the two new optional QP terms.
 _MAGNET_EXCLUSION_IN_QP: bool = False
+# 2026-11-19: explicit floor/margin/radius provenance, one consistent
+# definition shared with common.py's MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM /
+# MAGNET_EXCLUSION_ROBUST_MARGIN_MM -- logged into controller_metadata.json
+# so the effective boundary used by a given run is never implicit.
+_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM: float = common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM
+_MAGNET_EXCLUSION_ROBUST_MARGIN_MM: float = common.MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+# 2026-11-19 (rectangle-experiment config): the measured-clearance
+# post-hoc monitor's own abort radius, set in main() from
+# --measured-clearance-abort-mm. Deliberately SEPARATE from the unapproved
+# common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM=250.0 constant,
+# which is left untouched elsewhere and NOT used as this default -- the
+# operator directed this monitor to detect a breach of the ALREADY-
+# REVIEWED 230mm boundary (common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM)
+# for this experiment, not to enforce the still-provisional 250mm
+# early-trigger proposal. This is a measured-BOUNDARY-BREACH detector --
+# it reports that the magnet's measured position crossed the reviewed
+# limit, not that the robot is guaranteed to stop before reaching it.
+_MEASURED_CLEARANCE_ABORT_MM: float = common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM
 _DIPOLE_ALIGNMENT_WEIGHT: float = 0.0
 _INPUT_PENALTY_MODE: str = "planned"
 _JACOBIAN_ADAPTATION_MODE: str = "off"
@@ -306,6 +324,23 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
             "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
             "magnet_exclusion_in_qp": _MAGNET_EXCLUSION_IN_QP,
+            "magnet_beam_base_exclusion_floor_mm": _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM,
+            "magnet_exclusion_robust_margin_mm": _MAGNET_EXCLUSION_ROBUST_MARGIN_MM,
+            "magnet_beam_base_exclusion_commanded_radius_mm": (
+                _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM + _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+            ),
+            # 2026-11-19: BOTH thresholds recorded explicitly, by name, so
+            # neither is ever implicit from the other. "measured_clearance_
+            # abort_mm" is THIS run's actual post-hoc monitor radius (the
+            # operator-directed 230mm reviewed boundary for this
+            # experiment, not the unapproved 250mm proposal -- see
+            # common.py's own docstring on MAGNET_MEASURED_CLEARANCE_
+            # PROTECTIVE_RADIUS_MM, which stays separately recorded here
+            # too so a reader can see it was NOT the value used).
+            "measured_clearance_abort_mm": _MEASURED_CLEARANCE_ABORT_MM,
+            "magnet_measured_clearance_protective_radius_mm_UNUSED_provisional": (
+                common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM
+            ),
             "dipole_alignment_weight": _DIPOLE_ALIGNMENT_WEIGHT,
             "input_penalty_mode": _INPUT_PENALTY_MODE,
             "jacobian_adaptation_mode": _JACOBIAN_ADAPTATION_MODE,
@@ -352,7 +387,51 @@ def _wrapped_build_offline_solver(kind, **kwargs):
         _cp = meta["code_provenance"]
         print(f"[insertion_anchor] code provenance: commit={_cp['git_commit']} "
               f"dirty={_cp['git_dirty']} error={_cp['git_error']}")
+        # 2026-11-19 (point 2a): the real hardware runner now persists
+        # late-response timing records into ITS OWN run directory, not
+        # only the test harness. _WORKER was already spawned before
+        # _LAST_OUTPUT_DIR existed (see spawn_and_warm_worker's lifecycle
+        # note), so the path is set here, now that it does -- same timing
+        # as prediction_log_path below, same one-time guard.
+        _WORKER.set_late_response_log_path(str(_LAST_OUTPUT_DIR / "late_responses.jsonl"))
         _METADATA_WRITTEN = True
+
+    # 2026-11-19: independent, per-tick MEASURED-clearance BREACH DETECTOR
+    # (same mechanism the vessel runner already uses) -- computes the
+    # magnet's real FK position from MEASURED joints every tick and
+    # reports/aborts if it drops below _MEASURED_CLEARANCE_ABORT_MM. This
+    # is wholly separate from the in-QP linearized constraint above: it
+    # exists to detect a real geometric breach of the REVIEWED boundary
+    # that the QP's own (linearized, schedule-anchored) prediction might
+    # not reflect -- see the comparison this session already did (part
+    # 2/3 of the pilotA review): the QP's own exclusion rows were
+    # satisfied with margin at every exactly-reconstructible horizon
+    # stage, so this monitor is a detector of what actually happened
+    # physically, not evidence the QP itself needed correcting. It is
+    # NOT a guarantee that motion stops before reaching the boundary --
+    # see common.py's own docstring on stopping-distance limitations --
+    # and it is independent of, and does not modify, the robot's own
+    # safety-rated configuration or any established lab E-stop procedure.
+    _magnet_measured_clearance_radius_m = _MEASURED_CLEARANCE_ABORT_MM * 1e-3
+    # 2026-11-19: recomputed locally rather than reused from main()'s own
+    # `_beam_base_xyz_r` local -- this function is a module-level callback
+    # with no closure over main()'s locals (same scoping class of bug as
+    # the --protective-config-reviewed check fixed earlier). Same formula
+    # main() uses for the in-QP constraint's own beam-base point.
+    _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
+
+    def _magnet_transform_fn(q6: np.ndarray) -> np.ndarray:
+        fk = urik.forward_kinematics(np.asarray(q6, dtype=float).reshape(6), _robot_kin.dh, _robot_kin.T_F_M)
+        return fk.T_R_target[:3, 3]
+
+    print(f"[insertion_anchor] measured-clearance BREACH DETECTOR active: "
+          f"abort_radius={_MEASURED_CLEARANCE_ABORT_MM:.1f}mm "
+          f"(separate from the QP's own {_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM + _MAGNET_EXCLUSION_ROBUST_MARGIN_MM:.1f}mm "
+          f"commanded linearized boundary -- this detector reports a measured breach of the "
+          f"{_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM:.1f}mm reviewed boundary, it does NOT guarantee "
+          f"motion stops before reaching it; confirmed via --protective-config-reviewed for this "
+          f"run. The still-UNAPPROVED {common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM:.1f}mm "
+          f"proposal in common.py is NOT the value active here.)")
 
     adapter = ProcessIsolatedDelayAwareAdapter(
         reference=kwargs["reference"], worker=_WORKER, deadline_s=_DEADLINE_MS / 1e3,
@@ -363,6 +442,9 @@ def _wrapped_build_offline_solver(kind, **kwargs):
         controller_kind="nullspace_r700",
         controller_label="mpc_delay_aware_nullspace_r700_frame_fix_process_isolated",
         insertion_offset_abort_m=_INSERTION_OFFSET_ABORT_M,
+        magnet_transform_fn=_magnet_transform_fn,
+        magnet_exclusion_lumen_C_m=_beam_base_xyz_r,
+        magnet_exclusion_radius_m=_magnet_measured_clearance_radius_m,
     )
     _WORKER.set_frame_transform(r_fit, t_fit)
     print(f"[insertion_anchor] worker frame transform applied: "
@@ -467,17 +549,52 @@ def main() -> None:
                          "Same mechanism as the vessel runner's own flag of the same name, "
                          "ported here fresh rather than inherited from any shared default -- "
                          "see delay_aware_mpc.py's _configure_magnet_exclusion docstring.")
-    p.add_argument("--beam-base-exclusion-floor-mm", type=float, default=97.0,
-                    help="hard keep-out radius (mm) around the beam base the magnet must never "
-                         "violate in the QP's own constraint set. Default matches the vessel "
-                         "runner's own default for the equivalent flag.")
-    p.add_argument("--magnet-exclusion-robust-margin-mm", type=float, default=3.0,
-                    help="extra margin (mm) added on top of --beam-base-exclusion-floor-mm "
-                         "before becoming the QP's hard bound, covering commanded-vs-measured "
-                         "joint drift between ticks (same rationale as --tcp-workspace-robust-"
-                         "margin-mm above, smaller because this constraint's own FK -- urik's "
-                         "calibrated DH -- is known to ~0.11mm, not the TCP constraint's few-mm "
-                         "agreement; see that flag's own help text).")
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float,
+                    default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
+                    help="reviewed magnet-to-beam-base exclusion boundary (mm) around the beam "
+                         "base the magnet must never violate in the QP's own constraint set. "
+                         "2026-11-19 correction: the previous default here was 97.0mm, a value "
+                         "correctly derived 2026-10-03 for a DIFFERENT, older vessel campaign "
+                         "whose own start position sat only ~101.8mm from the beam base -- the "
+                         "vessel runner's own default was already corrected away from 97.0mm to "
+                         "210.0mm on 2026-10-07 for ITS current campaign, but that fix was never "
+                         "propagated here. This default is now the rectangle plan family's own "
+                         "reviewed boundary (MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM in common.py), "
+                         "NOT a measured collision radius -- it is the boundary established "
+                         "after a documented live breach (see offline_inverse_configuration_"
+                         "head_exclusion.py's magnet_beam_base_exclusion_radius_m docstring), "
+                         "shared with the offline planner's own default and preflight.")
+    p.add_argument("--measured-clearance-abort-mm", type=float,
+                    default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
+                    help="Abort radius for the independent, per-tick MEASURED-clearance breach "
+                         "detector (computed from real FK on measured joints, wholly separate "
+                         "from the in-QP linearized constraint). Default is the ALREADY-REVIEWED "
+                         "230mm boundary (common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM) -- this "
+                         "detector reports a measured breach of that boundary, it is NOT a "
+                         "guarantee that motion stops before reaching it (stopping-distance is "
+                         "still unverified, see common.py). The separate, still-UNAPPROVED "
+                         "common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM=250.0mm early-"
+                         "trigger proposal is NOT used here and is not this flag's default.")
+    p.add_argument("--protective-config-reviewed", action="store_true",
+                    help="REQUIRED to start a real (non-dry-run) run. States that a human "
+                         "reviewed --measured-clearance-abort-mm's ACTUAL value for this run "
+                         "(printed at startup) before starting. Without this flag, the runner "
+                         "REFUSES to start rather than silently running protected by an "
+                         "unreviewed value or running with no protection at all -- this applies "
+                         "regardless of what --measured-clearance-abort-mm is set to, so passing "
+                         "an unreviewed value (e.g. the 250.0mm proposal) still requires this "
+                         "flag, and this flag does NOT by itself mean 250.0mm has been approved.")
+    p.add_argument("--magnet-exclusion-robust-margin-mm", type=float,
+                    default=common.MAGNET_EXCLUSION_ROBUST_MARGIN_MM,
+                    help="PROVISIONAL additional commanded-clearance margin (mm) added on top "
+                         "of --beam-base-exclusion-floor-mm before becoming the QP's hard "
+                         "bound (230mm + 3mm = 233mm commanded boundary by default). Intended "
+                         "to cover commanded-vs-measured joint drift between ticks (same "
+                         "rationale as --tcp-workspace-robust-margin-mm above). This margin is "
+                         "NOT shown to guarantee measured clearance -- recorded signed "
+                         "measured-minus-commanded radial clearance error on real runs has "
+                         "exceeded 3mm (see magnet_clearance_signed_error.py); treat this value "
+                         "as provisional, reviewed per-run, not as a proven bound.")
     p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
                     help="soft actuation-preference cost weight: encourages the source "
                          "magnet's own dipole moment to point TOWARD the beam base. PURE "
@@ -535,6 +652,27 @@ def main() -> None:
                     help="upper bound on the adaptation scalar g (dimensionless). Default 0.5.")
     args = p.parse_args()
 
+    # 2026-11-19 (point 5, corrected): this check was previously placed
+    # inside _wrapped_build_offline_solver(), a module-level function with
+    # no `args` in scope (it runs later, as pf.main()'s monkeypatched
+    # solver-builder callback) -- that caused a NameError at runtime
+    # instead of ever actually refusing anything. Moved here, where `args`
+    # genuinely exists, and made to fail BEFORE any schedule/worker setup.
+    global _MEASURED_CLEARANCE_ABORT_MM
+    _MEASURED_CLEARANCE_ABORT_MM = float(args.measured_clearance_abort_mm)
+    if not args.dry_run and not args.protective_config_reviewed:
+        raise SystemExit(
+            "[insertion_anchor] REFUSING to start: the measured-clearance breach detector's "
+            f"abort radius for THIS run ({_MEASURED_CLEARANCE_ABORT_MM:.1f}mm, from "
+            "--measured-clearance-abort-mm) has not been confirmed reviewed. Pass "
+            "--protective-config-reviewed only after a human has reviewed this run's ACTUAL "
+            "value (printed above/below) -- this flag is never implied by any other argument, "
+            "and does not by itself mean the separate, still-unapproved "
+            f"common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM="
+            f"{common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM:.1f}mm proposal has been "
+            "approved."
+        )
+
     _DEADLINE_MS = args.deadline_ms
     _INSERTION_OFFSET_ABORT_M = (
         args.insertion_offset_abort_mm * 1e-3
@@ -590,8 +728,11 @@ def main() -> None:
               "stays ONLY a post-hoc monitor, not visible to the optimizer")
 
     global _MAGNET_EXCLUSION_IN_QP, _DIPOLE_ALIGNMENT_WEIGHT
+    global _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM, _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
     magnet_exclusion_kwargs = None
     _MAGNET_EXCLUSION_IN_QP = not args.disable_magnet_exclusion_in_qp
+    _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM = float(args.beam_base_exclusion_floor_mm)
+    _MAGNET_EXCLUSION_ROBUST_MARGIN_MM = float(args.magnet_exclusion_robust_margin_mm)
     _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
     if not args.disable_magnet_exclusion_in_qp:
         _magnet_reference = load_configuration_reference(args.plan_dir, require_planned_beam_feasible=False)

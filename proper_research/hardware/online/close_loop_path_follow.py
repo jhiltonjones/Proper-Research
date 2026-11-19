@@ -62,6 +62,7 @@ from proper_research.hardware.online.controller_adapters import (
     OfflineControllerConfig,
     build_offline_solver,
     _MPC_KINDS,
+    _TRIM_KINDS,
 )
 from proper_research.hardware.online.messages import now_monotonic
 from proper_research.hardware.online.state_stream import (
@@ -83,6 +84,45 @@ from proper_research.hardware.online.state_stream import (
 # paced by an explicit next_tick += dt scheduler, NOT by servo_j's own
 # blocking duration) instead of inventing a new convention.
 _STREAM_INTERVAL_S = 0.02  # 50Hz, matching cfg.servo_stream_hz's own default
+
+
+# 2026-11-19 (timing-assessment correction, point 1): explicit OSQP-status
+# categories, replacing the earlier "qp_status not in (None, 'solved')
+# => infeasible" classification, which wrongly lumped "solved inaccurate"
+# (a successful, lower-precision solve -- the project's own existing
+# `accept_time_limit_solution`-style logic in delay_aware_mpc.py and
+# simulate_time_parameterized_*_mpc.py already treats "solved" and "solved
+# inaccurate" as the SAME success case) and "run time limit reached"
+# (explicitly accepted elsewhere in this project when
+# `accept_time_limit_solution=True`) together with genuine primal/dual
+# infeasibility and iteration-limit failures. Status strings below are
+# the ones actually produced by the installed OSQP version (0.6.7.post3),
+# confirmed by direct construction of each case (see
+# test_qp_status_category.py) plus the "run time limit reached" string
+# already handled elsewhere in this codebase. `raw_qp_status` is passed
+# through unchanged; command acceptance/hold behaviour is NOT touched by
+# this function -- it is a pure classification used only for reporting.
+_QP_STATUS_CATEGORY_MAP = {
+    "solved": "solved",
+    "solved inaccurate": "solved_inaccurate",
+    "maximum iterations reached": "iteration_limit_reached",
+    "run time limit reached": "time_limit_reached",
+    "primal infeasible": "primal_infeasible",
+    "primal infeasible inaccurate": "primal_infeasible",
+    "dual infeasible": "dual_infeasible",
+    "dual infeasible inaccurate": "dual_infeasible",
+}
+
+
+def classify_qp_status(qp_status: str | None) -> str:
+    """One of: "no_response" (qp_status is None -- no reply arrived within
+    the solver's own deadline, see solver_deadline_missed instead for
+    whether THIS was the cause), one of `_QP_STATUS_CATEGORY_MAP`'s values
+    for a recognized OSQP status, or "unrecognized_status:<raw>" for
+    anything else -- never silently folded into "infeasible"."""
+    if qp_status is None:
+        return "no_response"
+    return _QP_STATUS_CATEGORY_MAP.get(qp_status, f"unrecognized_status:{qp_status}")
 
 
 class BackgroundArmStreamer:
@@ -1850,6 +1890,35 @@ def main() -> None:
             print(f"[path] {cfg.controller_kind}: magnet-exclusion/z-workspace hard-"
                   f"constraint clip ENABLED (external override)")
 
+        # 2026-11-19: shared MEASURED-STATE external safety check (see
+        # OfflineJointControllerAdapter's own docstring note) for the
+        # inv_7dof_delay_aware comparator -- deliberately a SEPARATE kwarg
+        # path from magnet_clip_kwargs above (that one feeds the OLDER
+        # InverseJacobianStep's own in-controller clip for naive_inverse_
+        # jacobian[_ltv]; this one feeds the generic adapter's pre-solve
+        # hold-and-abort, used by inv_7dof_delay_aware, with NO predictive
+        # constraint handling added to the controller itself). Reuses the
+        # SAME _MAGNET_CONSTRAINT_CLIP_OVERRIDE global the calling script
+        # already sets (same dict, same magnet_position_fn convention:
+        # fn(state7) -- adapted here to the external check's fn(q6)
+        # convention by padding a dummy insertion value, since magnet
+        # position never depends on insertion, same as that function's
+        # own docstring already states).
+        external_check_kwargs = {}
+        if _magnet_clip_override is not None and cfg.controller_kind in _TRIM_KINDS:
+            _mpf = _magnet_clip_override.get("magnet_position_fn")
+            if _mpf is not None:
+                def _external_check_magnet_transform_fn(q6, _mpf=_mpf):
+                    return _mpf(np.concatenate([np.asarray(q6, dtype=float).reshape(6), [0.0]]))
+                external_check_kwargs = {
+                    "external_check_magnet_transform_fn": _external_check_magnet_transform_fn,
+                    "magnet_exclusion_lumen_C_m": _magnet_clip_override.get("magnet_exclusion_lumen_C_m"),
+                    "magnet_exclusion_radius_m": _magnet_clip_override.get("magnet_exclusion_radius_m"),
+                }
+                print(f"[path] {cfg.controller_kind}: shared external measured-state "
+                      f"safety check ENABLED (reactive controller, no predictive "
+                      f"constraint added)")
+
         force_pref_kwargs = {}
         _force_pref_override = globals().get("_FORCE_PREFERENCE_OVERRIDE")
         if _force_pref_override is not None and cfg.controller_kind in (
@@ -1882,6 +1951,7 @@ def main() -> None:
             relinearise_every=int(cfg.mpc_relinearise_every),
             **dmap_kwargs,
             **magnet_clip_kwargs,
+            **external_check_kwargs,
             **force_pref_kwargs,
             trim_kp=cfg.trim_kp,
             trim_kn=cfg.trim_kn,
@@ -2300,6 +2370,25 @@ def main() -> None:
                 "progress_index": int(info.get("progress_index", ref_index)),
                 "terminal_hold": terminal_hold,
                 "infeasible": bool(result.infeasible),
+                # 2026-11-19 (timing-assessment correction): the top-level
+                # "deadline_miss" field above is the WHOLE-TICK loop-period
+                # check (pre_servo_elapsed_s > dt, ~100ms budget -- camera +
+                # solve + everything before servo dispatch); it is NOT
+                # whether the SOLVER's own 70ms sub-deadline was missed.
+                # "infeasible" likewise conflates "no response arrived in
+                # time" (qp_status is None) with "a response arrived but
+                # OSQP itself reported non-"solved"" -- two different
+                # failure modes. These two new fields disambiguate both,
+                # additively (existing fields and historical logs are
+                # unchanged) -- see test_deadline_miss_field_semantics.py.
+                "solver_deadline_missed": bool(info.get("status") == "deadline_miss"),
+                # Replaces the earlier (incorrect) "qp_genuinely_infeasible"
+                # boolean, which misclassified "solved inaccurate" and
+                # "run time limit reached" as infeasible -- see
+                # classify_qp_status's docstring. `raw_qp_status` preserves
+                # the untouched OSQP string for anyone who wants it directly.
+                "qp_status_category": classify_qp_status(info.get("qp_status")),
+                "raw_qp_status": info.get("qp_status"),
                 "tip_mm": [round(float(v), 3) for v in 1e3 * tip],
                 "tip_raw_mm": [round(float(v), 3) for v in 1e3 * tip_raw],
                 "desired_mm": [round(float(v), 3) for v in 1e3 * desired],
@@ -2394,6 +2483,14 @@ def main() -> None:
                 # behaviour despite it being fully present in-memory.
                 "jacobian_adaptation_diagnostics": info.get("jacobian_adaptation_diagnostics"),
                 "jacobian_scale_applied": info.get("jacobian_scale_applied"),
+                # 2026-11-19: the shared external measured-state safety
+                # check's own gap/reason (process_isolated_adapter.py and
+                # OfflineJointControllerAdapter both populate this key the
+                # same way) -- reported every tick it is computed, not only
+                # on the tripping tick, so the approach is visible in the
+                # saved file, not only the final abort event.
+                "external_measured_clearance_gap_m": info.get("external_measured_clearance_gap_m"),
+                "adapter_abort_reason": info.get("abort_reason"),
             }
             log_file.write(json.dumps(row) + "\n")
             log_file.flush()

@@ -51,6 +51,9 @@ import numpy as np
 
 from .messages import StateEstimate, now_monotonic
 from .online_mpc_runner import SolveResult
+from proper_research.controllers.mpc_delay_aware.external_safety_check import (
+    check_measured_external_safety,
+)
 
 Array = np.ndarray
 
@@ -130,11 +133,31 @@ class OfflineJointControllerAdapter:
         reference: Any,
         config: Optional[OfflineControllerConfig] = None,
         joint_state_getter: Optional[JointStateGetter] = None,
+        magnet_transform_fn: Optional[Any] = None,
+        magnet_z_bounds_m: Optional[Any] = None,
+        magnet_exclusion_radius_m: Optional[float] = None,
+        lumen_C_m: Optional[Array] = None,
     ) -> None:
         self.controller = controller
         self.reference = reference
         self.config = config or OfflineControllerConfig()
         self._joint_state_getter = joint_state_getter
+
+        # 2026-11-19: optional shared MEASURED-STATE external safety check
+        # (proper_research.controllers.mpc_delay_aware.external_safety_check),
+        # the SAME function the MPC adapter uses for its own pre-solve
+        # early-abort gate. All default None -- existing callers (and every
+        # controller kind that doesn't pass these) are unaffected. Added so
+        # a reactive controller (e.g. inv_7dof_delay_aware) can be given
+        # the identical external monitor the MPC path has, WITHOUT adding
+        # any predictive constraint handling to the controller itself: on
+        # a trip, this adapter holds (zero command, controller.solve() is
+        # never called) exactly like the MPC adapter's own early-abort
+        # convention -- the controller gets no chance to react differently.
+        self._magnet_transform_fn = magnet_transform_fn
+        self._magnet_z_bounds_m = magnet_z_bounds_m
+        self._magnet_exclusion_radius_m = magnet_exclusion_radius_m
+        self._lumen_C_m = lumen_C_m
 
         self._t0: Optional[float] = None
         self._counter = 0
@@ -213,21 +236,60 @@ class OfflineJointControllerAdapter:
             estimate.tip_position_m, dtype=float
         ).reshape(3)
 
-        step = self.controller.solve(
-            measured_state=measured_state,
-            measured_beam_position=measured_beam_position,
-            control_index=reference_index,
-            previous_input=self._prev_input,
+        # 2026-11-19: shared MEASURED-STATE external safety check (see
+        # __init__'s docstring note) -- runs BEFORE controller.solve() is
+        # even called, so a trip here holds the command and never lets the
+        # (reactive, non-predictive) controller compute or react to this
+        # tick's state at all. Examines measured_state[:6] only -- never a
+        # candidate command, since none exists yet at this point.
+        external_abort_reason, external_gap_m = check_measured_external_safety(
+            measured_state[:6], self._magnet_transform_fn,
+            magnet_z_bounds_m=self._magnet_z_bounds_m,
+            magnet_exclusion_radius_m=self._magnet_exclusion_radius_m,
+            lumen_C_m=self._lumen_C_m,
         )
 
-        command = np.asarray(step.command, dtype=float).reshape(7)
-        success = bool(getattr(step, "success", True))
-        infeasible = not success
-        if infeasible and self.config.zero_command_on_failure:
+        if external_abort_reason is not None:
             command = np.zeros(7, dtype=float)
+            step = None
+            success = False
+            infeasible = True
+        else:
+            step = self.controller.solve(
+                measured_state=measured_state,
+                measured_beam_position=measured_beam_position,
+                control_index=reference_index,
+                previous_input=self._prev_input,
+            )
+
+            command = np.asarray(step.command, dtype=float).reshape(7)
+            success = bool(getattr(step, "success", True))
+            infeasible = not success
+            if infeasible and self.config.zero_command_on_failure:
+                command = np.zeros(7, dtype=float)
 
         self._prev_input = command.copy()
         self._counter += 1
+
+        if step is None:
+            # external-check trip: build a minimal info dict here (the
+            # normal info dict below reads attributes off `step`, which
+            # does not exist on this path) -- matches the MPC adapter's
+            # own "no worker request sent on a trip" convention.
+            return SolveResult(u0=command, infeasible=True, info={
+                "controller": getattr(self.controller, "name", None)
+                or getattr(self.controller, "variant_name", "offline_controller"),
+                "progress_index": progress_index,
+                "reference_index": reference_index,
+                "terminal_hold": bool(progress_index >= sample_count - 1),
+                "status": "external_safety_abort",
+                "success": False,
+                "iterations": 0,
+                "solve_time_s": 0.0,
+                "measured_joint_state": measured_state,
+                "abort_reason": external_abort_reason,
+                "external_measured_clearance_gap_m": external_gap_m,
+            })
 
         # 2026-09-11: widened for controller-internals diagnosis (why does one
         # controller track worse than another on the same reference/Jacobian?)
@@ -300,7 +362,9 @@ class OfflineJointControllerAdapter:
             "abort_reason": (
                 getattr(step, "magnet_abort_reason", None)
                 or getattr(step, "tcp_abort_reason", None)
+                or external_abort_reason
             ),
+            "external_measured_clearance_gap_m": external_gap_m,
         }
         return SolveResult(u0=command, infeasible=infeasible, info=info)
 
@@ -395,6 +459,7 @@ def build_offline_solver(
     tcp_workspace_xyz_min_m: Any = None,
     tcp_workspace_xyz_max_m: Any = None,
     tcp_constraint_violation_abort_m: float = 2.0e-3,
+    external_check_magnet_transform_fn: Optional[Any] = None,
 ) -> OfflineJointControllerAdapter:
     """Build one of the five offline controllers and wrap it for the runner.
 
@@ -672,6 +737,26 @@ def build_offline_solver(
         reference=reference,
         config=adapter_config,
         joint_state_getter=joint_state_getter,
+        # 2026-11-19: forward the EXISTING magnet_exclusion_lumen_C_m/
+        # magnet_exclusion_radius_m/magnet_z_bounds_m parameters (already
+        # present in this function's signature, previously consumed only
+        # by the older, separate InverseJacobianStep path -- inv_7dof_
+        # delay_aware and the other _TRIM_KINDS never received them) into
+        # the adapter's own shared measured-state external check added
+        # this session. NOTE: deliberately NOT aliasing magnet_position_fn
+        # here -- that parameter's established convention elsewhere
+        # (inverse_jacobian_controller.py, run_inverse_jacobian_online_
+        # vessel.py) is `magnet_position_fn(state7)` (7-vector, slices
+        # [:6] internally); this new external check's own established
+        # convention (process_isolated_adapter.py's _magnet_transform_fn)
+        # is strictly `fn(q6)` (6-vector, reshape(6) -- would raise on a
+        # 7-vector). Mixing the two silently would be a real shape bug,
+        # not just a style choice, so a SEPARATE, unambiguous parameter is
+        # used instead of reusing magnet_position_fn's name/contract.
+        magnet_transform_fn=external_check_magnet_transform_fn,
+        magnet_z_bounds_m=magnet_z_bounds_m,
+        magnet_exclusion_radius_m=magnet_exclusion_radius_m,
+        lumen_C_m=magnet_exclusion_lumen_C_m,
     )
 
 

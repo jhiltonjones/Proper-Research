@@ -29,6 +29,9 @@ import numpy as np
 from proper_research.hardware.online.controller_adapters import OfflineControllerConfig
 from proper_research.hardware.online.messages import StateEstimate, now_monotonic
 from proper_research.controllers.mpc_delay_aware.worker_process import MPCWorkerHandle
+from proper_research.controllers.mpc_delay_aware.external_safety_check import (
+    check_measured_external_safety,
+)
 from proper_research.hardware.online.online_mpc_runner import SolveResult
 
 Array = np.ndarray
@@ -333,42 +336,83 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             self._q_cmd_prev = self._q_cmd.copy()
             self._ins_cmd = float(z_meas[6])
 
-        # (2026-10-26 instrumentation pass) wall-clock the full round trip
-        # (parent-side pickle+send, worker recv+deserialize, solve, worker
-        # pickle+send, parent poll+recv+deserialize) around try_solve, so
-        # round_trip_ms - t_solve_ms isolates IPC/serialization overhead on
-        # its own -- previously unmeasured; see A1 loop-overhead localization.
-        _ipc_t0 = time.monotonic()
-        resp = self._worker.try_solve(
-            kind=self._controller_kind, z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
-            insertion_cmd=self._ins_cmd, measured_beam_position=measured_beam_position,
-            control_index=reference_index, previous_input=self._prev_input,
-            deadline_s=self._deadline_s,
-            # 2026-11-18: feeds ONLY the jacobian-adaptation estimator's
-            # staleness/duplicate-sample gates (see jacobian_adaptation.py);
-            # a no-op for every other controller kind/config.
-            measurement_frame_index=getattr(estimate, "frame_index", None),
-            measurement_age_s=(
-                estimate.robot_joints_age() if hasattr(estimate, "robot_joints_age") else None
-            ),
-        )
-        round_trip_ms = (time.monotonic() - _ipc_t0) * 1e3
+        # 2026-11-19 (stop-path correction, point 3): measured-clearance
+        # (and magnet-z-bounds) checks MOVED here, BEFORE try_solve and
+        # BEFORE any accumulator advance -- previously these ran AFTER the
+        # solve and AFTER the accumulator had already been updated from
+        # this tick's command, so a violation was detected only once the
+        # worker request had already been sent and the execution-C state
+        # already moved. Both checks operate on `magnet_xyz`, computed
+        # above from z_meas[:6] -- this tick's own measurement, nothing
+        # advanced or solved yet. On a trip here: no worker request is
+        # sent, no accumulator advance happens, and the returned command
+        # is zero (held), same convention as every other reject case.
+        # 2026-11-19 (abort-event record, point 5): gap_m computed
+        # unconditionally (when the radius check is configured at all),
+        # not only on the tripping branch, so the abort-event record below
+        # can report the real measured gap on EVERY tick this check runs,
+        # not only the tick it happens to trip -- makes the preceding
+        # ticks' approach visible too, not just the trip itself.
+        # 2026-11-19: this measured-state check is now a SHARED function
+        # (common.check_measured_external_safety) so the inverse-Jacobian
+        # comparator can run the identical check without acquiring this
+        # adapter's QP -- see that function's docstring for the measured-
+        # state-vs-candidate-command distinction. Behaviour here is
+        # unchanged: same inputs, same tripped-reason strings.
+        early_abort_reason, gap_m = check_measured_external_safety(
+            z_meas[:6], self._magnet_transform_fn,
+            magnet_z_bounds_m=self._magnet_z_bounds_m,
+            magnet_exclusion_radius_m=self._magnet_exclusion_radius_m,
+            lumen_C_m=self._magnet_exclusion_lumen_C_m,
+        ) if magnet_xyz is not None else (None, None)
+        if early_abort_reason is not None:
+            print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT "
+                  f"(pre-solve) -- {early_abort_reason}")
 
-        if resp is not None and resp["status"] == "ok":
-            command = np.asarray(resp["command"], dtype=float)
-            success = True
-            self.consecutive_deadline_misses = 0
-        else:
+        if early_abort_reason is not None:
+            resp = None
+            round_trip_ms = 0.0
             command = np.zeros(7, dtype=float)
             success = False
             self.deadline_misses += 1
             self.consecutive_deadline_misses += 1
-            if resp is None:
-                print(f"[process_isolated_adapter] tick {self._counter}: DEADLINE MISS "
-                      f"(deadline={self._deadline_s*1e3:.0f}ms) -- holding q_cmd")
+        else:
+            # (2026-10-26 instrumentation pass) wall-clock the full round trip
+            # (parent-side pickle+send, worker recv+deserialize, solve, worker
+            # pickle+send, parent poll+recv+deserialize) around try_solve, so
+            # round_trip_ms - t_solve_ms isolates IPC/serialization overhead on
+            # its own -- previously unmeasured; see A1 loop-overhead localization.
+            _ipc_t0 = time.monotonic()
+            resp = self._worker.try_solve(
+                kind=self._controller_kind, z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
+                insertion_cmd=self._ins_cmd, measured_beam_position=measured_beam_position,
+                control_index=reference_index, previous_input=self._prev_input,
+                deadline_s=self._deadline_s,
+                # 2026-11-18: feeds ONLY the jacobian-adaptation estimator's
+                # staleness/duplicate-sample gates (see jacobian_adaptation.py);
+                # a no-op for every other controller kind/config.
+                measurement_frame_index=getattr(estimate, "frame_index", None),
+                measurement_age_s=(
+                    estimate.robot_joints_age() if hasattr(estimate, "robot_joints_age") else None
+                ),
+            )
+            round_trip_ms = (time.monotonic() - _ipc_t0) * 1e3
+
+            if resp is not None and resp["status"] == "ok":
+                command = np.asarray(resp["command"], dtype=float)
+                success = True
+                self.consecutive_deadline_misses = 0
             else:
-                print(f"[process_isolated_adapter] tick {self._counter}: worker status="
-                      f"{resp['status']!r} error={resp.get('error')!r} -- holding q_cmd")
+                command = np.zeros(7, dtype=float)
+                success = False
+                self.deadline_misses += 1
+                self.consecutive_deadline_misses += 1
+                if resp is None:
+                    print(f"[process_isolated_adapter] tick {self._counter}: DEADLINE MISS "
+                          f"(deadline={self._deadline_s*1e3:.0f}ms) -- holding q_cmd")
+                else:
+                    print(f"[process_isolated_adapter] tick {self._counter}: worker status="
+                          f"{resp['status']!r} error={resp.get('error')!r} -- holding q_cmd")
 
         if self._log_fh is not None:
             # (2026-09-28 instrumentation pass) purely additional fields,
@@ -393,6 +437,22 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                     None if resp is None or resp.get("predicted_states") is None
                     else np.asarray(resp["predicted_states"], dtype=float).tolist()
                 ),
+                # 2026-11-19 (future-run diagnosability, point 2 of the
+                # prior review): the Ec/Sc COMMAND stack -- distinct from
+                # predicted_states (Ep/Sp, physical) above. Persisted
+                # directly so no offline reconstruction from x_exec/Sp
+                # inversion (with its real rank-deficiency limitation,
+                # see test_fresh_solve_all_stages_against_qp_and_fk.py) is
+                # ever needed again for a FUTURE run.
+                "predicted_commands": (
+                    None if resp is None or resp.get("predicted_commands") is None
+                    else np.asarray(resp["predicted_commands"], dtype=float).tolist()
+                ),
+                "predicted_inputs": (
+                    None if resp is None or resp.get("predicted_inputs") is None
+                    else np.asarray(resp["predicted_inputs"], dtype=float).tolist()
+                ),
+                "magnet_exclusion_mapping": None if resp is None else resp.get("magnet_exclusion_mapping"),
                 "jacobian_used": (
                     None if resp is None or resp.get("jacobian_used") is None
                     else np.asarray(resp["jacobian_used"], dtype=float).tolist()
@@ -411,55 +471,93 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 # 2026-11-19 fix (post-review): same gap as the `info` dict
                 # above -- present in `resp`, never persisted here either.
                 "jacobian_adaptation_diagnostics": None if resp is None else resp.get("jacobian_adaptation_diagnostics"),
+                # 2026-11-19 (corrected): the 0.0 used when resp is None is
+                # a PARENT-SIDE HOLD VALUE (no response arrived to read a
+                # real gain from) -- it is NEVER an observation of what
+                # the worker's own (unobserved, possibly still-running or
+                # discarded) solve actually used. `jacobian_scale_is_
+                # observed` makes this explicit so a reader never has to
+                # infer it from whether resp happened to be None.
                 "jacobian_scale_applied": 0.0 if resp is None else resp.get("jacobian_scale_applied", 0.0),
+                "jacobian_scale_is_observed": resp is not None,
+                # 2026-11-19 (abort-event record, point 5): explicit fields
+                # for a pre-solve abort -- all read from values already
+                # computed above (estimate.t_monotonic, gap_m, the
+                # configured thresholds, self._q_cmd), nothing fabricated.
+                # None whenever the corresponding check isn't configured or
+                # didn't trip, same as every other optional field here.
+                "early_abort_reason": early_abort_reason,
+                # 2026-11-19 (point 3 correction): `estimate.t_monotonic` is
+                # NOT guaranteed to be the JOINT sample's own timestamp --
+                # path_follow.jsonl already logs several DISTINCT ages
+                # (joint_sample_age_at_use_s, camera_vision_age_s, ...)
+                # precisely because vision and joints can be sampled at
+                # different times. The magnet clearance here is computed
+                # from JOINTS (via magnet_transform_fn(z_meas[:6])), so its
+                # age must be the joint sample's own age -- the same
+                # `estimate.robot_joints_age()` accessor try_solve() already
+                # uses above for the jacobian-adaptation staleness gate --
+                # not a generic `t_monotonic`-based age that may describe a
+                # different (e.g. vision) sample.
+                "clearance_sample_age_s": (
+                    estimate.robot_joints_age() if hasattr(estimate, "robot_joints_age") else None
+                ),
+                "magnet_exclusion_gap_mm": None if gap_m is None else gap_m * 1e3,
+                "magnet_exclusion_radius_mm": (
+                    None if self._magnet_exclusion_radius_m is None
+                    else self._magnet_exclusion_radius_m * 1e3
+                ),
+                "magnet_z_bounds_mm": (
+                    None if self._magnet_z_bounds_m is None
+                    else [self._magnet_z_bounds_m[0] * 1e3, self._magnet_z_bounds_m[1] * 1e3]
+                ),
+                # 2026-11-19 (point 3 correction): renamed from the earlier
+                # "last_dispatched_target_rad" -- that claim was NOT
+                # verified against the actual publication record. This
+                # field is the execution-C accumulator (self._q_cmd) as of
+                # entering THIS tick, i.e. the SAME value as q_cmd_k above,
+                # logged before any conditional advance. Whether it equals
+                # what close_loop_path_follow.py actually dispatched
+                # depends on which of that file's three q_target branches
+                # is active (q_target = q_cmd only when feedforward and
+                # feedforward_joint_trajectory are both False -- true for
+                # this runner's current default config, confirmed against
+                # pilotA's own logged q_target_rad, but NOT guaranteed for
+                # every config of that file) -- this adapter has no
+                # visibility into which branch ran, so it cannot honestly
+                # claim to report the dispatch record itself.
+                "accumulator_q_cmd_rad": self._q_cmd.tolist(),
             }
             self._log_fh.write(json.dumps(row) + "\n")
             self._log_fh.flush()
 
-        # accumulator update from the ACTUALLY APPLIED command (0 on a miss)
-        qd = np.clip(command[:6], -self._vlim, self._vlim)
-        delta_q = np.clip(qd * dt, -self._max_step, self._max_step)
-        self._q_cmd_prev = self._q_cmd.copy()
-        self._q_cmd = self._q_cmd + delta_q
-        self._ins_cmd = float(np.clip(self._ins_cmd + command[6] * dt, 0.005, 0.20))
+        # 2026-11-19 (stop-path correction, point 3): accumulator advance
+        # SKIPPED entirely on an early (pre-solve) measured-clearance/
+        # z-bounds rejection -- `command` is already zero in that branch,
+        # but the point is to never even run this update against a
+        # rejected tick's state, not merely to have it compute a no-op.
+        if early_abort_reason is None:
+            # accumulator update from the ACTUALLY APPLIED command (0 on a miss)
+            qd = np.clip(command[:6], -self._vlim, self._vlim)
+            delta_q = np.clip(qd * dt, -self._max_step, self._max_step)
+            self._q_cmd_prev = self._q_cmd.copy()
+            self._q_cmd = self._q_cmd + delta_q
+            self._ins_cmd = float(np.clip(self._ins_cmd + command[6] * dt, 0.005, 0.20))
 
-        adapter_abort_reason = None
-        if self._insertion_offset_abort_m is not None:
+        # adapter_abort_reason: starts as whatever the pre-solve checks
+        # above already found (magnet z-bounds / measured-clearance); the
+        # insertion-offset check below is INDEPENDENT (depends on
+        # self._ins_cmd, which only advances in the branch above) and
+        # still runs after the solve, same as before -- only the two
+        # magnet checks moved earlier; this one did not.
+        adapter_abort_reason = early_abort_reason
+        if adapter_abort_reason is None and self._insertion_offset_abort_m is not None:
             L_ref = float(np.asarray(self.reference.state, dtype=float)[reference_index, 6])
             L_offset_m = self._ins_cmd - L_ref
             if abs(L_offset_m) > self._insertion_offset_abort_m:
                 adapter_abort_reason = (
                     f"insertion_offset_exceeded(|L-Lref|={L_offset_m*1e3:.2f}mm > "
                     f"{self._insertion_offset_abort_m*1e3:.1f}mm)"
-                )
-                print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
-                      f"{adapter_abort_reason}")
-
-        # magnet_xyz: computed from the MEASURED joints (z_meas, this tick's
-        # actual robot state, not the commanded/predicted one) -- an
-        # independent monitor must watch where the magnet actually is, not
-        # where the controller intends it to go. Now computed once, earlier
-        # in this method (see the instrumentation-pass comment above), and
-        # reused here unchanged -- same value, same FK call, just not
-        # recomputed.
-        if adapter_abort_reason is None and self._magnet_z_bounds_m is not None:
-            z_min, z_max = self._magnet_z_bounds_m
-            if magnet_xyz[2] < z_min or magnet_xyz[2] > z_max:
-                adapter_abort_reason = (
-                    f"magnet_z_out_of_bounds(z={magnet_xyz[2]*1e3:.1f}mm, "
-                    f"bounds=[{z_min*1e3:.1f},{z_max*1e3:.1f}]mm)"
-                )
-                print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
-                      f"{adapter_abort_reason}")
-
-        if adapter_abort_reason is None and self._magnet_exclusion_radius_m is not None:
-            gap_m = float(np.min(np.linalg.norm(
-                self._magnet_exclusion_lumen_C_m - magnet_xyz[None, :], axis=1
-            )))
-            if gap_m < self._magnet_exclusion_radius_m:
-                adapter_abort_reason = (
-                    f"magnet_exclusion_violated(gap={gap_m*1e3:.1f}mm < "
-                    f"{self._magnet_exclusion_radius_m*1e3:.1f}mm)"
                 )
                 print(f"[process_isolated_adapter] tick {self._counter}: SAFETY ABORT -- "
                       f"{adapter_abort_reason}")
@@ -505,7 +603,11 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             # saved to disk; this closes that gap. Logging-only, no
             # effect on command/success/control flow.
             "jacobian_adaptation_diagnostics": None if resp is None else resp.get("jacobian_adaptation_diagnostics"),
+            # 2026-11-19 (corrected): same hold-value-not-observation
+            # distinction as process_isolated_adapter's own log row --
+            # see that site for the full comment.
             "jacobian_scale_applied": 0.0 if resp is None else resp.get("jacobian_scale_applied", 0.0),
+            "jacobian_scale_is_observed": resp is not None,
             "objective": None if resp is None else resp.get("qp_objective"),
             "primal_residual": None if resp is None else resp.get("qp_primal_residual"),
             "dual_residual": None if resp is None else resp.get("qp_dual_residual"),

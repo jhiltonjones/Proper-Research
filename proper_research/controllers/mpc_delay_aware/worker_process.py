@@ -82,8 +82,11 @@ from what was actually applied (0), never from a late/rejected u0 -- see
 """
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
 import os
+import queue
+import threading
 import time
 from typing import Optional
 
@@ -629,6 +632,14 @@ def _worker_main(
                     control_index=int(req["control_index"]),
                     previous_input=np.asarray(req["previous_input"], dtype=float),
                 )
+            # 2026-11-19 (corrected): this is a WALL-CLOCK interval
+            # (time.monotonic() delta around the call), not a CPU-time or
+            # pure-computation measurement. It necessarily includes any
+            # time this process was descheduled by the OS inside that
+            # interval (e.g. another process/thread holding the CPU,
+            # GIL contention from this same interpreter, I/O waits inside
+            # numpy/osqp calls). A long t_solve_ms does not by itself mean
+            # the solve/estimator/assembly work itself was slow.
             t_solve_ms = (time.monotonic() - t0) * 1e3
             # Extra diagnostic-only fields (2026-09-28 instrumentation pass):
             # all read from values `step` already computed -- nothing here
@@ -639,6 +650,30 @@ def _worker_main(
             jacobian_used = getattr(step, "jacobian_used", None)
             conn.send({
                 "seq": seq, "status": "ok" if step.success else "infeasible",
+                # 2026-11-19 (late-response timing instrumentation,
+                # corrected 2026-11-19): a genuine worker-side
+                # time.monotonic() reading -- CLOCK_MONOTONIC is a
+                # system-wide clock, directly comparable to the PARENT's
+                # own time.monotonic() readings on the same host (this is
+                # a subprocess, not a remote machine).
+                #
+                # EXACT placement, stated precisely rather than implied:
+                # taken here, immediately after `t_solve_ms` is computed
+                # (i.e. after the QP solve itself has finished), but
+                # BEFORE the remaining response-dict fields below are
+                # assembled (several numpy array conversions:
+                # predicted_beam_positions, predicted_states,
+                # jacobian_used, dual_y, predicted_commands,
+                # predicted_inputs), and BEFORE this dict is handed to
+                # `conn.send()` for pickling and the actual pipe write.
+                # It is named `_timestamp`, not `_sent_at`, because it is
+                # NOT the moment the bytes left this process -- it is a
+                # marker taken mid-construction of the response, closer
+                # to "solve finished" than to "transmitted". Downstream,
+                # `parent_send_to_worker_timestamp_s` (see
+                # MPCWorkerHandle.try_solve) is derived from this and is
+                # documented the same way: NOT a full round trip.
+                "worker_response_timestamp": time.monotonic(),
                 "command": np.asarray(step.command, dtype=float),
                 "predicted_beam_positions": np.asarray(step.predicted_beam_positions, dtype=float),
                 "t_solve_ms": t_solve_ms, "error": None,
@@ -657,16 +692,35 @@ def _worker_main(
                 ),
                 "jacobian_adaptation_diagnostics": getattr(step, "jacobian_adaptation_diagnostics", None),
                 "jacobian_scale_applied": float(getattr(step, "jacobian_scale_applied", 0.0)),
+                # 2026-11-19 (future-run diagnosability): the Ec/Sc COMMAND
+                # stack this solve's exclusion rows actually constrain --
+                # DISTINCT from predicted_states (Ep/Sp, the delayed
+                # PHYSICAL stack) above. Previously only predicted_states
+                # was persisted, which a prior offline review mistook for
+                # the commanded configuration -- see
+                # test_predicted_commands_matches_exclusion_rows.py for the
+                # check this gap motivated. `predicted_inputs` is the FULL
+                # (N, m) solution, not only u0=command -- needed to verify
+                # any stage, not just the first.
+                "predicted_commands": (
+                    None if getattr(step, "predicted_commands", None) is None
+                    else np.asarray(step.predicted_commands, dtype=float)
+                ),
+                "predicted_inputs": np.asarray(step.predicted_inputs, dtype=float),
+                "magnet_exclusion_mapping": getattr(step, "magnet_exclusion_mapping", None),
             })
         except Exception as exc:  # noqa: BLE001 -- must never crash silently, always reply
             conn.send({
                 "seq": seq, "status": "error", "command": None,
+                "worker_response_timestamp": time.monotonic(),
                 "predicted_beam_positions": None, "t_solve_ms": float("nan"), "error": repr(exc),
                 "predicted_states": None, "qp_objective": float("nan"), "qp_status": "error",
                 "qp_success": False, "qp_iterations": 0, "qp_solve_time_s": float("nan"),
                 "qp_primal_residual": float("nan"), "qp_dual_residual": float("nan"),
                 "jacobian_used": None, "dual_y": None,
                 "jacobian_adaptation_diagnostics": None, "jacobian_scale_applied": 0.0,
+                "predicted_commands": None, "predicted_inputs": None,
+                "magnet_exclusion_mapping": None,
             })
 
 
@@ -702,6 +756,7 @@ class MPCWorkerHandle:
         jacobian_adaptation_kwargs: Optional[dict] = None,
         right_shift_m: float = 0.0,
         jacobian_source_kwargs: Optional[dict] = None,
+        late_response_log_path: Optional[str] = None,
     ) -> None:
         self.t_spawn_start = time.monotonic()
         ctx = mp.get_context("spawn")
@@ -732,11 +787,113 @@ class MPCWorkerHandle:
         self._proc.start()
         self._seq = 0
         self._pending_seq: Optional[int] = None
+        # 2026-11-19 (minimal async request/response timing instrumentation):
+        # when a request's own deadline is missed, the TRUE worker-side solve
+        # time is otherwise unrecoverable -- the response, if it arrives
+        # late, was previously drained and discarded with no record of when
+        # it showed up or how late it was. `_pending_sent_at` is the
+        # monotonic send time for the currently-outstanding seq;
+        # `late_response_log` records (seq, sent_at, drained_at, lateness_s)
+        # for every response drained AFTER its own deadline already expired
+        # -- purely diagnostic, never fed back into control (the drained
+        # response is still discarded exactly as before; see try_solve).
+        self._pending_sent_at: Optional[float] = None
+        self._pending_deadline_s: Optional[float] = None
+        self._pending_control_index: Optional[int] = None
+        self.late_response_log: list[dict] = []
+        # 2026-11-19 (corrected): a synchronous write-then-send-after
+        # ordering was NOT sufficient -- it still runs file I/O on the
+        # CONTROL thread (try_solve), which can block the next tick's
+        # response handling and consume control-loop budget whenever the
+        # write is slow (a busy disk, a full buffer, a hung filesystem).
+        # Fixed properly: the control thread only ever does a bounded,
+        # non-blocking `queue.Queue.put_nowait()` -- real file I/O
+        # (open/write/flush) happens exclusively on a SEPARATE writer
+        # thread that owns the file handle. The control thread never
+        # touches a file handle or lock. Overflow (the queue is full,
+        # e.g. the writer thread is stuck) and writer errors are both
+        # counted, never silently dropped or allowed to raise into
+        # control code.
+        self._late_response_queue: "queue.Queue[Optional[dict]]" = queue.Queue(maxsize=256)
+        self.late_response_queue_overflow_count = 0
+        self.late_response_shutdown_drain_complete: Optional[bool] = None  # set by close()
+        self.late_response_pending_at_shutdown: Optional[int] = None  # set by close()
+        self.late_response_writer_error_count = 0
+        self._late_response_writer_thread: Optional[threading.Thread] = None
+        self._late_response_log_path: Optional[str] = None
+        if late_response_log_path:
+            self._start_late_response_writer(late_response_log_path)
         if not self._parent_conn.poll(startup_timeout_s):
             raise RuntimeError("MPC worker process did not start in time")
         ready = self._parent_conn.recv()
         if ready.get("status") != "ready":
             raise RuntimeError(f"MPC worker process failed to start: {ready}")
+
+    def _start_late_response_writer(self, path: str) -> None:
+        """Starts the dedicated writer thread for `path`. The writer
+        thread (NOT the control thread) opens the file, blocks on
+        `queue.get()`, and writes+flushes each record as it arrives. A
+        `None` sentinel tells it to stop (used by close()). Any
+        open/write/flush exception is caught, counted in
+        `late_response_writer_error_count`, and does NOT crash the
+        thread or the control path -- the writer keeps trying to serve
+        subsequent queue items."""
+        self._late_response_log_path = path
+
+        def _writer_loop():
+            fh = None
+            try:
+                fh = open(path, "a", encoding="utf-8")
+            except Exception:
+                self.late_response_writer_error_count += 1
+                fh = None
+            while True:
+                item = self._late_response_queue.get()
+                if item is None:
+                    break
+                if fh is None:
+                    self.late_response_writer_error_count += 1
+                    continue
+                try:
+                    fh.write(json.dumps(item, default=str) + "\n")
+                    fh.flush()
+                except Exception:
+                    self.late_response_writer_error_count += 1
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    self.late_response_writer_error_count += 1
+
+        self._late_response_writer_thread = threading.Thread(target=_writer_loop, daemon=True)
+        self._late_response_writer_thread.start()
+
+    def _enqueue_late_response(self, record: dict) -> None:
+        """Control-thread side: NEVER blocks, NEVER touches a file. A full
+        queue (writer stuck/slow) increments an observable overflow
+        counter and drops the record rather than blocking try_solve."""
+        if self._late_response_writer_thread is None:
+            return
+        try:
+            self._late_response_queue.put_nowait(record)
+        except queue.Full:
+            self.late_response_queue_overflow_count += 1
+
+    def set_late_response_log_path(self, path: str) -> None:
+        """Starts (or restarts, pointed at a new path) the late-response
+        writer thread after construction -- for callers (the real
+        hardware runner) whose own output directory isn't created until
+        AFTER this worker is spawned (see spawn_and_warm_worker's "spawn
+        BEFORE any hardware connection" lifecycle note), so the path
+        can't be passed to __init__ in the first place. Safe to call
+        before any try_solve(); any already-buffered late_response_log
+        entries are NOT retroactively written (there won't be any yet in
+        the normal spawn-then-set-path ordering this exists for)."""
+        if self._late_response_writer_thread is not None:
+            self._late_response_queue.put(None)  # stop the old writer
+            self._late_response_writer_thread.join(timeout=2.0)
+            self._late_response_writer_thread = None
+        self._start_late_response_writer(path)
         self.t_worker_ready = time.monotonic()
 
     def require_frame_transform(self, *, timeout_s: float = 5.0) -> None:
@@ -817,11 +974,102 @@ class MPCWorkerHandle:
         older request). The caller's fallback (apply u=0, hold q_cmd) is
         identical for every None case.
         """
+        # 2026-11-19 (point 2b): the drained-late-response record is
+        # WRITTEN TO DISK below, but only AFTER this tick's own new
+        # request has already been sent -- see the deferred-write block
+        # near the end of this method. This keeps the (rare) blocking
+        # file write off the deadline-sensitive critical path: it only
+        # happens on a tick that follows a miss, and even then, the new
+        # request goes out first.
+        deferred_late_record = None
+
         if self._pending_seq is not None:
             if self._parent_conn.poll(0.0):
+                drained_at = time.monotonic()
                 stale = self._parent_conn.recv()
                 if stale.get("seq") == self._pending_seq:
+                    # 2026-11-19 (point 2, corrected 2026-11-19): record how
+                    # late this arrived relative to its own deadline, purely
+                    # for diagnosis -- it is discarded either way, exactly
+                    # as before (see the drained-not-returned path below);
+                    # nothing here changes which response (if any) is
+                    # returned to the caller. Two DISTINCT, non-overlapping
+                    # quantities, neither of which is a full round trip:
+                    #  - drain_delay_s: deadline-expiry -> this poll(0.0)
+                    #    noticing it. Bounded by whenever the NEXT call
+                    #    happened to check -- NOT when the worker actually
+                    #    finished. Does not identify the worker's bottleneck.
+                    #  - parent_send_to_worker_timestamp_s: THIS call's own
+                    #    request-send -> the worker's `worker_response_
+                    #    timestamp` (a genuine worker-side time.monotonic()
+                    #    reading, comparable to ours on the same host). That
+                    #    worker-side timestamp is taken AFTER the QP solve
+                    #    finishes but BEFORE several remaining response-dict
+                    #    array conversions and BEFORE conn.send()'s own
+                    #    pickling/pipe write -- see worker_process.py's
+                    #    _worker_main for the exact spot. So this quantity
+                    #    excludes: the rest of dict assembly, pickling, the
+                    #    pipe write, and this side's own poll/recv -- it is
+                    #    NOT the full round trip, only the send-to-near-
+                    #    solve-completion portion of it.
+                    #
+                    # 2026-11-19 (corrected): `parent_timeout_at` is the
+                    # instant this tick's own `poll(deadline_s)` gave up
+                    # waiting. Correct description: "No response was
+                    # available to the parent within the configured
+                    # wait." That is a CENSORED observation -- it does
+                    # NOT prove a response eventually arrived, and if one
+                    # did, this value does not say when. It must never be
+                    # read as "the worker finished at this time," nor as
+                    # proof the worker ever produced a response at all.
+                    worker_ts = stale.get("worker_response_timestamp")
+                    record = {
+                        "request_id": self._pending_seq,
+                        "reference_index": self._pending_control_index,
+                        "parent_sent_at": self._pending_sent_at,
+                        "parent_timeout_at": (
+                            None if self._pending_sent_at is None or self._pending_deadline_s is None
+                            else self._pending_sent_at + self._pending_deadline_s
+                        ),
+                        "parent_drained_at": drained_at,
+                        "deadline_s": self._pending_deadline_s,
+                        "drain_delay_s": (
+                            None if self._pending_sent_at is None or self._pending_deadline_s is None
+                            else (drained_at - self._pending_sent_at) - self._pending_deadline_s
+                        ),
+                        "worker_response_timestamp": worker_ts,
+                        "parent_send_to_worker_timestamp_s": (
+                            None if worker_ts is None or self._pending_sent_at is None
+                            else worker_ts - self._pending_sent_at
+                        ),
+                        "worker_reported_t_solve_ms": stale.get("t_solve_ms"),
+                        # 2026-11-19 (bounded offline profile gap closed):
+                        # OSQP's OWN internally-measured solve time (step.
+                        # solve_time_s = result.info.run_time), the one
+                        # genuinely separable sub-component of t_solve_ms
+                        # available anywhere in this pipeline. Was missing
+                        # from this record's schema -- added so a FUTURE
+                        # saved late-response file can split "OSQP solve"
+                        # from "everything else inside solve_delay_aware"
+                        # (estimator work + matrix assembly + Python glue,
+                        # which remain NOT separable from each other with
+                        # the timestamps that exist today).
+                        "worker_reported_qp_solve_time_s": stale.get("qp_solve_time_s"),
+                        # The gain THAT REQUEST's worker-side solve actually
+                        # used -- read from the late response itself, NOT
+                        # the parent-side 0.0 hold-value that gets logged
+                        # into path_follow.jsonl/controller_metadata for a
+                        # miss (see point 1: that 0.0 is a default, never
+                        # an observation of this quantity).
+                        "gain_actually_used": stale.get("jacobian_scale_applied"),
+                        "resolved": True,
+                    }
+                    self.late_response_log.append(record)
+                    deferred_late_record = record  # written to disk AFTER the new request is sent, see below
                     self._pending_seq = None  # drained -- worker is free again
+                    self._pending_sent_at = None
+                    self._pending_deadline_s = None
+                    self._pending_control_index = None
                 # a mismatched seq here would mean two responses queued up,
                 # which try_solve's one-outstanding-request invariant should
                 # make impossible; left undrained is not silently ignored --
@@ -832,6 +1080,9 @@ class MPCWorkerHandle:
         self._seq += 1
         seq = self._seq
         self._pending_seq = seq
+        self._pending_sent_at = time.monotonic()
+        self._pending_deadline_s = float(deadline_s)
+        self._pending_control_index = int(control_index)
         self._parent_conn.send({
             "seq": seq, "kind": kind,
             "z_meas": np.asarray(z_meas, dtype=float),
@@ -846,15 +1097,83 @@ class MPCWorkerHandle:
             "measurement_age_s": measurement_age_s,
         })
 
+        # 2026-11-19 (corrected): a synchronous write here -- even placed
+        # after the new request is sent -- can still block THIS call's
+        # return (and thus the caller's own response handling / next-tick
+        # scheduling) and consume control-loop budget on a slow or stuck
+        # disk. Only a bounded, non-blocking enqueue happens on this
+        # thread; the actual write runs on the separate writer thread.
+        if deferred_late_record is not None:
+            self._enqueue_late_response(deferred_late_record)
+
         if not self._parent_conn.poll(deadline_s):
-            return None  # miss -- seq stays pending, drained by a future call
+            # 2026-11-19 (corrected wording): no response was available to
+            # the parent within the configured wait. This does NOT prove
+            # a response eventually arrived -- the worker may still be
+            # solving, may never finish, or may have crashed. Seq stays
+            # pending, drained (and timed, if it does arrive) by a future
+            # call.
+            return None
         resp = self._parent_conn.recv()
         if resp.get("seq") != seq:
             return None  # shouldn't happen given the invariant above; treat as a miss
         self._pending_seq = None
+        self._pending_sent_at = None
+        self._pending_deadline_s = None
+        self._pending_control_index = None
         return resp
 
     def close(self) -> None:
+        # 2026-11-19 (point 3): a request can still be outstanding at
+        # shutdown (e.g. the last tick of a run missed its deadline and
+        # nothing drained it before close() was called). Whatever response
+        # the worker eventually produces for it will never be read -- the
+        # process is about to be torn down -- so its timing is genuinely
+        # unresolved, not merely late. Record that explicitly rather than
+        # silently losing the request.
+        if self._pending_seq is not None:
+            record = {
+                "request_id": self._pending_seq,
+                "reference_index": self._pending_control_index,
+                "parent_sent_at": self._pending_sent_at,
+                "parent_timeout_at": (
+                    None if self._pending_sent_at is None or self._pending_deadline_s is None
+                    else self._pending_sent_at + self._pending_deadline_s
+                ),
+                "parent_drained_at": None,
+                "deadline_s": self._pending_deadline_s,
+                "drain_delay_s": None,
+                "worker_response_timestamp": None,
+                "parent_send_to_worker_timestamp_s": None,
+                "worker_reported_t_solve_ms": None,
+                "worker_reported_qp_solve_time_s": None,
+                "gain_actually_used": None,
+                "resolved": False,
+                "unresolved_reason": "pending_request_at_shutdown -- worker's eventual response, if any, was never read",
+            }
+            self.late_response_log.append(record)
+            self._enqueue_late_response(record)
+            self._pending_seq = None
+            self._pending_sent_at = None
+            self._pending_deadline_s = None
+            self._pending_control_index = None
+        # 2026-11-19: shutdown-drain completeness made observable, not
+        # assumed. Signal the writer to stop (the None sentinel), THEN
+        # wait for it to actually exit -- if the queue had anything still
+        # unwritten (the writer was behind, or stuck), that is reported
+        # via `late_response_shutdown_drain_complete`/`..._pending_count`
+        # rather than silently dropped on the floor.
+        self.late_response_shutdown_drain_complete = True
+        self.late_response_pending_at_shutdown = 0
+        if self._late_response_writer_thread is not None:
+            self._late_response_queue.put(None)
+            self._late_response_writer_thread.join(timeout=5.0)
+            if self._late_response_writer_thread.is_alive():
+                self.late_response_shutdown_drain_complete = False
+            self.late_response_pending_at_shutdown = self._late_response_queue.qsize()
+            if self.late_response_pending_at_shutdown > 0:
+                self.late_response_shutdown_drain_complete = False
+            self._late_response_writer_thread = None
         try:
             self._parent_conn.send(None)
         except Exception:

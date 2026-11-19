@@ -31,8 +31,20 @@ from proper_research.planning.planning_context import build_planning_context
 from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
     load_configuration_reference,
 )
+from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    _resolve_robot_kinematics,
+)
+from proper_research.planning.planning_context import make_robot_config
 
 from . import common
+
+# 2026-11-19: SAME robot-kinematics resolution the MPC rectangle runner
+# uses (run_mpc_delay_aware_insertion_anchor.py), needed here only to
+# build the shared external measured-state safety check's magnet FK --
+# see main()'s own comment at the pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE
+# assignment below.
+_robot_kin = _resolve_robot_kinematics(make_robot_config())
 
 # 2026-10-23: physical rig's middle marker is permanently gone (removed
 # 2026-09-29, see common.py's patch_state_stream_config_two_markers) --
@@ -82,10 +94,45 @@ def main() -> None:
                     help="camera/robot connect and every tick solves normally, but no servoJ/"
                          "advancer motion commands are sent -- for validating the wiring before "
                          "the first live pilot")
+    p.add_argument("--measured-clearance-abort-mm", type=float,
+                    default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
+                    help="2026-11-19: SAME shared measured-state external safety check the MPC "
+                         "rectangle runner uses (run_mpc_delay_aware_insertion_anchor.py), now "
+                         "wired to this reactive controller via OfflineJointControllerAdapter's "
+                         "pre-solve hold-and-abort -- no predictive constraint is added to the "
+                         "controller itself. Default is the already-reviewed "
+                         "MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM (230mm), same as the MPC runner.")
     args = p.parse_args()
 
     schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache)
     pf._SCHEDULE_OVERRIDE = schedule
+
+    # 2026-11-19: shared external measured-state safety check (see
+    # proper_research.controllers.mpc_delay_aware.external_safety_check
+    # and OfflineJointControllerAdapter/close_loop_path_follow.py's
+    # _TRIM_KINDS wiring, both added this session). Uses the SAME FK and
+    # beam-base point the MPC rectangle runner uses, so the two
+    # conditions see an identical geometric monitor -- only the control
+    # law differs, matching the inv-vs-MPC comparison's intent.
+    _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
+
+    def _magnet_position_fn(state7: np.ndarray) -> np.ndarray:
+        # convention matches run_inverse_jacobian_online_vessel.py's own
+        # magnet_position_fn(state7) docstring: the magnet never depends
+        # on insertion length, only the 6 joints.
+        q6 = np.asarray(state7, dtype=float)[:6]
+        fk = urik.forward_kinematics(q6.reshape(6), _robot_kin.dh, _robot_kin.T_F_M)
+        return np.asarray(fk.T_R_target[:3, 3], dtype=float)
+
+    pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = dict(
+        magnet_position_fn=_magnet_position_fn,
+        magnet_exclusion_lumen_C_m=_beam_base_xyz_r,
+        magnet_exclusion_radius_m=args.measured_clearance_abort_mm * 1e-3,
+    )
+    print(f"[inv_7dof_delay_aware] shared external measured-state safety check: "
+          f"abort_radius={args.measured_clearance_abort_mm:.1f}mm (reactive controller -- "
+          f"no predictive constraint added; a trip holds the command and enters the shared "
+          f"main loop's abort/shutdown path, same as the MPC runner's own monitor)")
     print(f"[inv_7dof_delay_aware] schedule: {schedule.shape} (paired-A/B mode: J_{{k+3}})")
 
     if args.skip_preflight:

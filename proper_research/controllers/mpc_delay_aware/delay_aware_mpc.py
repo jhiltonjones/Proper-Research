@@ -90,6 +90,18 @@ class DelayAwareBeamOutputMPCStep(beam_module.BeamOutputMPCStep):
     # (2026-11-18) the frozen scalar actually applied to the Jacobian this
     # solve -- 0.0 unless mode="active" and a sample was accepted.
     jacobian_scale_applied: float = 0.0
+    # 2026-11-19 (future-run diagnosability): the exact per-stage mapping
+    # the magnet-exclusion constraint used THIS solve, when configured --
+    # None otherwise. Lets an offline check reconstruct `lower[j] = radius
+    # - d_nom[j] + c[j]@q_nom[j] - c[j]@free_cmd[j]` and the row-times-
+    # solution value EXACTLY from the log, instead of re-deriving the
+    # schedule and guessing control_index alignment (the prior review's
+    # main source of error). `indices` are the reference-sample indices
+    # used for this horizon (control_index+1+range(N), clipped); d_nom/
+    # normal/q_nom are the schedule's own fixed values at those indices;
+    # free_cmd is this tick's (Ec@x_exec) baseline the rows were built
+    # against.
+    magnet_exclusion_mapping: dict | None = None
 
 
 class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
@@ -355,6 +367,7 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
         self._magnet_excl_d_nom = d_nom
         self._magnet_excl_normal = normal
         self._magnet_excl_radius = radius
+        self._last_magnet_excl_mapping: dict | None = None
         self._magnet_excl_min_nominal_margin_m = float(np.min(d_nom - radius))
         self._magnet_excl_lumen = lumen
 
@@ -491,6 +504,22 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             lower[j] = self._magnet_excl_radius - d_nom[j] + c[j] @ q_nom[j] - c[j] @ free_cmd[j]
         upper = np.full(self.N, np.inf, dtype=float)
         self.A[self._magnet_excl_row_start:self._magnet_excl_row_start + self.N, :] = rows
+        # 2026-11-19 (future-run diagnosability): stash exactly what this
+        # solve's exclusion rows were built from, read back out into
+        # DelayAwareBeamOutputMPCStep.magnet_exclusion_mapping below --
+        # `indices` is None in the live_relinearize branch (no fixed
+        # reference-sample schedule lookup there).
+        self._last_magnet_excl_mapping = {
+            "indices": (
+                None if self._magnet_excl_live_relinearize else indices.tolist()
+            ),
+            "d_nom_m": d_nom.tolist(), "normal": (
+                c.tolist() if self._magnet_excl_live_relinearize else normal.tolist()
+            ),
+            "q_nom_rad": q_nom.tolist(), "free_cmd_rad": free_cmd.tolist(),
+            "radius_m": self._magnet_excl_radius, "lower": lower.tolist(),
+            "live_relinearize": self._magnet_excl_live_relinearize,
+        }
         return lower, upper
 
     # ------------------------------------------------------------------
@@ -1429,13 +1458,27 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
             objective = float(0.5 * solution @ hessian @ solution + linear_cost @ solution)
             self._warm_start = solution.copy()
 
+        # 2026-11-19 (anchor-mismatch fix): reconstruct the LOGGED prediction
+        # from the EXACT same G/constant_error/desired_position the QP cost
+        # itself was built from (beam_terms["G"]/["constant_error"] encode
+        # `predicted_beam_position - desired_position`, including the
+        # jacobian-adaptation correction's TRUE anchor at q_meas when
+        # g!=0 -- see _beam_prediction_terms_exec's docstring). The OLD
+        # formula here independently re-expanded nominal_position +
+        # Jbar@(predicted_states-state_reference), which for g!=0 silently
+        # anchors the correction at the schedule's q_ref instead of the
+        # measured q_meas the QP's own cost actually uses -- a real
+        # divergence between what was logged/scored and what the task
+        # cost optimized against, not merely a stylistic difference (see
+        # test_predicted_beam_matches_task_cost.py). `predicted_inputs`
+        # already equals `solution` reshaped (or zeros in the infeasible
+        # fallback), so this is a pure function of the SAME decision the
+        # QP solved for -- one computation, used both places, so they
+        # cannot silently diverge again.
         predicted_beam_vector = (
-            beam_terms["nominal_position"].reshape(3 * self.N)
-            + beam_terms["Jbar"] @ (
-                predicted_states.reshape(self.nu)
-                - self.reference.state_window(control_index, self.N).reshape(self.nu)
-            )
-            + self.beta_d * np.tile(estimated, self.N)
+            beam_terms["desired_position"].reshape(3 * self.N)
+            + beam_terms["G"] @ predicted_inputs.reshape(self.nu)
+            + beam_terms["constant_error"]
         )
         predicted_beam = predicted_beam_vector.reshape(self.N, 3)
         predicted_error = predicted_beam - beam_terms["desired_position"]
@@ -1467,4 +1510,5 @@ class DelayAwareBeamOutputTrackingMPC(beam_module.BeamOutputTrackingMPC):
                 None if self._jac_adapt is None else self.last_jacobian_adaptation_diagnostics
             ),
             jacobian_scale_applied=jac_g,
+            magnet_exclusion_mapping=getattr(self, "_last_magnet_excl_mapping", None),
         )

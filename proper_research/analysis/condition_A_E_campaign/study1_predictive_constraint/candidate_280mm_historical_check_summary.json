@@ -1,0 +1,62 @@
+{
+  "candidate_mm": 280.0,
+  "n_states": 1995,
+  "n_failures": 7,
+  "failures": [
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 107,
+      "ref_index": 107,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 277.2486781696806
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 108,
+      "ref_index": 108,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 275.73754614724425
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 109,
+      "ref_index": 109,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 274.6006387863223
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 110,
+      "ref_index": 110,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 273.33834650430543
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 111,
+      "ref_index": 111,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 273.02666925935625
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T130429Z",
+      "step": 110,
+      "ref_index": 110,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 274.77802954171244
+    },
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T131743Z",
+      "step": 110,
+      "ref_index": 110,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 274.7956108321794
+    }
+  ],
+  "n_nonzero_joint": 117,
+  "n_nonzero_insertion": 12,
+  "joint_delta_max": 0.007664107273335549,
+  "insertion_delta_max": 0.0001999999999999988,
+  "min_logged_gap_mm": 272.97626356682224,
+  "elapsed_s": 27.268063068389893
+}

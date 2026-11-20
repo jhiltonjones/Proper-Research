@@ -140,17 +140,30 @@ class AdvancerSink:
     # ------------------------------------------------------------------
     # producer API
     # ------------------------------------------------------------------
-    def submit_rate(self, insertion_rate_m_s: float, dt: float) -> None:
-        """Integrate one MPC tick of insertion rate into the commanded distance."""
+    def submit_rate(self, insertion_rate_m_s: float, dt: float) -> float:
+        """Integrate one MPC tick of insertion rate into the commanded distance.
+
+        2026-11-20: now returns the FINAL accepted rate (m/s) -- the
+        requested rate after this method's own |rate|<=max_rate_m_s
+        clamp -- so a caller's software bookkeeping (the tracked
+        insertion_m/ins_cmd accumulator feeding the next controller
+        call and the logged row) can use what was actually accepted,
+        not the pre-clamp request. Returns 0.0 for a NaN request
+        (previously a silent no-op with no way for the caller to know).
+        This is purely a return-value addition; nothing about this
+        method's own accumulation/dispatch behaviour changes, and no
+        existing caller reads a return value today.
+        """
         cfg = self.config
         rate = float(insertion_rate_m_s)
         if rate != rate:  # NaN
-            return
+            return 0.0
         rate = max(-cfg.max_rate_m_s, min(cfg.max_rate_m_s, rate))
         delta_mm = rate * float(dt) * 1000.0
         with self._state_lock:
             self._commanded_mm += delta_mm
             self._residual_mm += delta_mm
+        return rate
 
     def submit_distance(self, distance_mm: float) -> None:
         """Directly queue a signed travel increment (bypasses rate integration)."""

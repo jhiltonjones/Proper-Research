@@ -33,7 +33,7 @@ from .measure_l0 import build_measurement_camera, measure_l_mm
 
 def reset_insertion(
     target_mm: float, *, live: bool, advancer_port: str = "/dev/ttyACM0",
-    rate_mm_s: float = 1.5, tolerance_mm: float = 0.3, max_iters: int = 5,
+    rate_mm_s: float = 1.5, tolerance_mm: float = 0.2, max_iters: int = 5,
 ) -> float:
     camera, mapper = build_measurement_camera()
     camera.start()

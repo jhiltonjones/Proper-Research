@@ -1,0 +1,97 @@
+{
+  "replay_run": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+  "label": "PREDICTION REPLAY on one fixed recorded A execution history -- NOT closed-loop evidence; frozen forecast is a linear substitution (scheduled_forecast - (J_sched-J0)@(z_pred-z_ref)), not a re-solved QP, so it cannot capture how a real frozen-Jacobian controller would have acted differently",
+  "n_ticks_scored": 235,
+  "by_lead_stage_mm": {
+    "0": {
+      "scheduled_mean_mm": 0.24141659670088603,
+      "frozen_mean_mm": 0.41611357449961167,
+      "diff_frozen_minus_scheduled_mm": 0.17469697779872567,
+      "n": 235
+    },
+    "1": {
+      "scheduled_mean_mm": 0.34394027383762504,
+      "frozen_mean_mm": 0.5003467580744563,
+      "diff_frozen_minus_scheduled_mm": 0.1564064842368313,
+      "n": 234
+    },
+    "2": {
+      "scheduled_mean_mm": 0.4068232358792914,
+      "frozen_mean_mm": 0.556322428978125,
+      "diff_frozen_minus_scheduled_mm": 0.14949919309883355,
+      "n": 233
+    },
+    "3": {
+      "scheduled_mean_mm": 0.46078225622702135,
+      "frozen_mean_mm": 0.6090978334286138,
+      "diff_frozen_minus_scheduled_mm": 0.1483155772015925,
+      "n": 232
+    },
+    "4": {
+      "scheduled_mean_mm": 0.49783703058507767,
+      "frozen_mean_mm": 0.6536585256163947,
+      "diff_frozen_minus_scheduled_mm": 0.15582149503131704,
+      "n": 231
+    },
+    "5": {
+      "scheduled_mean_mm": 0.5230952529977543,
+      "frozen_mean_mm": 0.6915243567012371,
+      "diff_frozen_minus_scheduled_mm": 0.16842910370348285,
+      "n": 230
+    },
+    "6": {
+      "scheduled_mean_mm": 0.5375532803925049,
+      "frozen_mean_mm": 0.7215625291435689,
+      "diff_frozen_minus_scheduled_mm": 0.18400924875106386,
+      "n": 229
+    },
+    "7": {
+      "scheduled_mean_mm": 0.547405831479847,
+      "frozen_mean_mm": 0.7483787543541343,
+      "diff_frozen_minus_scheduled_mm": 0.2009729228742872,
+      "n": 228
+    },
+    "8": {
+      "scheduled_mean_mm": 0.5522918251723783,
+      "frozen_mean_mm": 0.7667018044062051,
+      "diff_frozen_minus_scheduled_mm": 0.21440997923382665,
+      "n": 227
+    },
+    "9": {
+      "scheduled_mean_mm": 0.556149363538369,
+      "frozen_mean_mm": 0.784228100041809,
+      "diff_frozen_minus_scheduled_mm": 0.2280787365034401,
+      "n": 226
+    },
+    "10": {
+      "scheduled_mean_mm": 0.5585385046933335,
+      "frozen_mean_mm": 0.7953610960664899,
+      "diff_frozen_minus_scheduled_mm": 0.2368225913731563,
+      "n": 225
+    },
+    "11": {
+      "scheduled_mean_mm": 0.5594628241104296,
+      "frozen_mean_mm": 0.8069693622813561,
+      "diff_frozen_minus_scheduled_mm": 0.24750653817092655,
+      "n": 224
+    },
+    "12": {
+      "scheduled_mean_mm": 0.5612514641333701,
+      "frozen_mean_mm": 0.8140667982613526,
+      "diff_frozen_minus_scheduled_mm": 0.2528153341279825,
+      "n": 223
+    },
+    "13": {
+      "scheduled_mean_mm": 0.5647481447183139,
+      "frozen_mean_mm": 0.8239926448113021,
+      "diff_frozen_minus_scheduled_mm": 0.2592445000929881,
+      "n": 222
+    },
+    "14": {
+      "scheduled_mean_mm": 0.5686915006975395,
+      "frozen_mean_mm": 0.8293731352907983,
+      "diff_frozen_minus_scheduled_mm": 0.2606816345932587,
+      "n": 221
+    }
+  }
+}

@@ -8,7 +8,7 @@ the adopted default, not a proposal check.
 
 No hardware connection anywhere in this file (hardware guard below).
 """
-import sys, json, os, time
+import sys, json, os, time, tempfile
 MAIN = "/home/jack/Proper-Research"
 sys.path.insert(0, MAIN)
 
@@ -103,9 +103,19 @@ def test_real_spawned_worker_single_thread_enforcement():
     tcp_workspace_kwargs = dict(position_jacobians=tcp_jacobians, nominal_positions_m=tcp_positions,
                                  xyz_min=xyz_min, xyz_max=xyz_max)
 
-    timing_log_path = f"{MAIN}/close_loop_logs/myrun/tcp_fix_verification_diagnostics/regression_test_postsolve_threadpool.jsonl"
-    if os.path.exists(timing_log_path):
-        raise FileExistsError(f"REFUSING TO OVERWRITE: {timing_log_path} already exists.")
+    # 2026-11-19 isolation fix: this path previously was FIXED (the same
+    # filename on every run) and lived under close_loop_logs/myrun/ --
+    # the REAL experiment-log tree -- even though it is purely this
+    # test's own throwaway diagnostic (written here, read back a few
+    # lines below, never a campaign artifact). A second run (or a
+    # leftover file from an earlier one) tripped a "refuse to overwrite"
+    # guard that was meant to protect real experiment logs, not this
+    # test's own scratch output. Fixed by using a fresh, unique path
+    # under tempfile's own scratch directory every run, so repeated runs
+    # never collide with each other OR with any real historical log --
+    # no existing file is ever deleted or overwritten by this change.
+    _scratch_dir = tempfile.mkdtemp(prefix="single_thread_enforcement_regression_")
+    timing_log_path = os.path.join(_scratch_dir, "regression_test_postsolve_threadpool.jsonl")
     os.environ["MPC_WORKER_TIMING_LOG"] = timing_log_path
     # NO experimental env var -- single_threaded=True alone must now
     # enforce this, unconditionally, as the real production default.

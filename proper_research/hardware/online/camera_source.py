@@ -125,13 +125,20 @@ class CameraSource:
         self._robot_pose_getter = robot_pose_getter
         self._insertion_length_getter = insertion_length_getter
         self._robot_joints_getter = robot_joints_getter
-        # 2026-11-16: opt-in atomic (joints, timestamp) getter. When set,
-        # this is used INSTEAD of robot_joints_getter below -- the two are
-        # mutually exclusive on purpose, so a caller can't accidentally mix
-        # a bare-vector read with a stale/unrelated timestamp. robot_joints_
-        # getter's contract and all 3 of its other existing callers
-        # (close_loop_tip_control.py, state_stream.py, and the third
-        # existing use) are completely unaffected by this addition.
+        # 2026-11-20: this parameter was referenced in comments elsewhere
+        # in this codebase ("the new robot_joints_with_timestamp_getter
+        # parameter") and passed by at least one caller
+        # (close_loop_path_follow.py's main()), but CameraSource never
+        # actually accepted or used it -- a real TypeError on construction
+        # for any caller passing it, and (separately) the reason
+        # StateEstimate.robot_joints_age() had no real timestamp to work
+        # from even where this kwarg wasn't passed. When given, this is
+        # PREFERRED over robot_joints_getter: it returns an ATOMIC
+        # (joints, timestamp) pair from one indivisible read (see
+        # RobotJointStream.latest_joints_with_timestamp's own docstring),
+        # so the joint vector baked into a StateEstimate and the timestamp
+        # used to compute its age are guaranteed to be the SAME sample,
+        # not two separate reads that could race.
         self._robot_joints_with_timestamp_getter = robot_joints_with_timestamp_getter
         self._on_error = on_error
 
@@ -156,6 +163,18 @@ class CameraSource:
         self.frames_reconstructed = 0
         self.reconstruct_failures = 0
         self.last_error: str = ""
+        # 2026-11-20: a real baseline-A launch hit "no fresh tip+joints
+        # within warmup_timeout_s (vis_fail=0, '')" after preflight's own
+        # separate camera session had just grabbed 20/20 valid frames --
+        # i.e. the device opened fine (cap.isOpened() passed) but
+        # _grab_body()'s cap.grab()/cap.retrieve() path previously
+        # returned silently on every failure, never touching last_error
+        # or any counter, so camera.healthy stayed True (loop alive, no
+        # exception) while zero frames ever arrived and the warmup error
+        # could only report the (irrelevant, since the vision mapper is
+        # never reached without a frame) mapper fields. grab_failures
+        # below is the missing diagnostic signal for exactly that case.
+        self.grab_failures = 0
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -271,11 +290,17 @@ class CameraSource:
     def _grab_body(self, _t_start: float) -> None:
         cap = self._cap
         if cap is None:
+            self.grab_failures += 1
+            self.last_error = "grab attempted with no open cv2.VideoCapture (cap is None)"
             return
         if not cap.grab():
+            self.grab_failures += 1
+            self.last_error = "cv2.VideoCapture.grab() returned False"
             return
         ok, frame = cap.retrieve()
         if not ok or frame is None:
+            self.grab_failures += 1
+            self.last_error = f"cv2.VideoCapture.retrieve() failed (ok={ok}, frame_is_none={frame is None})"
             return
         with self._grab_lock:
             self._latest_frame = frame
@@ -380,10 +405,10 @@ class CameraSource:
         robot_joints_stamp = None
         if self._robot_joints_with_timestamp_getter is not None:
             try:
-                joints, stamp = self._robot_joints_with_timestamp_getter()
+                joints, j_stamp = self._robot_joints_with_timestamp_getter()
                 if joints is not None:
                     robot_joints = np.asarray(joints, dtype=float).reshape(6)
-                    robot_joints_stamp = stamp
+                    robot_joints_stamp = None if j_stamp is None else float(j_stamp)
             except Exception:
                 robot_joints = None
                 robot_joints_stamp = None
@@ -392,6 +417,9 @@ class CameraSource:
                 joints = self._robot_joints_getter()
                 if joints is not None:
                     robot_joints = np.asarray(joints, dtype=float).reshape(6)
+                # robot_joints_stamp stays None: the bare getter carries no
+                # timestamp at all -- StateEstimate.robot_joints_age() must
+                # return None for this estimate, not a fabricated value.
             except Exception:
                 robot_joints = None
 

@@ -216,13 +216,30 @@ def spawn_and_warm_worker(
     dipole_alignment_preference_kwargs: dict | None = None,
     zero_centered_input_penalty: bool = False,
     jacobian_adaptation_kwargs: dict | None = None,
+    insertion_command_min_m: float = -0.05,
+    insertion_command_max_m: float = 0.20,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
-    identical lifecycle ordering to nullq_r700's runner."""
+    identical lifecycle ordering to nullq_r700's runner.
+
+    2026-11-20: insertion_command_min_m/max_m now drive the QP's OWN
+    insertion state_min[6]/state_max[6] box bound too -- previously a
+    separate, hardcoded (-0.05, 0.20)m regardless of what
+    --insertion-command-min-mm/max-mm requested for the dispatch-level
+    clip. For this run's comparison, both now come from the SAME
+    source: the QP is genuinely constrained to the approved envelope at
+    every horizon stage (state_min/state_max apply identically to each
+    of the N stages -- see ConfigurationMPCConfig's own box-constraint
+    construction, which tiles these once per stage, not just stage 0),
+    not merely post-hoc clipped at dispatch. Defaults (-0.05, 0.20)
+    match the PRIOR hardcoded QP bound exactly, so any caller that
+    doesn't pass these explicitly is unaffected.
+    """
     dt = 1.0 / control_hz
     mpc_config_kwargs = dict(
         sample_period_s=dt, prediction_horizon=int(prediction_horizon),
-        state_min=tuple([-2.0 * math.pi] * 6 + [-0.05]), state_max=tuple([2.0 * math.pi] * 6 + [0.20]),
+        state_min=tuple([-2.0 * math.pi] * 6 + [float(insertion_command_min_m)]),
+        state_max=tuple([2.0 * math.pi] * 6 + [float(insertion_command_max_m)]),
         velocity_limit=tuple([joint_velocity_limit_rad_s] * 6 + [insertion_rate_limit_m_s]),
         acceleration_limit=tuple([joint_acceleration_limit_rad_s2] * 6 + [10.0 * insertion_rate_limit_m_s]),
         # 2026-11-18: real fix, see stagewise_task_nullspace.py/delay_aware_
@@ -527,6 +544,18 @@ def main() -> None:
                          "exceeds this. Default 0.0 means 'let close_loop_path_follow.main() "
                          "fill in the controller-aware default' (7mm for this MPC path); pass "
                          "a nonzero value to override.")
+    p.add_argument("--insertion-command-min-mm", type=float, default=5.0,
+                    help="2026-11-19: the ONLINE dispatched insertion command's own clip "
+                         "bound (close_loop_path_follow.py's cfg.insertion_command_min_m). "
+                         "Default (5mm) matches the prior hardcoded physical-safety value -- "
+                         "this is NOT the same as the plan's generated reference range (e.g. a "
+                         "'30-50mm' plan-family name is a label on the GENERATED trajectory, "
+                         "not an enforced execution bound). Pass 30.0 to enforce this plan's "
+                         "intended envelope online; left at the default, nothing stops the "
+                         "dispatched command from going below 30mm.")
+    p.add_argument("--insertion-command-max-mm", type=float, default=200.0,
+                    help="see --insertion-command-min-mm. Default (200mm) matches the prior "
+                         "hardcoded value. Pass 50.0 to enforce this plan's intended envelope.")
     p.add_argument("--disable-tcp-workspace-in-qp", action="store_true",
                     help="disable the linearized TCP Cartesian-workspace constraint wired "
                          "directly into the QP (2026-11-04): keeps the robot's TCP within "
@@ -650,6 +679,20 @@ def main() -> None:
                     help="lower bound on the adaptation scalar g (dimensionless). Default -0.3.")
     p.add_argument("--jacobian-adaptation-g-max", type=float, default=0.5,
                     help="upper bound on the adaptation scalar g (dimensionless). Default 0.5.")
+    p.add_argument("--freeze-jacobian", action="store_true",
+                    help="2026-11-20, condition B: use ONE fixed Jacobian for the whole run "
+                         "instead of the scheduled (per-reference-sample) LTV Jacobian baseline "
+                         "A uses. Implemented additively at this runner's level, not inside the "
+                         "worker: every row of the loaded --schedule-cache array is overwritten "
+                         "with the row at --freeze-jacobian-index (default 0) before being "
+                         "written to a temporary .npy file and handed to the worker exactly as "
+                         "the unfrozen schedule would be -- the worker itself is unmodified and "
+                         "unaware a freeze happened. Off by default; baseline A's behavior "
+                         "(scheduled, per-sample Jacobian) is completely unchanged when this "
+                         "flag is not passed.")
+    p.add_argument("--freeze-jacobian-index", type=int, default=0,
+                    help="reference-sample index whose Jacobian is held fixed for the whole run "
+                         "when --freeze-jacobian is set. Default 0 (the plan's own start).")
     args = p.parse_args()
 
     # 2026-11-19 (point 5, corrected): this check was previously placed
@@ -683,6 +726,34 @@ def main() -> None:
     _ALLOW_UNVERIFIED_PLAN = bool(args.allow_unverified_plan)
     _SCHEDULE_CACHE_PATH = str(args.schedule_cache)
     schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache, allow_unverified=args.allow_unverified_plan)
+    if args.freeze_jacobian:
+        # Condition B: hold ONE Jacobian fixed for every tick instead of
+        # baseline A's scheduled, per-reference-sample LTV Jacobian.
+        # Implemented by overwriting the schedule array in memory and
+        # writing it to a NEW .npy file -- spawn_and_warm_worker's own
+        # schedule_cache argument is a PATH the worker process reloads
+        # independently, so the override must be a real file on disk,
+        # not just the in-memory `schedule` variable here.
+        if not (0 <= args.freeze_jacobian_index < schedule.shape[0]):
+            raise ValueError(
+                f"--freeze-jacobian-index={args.freeze_jacobian_index} is out of range "
+                f"for a schedule with {schedule.shape[0]} reference samples"
+            )
+        frozen_row = schedule[args.freeze_jacobian_index]
+        schedule = np.tile(frozen_row[None, :, :], (schedule.shape[0], 1, 1))
+        _frozen_schedule_path = os.path.join(
+            args.out_dir, f"{args.run_name}_frozen_jacobian_schedule.npy"
+        )
+        os.makedirs(args.out_dir, exist_ok=True)
+        np.save(_frozen_schedule_path, schedule)
+        args.schedule_cache = _frozen_schedule_path
+        _SCHEDULE_CACHE_PATH = _frozen_schedule_path
+        print(
+            f"[insertion_anchor] CONDITION B: Jacobian FROZEN at reference-sample index "
+            f"{args.freeze_jacobian_index} for the whole run -- every one of the "
+            f"{schedule.shape[0]} schedule rows now holds that single Jacobian; "
+            f"written to {_frozen_schedule_path}"
+        )
     pf._SCHEDULE_OVERRIDE = schedule
     print(f"[insertion_anchor] schedule: {schedule.shape} "
           f"(nullq_r700 -> +insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT}, "
@@ -801,6 +872,8 @@ def main() -> None:
         dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
         zero_centered_input_penalty=(args.input_penalty == "zero_centered"),
         jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
+        insertion_command_min_m=args.insertion_command_min_mm / 1000.0,
+        insertion_command_max_m=args.insertion_command_max_mm / 1000.0,
     )
 
     if args.skip_preflight:
@@ -815,6 +888,8 @@ def main() -> None:
     cfg.plan_dir = args.plan_dir
     cfg.reference_source = "plan_dir"
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
+    cfg.insertion_command_min_m = args.insertion_command_min_mm / 1000.0
+    cfg.insertion_command_max_m = args.insertion_command_max_mm / 1000.0
     cfg.mpc_prediction_horizon = args.horizon
     cfg.mpc_use_dare_terminal_cost = False  # V_f=0 -- required
 

@@ -94,6 +94,14 @@ def main() -> None:
                     help="camera/robot connect and every tick solves normally, but no servoJ/"
                          "advancer motion commands are sent -- for validating the wiring before "
                          "the first live pilot")
+    p.add_argument("--insertion-command-min-mm", type=float, default=5.0,
+                    help="2026-11-19: SAME shared online insertion-command clip bound as the "
+                         "MPC rectangle runner's own flag of this name -- see its help text. "
+                         "Default (5mm) matches the prior hardcoded value; pass 30.0 to "
+                         "enforce this plan's intended envelope.")
+    p.add_argument("--insertion-command-max-mm", type=float, default=200.0,
+                    help="see --insertion-command-min-mm. Default (200mm); pass 50.0 to "
+                         "enforce this plan's intended envelope.")
     p.add_argument("--measured-clearance-abort-mm", type=float,
                     default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
                     help="2026-11-19: SAME shared measured-state external safety check the MPC "
@@ -102,7 +110,31 @@ def main() -> None:
                          "pre-solve hold-and-abort -- no predictive constraint is added to the "
                          "controller itself. Default is the already-reviewed "
                          "MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM (230mm), same as the MPC runner.")
+    p.add_argument("--protective-config-reviewed", action="store_true",
+                    help="2026-11-20: ported from run_mpc_delay_aware_insertion_anchor.py -- "
+                         "this script shares the SAME --measured-clearance-abort-mm external "
+                         "safety check (see that flag's own docstring above) but, until now, "
+                         "had no gate requiring a human to have reviewed it before a real start. "
+                         "REQUIRED to start a real (non-dry-run) run. States that a human "
+                         "reviewed --measured-clearance-abort-mm's ACTUAL value for this run "
+                         "(printed at startup) before starting. Without this flag, the runner "
+                         "REFUSES to start rather than silently running protected by an "
+                         "unreviewed value or running with no protection at all.")
     args = p.parse_args()
+
+    # 2026-11-20: ported verbatim from run_mpc_delay_aware_insertion_anchor.py's
+    # own identical check -- see that file's own comment for why this must
+    # be placed immediately after args = p.parse_args() (args must exist)
+    # and before any schedule/worker setup (fail before anything else
+    # happens, not partway through).
+    if not args.dry_run and not args.protective_config_reviewed:
+        raise SystemExit(
+            "[inv_7dof] REFUSING to start: the measured-clearance breach detector's abort "
+            f"radius for THIS run ({args.measured_clearance_abort_mm:.1f}mm, from "
+            "--measured-clearance-abort-mm) has not been confirmed reviewed. Pass "
+            "--protective-config-reviewed only after a human has reviewed this run's ACTUAL "
+            "value (printed above/below) -- this flag is never implied by any other argument."
+        )
 
     schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache)
     pf._SCHEDULE_OVERRIDE = schedule
@@ -145,6 +177,8 @@ def main() -> None:
     cfg.plan_dir = args.plan_dir
     cfg.reference_source = "plan_dir"
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
+    cfg.insertion_command_min_m = args.insertion_command_min_mm / 1000.0
+    cfg.insertion_command_max_m = args.insertion_command_max_mm / 1000.0
 
     cfg.trim_kp = args.kp
     cfg.trim_kn = 0.0

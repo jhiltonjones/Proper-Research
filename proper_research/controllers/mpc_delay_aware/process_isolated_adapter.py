@@ -376,12 +376,25 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             success = False
             self.deadline_misses += 1
             self.consecutive_deadline_misses += 1
+            # 2026-11-20: pre-solve abort -- try_solve() is never called,
+            # so NO request is sent this tick. request_id must not be
+            # fabricated; None is the correct, honest value here. An
+            # OLDER request from a prior tick could still be genuinely
+            # outstanding (the worker's own invariant is independent of
+            # this abort gate), so that id is still reported separately.
+            _this_tick_request_id = None
+            _worker_still_pending_request_id = getattr(self._worker, "pending_seq", None)
         else:
             # (2026-10-26 instrumentation pass) wall-clock the full round trip
             # (parent-side pickle+send, worker recv+deserialize, solve, worker
             # pickle+send, parent poll+recv+deserialize) around try_solve, so
             # round_trip_ms - t_solve_ms isolates IPC/serialization overhead on
             # its own -- previously unmeasured; see A1 loop-overhead localization.
+            # 2026-11-20: captured BEFORE try_solve() so request identity
+            # is recorded at submission, not solely inferred from a
+            # received response -- see MPCWorkerHandle.pending_seq's own
+            # docstring for exactly what this distinguishes.
+            _pending_seq_before = getattr(self._worker, "pending_seq", None)
             _ipc_t0 = time.monotonic()
             resp = self._worker.try_solve(
                 kind=self._controller_kind, z_meas=z_meas, q_cmd=self._q_cmd, q_cmd_prev=self._q_cmd_prev,
@@ -397,6 +410,30 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
                 ),
             )
             round_trip_ms = (time.monotonic() - _ipc_t0) * 1e3
+
+            # 2026-11-20: determine THIS tick's own request identity,
+            # distinguishing three cases rather than collapsing them all
+            # to the same None/seq value:
+            #   - a response arrived in time: request_id = its own seq
+            #     (unambiguous, from the response itself);
+            #   - no response, but pending_seq CHANGED from before this
+            #     call: a NEW request was submitted this tick and timed
+            #     out -- request_id = that submitted seq (known at send
+            #     time via the worker's own property), not None;
+            #   - no response, pending_seq UNCHANGED: try_solve()'s one-
+            #     outstanding-request invariant held off -- NO request
+            #     was sent this tick at all. request_id for THIS tick is
+            #     None (never fabricated); the STILL-outstanding older
+            #     request's own id (if any) is separately exposed as
+            #     worker_still_pending_request_id for diagnosis.
+            _pending_seq_after = getattr(self._worker, "pending_seq", None)
+            if resp is not None:
+                _this_tick_request_id = resp.get("seq")
+            elif _pending_seq_after != _pending_seq_before:
+                _this_tick_request_id = _pending_seq_after
+            else:
+                _this_tick_request_id = None
+            _worker_still_pending_request_id = _pending_seq_after
 
             if resp is not None and resp["status"] == "ok":
                 command = np.asarray(resp["command"], dtype=float)
@@ -421,6 +458,21 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             # here feeds back into the control loop.
             row = {
                 "step": self._counter, "ref_index": reference_index,
+                # 2026-11-20: request identity recorded at SUBMISSION time
+                # (via MPCWorkerHandle.pending_seq, captured before AND
+                # after try_solve()), not solely inferred from a received
+                # response -- distinguishes a normal tick (id = the
+                # response's own seq), a timeout whose request WAS sent
+                # (id = the seq that was submitted, known even though no
+                # response arrived -- joins to a later-drained late_
+                # response_log entry by its own "request_id"), a worker-
+                # busy tick where NO new request was sent (id = None,
+                # never fabricated -- see worker_still_pending_request_id
+                # for the older request that is still genuinely
+                # outstanding), and a pre-solve abort (id = None, try_
+                # solve() was never called at all this tick).
+                "worker_request_id": _this_tick_request_id,
+                "worker_still_pending_request_id": _worker_still_pending_request_id,
                 "z_meas": z_meas.tolist(), "q_cmd_k": self._q_cmd.tolist(),
                 "q_cmd_km1": self._q_cmd_prev.tolist(), "insertion_cmd_m": self._ins_cmd,
                 "u_prev": self._prev_input.tolist(), "u0": command.tolist(),
@@ -579,6 +631,29 @@ class ProcessIsolatedDelayAwareAdapter(_BaseProcessIsolatedAdapter):
             ),
             "measured_joint_state": z_meas,
             "abort_reason": adapter_abort_reason,
+            # 2026-11-19: same key name OfflineJointControllerAdapter now
+            # uses for INV's shared external check, so both conditions'
+            # saved path_follow.jsonl rows carry a directly comparable
+            # measured-clearance field -- reported every tick it is
+            # computed (not only on a trip), matching gap_m's own
+            # unconditional-computation convention above.
+            "external_measured_clearance_gap_m": gap_m,
+            # 2026-11-20: these two were added to the predicted_beam_
+            # positions.jsonl row dict earlier but NOT to this info dict
+            # -- the one close_loop_path_follow.py's main() (and this
+            # adapter's own callers generally) actually reads via
+            # info.get(...). Without this, clearance_sample_age_s and
+            # worker_request_id would always read back as None from
+            # path_follow.jsonl regardless of whether a real timestamp/
+            # request existed, silently looking identical to the
+            # genuinely-unavailable case. Added here so both saved files
+            # carry the same real values, not just the adapter's own
+            # internal predicted_beam_positions.jsonl row.
+            "clearance_sample_age_s": (
+                estimate.robot_joints_age() if hasattr(estimate, "robot_joints_age") else None
+            ),
+            "worker_request_id": _this_tick_request_id,
+            "worker_still_pending_request_id": _worker_still_pending_request_id,
             # (2026-09-28 instrumentation pass) fills in slots the caller's
             # own JSONL writer (`close_loop_path_follow.py`) already reads
             # via `info.get(...)` but which were never populated for this

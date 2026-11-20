@@ -83,24 +83,41 @@ class LatestSlot(Generic[T]):
     def get_with_timestamp(
         self, max_age_s: Optional[float] = None
     ) -> Tuple[Optional[T], Optional[float]]:
-        """Atomic (value, raw_stamp) read -- same single-lock-acquisition
-        atomicity as get(), but returns the raw monotonic timestamp instead
-        of a pre-computed age. 2026-11-16: added because get()'s age is
-        frozen at THIS call's moment; a caller needing age at a LATER
-        moment (e.g. "age when the controller used this sample" vs. "age
-        when the row was logged") would otherwise have to call get() again
-        -- a second, separate read of the slot that can return a DIFFERENT
-        (newer) sample if the writer updated it in between. Returning the
-        raw stamp lets any number of later call sites compute
-        `now_monotonic() - stamp` themselves, all describing the exact
-        same underlying sample.
+        """Return ``(value, raw_monotonic_stamp)`` from ONE lock acquisition,
+        so a caller gets the stamp of the EXACT sample it also got the
+        value from -- unlike calling ``get()`` for the value and a second,
+        later ``get()``/``get_with_timestamp()`` for "the age", which can
+        observe a newer sample if the slot was set in between (this is
+        what RobotJointStream.latest_joints_with_timestamp() relies on to
+        pair a StateEstimate's robot_joints with its own robot_joints_stamp
+        atomically).
+
+        2026-11-20: this method was referenced by RobotJointStream.
+        latest_joints_with_timestamp() and by test_atomic_joint_snapshot.py
+        (which documents the exact atomicity contract above, written
+        2026-11-16) but was never actually implemented here -- confirmed
+        the root cause of two separate real-hardware launch failures
+        ("no fresh tip+joints within warmup_timeout_s"): the getter lambda
+        raised AttributeError on every call, silently caught by
+        camera_source.py's own try/except, so estimate.robot_joints was
+        always None regardless of how fresh the underlying RTDE joint
+        stream actually was (confirmed via camera_frames_grabbed=365,
+        camera_grab_failures=0 on the second failed launch -- the camera
+        and vision pipeline were working the whole time).
+
+        If the slot is empty, or ``max_age_s`` is given and the value is
+        older than that, return ``(None, stamp_or_None)`` -- stamp is
+        still reported (not discarded) so a caller can distinguish "never
+        set" from "set but too old", matching get()'s own age-reporting
+        convention.
         """
         with self._lock:
             value = self._value
             stamp = self._stamp
         if value is None or stamp is None:
-            return None, None
-        if max_age_s is not None and (now_monotonic() - stamp) > float(max_age_s):
+            return None, stamp
+        age = now_monotonic() - stamp
+        if max_age_s is not None and age > float(max_age_s):
             return None, stamp
         return value, stamp
 
@@ -216,34 +233,37 @@ class StateEstimate:
     insertion_length_m: float = float("nan")
     robot_pose6: Optional[np.ndarray] = None
     robot_joints: Optional[np.ndarray] = None
-    # 2026-11-16: paired with robot_joints -- the raw monotonic timestamp of
-    # the SAME atomic read that produced robot_joints (via
-    # RobotJointStream.latest_joints_with_timestamp(), when the producer
-    # passes a robot_joints_with_timestamp_getter to CameraSource). None
-    # when the producer only has the legacy bare-vector robot_joints_getter
-    # (the other 3 existing CameraSource callers), since no timestamp is
-    # available in that path -- never fabricated. Use
-    # robot_joints_age(ref=...) below to compute age from this at whatever
-    # later moment a caller needs, without a second read of the joint
-    # stream (which could observe a newer, different sample).
-    robot_joints_stamp: Optional[float] = None
     source: str = "vision"
     frame_index: int = -1
     valid: bool = True
     vision_beam_length_mm: float = float("nan")
-
-    def age(self, ref: Optional[float] = None) -> float:
-        return (now_monotonic() if ref is None else ref) - self.t_monotonic
+    # 2026-11-20: a REAL, previously-undetected bug -- close_loop_path_
+    # follow.py has called `estimate.robot_joints_age()` unconditionally
+    # (no hasattr/try guard) since the 2026-11-16 instrumentation pass,
+    # but this class never had that method, and CameraSource's actual
+    # StateEstimate construction (camera_source.py) never populated a
+    # joints-specific timestamp -- only this generic `t_monotonic` (which
+    # the class's own docstring already says may be a DIFFERENT, e.g.
+    # vision, sample than the one `robot_joints` was read with). Any real
+    # run reaching that line would have raised AttributeError. Fixed by
+    # adding the missing field and method here (same pattern as `age()`
+    # above), and by wiring CameraSource to actually populate it from its
+    # own atomic (joints, timestamp) read when available -- see
+    # camera_source.py's corresponding fix.
+    robot_joints_stamp: Optional[float] = None
 
     def robot_joints_age(self, ref: Optional[float] = None) -> Optional[float]:
-        """Age of robot_joints at `ref` (default: now), computed from the
-        SAME timestamp paired with it at acquisition time -- call this as
-        many times as needed (e.g. once at controller-use time, again at
-        logging time) without re-reading the joint stream. Returns None if
-        robot_joints_stamp isn't available (legacy getter path)."""
+        """None (not a fabricated default) when no joints-specific
+        timestamp was ever recorded for this estimate -- e.g. a caller
+        using the older bare-vector robot_joints_getter, which carries no
+        timestamp at all. Never returns a plausible-looking but wrong
+        number in that case."""
         if self.robot_joints_stamp is None:
             return None
         return (now_monotonic() if ref is None else ref) - self.robot_joints_stamp
+
+    def age(self, ref: Optional[float] = None) -> float:
+        return (now_monotonic() if ref is None else ref) - self.t_monotonic
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,12 @@
+{
+  "candidate_mm": 276.0,
+  "n_states": 1995,
+  "n_failures": 0,
+  "failures": [],
+  "n_nonzero_joint": 29,
+  "n_nonzero_insertion": 0,
+  "joint_delta_max": 0.00695712676999894,
+  "insertion_delta_max": 0.0,
+  "min_logged_gap_mm": 272.97626356682224,
+  "elapsed_s": 26.450140953063965
+}

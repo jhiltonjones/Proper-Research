@@ -275,6 +275,16 @@ def _worker_main(
               f"(0.0 = bit-identical to plain R700/gamma=0, regression-tested)")
         print(f"[worker] R multiplier: 700 (input_tracking_weight="
               f"{null_mpc_config.input_tracking_weight})")
+        # 2026-11-19: R's magnitude alone does not say which REFERENCE the
+        # input-penalty term is taken around (u_ref,planned vs 0) -- that
+        # is diagnostic_zero_input_reference_in_R, a separate boolean.
+        # Printed explicitly here, read directly off the real config
+        # object the QP construction code actually consumes, so this is
+        # an observation of the effective setting, not an inference from
+        # R's size or from the CLI flag that requested it.
+        _zero_ref = bool(getattr(null_mpc_config, "diagnostic_zero_input_reference_in_R", False))
+        print(f"[worker] input_penalty_mode (effective, from ConfigurationMPCConfig."
+              f"diagnostic_zero_input_reference_in_R)={'zero_centered' if _zero_ref else 'planned'}")
         print(f"[worker] Rd: baseline {null_mpc_config.input_increment_weight}, "
               f"increment scale explicitly pinned={null_mpc_config.input_increment_scale}")
         print(f"[worker] delay_samples={delay_samples} beta_d={beta_d} "
@@ -483,7 +493,23 @@ def _worker_main(
             measured_beam_position=p0, control_index=0, previous_input=zeros7,
         )
 
-    conn.send({"status": "ready"})
+    # 2026-11-19: report the ACTUAL runtime BLAS thread configuration
+    # from inside this worker, immediately after all initialization
+    # (nullspace checks + the warm-up solve(s) above, which are
+    # representative of the real per-tick solve) and before the ready
+    # handshake -- a direct observation, not an inference from the env
+    # vars alone (see the single-thread enforcement fix above's own
+    # comment: env vars reading '1' does not by itself prove the loaded
+    # BLAS backend honored them).
+    try:
+        import threadpoolctl
+        _threadpool_info = [
+            {"user_api": d["user_api"], "internal_api": d["internal_api"], "num_threads": d["num_threads"]}
+            for d in threadpoolctl.threadpool_info()
+        ]
+    except Exception as _e:
+        _threadpool_info = f"threadpoolctl probe failed: {_e!r}"
+    conn.send({"status": "ready", "threadpool_info": _threadpool_info})
 
     # frame_ready gates real solves (per set_frame_transform's docstring
     # above): a live run's measured_beam_position is meaningless against
@@ -759,6 +785,31 @@ class MPCWorkerHandle:
         late_response_log_path: Optional[str] = None,
     ) -> None:
         self.t_spawn_start = time.monotonic()
+        # 2026-11-19 fix: calling _force_single_threaded_blas() from
+        # INSIDE _worker_main (as this used to be the only call site) is
+        # too late -- this module's own top-level `import numpy as np`
+        # (see this file's imports) has ALREADY executed by the time
+        # _worker_main's body runs, because the spawn context must
+        # re-import this whole module in the child just to obtain the
+        # _worker_main function object it was told to call. OpenBLAS
+        # reads its thread-count env vars at its own first
+        # initialization, which that already-executed numpy import
+        # triggers -- setting the env vars afterward, inside
+        # _worker_main, has no effect on an already-initialized BLAS
+        # backend (confirmed: threadpoolctl reported num_threads=16
+        # despite the env vars correctly reading '1' from inside the
+        # worker). Fixed by setting these env vars HERE, in the PARENT,
+        # before the child process is even spawned: `multiprocessing`'s
+        # spawn context builds the child's initial environment from the
+        # parent's os.environ at this exact moment, so the child's own
+        # numpy/OpenBLAS import (triggered by the same re-import above)
+        # now sees the limit from the very first line of the new
+        # process, before any BLAS initialization can happen. The call
+        # inside _worker_main is left in place as a harmless no-op
+        # defense-in-depth for any BLAS backend that reads these per
+        # call rather than only at load time.
+        if single_threaded:
+            _force_single_threaded_blas()
         ctx = mp.get_context("spawn")
         self._parent_conn, child_conn = ctx.Pipe()
         self._proc = ctx.Process(
@@ -828,6 +879,38 @@ class MPCWorkerHandle:
         ready = self._parent_conn.recv()
         if ready.get("status") != "ready":
             raise RuntimeError(f"MPC worker process failed to start: {ready}")
+        # 2026-11-19: the worker's own threadpoolctl.threadpool_info()
+        # observation, captured right before this ready handshake was
+        # sent -- i.e. after all initialization/warm-up, immediately
+        # before the real per-tick solve loop starts. A direct runtime
+        # observation, not an inference from env vars.
+        self.worker_threadpool_info = ready.get("threadpool_info")
+        # 2026-11-19 fix: this is the actual "worker ready" lifecycle point
+        # (the startup handshake above just confirmed it) -- t_worker_ready
+        # was previously (incorrectly) set inside set_late_response_log_path,
+        # a LATER, unrelated, optional call. A caller computing
+        # (t_worker_ready - t_spawn_start) as the spawn latency before
+        # set_late_response_log_path ever ran would hit
+        # AttributeError: no attribute 't_worker_ready' -- exactly what
+        # spawn_and_warm_worker does. Fixed at the true ready point; the
+        # line inside set_late_response_log_path below is removed, not
+        # duplicated.
+        self.t_worker_ready = time.monotonic()
+
+    @property
+    def pending_seq(self) -> Optional[int]:
+        """2026-11-20: public read of the request seq submitted at send
+        time, not only recoverable from a received response. None when no
+        request is currently outstanding. A caller can capture this
+        BEFORE calling try_solve() and compare it to the value AFTER the
+        call to distinguish: a NEW request was sent this call (the value
+        changed to a new seq, whether or not it resolved in time) from no
+        new request being sent (try_solve()'s one-outstanding-request
+        invariant held off because an OLDER request was still pending --
+        the value is unchanged). See process_isolated_adapter.py's own
+        use of this for exactly that distinction.
+        """
+        return self._pending_seq
 
     def _start_late_response_writer(self, path: str) -> None:
         """Starts the dedicated writer thread for `path`. The writer
@@ -894,7 +977,6 @@ class MPCWorkerHandle:
             self._late_response_writer_thread.join(timeout=2.0)
             self._late_response_writer_thread = None
         self._start_late_response_writer(path)
-        self.t_worker_ready = time.monotonic()
 
     def require_frame_transform(self, *, timeout_s: float = 5.0) -> None:
         """Force the worker to refuse any solve until `set_frame_transform`

@@ -490,6 +490,18 @@ class PathFollowConfig:
     # branch below when True; feedforward_joint_trajectory still controls
     # the MPC ref_input double-count subtraction into `corr`.
     accumulator_seam: bool = False
+    # 2026-11-19: the ONLINE dispatched insertion command's own clip
+    # bounds -- previously hardcoded (0.005, 0.20) at all 3 call sites
+    # below regardless of what range any specific plan was generated
+    # for (e.g. a "30-50mm" plan family name is a label on the GENERATED
+    # reference, not an enforced execution bound; the actual online
+    # envelope was always this physical safety range, 5-200mm). Exposed
+    # as config so a caller can opt into a tighter, plan-matched
+    # envelope; DEFAULTS UNCHANGED from the prior hardcoded values, so
+    # no existing caller's behaviour changes unless it explicitly sets
+    # these.
+    insertion_command_min_m: float = 0.005
+    insertion_command_max_m: float = 0.20
     # 2026-09-11 fix #2 (diagnosed root cause: MPC's u0 does not shrink to zero
     # as the tracking error shrinks/grows the way inverse-Jacobian's does --
     # corr(|u0|,error) collapses to ~0.03-0.14 at the hold vs inverse-Jacobian's
@@ -1152,6 +1164,100 @@ def _load_plan_reference(
 # =============================================================================
 
 
+def accumulator_seam_tick(cfg, *, ins_cmd, insertion_m, q_cmd, q, corr, command, dt, servo_err_log, advancer=None):
+    """Extracted 2026-11-20 from main()'s own accumulator_seam branch
+    (previously inline there, unchanged otherwise) so a test can call
+    the SAME production code main() calls, instead of reproducing the
+    clip/accumulator arithmetic separately. Covers exactly the
+    configuration every one of this project's rectangle_stage_a
+    runners (MPC and INV alike) actually uses: accumulator_seam=True,
+    feedforward_joint_trajectory=False. Asserts that precondition
+    rather than silently handling the other (feedforward) branches,
+    which remain inline in main() unchanged -- extracting those is out
+    of this change's scope.
+
+    2026-11-20 (actuator-dispatch fix): the insertion envelope
+    (insertion_command_min_m/max_m) is now enforced BEFORE
+    AdvancerSink.submit_rate, not only on the tracked insertion_m
+    state afterward. The CLIPPED target is computed first; the rate
+    dispatched to the advancer is the EFFECTIVE rate implied by that
+    clipped target, not the raw corr[6]. This:
+      - never exceeds the raw rate's own magnitude (clipping a position
+        delta can only shrink it, never grow it);
+      - still allows retraction/extension and recovery from a bound:
+        if already at a limit and corr[6] points BACK into the
+        envelope, the resulting effective rate is nonzero and in that
+        direction (only motion that would go FURTHER past the limit is
+        zeroed), so the actuator is never stuck at a boundary.
+
+    2026-11-20 (final-rate consistency fix): AdvancerSink.submit_rate
+    has its OWN independent |rate|<=max_rate_m_s clamp and now returns
+    the rate it actually accepted after that clamp. Software
+    bookkeeping (ins_cmd/insertion_m -- what feeds the next tick's
+    z_meas, the next MPC/INV controller call, and the logged row) is
+    now built from THIS accepted rate, not the pre-advancer effective
+    rate -- so a request that exceeds the advancer's own rate cap
+    (independent of any position-bound crossing) is reflected
+    consistently in software, not silently assumed to have been
+    applied in full. When no advancer is given, the envelope-clipped
+    rate is used as-is (nothing else could have further limited it).
+    `advancer` defaults to None so this function remains callable
+    standalone for the insertion-bookkeeping-only case; main() passes
+    its own `advancer` object.
+
+    Returns (ins_cmd, insertion_m, q_cmd, q_cmd_prev, q_target,
+    requested_insertion_rate_m_s, final_insertion_rate_m_s, delta_q) --
+    delta_q is also read by main() AFTER this branch (the started_moving
+    check); the two rate values are for the caller's own logging (see
+    main()'s path_follow.jsonl row), distinguishing what this tick's
+    command implied before any
+    limiter from what was actually accepted after both the envelope
+    clip and the advancer's own rate cap.
+    """
+    assert cfg.accumulator_seam is True
+    assert cfg.feedforward_joint_trajectory is False
+
+    if ins_cmd is None:
+        ins_cmd = float(insertion_m)
+    raw_target = ins_cmd + float(corr[6]) * dt
+    clipped_target = float(np.clip(raw_target, cfg.insertion_command_min_m, cfg.insertion_command_max_m))
+    effective_insertion_rate_m_s = (clipped_target - ins_cmd) / dt
+    if advancer is not None:
+        final_rate_m_s = float(advancer.submit_rate(effective_insertion_rate_m_s, dt))
+    else:
+        final_rate_m_s = effective_insertion_rate_m_s
+    # backstop clip, per the actuator-dispatch fix's own contract: the
+    # final accepted rate can only have a smaller (or equal) magnitude
+    # than the already-envelope-clipped effective rate, so this can
+    # only ever reproduce clipped_target exactly or pull back toward
+    # ins_cmd -- it cannot push outside the envelope independently.
+    ins_cmd = float(np.clip(ins_cmd + final_rate_m_s * dt, cfg.insertion_command_min_m, cfg.insertion_command_max_m))
+    insertion_m = ins_cmd
+
+    if q_cmd is None:
+        q_cmd = q.copy()
+    q_cmd_prev = q_cmd.copy()
+    servo_err_log.append(float(np.linalg.norm(q - q_cmd_prev)))
+    qd = np.clip(command[:6], -cfg.joint_velocity_limit_rad_s, cfg.joint_velocity_limit_rad_s)
+    delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
+    q_cmd = q_cmd + delta_q
+    q_target = q_cmd
+
+    # requested_insertion_rate_m_s: the raw, pre-envelope rate this tick's
+    # command would have implied (corr[6]), for the caller to log
+    # alongside final_insertion_rate_m_s -- the actually-accepted rate
+    # after BOTH the envelope clip and the advancer's own rate cap.
+    requested_insertion_rate_m_s = float(corr[6])
+    # 2026-11-20 fix (found by the end-to-end smoke test, not by any of
+    # this change's own isolated unit tests): main() still reads
+    # `delta_q` AFTER this branch, for the started_moving check below --
+    # a real regression from the original extraction, which computed
+    # delta_q as a main()-level local (shared with that later read) and
+    # never returned it once the computation moved in here. Returning it
+    # now restores that contract exactly; its value is unchanged.
+    return ins_cmd, insertion_m, q_cmd, q_cmd_prev, q_target, requested_insertion_rate_m_s, final_rate_m_s, delta_q
+
+
 def main() -> None:
     import sys
 
@@ -1475,7 +1581,11 @@ def main() -> None:
         if estimate is None:
             raise RuntimeError(
                 "no fresh tip+joints within warmup_timeout_s "
-                f"(vis_fail={mapper.detection_failures}, {mapper.last_error!r})"
+                f"(vis_fail={mapper.detection_failures}, {mapper.last_error!r}, "
+                f"camera_frames_grabbed={camera.frames_grabbed}, "
+                f"camera_grab_failures={camera.grab_failures}, "
+                f"camera_frames_reconstructed={camera.frames_reconstructed}, "
+                f"camera_last_error={camera.last_error!r})"
             )
 
         start_tips = []
@@ -2247,52 +2357,62 @@ def main() -> None:
             insertion_rate_cmd_m_s = (
                 float(corr[6]) if cfg.feedforward_joint_trajectory else float(command[6])
             ) + ff_ins_rate
-            if advancer is not None:
-                advancer.submit_rate(insertion_rate_cmd_m_s, dt)
             if cfg.accumulator_seam:
-                if ins_cmd is None:
-                    ins_cmd = float(insertion_m)
-                ins_cmd = float(np.clip(ins_cmd + float(corr[6]) * dt, 0.005, 0.20))
-                insertion_m = ins_cmd
-            elif cfg.feedforward_joint_trajectory:
-                ins_trim += float(corr[6]) * dt
-                insertion_m = float(np.clip(ref_state[target_index, 6] + ins_trim, 0.005, 0.20))
-            elif advancer is not None:
-                insertion_m = float(
-                    np.clip(insertion_m + float(command[6]) * dt, 0.005, 0.20)
+                # 2026-11-20: extracted to accumulator_seam_tick() (module
+                # level, above main()) so a test can call the SAME
+                # production code this branch always ran, instead of
+                # reproducing its arithmetic separately. Every caller of
+                # this branch (MPC's and INV's rectangle_stage_a runners
+                # alike) sets feedforward_joint_trajectory=False, which
+                # that function asserts.
+                #
+                # 2026-11-20 (actuator-dispatch fix + final-rate
+                # consistency fix): advancer.submit_rate is now called
+                # FROM INSIDE accumulator_seam_tick with the envelope-
+                # aware effective rate, and the function returns BOTH
+                # the requested (pre-limiter) and final (post-envelope-
+                # clip AND post-advancer-rate-cap) rates so the logged
+                # row can record both distinctly, and so insertion_m
+                # itself is built from the FINAL accepted rate -- not
+                # assumed equal to what was requested.
+                ins_cmd, insertion_m, q_cmd, q_cmd_prev, q_target, \
+                    requested_insertion_rate_m_s, final_insertion_rate_m_s, delta_q = accumulator_seam_tick(
+                    cfg, ins_cmd=ins_cmd, insertion_m=insertion_m, q_cmd=q_cmd, q=q,
+                    corr=corr, command=command, dt=dt, servo_err_log=servo_err_log,
+                    advancer=advancer,
                 )
-
-            qd = np.clip(
-                (corr[:6] if cfg.feedforward_joint_trajectory else command[:6]),
-                -cfg.joint_velocity_limit_rad_s,
-                cfg.joint_velocity_limit_rad_s,
-            )
-            delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
-            if cfg.accumulator_seam:
-                # controller-owned running command trajectory -- see the
-                # accumulator_seam field docstring. Seeded at the first
-                # measured joints so it starts exactly where the robot is;
-                # from then on it only ever advances by delta_q, never by
-                # re-reading q_meas, so it is immune to the ~beta=0.2
-                # servoJ realization gain the direct-apply seam fell victim
-                # to (that gain attenuates how far q_meas moves toward
-                # q_target, not what q_target itself is).
-                if q_cmd is None:
-                    q_cmd = q.copy()
-                q_cmd_prev = q_cmd.copy()
-                servo_err_log.append(float(np.linalg.norm(q - q_cmd_prev)))
-                q_cmd = q_cmd + delta_q
-                q_target = q_cmd
-            elif cfg.feedforward_joint_trajectory and not (
-                cfg.ff_trim_base_switch_at_hold and terminal_hold
-            ):
-                # servo the PLANNED joints + the controller correction as a trim
-                q_target = ref_state[target_index, :6] + cfg.feedforward_correction_scale * delta_q
+                insertion_rate_cmd_m_s = final_insertion_rate_m_s
             else:
-                # fix #2 (or FF off): pure feedback off the measured joints --
-                # either FF was never on, or ff_trim_base_switch_at_hold kicked
-                # in because the planned reference has stopped advancing.
-                q_target = q + delta_q
+                requested_insertion_rate_m_s = insertion_rate_cmd_m_s
+                if advancer is not None:
+                    _accepted = advancer.submit_rate(insertion_rate_cmd_m_s, dt)
+                    final_insertion_rate_m_s = float(_accepted) if _accepted is not None else insertion_rate_cmd_m_s
+                else:
+                    final_insertion_rate_m_s = insertion_rate_cmd_m_s
+                if cfg.feedforward_joint_trajectory:
+                    ins_trim += float(corr[6]) * dt
+                    insertion_m = float(np.clip(ref_state[target_index, 6] + ins_trim, cfg.insertion_command_min_m, cfg.insertion_command_max_m))
+                elif advancer is not None:
+                    insertion_m = float(
+                        np.clip(insertion_m + float(command[6]) * dt, cfg.insertion_command_min_m, cfg.insertion_command_max_m)
+                    )
+
+                qd = np.clip(
+                    (corr[:6] if cfg.feedforward_joint_trajectory else command[:6]),
+                    -cfg.joint_velocity_limit_rad_s,
+                    cfg.joint_velocity_limit_rad_s,
+                )
+                delta_q = np.clip(qd * dt, -cfg.max_joint_step_rad, cfg.max_joint_step_rad)
+                if cfg.feedforward_joint_trajectory and not (
+                    cfg.ff_trim_base_switch_at_hold and terminal_hold
+                ):
+                    # servo the PLANNED joints + the controller correction as a trim
+                    q_target = ref_state[target_index, :6] + cfg.feedforward_correction_scale * delta_q
+                else:
+                    # fix #2 (or FF off): pure feedback off the measured joints --
+                    # either FF was never on, or ff_trim_base_switch_at_hold kicked
+                    # in because the planned reference has stopped advancing.
+                    q_target = q + delta_q
 
             # Round-7 timing fix: how long the tick took BEFORE the
             # target/servo handoff -- i.e. the cost the background-
@@ -2354,7 +2474,6 @@ def main() -> None:
                     started_moving = True
             servo_ms = 1e3 * (now_monotonic() - t_servo)
 
-            steps += 1
             t_rel = now_monotonic() - t_zero
             tip_log.append(tip.copy())
             des_log.append(desired.copy())
@@ -2432,6 +2551,15 @@ def main() -> None:
                     else None
                 ),
                 "insertion_rate_cmd_m_s": round(float(insertion_rate_cmd_m_s), 6),
+                # 2026-11-20: requested (pre-limiter) vs final (post-
+                # envelope-clip AND post-advancer-rate-cap) insertion
+                # rate, logged distinctly so a request that exceeded
+                # the advancer's own rate cap -- independent of any
+                # position-bound crossing -- is visible in the saved
+                # row, not only inferable from insertion_rate_cmd_m_s
+                # (which already equals the final rate).
+                "requested_insertion_rate_m_s": round(float(requested_insertion_rate_m_s), 6),
+                "final_insertion_rate_m_s": round(float(final_insertion_rate_m_s), 6),
                 "servo_ms": round(servo_ms, 1),
                 # Round-7 timing-fix fields. loop_start_s: wall time (run-
                 # relative) at the top of this tick, right after the
@@ -2512,6 +2640,23 @@ def main() -> None:
                     f"|qd|={np.linalg.norm(command[:6]):.4f} "
                     f"ins={1e3*insertion_m:5.1f}mm{' TERM' if terminal_hold else ''}"
                 )
+
+            # 2026-11-20 (shared control-tick ID fix): moved from immediately
+            # after the solver() call to here, the END of this iteration's
+            # body -- every log write THIS iteration (the JSONL row, the CSV
+            # row, the print throttle) now reads `steps` BEFORE it advances,
+            # matching the adapter's own convention of writing self._counter
+            # before incrementing it. Previously `steps` incremented right
+            # after the solver() call but BEFORE this iteration's own log
+            # writes, so path_follow.jsonl's "step" for a given tick was
+            # always 1 AHEAD of predicted_beam_positions.jsonl's "step" for
+            # the SAME tick (confirmed: both files' rows are built from the
+            # SAME solver() call's result, within the same iteration) -- a
+            # real off-by-one between the two files' tick IDs, not merely a
+            # cosmetic numbering difference. The `while`/`%` checks above
+            # that read `steps` only run at the top of the NEXT iteration,
+            # so moving the increment here does not change their behaviour.
+            steps += 1
 
             if terminal_hold:
                 terminal_since = terminal_since or now_monotonic()
@@ -2629,7 +2774,19 @@ def _write_plot(
     ax0.set_aspect("equal", adjustable="datalim")
     ax0.grid(alpha=0.3)
     ax0.legend(fontsize=8)
-    ax0.set_title(f"{cfg.shape} in beam plane")
+    # 2026-11-20: this title always read f"{cfg.shape} in beam plane" --
+    # cfg.shape is the INTERNAL synthetic square/triangle generator's own
+    # field (default "triangle"), unrelated to and not updated by a real
+    # plan_dir run. On the first real baseline-A hardware pilot (a
+    # rectangle plan, via --plan-dir) this produced a plot plainly titled
+    # "triangle in beam plane" -- actively misleading, not just a cosmetic
+    # gap. Now reflects the actual reference source.
+    _plot_title = (
+        f"plan: {Path(cfg.plan_dir).name}"
+        if cfg.reference_source == "plan_dir"
+        else f"{cfg.shape} in beam plane"
+    )
+    ax0.set_title(_plot_title)
 
     ax1.plot(tsec_log, err_log, "-", color="tab:red", lw=1.2)
     ax1.set_xlabel("t (s)")

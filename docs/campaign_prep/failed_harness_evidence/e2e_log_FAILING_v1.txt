@@ -1,0 +1,41 @@
+[diag] pf.URRTDERobot is MockRobot: True
+[diag] pf.RobotJointStream: <function main.<locals>.<lambda> at 0x7969eb2aba30>
+[diag] runner.pf.RobotJointStream: <function main.<locals>.<lambda> at 0x7969eb2aba30>
+[diag] pf is runner.pf: True
+[INIT] start_point (magnet in R) = [ 0.390575   -0.719727   -0.016567   -3.07793295  0.5753727   0.04503358]
+[INIT] pivot_point  (beam base)  = [ 0.670575   -0.719727   -0.016567    3.14159265  0.          0.        ]
+[INIT] L0=0.0250, dt=0.0100
+[insertion_anchor] beam-base check PASSED: plan=plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/shape_rectangle/plan_shape_summary.json, value=[0.670575, -0.719727, -0.039627], ref=[0.670575, -0.719727, -0.039627]
+[insertion_anchor] loading cached genuine LTV schedule from plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/jacobian_schedule_insertion_anchor.npy (beam base verified matching)
+[insertion_anchor] schedule: (214, 3, 7) (nullq_r700 -> +insertion anchor w_L=0.0, d=2, beta_d=1.0, V_f=0, N=15, process-isolated, deadline=70ms, insertion-offset-abort=5.0mm)
+[insertion_anchor] TCP Cartesian-workspace constraint will be wired INTO the QP (x in [259.7,574.7]mm, y in [-878.6,-510.8]mm, z in [380.4,450.0]mm = post-hoc bounds +/- 15.0mm robust margin) -- pass --disable-tcp-workspace-in-qp to turn this off
+[INIT] start_point (magnet in R) = [ 0.390575   -0.719727   -0.016567   -3.07793295  0.5753727   0.04503358]
+[INIT] pivot_point  (beam base)  = [ 0.670575   -0.719727   -0.016567    3.14159265  0.          0.        ]
+[INIT] L0=0.0250, dt=0.0100
+[insertion_anchor] magnet-to-beam-base exclusion constraint will be wired INTO the QP (beam_base_xyz_r=[0.670575, -0.719727, -0.039627], floor=230.0mm + 3.0mm robust margin = 233.0mm hard radius) -- pass --disable-magnet-exclusion-in-qp to turn this off
+[insertion_anchor] input_penalty='planned' jacobian_adaptation_mode='off' (both default/baseline unless explicitly requested above)
+[insertion_anchor] spawning + warming process-isolated MPC worker (BEFORE any hardware connection); building M0 + nullspace/R700/w_L...
+[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = 215ms)
+[insertion_anchor] CONTROLLER CONFIRMED: gamma=0.0, R700 (input_tracking_weight=7.0), insertion anchor w_L=0.0 s_L=0.25mm, safety abort at disabled (insertion-offset abort off by default; pass --enable-insertion-offset-abort to turn it on)
+[insertion_anchor] worker will refuse solves until set_frame_transform() is called (happens once preflight computes the live registration)
+[insertion_anchor] plan=plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/time_parameterized_configuration_path
+[insertion_anchor] q0=[-0.8532819757328033, -1.8744470228869876, -1.7318862288374695, -1.1344939472295286, 1.5625819799218186, -2.0535198713825347] L0=30.00mm
+[insertion_anchor] horizon=15 d=2 beta_d=1.0 V_f=0 servo_stream_hz=50.0 joint_velocity_limit_rad_s=0.1 max_joint_step_rad=0.01
+[insertion_anchor] CONTROLLER = gamma=0 exact task-nullspace Q_N, R700, insertion anchor w_L=0.0, safety abort |L-Lref|>5.0mm
+[path] LIVE (servoJ per tick)  control @ 10.0 Hz  ref=plan_dir
+[path] log -> /home/jack/.claude/jobs/043c0b8b/tmp/e2e_smoke_run/normal/e2e_smoke_normal_20261120T104013Z/path_follow.jsonl
+[path] T_R_B  B.x(axial)=[-1.0, 0.0, 0.0]  B.y(sideways)=[0.0, 1.0, 0.0]  B.z(camera)=[0.0, 0.0, -1.0]
+RTDEControlInterface: Could not receive data from robot...
+RTDEControlInterface Exception: available: Bad file descriptor
+Reconnecting...
+RTDEControlInterface: Robot is disconnected, reconnecting...
+RTDEControlInterface Exception: std::bad_alloc
+[worker] (nullspace_r700) magnet-exclusion constraint wired INTO the QP (radius=233.0mm, min nominal margin over reference=47.0mm)
+[worker] nullspace projector startup checks PASS over full schedule (214, 3, 7): idempotent_err=1.08e-15 symmetric_err=0.00e+00 task_annihilation_err=6.61e-19 ranks=[2]
+[worker] state cost: exact task-nullspace only, gamma=0
+[worker] insertion state anchor: w_L=0.0 (0.0 = bit-identical to plain R700/gamma=0, regression-tested)
+[worker] R multiplier: 700 (input_tracking_weight=7.0)
+[worker] input_penalty_mode (effective, from ConfigurationMPCConfig.diagnostic_zero_input_reference_in_R)=planned
+[worker] Rd: baseline 0.001, increment scale explicitly pinned=(0.04000000000000001, 0.04000000000000001, 0.04000000000000001, 0.04000000000000001, 0.04000000000000001, 0.04000000000000001, 0.002)
+[worker] delay_samples=2 beta_d=1.0 horizon=15 terminal_cost=False (V_f=0)
+timeout: the monitored command dumped core

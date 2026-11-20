@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_ltv_offline,ltv,1,close_loop_logs/scurve_exp4_rd0_rep3_2026-09-16/runs/ltv_rep1_20260916T105425Z,path_complete,193,171,1.802859124666099,1.3338888888888891,4.277,3.9555,0.35509090909090907,0.264,40.8323

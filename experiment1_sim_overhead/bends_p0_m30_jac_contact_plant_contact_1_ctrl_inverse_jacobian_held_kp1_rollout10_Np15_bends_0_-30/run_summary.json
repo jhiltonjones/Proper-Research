@@ -1,0 +1,26 @@
+{
+  "run_name": "bends_p0_m30_jac_contact_plant_contact_1_ctrl_inverse_jacobian_held_kp1_rollout10_Np15_bends_0_-30",
+  "log_csv_path": "experiment1_sim_overhead/bends_p0_m30_jac_contact_plant_contact_1_ctrl_inverse_jacobian_held_kp1_rollout10_Np15_bends_0_-30/log.csv",
+  "plant_contact": true,
+  "jacobian_variant": "contact",
+  "controller_kind": "inverse_jacobian",
+  "inverse_sequence_mode": "held",
+  "inverse_kp": 1.0,
+  "solver_mode": "",
+  "rollout_steps": 10,
+  "Np": 15,
+  "N_sqp": 0,
+  "n_steps": 25,
+  "final_status": "solved_inverse_jacobian",
+  "final_infeasible": 0,
+  "final_i_ref": 57,
+  "final_tip": [
+    0.7757218045921769,
+    -0.7096878506033434,
+    -0.09807371271597401
+  ],
+  "num_infeasible_steps": 0,
+  "mean_sqp_iters": NaN,
+  "mean_jac_cond": 450230796617999.4,
+  "max_jac_cond": 1074766966009122.9
+}

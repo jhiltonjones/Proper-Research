@@ -1,0 +1,98 @@
+{
+  "rectangle10x15mm": {
+    "inv+FF": {
+      "row_mag_mean": 0.05686676289226056,
+      "row_mag_std": 0.03369278634817423,
+      "null_mag_mean": 0.0004137872049713303,
+      "total_mag_mean": 0.05688456594439773,
+      "row_frac_mean": 0.9988812313415022,
+      "react_align_mean": 0.9051709595506474,
+      "pred_align_mean": 0.4481165471952629,
+      "pred_minus_react": -0.4570544123553845
+    },
+    "mpc_lti+FF": {
+      "row_mag_mean": 0.11063022927666734,
+      "row_mag_std": 0.045492504673813265,
+      "null_mag_mean": 0.07050687452549109,
+      "total_mag_mean": 0.13258421545821908,
+      "row_frac_mean": 0.834193020523084,
+      "react_align_mean": 0.6358629432247119,
+      "pred_align_mean": 0.277888193236605,
+      "pred_minus_react": -0.3579747499881069
+    },
+    "mpc_ltv+FF": {
+      "row_mag_mean": 0.12066907830222795,
+      "row_mag_std": 0.04598783308184368,
+      "null_mag_mean": 0.020617181935386995,
+      "total_mag_mean": 0.12300293198991917,
+      "row_frac_mean": 0.9801454666082771,
+      "react_align_mean": 0.7430145767161209,
+      "pred_align_mean": 0.4072664023103082,
+      "pred_minus_react": -0.3357481744058127
+    }
+  },
+  "triangle20mm": {
+    "inv+FF": {
+      "row_mag_mean": 0.049022202979874266,
+      "row_mag_std": 0.029343682436044072,
+      "null_mag_mean": 0.00011001681773280534,
+      "total_mag_mean": 0.04902607332188624,
+      "row_frac_mean": 0.9998913255954682,
+      "react_align_mean": 0.8923041735277865,
+      "pred_align_mean": 0.5056834515703736,
+      "pred_minus_react": -0.3866207219574128
+    },
+    "mpc_lti+FF": {
+      "row_mag_mean": 0.09805346779114828,
+      "row_mag_std": 0.04575046905827812,
+      "null_mag_mean": 0.06067149119405942,
+      "total_mag_mean": 0.11616863595138568,
+      "row_frac_mean": 0.8432162643010273,
+      "react_align_mean": 0.4985772371928531,
+      "pred_align_mean": 0.27157415481544456,
+      "pred_minus_react": -0.22700308237740852
+    },
+    "mpc_ltv+FF": {
+      "row_mag_mean": 0.08811029786641059,
+      "row_mag_std": 0.04889575348038209,
+      "null_mag_mean": 0.03132176946955994,
+      "total_mag_mean": 0.09533465889948947,
+      "row_frac_mean": 0.8875668477055139,
+      "react_align_mean": 0.6994140155291845,
+      "pred_align_mean": 0.4245713399983339,
+      "pred_minus_react": -0.27484267553085057
+    }
+  },
+  "ushape10x15mm": {
+    "inv+FF": {
+      "row_mag_mean": 0.05941749935151448,
+      "row_mag_std": 0.03810045245440065,
+      "null_mag_mean": 0.000914499312875164,
+      "total_mag_mean": 0.05945398726428651,
+      "row_frac_mean": 0.9997076822631222,
+      "react_align_mean": 0.9039420488597651,
+      "pred_align_mean": 0.4294773226250918,
+      "pred_minus_react": -0.47446472623467334
+    },
+    "mpc_lti+FF": {
+      "row_mag_mean": 0.10685092584973288,
+      "row_mag_std": 0.050876277933807966,
+      "null_mag_mean": 0.06174132447100681,
+      "total_mag_mean": 0.12419315525852334,
+      "row_frac_mean": 0.8654210126308101,
+      "react_align_mean": 0.6322444155541903,
+      "pred_align_mean": 0.2749658682073106,
+      "pred_minus_react": -0.3572785473468797
+    },
+    "mpc_ltv+FF": {
+      "row_mag_mean": 0.11351157053290474,
+      "row_mag_std": 0.05165220150075746,
+      "null_mag_mean": 0.01684595841709776,
+      "total_mag_mean": 0.11502360050447728,
+      "row_frac_mean": 0.987541379216472,
+      "react_align_mean": 0.8168920896237211,
+      "pred_align_mean": 0.48068078481421916,
+      "pred_minus_react": -0.3362113048095019
+    }
+  }
+}

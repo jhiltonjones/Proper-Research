@@ -1,0 +1,3 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/compare_FF_triangle8mm_bimaterial_h15_2026-09-15/runs/lti_rep1_20260915T135937Z,path_complete,144,122,0.7335691268956364,0.5949918032786885,1.802,1.5183999999999993,0.18163636363636362,0.231,42.1075
+mpc_ltv_offline,ltv,1,close_loop_logs/compare_FF_triangle8mm_bimaterial_h15_2026-09-15/runs/ltv_rep1_20260915T140112Z,path_complete,144,122,0.7915776786339263,0.6223852459016394,2.072,1.6319999999999997,0.29413636363636364,0.377,33.6316

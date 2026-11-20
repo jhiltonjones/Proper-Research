@@ -1,0 +1,1084 @@
+protocol_version: campaign2-2026-11-11-v3
+status: DRAFT -- NOT YET REVIEWED OR SIGNED OFF BY THE AUTHOR. Core executable entries below cover vessel
+  plan B, rectangle, triangle-35 only. Plan B' is OUT OF SCOPE for new runs (existing campaign-1 data
+  preserved). Trap paths and the silicone demonstration are PLANNED LATER PHASES of this same campaign
+  (see later_phases_2026_11_11 below), not dropped -- they have no executable protocol entry yet because
+  their plans do not exist yet. Do not use for a real dry run or hardware campaign until the author has
+  reviewed every entry below and explicitly signs off.
+campaign_order_2026_11_11:
+- 1. Finish code gates + make instructions reproducible (this review package)
+- 2. K2 dry run on the real arm, no MCR
+- 3. Day-1 pilots + go/no-go gate
+- '4. Core campaign: vessel plan B, rectangle, triangle-35 (the 15 entries below)'
+- 5. Trap paths (planned, later phase -- see later_phases_2026_11_11)
+- 6. Silicone demonstration (planned, final phase -- see later_phases_2026_11_11; the author's own work,
+  not scoped here)
+campaign2_decisions_applied_globally:
+  weights:
+    R: 7.0
+    R_d: 0.001
+  keep_out:
+    radius_m: 0.235
+    monitor_tolerance_m: 0.005
+  robust_margins:
+    tcp_m: 0.015
+  tracking_error_abort_m:
+    mpc: 0.007
+    inv7: 0.015
+  insertion_offset_abort: 'off'
+  reference_mode: counter
+  streaming: 'on'
+  delay_samples: 2
+  deadline_ms: 70.0
+out_of_scope_for_new_runs_2026_11_11:
+  vessel_planBprime: preserved as existing campaign-1 data; not scheduled for new runs
+later_phases_2026_11_11:
+  trap_paths:
+    status: PLANNED, not dropped -- scheduled after the core campaign (step 5 above)
+    required_before_an_executable_protocol_entry_exists:
+    - path design (reference-speed fraction alpha, planned clearance delta -- see paper Sec. on trap paths
+      for the parameter grid)
+    - L1-L3 build of the chosen trap path(s)
+    - the resulting plan file + its SHA-256
+    - a decision on which controller/N combinations to run on it (simulation screen first, per the plan
+      document's K3 section)
+  silicone_demonstration:
+    status: PLANNED, final phase -- the author's own scoping work, not done here
+    required_before_an_executable_protocol_entry_exists:
+    - the silicone phantom itself (material, fabrication) -- author's own work
+    - its centreline/lumen-radius extraction
+    - an L1-L3 build against that geometry
+    - the resulting plan file + its SHA-256
+conditions:
+  vessel_planB_mpc_sj_n15:
+    plan_file: /home/jack/Proper-Research/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 16bf7e34cddbba47b9a9569e1f94ebeaf31a7f18ab43356ba11000c17d506fd2
+    controller_class: ExactQNZeroTaskNullspaceDelayAwareMPC
+    N: 15
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see plan's own mpc_schedule_*.npy)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the per-sample schedule, not a scalar -- see
+        delay_aware_mpc.py'
+    rate_limit_m_s_or_rad_s:
+      insertion: 0.002
+      _source: log_majority
+    increment_scale: &id001
+      input:
+        q_rad_s: 0.05
+        L_m_s: 0.005
+      state:
+        q_rad: 0.008726646259971648
+        L_m: 0.00025
+      _source: log_majority
+    gamma: 0.0
+    beta_d: 1.0
+    delay_samples: 2
+    osqp: &id002
+      eps_abs: 1.0e-07
+      eps_rel: 1.0e-07
+      max_iter: 20000
+      polish: true
+      time_limit_s: 0.03
+      accept_time_limit_solution: true
+      source_note: 'code_default: ConfigurationMPCConfig class defaults (simulate_time_parameterized_configuration_mpc.py)
+        for eps/max_iter/polish; time_limit_s/accept_time_limit_solution per the 2026-10-14 speed-fix
+        investigation (not re-verified live this session -- author should confirm against the actual worker_process.py
+        call site before sign-off).'
+    tcp_box: &id003
+      min_m:
+      - 0.27
+      - -0.88
+      - 0.17
+      max_m:
+      - 0.66
+      - -0.53
+      - 0.5
+      _source: run_mpc_delay_aware_vessel.py module-level _WORKSPACE_XYZ_MIN_M/_WORKSPACE_XYZ_MAX_M constants
+        (the vessel runner's own 'post-hoc bounds' that --tcp-workspace-robust-margin-mm tightens inward
+        by for the in-QP constraint; code_default, confirmed by source read 2026-11-11).
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+    height_band_m: &id004
+      lower: -0.028142895340206694
+      upper: 0.016857104659793308
+      _source: log_majority (representative plan-B run's magnet_z_bounds_m, controller_metadata.json)
+    keep_out: &id005
+      centre_R_m:
+      - 0.670575
+      - -0.719727
+      - -0.039627
+      radius_m: 0.235
+      floor_m: 0.21
+      monitor_tolerance_m: 0.005
+      _source: 'radius_m: campaign2_decision; centre/floor: log_majority (controller_metadata.json magnet_exclusion_point_R
+        / beam_base_exclusion_floor_mm CLI default); monitor_tolerance_m: run_mpc_delay_aware_vessel.py
+        --magnet-exclusion-tolerance-mm default=5.0 (code_default, confirmed by source read 2026-11-11).'
+  vessel_planB_mpc_sj_n3:
+    plan_file: /home/jack/Proper-Research/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 16bf7e34cddbba47b9a9569e1f94ebeaf31a7f18ab43356ba11000c17d506fd2
+    controller_class: ExactQNZeroTaskNullspaceDelayAwareMPC
+    N: 3
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see plan's own mpc_schedule_*.npy)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the per-sample schedule, not a scalar -- see
+        delay_aware_mpc.py'
+    rate_limit_m_s_or_rad_s:
+      insertion: 0.002
+      _source: log_majority
+    increment_scale: *id001
+    gamma: 0.0
+    beta_d: 1.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id003
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+    height_band_m: *id004
+    keep_out: *id005
+  vessel_planB_mpc_fj_n15:
+    plan_file: /home/jack/Proper-Research/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 16bf7e34cddbba47b9a9569e1f94ebeaf31a7f18ab43356ba11000c17d506fd2
+    controller_class: ExactQNZeroTaskNullspaceDelayAwareMPC
+    N: 15
+    jacobian_source: frozen
+    weights:
+      Q_p: per-sample LTV schedule (see plan's own mpc_schedule_*.npy)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the per-sample schedule, not a scalar -- see
+        delay_aware_mpc.py'
+    rate_limit_m_s_or_rad_s:
+      insertion: 0.002
+      _source: log_majority
+    increment_scale: *id001
+    gamma: 0.0
+    beta_d: 1.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id003
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+    height_band_m: *id004
+    keep_out: *id005
+  vessel_planB_inv7:
+    plan_file: /home/jack/Proper-Research/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 16bf7e34cddbba47b9a9569e1f94ebeaf31a7f18ab43356ba11000c17d506fd2
+    controller_class: InverseJacobian7DOFDelayAware
+    N: null
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see plan's own mpc_schedule_*.npy)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the per-sample schedule, not a scalar -- see
+        delay_aware_mpc.py'
+    rate_limit_m_s_or_rad_s:
+      insertion: 0.002
+      _source: log_majority
+    increment_scale: *id001
+    gamma: 0.0
+    beta_d: 1.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id003
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    tracking_error_abort_m: 0.015
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+    height_band_m: *id004
+    keep_out: *id005
+  rectangle_ff:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: feedforward
+    N: null
+    jacobian_source: n/a
+    weights:
+      Q_p: n/a (open-loop)
+      R: null
+      R_d: null
+      _source: 'n/a: feedforward has no feedback weights'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: &id006
+      min_m:
+      - 0.24469
+      - -0.89361
+      - 0.36544
+      max_m:
+      - 0.58971
+      - -0.49576
+      - 0.46496
+      _source: code_default (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M, post-Round-33/AF1 revert)
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: null
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  rectangle_inv7_sj:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: inv_7dof_delay_aware (run_inv_7dof_delay_aware.py)
+    N: null
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.015
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  rectangle_mpc_fj_n15:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 15
+    jacobian_source: frozen
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  rectangle_mpc_sj_n15:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 15
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  rectangle_mpc_sj_n3:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 3
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  rectangle_mpc_sj_n1:
+    plan_file: /home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 62cf493b0dc48518985e19fb09c97021de8434b7ca2a92a3a7a4229602453613
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 1
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  triangle35_ff:
+    plan_file: /home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 929739fd7fae369202328da478f758f32fc3e7b1a093a80178136278e1adc64c
+    controller_class: feedforward
+    N: null
+    jacobian_source: n/a
+    weights:
+      Q_p: n/a (open-loop)
+      R: null
+      R_d: null
+      _source: 'n/a: feedforward has no feedback weights'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: null
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  triangle35_inv7_sj:
+    plan_file: /home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 929739fd7fae369202328da478f758f32fc3e7b1a093a80178136278e1adc64c
+    controller_class: inv_7dof_delay_aware (run_inv_7dof_delay_aware.py)
+    N: null
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.015
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  triangle35_mpc_fj_n15:
+    plan_file: /home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 929739fd7fae369202328da478f758f32fc3e7b1a093a80178136278e1adc64c
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 15
+    jacobian_source: frozen
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  triangle35_mpc_sj_n15:
+    plan_file: /home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 929739fd7fae369202328da478f758f32fc3e7b1a093a80178136278e1adc64c
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 15
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0
+  triangle35_mpc_sj_n1:
+    plan_file: /home/jack/Proper-Research/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path/time_parameterized_configuration_path.npz
+    plan_sha256: 929739fd7fae369202328da478f758f32fc3e7b1a093a80178136278e1adc64c
+    controller_class: mpc_delay_aware (run_mpc_delay_aware_insertion_anchor.py)
+    N: 1
+    jacobian_source: scheduled
+    weights:
+      Q_p: per-sample LTV schedule (see this plan's own schedule cache)
+      R: 7.0
+      R_d: 0.001
+      _source: 'R/R_d: campaign2_decision; Q_p: inherent to the schedule'
+    rate_limit_rad_s:
+      joint: 0.1
+      _source: log_majority/code_default (common.JOINT_VELOCITY_LIMIT_RAD_S)
+    increment_rad:
+      joint: 0.01
+      _source: log_majority/code_default (common.MAX_JOINT_STEP_RAD)
+    joint_box: 6-DOF UR10e joint limits (unchanged from manufacturer limits; not separately overridden)
+    insertion_tol_mm: 3.0
+    delay_samples: 2
+    osqp: *id002
+    tcp_box: *id006
+    robust_margins:
+      tcp_m: 0.015
+      _source: campaign2_decision
+    keep_out:
+      not_a_dedicated_mechanism: true
+      see: SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+      implemented_mechanism: 'The TCP Cartesian box (rectangle_stage_a.common.WORKSPACE_XYZ_MIN_M/MAX_M,
+        see tcp_box below) is the ONLY implemented Cartesian safety constraint on the free-space rig --
+        confirmed by exhaustive source search 2026-11-11 (grepped all 10 rectangle_stage_a run_*.py scripts
+        for any --magnet-exclusion*, --height-band*, --keep-out* CLI flag: none exist; vessel_stage_a''s
+        equivalent flags, e.g. --magnet-exclusion-tolerance-mm, --magnet-workspace-robust-margin-mm in
+        run_mpc_delay_aware_vessel.py, have no counterpart anywhere in rectangle_stage_a/).'
+      does_tcp_box_substitute: 'Partially, by construction, not by design: the TCP box''s z-bounds (0.36544-0.46496m)
+        are themselves a height constraint on the TCP -- functionally the same ROLE as the vessel''s height_band_m,
+        just not implemented as a separate named mechanism anchored to a measured beam-base pivot the
+        way the vessel one is. The x/y bounds constrain where the TCP can go, which is a DIFFERENT shape
+        of constraint than the vessel''s keep-out SPHERE around a point (a box face vs. a radius from
+        a centre) -- not the same safety case, even though both limit Cartesian motion. Critically, the
+        TCP box bounds the ROBOT TCP, not the MAGNET directly; on this rig the magnet is at a fixed offset
+        past the TCP, so TCP bounds indirectly bound the magnet ONLY to the extent that offset stays fixed
+        in the robot frame as the wrist re-orients along a path -- this was NOT independently re-verified
+        this session (it would require checking the magnet offset''s orientation-dependence along the
+        rebuilt plans, not done here).'
+      physical_reasoning_for_and_against: 'FOR TCP-box being adequate: the free-space rig has no vessel
+        phantom and no insertion-point structure near the workspace to protect against magnet collision
+        with -- the vessel''s keep-out/height-band exist specifically to protect a phantom and an insertion
+        point that do not exist on this rig. The physical hazards specific to free-space (table, camera/mount,
+        cables, robot base) are exactly what the TCP box was measured against (Round 15/R1: the author
+        jogged the arm to its physical limits and the box is those limits minus a 20mm margin). AGAINST:
+        the magnet itself is never independently bounded on this rig the way it is on the vessel -- if
+        a shape path''s wrist orientation carries the magnet meaningfully off the TCP''s own bounded envelope
+        (e.g. a large final-link rotation), the TCP box would not catch that, since it was derived from
+        TCP motion alone.'
+      plan_clearance_evidence: 'Computed live 2026-11-11 by forward-kinematics on both rebuilt plans''
+        full joint trajectories against the TCP box: rectangle worst-case clearance 24.73mm (z-face, sample
+        0 -- the documented node-0 start-pose exception from Round 33/AF1, x/y clearance 80.25/85.76mm
+        elsewhere); triangle-35 worst-case clearance also 24.73mm (same shared start pose, z-face), with
+        x/y clearance down to 26.45/26.26mm at other samples along its path (not the start pose) -- tighter
+        than the rectangle''s, but still inside the box with margin. No sample of either rebuilt plan
+        violates the box.'
+      verdict: 'CLOSED by author decision (2026-11-11), author''s exact words: ''I accept the measured
+        TCP box as the shape rig''s safety mechanism.'' The TCP box IS the shape rig''s safety mechanism
+        for keep-out/height-band purposes -- no further implementation required before the campaign runs.
+        The 24.73mm fixed-start-pose clearance exception (documented above and in common.py/BOX_ADJUSTMENT_NOTE.txt
+        since Round 33/AF1) remains the one known exception to this box, unchanged by this decision. K2
+        (see protocol_campaign2.yaml''s own K2 procedure in the HOWTO) now includes a reduced-speed physical
+        clearance check at the start pose and at each plan''s extreme poses specifically BECAUSE this
+        decision makes that physical check the thing that validates it on real hardware.'
+    height_band_m:
+      not_a_dedicated_mechanism: true
+      note: TCP box z-bounds serve this role functionally; see SHAPE_KEEPOUT_HEIGHTBAND_NOTE
+    tracking_error_abort_m: 0.007
+    insertion_offset_abort: 'off'
+    reference_mode: counter
+    streaming: 'on'
+    deadline_ms: 70.0

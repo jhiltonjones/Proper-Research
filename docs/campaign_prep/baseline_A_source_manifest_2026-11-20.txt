@@ -1,0 +1,96 @@
+Baseline A/B/C/D/E source manifest -- frozen for campaign release,
+2026-11-20 (v7: conditions D and E).
+
+Condition D (MPC N=3): no code change needed. The schedule-cache file
+stores one Jacobian per reference sample, not per horizon stage, so it
+works unmodified at any --horizon value. Verified offline (real
+worker, real schedule, no hardware): spawning with prediction_horizon=3
+and solving against the plan's own q0/tip0 returns qp_status=solved
+with predicted_commands.shape[0]==3.
+
+Condition E (MPC N=15, adaptation active): no production code change
+needed either -- --jacobian-adaptation-mode active already existed on
+the runner. Extended the e2e smoke harness with a 5th scenario
+("adaptation_active", 20 ticks so the online estimator has enough
+history) and a new permanent regression test confirming the real
+estimator runs across consecutive real ticks (not just parses without
+crashing) and produces correctly-structured diagnostics every tick.
+This mocked plant has almost no excitation, so every tick rejects the
+update (insufficient_excitation) rather than accepting one -- that is
+the estimator's own designed safety behavior under low excitation, not
+a bug; the test checks diagnostic structure/population, not acceptance.
+
+Full suite: 164/164 passing (up from 163 in v6, now including the new
+adaptation-active test). Same 3 pre-existing unrelated failures
+excluded, confirmed by git history predating this session.
+
+v6 change: condition C's runner (run_inv_7dof_delay_aware.py, the
+reactive inverse-Jacobian controller) had NO --protective-config-
+reviewed gate at all, unlike A/B's runner -- found while preparing C's
+launch command, confirmed by direct inspection of its argparse list.
+It shares the identical --measured-clearance-abort-mm external safety
+check A/B use, but nothing stopped a real (non-dry-run) start without
+a human having reviewed that value. Ported the identical gate from
+run_mpc_delay_aware_insertion_anchor.py: added --protective-config-
+reviewed, required unless --dry-run, checked immediately after args =
+p.parse_args() and before any schedule/worker setup. One existing test
+(test_inv_runner_cli_flags_populate_pathfollowconfig) invoked the CLI
+without this flag and without --dry-run; updated to pass it (it tests
+CLI-flag population, not safety behavior). Full suite: 163/163 passing
+(same count as v5 -- one test fixed, no new test added this round).
+
+
+History: v1 (pre-launch) -> v2 (camera grab-failure diagnostics) -> v3
+(LatestSlot.get_with_timestamp() fix -- this is what let launch #2
+actually succeed) -> v4 (plot formatting + field-name bug fix, after
+baseline A's first SUCCESSFUL real run: run_name
+baseline_A_pilot_2026-11-20_retry1_20261120T122825Z, stop_reason=
+path_complete, control_steps=235, final_error_mm=0.131,
+max_error_mm=2.313, qp_status=solved on all 235/235 ticks) -> v5 (this
+one): added condition B.
+
+v5 change: run_mpc_delay_aware_insertion_anchor.py had NO CLI-exposed
+way to freeze the Jacobian for condition B -- only --jacobian-adaptation
+-mode existed, a different feature (online gain estimation), not the
+scheduled-vs-frozen distinction condition B needs. Added --freeze-
+jacobian (store_true) and --freeze-jacobian-index (default 0, int).
+Implemented additively at the RUNNER level, not inside the worker: when
+set, every row of the loaded --schedule-cache array is overwritten with
+the row at --freeze-jacobian-index, written to a new
+<run_name>_frozen_jacobian_schedule.npy file in --out-dir, and THAT
+path is substituted for --schedule-cache before spawn_and_warm_worker()
+is called -- the worker process itself is completely unmodified and
+unaware a freeze happened. Off by default; baseline A's behavior
+(scheduled, per-reference-sample LTV Jacobian) is unchanged when this
+flag is not passed -- confirmed: run_mpc_delay_aware_insertion_anchor.py
+'s own hash changed only in the new argparse/freeze block, nothing else
+touched.
+
+Verified offline, no hardware: extended the existing 3-scenario e2e
+smoke harness with a 4th scenario ("frozen_jacobian") exercising
+--freeze-jacobian end to end through the REAL worker subprocess (8/8
+ticks succeed, qp_status=solved); a new permanent regression test
+(test_freeze_jacobian_flag_builds_and_uses_a_constant_schedule) asserts
+the saved schedule file has every row identical. Full suite: 163/163
+passing (up from 162 in v4, now including this new test). Pre-existing,
+unrelated failures (3, confirmed by git history predating this
+session) are unchanged and still excluded from this count.
+
+Identical in both the editing worktree and the canonical checkout
+(/home/jack/Proper-Research), confirmed by diff.
+
+6cfb552eaf094820a231690ad2d3733f3dd585a187541918a107ee26775671b0  proper_research/hardware/online/close_loop_path_follow.py
+e1ad27b0598fcf974c15f18219efc5d528e0f9686590aac5b98fd868cf0091ef  proper_research/hardware/online/camera_source.py
+82b112c3b7fe29330ab18248b643b500c6807f38d3a042987db545fd2f645bc5  proper_research/hardware/online/messages.py
+07abe8ae5071a832a8ff5062e37d2a036da1f73ebb4e37ee27b7074b064dbca0  proper_research/hardware/online/state_stream.py
+db1d48e75076beacbcad83ac01cd78bf735e4fdd2bbb1e5bbb01616d6b401a1f  proper_research/hardware/online/advancer_sink.py
+51a0ed232b9ebb5494d27513510323ded5e78390e3f9eddab2f20226e2116268  proper_research/hardware/ur_rtde_robot.py
+6989d9d8807f609f52c86c8c5093dd964acc163faec71b95a497902a09c29d44  proper_research/controllers/mpc_delay_aware/worker_process.py
+9391b43c5821d426da25984e74b529dbd652bde0653a8711c3b4c4e03da30364  proper_research/controllers/mpc_delay_aware/process_isolated_adapter.py
+840e5b4f44b98398374d63a6f93fbc20d006772a74f00729131e9a612c4cb5c2  proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py
+515ec6e06bd48e5ebb8b1c3d4b306fbd264ddb9ef38393f7dfcc12d129abb675  proper_research/hardware/online/test_camera_grab_failure_diagnostics.py
+967c25c2c19d137617f2c23ac0b4bacd276822b9fd2ccbb720fdbd9f908c0002  proper_research/analysis/pilot_logging_check/plot_pilot_run.py
+87de5eccbcf6c71b9543ec9335fe54fcf4ca7e79c949e7cad73cd0fa228db24e  proper_research/hardware/online/rectangle_stage_a/run_inv_7dof_delay_aware.py
+634d74bdeb3aa45e1f1615b71ef2df7cba3b0f854eb482e6b589ed2f91b004ab  proper_research/hardware/online/rectangle_stage_a/test_insertion_bound_crossing_dispatch_consistency.py
+7aad4cba64373ab37da93e143948765d1767402b6a964d3e39dddf36151d60b6  proper_research/hardware/online/e2e_smoke/_mocked_hardware_harness.py
+34ba9c32224a1b322cd03fe475556c45ab40d5dfb73e75896636ea2a64d68918  proper_research/hardware/online/e2e_smoke/test_e2e_mocked_hardware_smoke.py

@@ -1,0 +1,155 @@
+{
+  "layer": 4,
+  "name": "mpc_tracking",
+  "source_dir": "/Users/jackhilton-jones/Proper-Research/proper_research/flow/results/closed_loop/riccati_flow",
+  "source_csv": "/Users/jackhilton-jones/Proper-Research/proper_research/flow/results/closed_loop/riccati_flow/configuration_mpc_simulation.csv",
+  "sample_count": 776,
+  "sample_period_s": 0.009999999999999898,
+  "position_tolerance_m": 0.0015,
+  "tangent_tolerance_rad": 1.5707963267948966,
+  "summary_from_simulation": {},
+  "position_budget": {
+    "name": "tip position",
+    "tolerance": 0.0015,
+    "unit": "mm",
+    "maximum": 0.0006664439432963436,
+    "rms": 0.00017223177616030997,
+    "p95": 0.00038927516638179275,
+    "median": 8.587712829264358e-05,
+    "utilisation_max": 0.44429596219756234,
+    "utilisation_rms": 0.11482118410687331,
+    "utilisation_p95": 0.25951677758786185,
+    "over_budget_fraction": 0.0,
+    "near_boundary_fraction": 0.0,
+    "sample_count": 776
+  },
+  "tangent_budget": {
+    "name": "tip tangent",
+    "tolerance": 1.5707963267948966,
+    "unit": "deg",
+    "maximum": 0.42270211087364684,
+    "rms": 0.20474799859366588,
+    "p95": 0.3914417372620321,
+    "median": 0.10335679036968798,
+    "utilisation_max": 0.2691005216036772,
+    "utilisation_rms": 0.13034662425741744,
+    "utilisation_p95": 0.24919954967092545,
+    "over_budget_fraction": 0.0,
+    "near_boundary_fraction": 0.0,
+    "sample_count": 776
+  },
+  "configuration_tracking": {
+    "max_abs_joint_error_deg": 2.999999999999998,
+    "rms_joint_error_deg": 0.4958014733528437,
+    "max_abs_insertion_error_mm": 0.020994890065663407
+  },
+  "planning_error": {
+    "source_column": "position_error_m",
+    "max_m": 1.935956574963826e-05,
+    "rms_m": 1.1428632404306487e-05,
+    "share_of_total_rms": 0.06635611998606424
+  },
+  "one_step_model_quality": {
+    "prediction_error_max_m": 0.00029170503920431656,
+    "prediction_error_rms_m": 6.617095614029098e-05,
+    "tip_motion_per_step_rms_m": 3.965314674213177e-05,
+    "relative_prediction_error": 1.668744137019114
+  },
+  "qp": {
+    "success_fraction": 1.0,
+    "failures": 0,
+    "solve_ms_mean": 139.69006873883268,
+    "solve_ms_p95": 253.5868026316166,
+    "solve_ms_max": 275.62687499448657,
+    "iterations_max": 1.0,
+    "sample_period_ms": 9.999999999999897,
+    "overruns": 775
+  },
+  "command_limits": {
+    "peak_velocity_utilisation": [
+      0.37999999999999606,
+      0.28999999999999715,
+      0.44315241589561444,
+      0.31999999999999684,
+      0.29999999999999705,
+      0.20970043556872767,
+      0.0260774268464084
+    ],
+    "velocity_binding": {
+      "available": true,
+      "peak_per_axis": [
+        0.37999999999999606,
+        0.28999999999999715,
+        0.44315241589561444,
+        0.31999999999999684,
+        0.29999999999999705,
+        0.20970043556872767,
+        0.0260774268464084
+      ],
+      "binding_axis": "q3",
+      "binding_axis_index": 2,
+      "binding_peak": 0.44315241589561444,
+      "share_of_samples_where_axis_is_worst": {
+        "q1": 0.14948453608247422,
+        "q2": 0.13530927835051546,
+        "q3": 0.5412371134020618,
+        "q4": 0.061855670103092786,
+        "q5": 0.027061855670103094,
+        "q6": 0.023195876288659795,
+        "L": 0.061855670103092786
+      }
+    }
+  },
+  "acceleration_limits": {
+    "peak_acceleration_utilisation": [
+      1.0000000000000007,
+      1.0000000000000007,
+      1.0000000000000007,
+      1.0000000000000007,
+      1.0000000000000007,
+      1.0000000000000007,
+      0.6874605671145553
+    ],
+    "acceleration_binding": {
+      "available": true,
+      "peak_per_axis": [
+        1.0000000000000007,
+        1.0000000000000007,
+        1.0000000000000007,
+        1.0000000000000007,
+        1.0000000000000007,
+        1.0000000000000007,
+        0.6874605671145553
+      ],
+      "binding_axis": "q1",
+      "binding_axis_index": 0,
+      "binding_peak": 1.0000000000000007,
+      "share_of_samples_where_axis_is_worst": {
+        "q1": 0.3956185567010309,
+        "q2": 0.31829896907216493,
+        "q3": 0.19201030927835053,
+        "q4": 0.05154639175257732,
+        "q5": 0.01804123711340206,
+        "q6": 0.01288659793814433,
+        "L": 0.011597938144329897
+      }
+    }
+  },
+  "findings": [
+    {
+      "level": "warn",
+      "title": "The offline Jacobian predicts poorly one step ahead",
+      "detail": "prediction error is 1.67x the tip motion it is trying to predict. That is the case for relinearising online (SQP) rather than trusting the reference-point Jacobian."
+    },
+    {
+      "level": "warn",
+      "title": "775 QP solve(s) exceeded the sample period",
+      "detail": "worst 275.6 ms against 10.0 ms. In simulation this is invisible; on hardware it is a missed deadline. Report worst-case, not mean, solve time when comparing controllers."
+    },
+    {
+      "level": "warn",
+      "title": "The acceleration limit saturates on q1",
+      "detail": "the controller is running against a hard bound, so any extra acceleration demand created upstream translates directly into tracking error rather than faster motion."
+    }
+  ]
+}

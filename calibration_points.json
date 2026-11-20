@@ -1,0 +1,15 @@
+{
+  "points_px": [
+    [
+      25.4526,
+      142.1134
+    ],
+    [
+      222.5502,
+      233.8219
+    ]
+  ],
+  "distance_px": 217.3888,
+  "known_distance_mm": 80.62257748298549,
+  "source": "2026-11-17: reverted to the original 2026-09-14 checkerboard-derived value, per the user's explicit decision to stop today's recalibration process. This is a revert, not a finding that the original value is more accurate than today's intermediate attempts -- the user's own physical measurements swung across many different values today (34.2mm, 41mm, 13mm, among others) regardless of which calibration was active, so no single calibration value has been shown to resolve the underlying measurement instability. Today's intermediate recalibration attempts (a checkerboard-tilt-based re-measurement, then three ground-truth back-solves to 24.0/22.0/41.0mm targets) are superseded/abandoned by this revert, not disproven."
+}

@@ -1,0 +1,48 @@
+{
+  "run": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+  "description": "Divergence between (a) fixed-bias substitution and (b) separate causal bias at lead stage 14, as a function of an ARTIFICIALLY INJECTED filter alpha (not the real campaign's own alpha=0 default) -- a properly stateful recursive filter is run separately for the scheduled and frozen predictor at each tested alpha. If divergence grows with alpha and shrinks toward 0 as alpha->0, this confirms the prior pass's exact (a)~=(b) agreement under the real alpha=0 is a genuine consequence of zero filter memory, not an implementation artifact that would hold regardless of alpha.",
+  "by_alpha": {
+    "0.0": {
+      "alpha": 0.0,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.4444209925531899,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 2.098643894233434,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.454509106307777
+    },
+    "0.1": {
+      "alpha": 0.1,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.44354589067629774,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 2.0805468313292037,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.4342464194905988
+    },
+    "0.3": {
+      "alpha": 0.3,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.4409851856258485,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 2.0316573503219932,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.4623323432032405
+    },
+    "0.5": {
+      "alpha": 0.5,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.43573045611929073,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 1.9435394030124067,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.4661434555780888
+    },
+    "0.7": {
+      "alpha": 0.7,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.42080875981452814,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 1.7744860148824835,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.459607260672284
+    },
+    "0.9": {
+      "alpha": 0.9,
+      "n_ticks": 235,
+      "mean_abs_diff_a_vs_b_mm_at_lead14": 0.3478470254506183,
+      "max_abs_diff_a_vs_b_mm_at_lead14": 1.3798753433856712,
+      "p95_abs_diff_a_vs_b_mm_at_lead14": 1.2219560492587676
+    }
+  }
+}

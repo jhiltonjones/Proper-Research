@@ -1,0 +1,15 @@
+usage: build_vessel_plan.py [-h] --lumen-file LUMEN_FILE --start-position-json
+                            START_POSITION_JSON
+                            [--insertion-max-mm INSERTION_MAX_MM]
+                            [--position-tolerance-mm POSITION_TOLERANCE_MM]
+                            [--tangent-tolerance-deg TANGENT_TOLERANCE_DEG]
+                            [--maximum-function-evaluations MAXIMUM_FUNCTION_EVALUATIONS]
+                            [--maximum-multistart-attempts MAXIMUM_MULTISTART_ATTEMPTS]
+                            [--multistart-joint-perturbation-rad MULTISTART_JOINT_PERTURBATION_RAD]
+                            [--node-timeout-s NODE_TIMEOUT_S]
+                            [--finite-difference-joint-step-rad FINITE_DIFFERENCE_JOINT_STEP_RAD]
+                            [--finite-difference-insertion-step-m FINITE_DIFFERENCE_INSERTION_STEP_M]
+                            [--maximum-chain-rule-relative-error MAXIMUM_CHAIN_RULE_RELATIVE_ERROR]
+                            [--dt DT] --output-root OUTPUT_ROOT
+                            [--z-raise-mm Z_RAISE_MM]
+build_vessel_plan.py: error: the following arguments are required: --start-position-json

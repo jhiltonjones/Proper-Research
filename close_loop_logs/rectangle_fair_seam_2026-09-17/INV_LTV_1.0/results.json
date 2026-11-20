@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "naive_inverse_jacobian_ltv",
+    "key": "inv_ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/rectangle_fair_seam_2026-09-17/INV_LTV_1.0/runs/inv_ltv_rep1_20260917T133254Z",
+    "stop_reason": "path_complete",
+    "steps": 285,
+    "n_track": 263,
+    "rms_track_mm": 7.552780225392492,
+    "mean_track_mm": 5.560638783269963,
+    "max_track_mm": 13.515,
+    "p95_track_mm": 13.194099999999999,
+    "mean_hold_mm": 0.24763636363636368,
+    "final_mm": 0.19,
+    "duration_s": 62.1146
+  }
+]

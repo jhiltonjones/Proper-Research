@@ -1,0 +1,215 @@
+CONTROLLER AND DATASET SPECIFICATIONS — vessel + shape campaigns
+Generated 2026-10-28, consolidating this session's full investigation (Batch 1 through
+the reproduction-diagnosis + Section 0 work). Every number below is either read directly
+from controller_metadata.json / code on the main checkout (/home/jack/Proper-Research),
+or empirically confirmed (the dipole-alignment check). Where something is inferred rather
+than directly logged, it is marked INFERRED and the basis is given.
+
+====================================================================================
+1. DIPOLE-ALIGNMENT STATUS PER PLAN/DATASET — confirmed empirically, 2026-10-28
+====================================================================================
+controller_metadata.json logs NO dipole-related field at all for any vessel attempt in
+any group (confirmed by direct key-search across vesselB SJ-N15, vesselB FJ, vesselB'
+SJ-N15 — zero hits). Condition membership below is therefore established by:
+  (a) directory-naming convention + the user's direct confirmation of which --dipole-
+      alignment-weight value was passed per run, AND
+  (b) an independent empirical check: computing the magnet's actual commanded
+      misalignment angle to the dipole-alignment target point (beam-base point,
+      [0.670575, -0.719727, -0.039627]) from logged q_meas_rad via
+      dipole_alignment_residual_and_jacobian_from_q, at every tick of the SJ-N15
+      trial set (10 runs each group).
+
+  RESULT (decisive): dipolealign group pooled-tick median misalignment = 16.04°
+  (per-trial median range 13.3-17.15°); nodipole group pooled-tick median = 44.51°
+  (per-trial median range 43.49-45.33°). Mann-Whitney U on the 10 trial-level medians:
+  U=0.0, p=0.00018 -- zero overlap between any dipolealign trial and any nodipole trial.
+  Groups are correctly labeled, confirmed by data, not just assumed from folder names.
+
+  Plan                                                                  | dipole-align?
+  ----------------------------------------------------------------------|---------------
+  plans/.../floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/  | ACTIVE, weight=1.0, target=beam-base point, sign=+1
+  plans/.../floor240_dipolealign_recal_matchedtarget_2026-10-19/               | INACTIVE (weight=0/absent), confirmed empirically
+  plans/.../floor240_2026-10-12/ (Oct-12 pre-dipole plan)                      | IMPOSSIBLE -- the dipole-alignment feature's code did not
+                                                                                |   exist yet (added to delay_aware_mpc.py 2026-10-19 23:03:58,
+                                                                                |   confirmed via git log)
+
+====================================================================================
+2. VESSEL CONTROLLER OBJECTIVE -- ExactQNZeroTaskNullspaceDelayAwareMPC
+====================================================================================
+Class hierarchy: ExactQNZeroTaskNullspaceDelayAwareMPC(StagewiseTaskNullspaceDelayAwareMPC)
+                   (StagewiseTaskNullspaceDelayAwareMPC(DelayAwareBeamOutputTrackingMPC))
+Used by: all vessel-B and vessel-B' MPC conditions (SJ-N15, SJ-N1, FJ). NOT used by INV-7
+(a separate, inverse-Jacobian-based controller class with its own thresholds -- see Sec. 4).
+
+Objective (confirmed by reading _dynamic_qp_terms_exec / _linear_cost_exec directly,
+not inferred from docstrings; also confirmed empirically that v_ref is genuinely used,
+not zero, by directly testing both hypotheses and comparing against logged commands):
+
+  J = sum_{j=1}^{N} [ (u_j - v_ref,j)^T R (u_j - v_ref,j)      R = input_tracking_weight = 7.0
+                     + (u_j - u_{j-1})^T Rd (u_j - u_{j-1}) ]  Rd = input_increment_weight = 0.001
+    + sum_{j=1}^{N} Qp * ||C.(p_pred,j - p_des,j)||^2          Qp = position_tracking_weight = 1.0
+                                                                 position_error_scale_mm = 0.5
+    + lambda_dipole * ||dipole_alignment_residual(q_now)||^2   lambda_dipole: see Sec. 1 per plan
+                                                                 target = beam-base point, sign=+1
+                                                                 m_body = [455.15, -206.98, 0.193]
+                                                                 (current calibrated bundle, B_r=0.80T)
+
+  v_ref,j = reference.input_window(control_index, N)[j] -- the OFFLINE PLAN's own recorded
+  rate, UNCONDITIONALLY. --zero-input-reference-in-r sets config.diagnostic_zero_input_
+  reference_in_R=True, but this field is read ONLY by the unrelated base class's
+  _linear_cost (simulate_time_parameterized_configuration_mpc.py:814) -- NEVER by this
+  class's own _linear_cost_exec/_dynamic_qp_terms_exec. Passing the flag has NO EFFECT
+  on any vessel run, confirmed on main checkout code AND empirically (forcing v_ref=0
+  gives commands with cosine similarity as low as -0.17 against logged commands; v_ref=
+  plan's-rate matches at cosine 0.97-0.9999 at the same ticks).
+
+  State-tracking term: EXACTLY ZERO for this class (ExactQNZeroTaskNullspaceDelayAwareMPC's
+  own _dynamic_qp_terms_exec override never computes it -- base_hessian = H_R + H_Rd only).
+  This is THE key structural difference from the shapes' controller (Sec. 3).
+
+  Confirmed INACTIVE for every vessel run: soft magnet-workspace clearance (weight 0, user-
+  confirmed); disturbance-residual EMA filter (alpha=0, no-op -- estimated_residual = raw
+  instantaneous residual, unfiltered); magnetic-force-preference (a feature present in the
+  controller code but NEVER wired by run_mpc_delay_aware_vessel.py for any flag/run).
+
+  Delay structure: delay_samples=2, beta_d=1.0, terminal_cost=False. horizon=15 for the
+  N=15 condition, horizon=1 for the N=1 condition (same class, same objective; at N=1 the
+  joint components of u0 have zero tracking-cost gradient by the delay-stage construction
+  -- a decision at tick k first affects the physical-state stack at stage 3, never stage 1
+  -- so R alone determines them, pulling exactly to v_ref; only insertion is genuinely
+  optimized at N=1. Confirmed by code AND by direct empirical re-solve test.)
+
+  Hard constraints (vary by plan -- see Sec. 1 table and per-condition table below):
+    - velocity/rate box: +-0.05 rad/s joints, insertion rate limited to 0.002 m/s
+      (insertion_rate_limit_m_s is a SEPARATE field from the input_scale_L_m_s=0.005
+      normalization constant -- do not conflate)
+    - magnet exclusion: point [0.670575, -0.719727, -0.039627], QP radius 0.235m (= true
+      240mm floor minus 5mm monitor tolerance; robust_margin default 0.0mm on main
+      checkout, confirmed, so QP-level == monitor-level for runs using the default)
+    - magnet z-workspace: plan-dependent, see per-condition table below
+    - TCP workspace: box (0.270,-0.880,0.170) to (0.660,-0.530,0.500) +- 15mm margin ->
+      QP bounds [0.285,-0.865,0.185] to [0.645,-0.545,0.485] -- confirmed for the
+      dipolealign and nodipole plans; NOT yet independently confirmed for the Oct-12 plan.
+    - All three (exclusion, z-workspace, TCP-workspace) support --*-live-relinearize,
+      which re-anchors the constraint's linearization point to the CURRENT commanded
+      joints every solve (free_cmd[0], tiled across the horizon) instead of the offline
+      plan's static, schedule-indexed nominal trajectory. User confirmed all three flags
+      were passed for the dipole-aligned and nodipole live runs. Git history: the flags
+      were added in the same commit as the Oct-12 dataset's own "hybrid_j1j3" schedule
+      mechanism (f95bcf0a, 2026-10-14), one day before those runs, so they COULD have
+      been active there too -- not yet confirmed either way, and NOT YET IMPLEMENTED
+      correctly in the offline re-solve for the dipole-aligned or Oct-12 datasets (only
+      done for nodipole so far, where it narrowed but did not close the reproduction gap).
+
+  Scaling constants (identical across all vessel conditions, confirmed): state_scale_q_rad
+  = 0.008726646259971648 (0.5deg), state_scale_L_m = 0.00025, input_scale_q_rad_s = 0.05,
+  input_scale_L_m_s = 0.005 -- all confirmed matching the dataclass's own default values
+  exactly (the scaffolding scripts relied on these defaults rather than passing them
+  explicitly, and the defaults turned out correct).
+
+====================================================================================
+3. SHAPE CONTROLLER OBJECTIVE (rectangle/triangle) -- InsertionAnchoredTaskNullspaceMPC
+====================================================================================
+Class hierarchy: InsertionAnchoredTaskNullspaceMPC(StagewiseTaskNullspaceDelayAwareMPC)
+                   (same StagewiseTaskNullspaceDelayAwareMPC base as vessel, but WITHOUT
+                    the ExactQNZero override -- this is the structural difference)
+
+InsertionAnchoredTaskNullspaceMPC wraps StagewiseTaskNullspaceDelayAwareMPC with an extra
+insertion_state_anchor_weight term that has a hard `if w_L == 0.0: return` early-exit guard
+in its own _dynamic_qp_terms_exec (confirmed by reading the code) -- and every one of the
+99 logged shape runs this session has insertion_state_anchor_weight=0.0, so this wrapper
+is provably inert for every run in this paper; the EXECUTED objective is exactly
+StagewiseTaskNullspaceDelayAwareMPC's own.
+
+  Objective:
+  J = sum_{j=1}^{N} [ (u_j - v_ref,j)^T R (u_j - v_ref,j) + (u_j-u_{j-1})^T Rd (u_j-u_{j-1}) ]
+    + sum_{j=1}^{N} z~_j^T (P_N,j + gamma * P_R,j) z~_j          z~_j = S_z^{-1}(z_j - z_ref,j)
+    + sum_{j=1}^{N} Qp * ||C.(p_pred,j - p_des,j)||^2
+
+  R=7.0, Rd=0.001, Qp=1.0 -- IDENTICAL to vessel, confirmed exhaustively across all 99
+  logged shape runs (53 rectangle + 46 triangle), no exceptions.
+
+  *** KEY STRUCTURAL DIFFERENCE FROM VESSEL ***: gamma=0.0 here does NOT zero the whole
+  state-tracking term the way it effectively does for vessel's ExactQNZero class. P_R
+  (task row-space projector) IS weighted by gamma and vanishes at gamma=0 -- but P_N
+  (task NULL-space projector) is applied at FULL WEIGHT 1 REGARDLESS of gamma. So shapes
+  carry a real, active null-space STATE-POSITION-anchoring term (pulling the redundant/
+  out-of-camera-plane configuration back toward the plan's own reference POSITION, not
+  just its rate) that vessel's ExactQNZero class deliberately, completely lacks (built
+  specifically to force this term to exactly zero, for the model-necessity study,
+  paper/model_necessity_study.tex Sec. mn-exp4).
+
+  No dipole-alignment term: never configured for any shape run (the feature's own CLI
+  flag/wiring exists only in run_mpc_delay_aware_vessel.py, not in
+  run_mpc_delay_aware_insertion_anchor.py).
+
+  No magnet-exclusion / magnet-z-workspace constraints: shapes are free-space paths, no
+  vessel wall, confirmed absent from all 99 runs' metadata.
+
+  TCP workspace box (DIFFERENT from vessel's): (0.15,-1.2,0.2) to (1.1,-0.483,0.7).
+
+  delay_samples=2, horizon=15 (N=15 condition) or 1 (N1 condition), confirmed.
+
+  7 conditions exist per shape (not just SJ/FJ as earlier assumed): mpc_SJ, mpc_FJ,
+  mpc_N1, mpc_N1_FJ, inv7_SJ, inv7_FJ, openloop.
+
+  KNOWN LOGGING BUGS, reported not fixed (controller code not to be changed per the
+  user's own rule for this investigation):
+    - Every rectangle run's logged config["shape"] field reads "triangle" -- a stale
+      default in the logging code. plan_dir is correct and authoritative; this is a
+      cosmetic metadata bug, not a real condition mix-up.
+    - SJ vs FJ identity is NOT recoverable from any logged config field for shapes
+      (dmap_path, mpc_freeze_index, feedforward are identical between a shape's own SJ
+      and FJ attempts) -- only the directory name distinguishes them.
+    - INV-7's logged "horizon=12" field (mpc_prediction_horizon) is of UNVERIFIED
+      relevance -- INV-7 is not a prediction-horizon MPC controller; this may be a
+      stale/irrelevant field. Reported as found, not adjusted to fit expectation.
+
+====================================================================================
+4. INV-7 (inverse-Jacobian controller) -- separate class, own schema
+====================================================================================
+NOT ExactQNZero/Stagewise -- a distinct inverse-Jacobian-based controller. Its
+controller_metadata.json does NOT carry comparable fields to the MPC schema (no
+magnet_z_bounds_m/magnet_exclusion_radius_m/horizon/max_tracking_error_m/plan_dir under
+the same key names) -- confirmed; this is an OPEN GAP, not yet resolved: INV-7 attempt
+validity against the Section-0 criteria could not be fully verified against a standard
+the way MPC's could, for either vessel plan. Needs a second pass reading INV-7's own
+metadata schema before its "N valid" counts can be fully trusted.
+
+Confirmed from earlier sessions: INV-7's tracking-error abort limit for vessel is 15mm
+(vs MPC's 7mm -- a real, confirmed, looser condition, not a typo -- one exceptional
+InvJac-hybrid attempt used 7mm matching MPC, flagged invalid/different-condition).
+INV-7's independent monitor for magnet-exclusion uses the RAW 240mm floor directly (no
+5mm tolerance subtracted) -- asymmetric vs MPC's monitor at 235mm; recommended fix
+(not yet applied) is a new --magnet-exclusion-monitor-tolerance-mm flag for INV-7's
+runner script, defaulting to 5.0mm to match MPC.
+
+====================================================================================
+5. PER-CONDITION QUICK-REFERENCE TABLE (vessel)
+====================================================================================
+Condition            | plan_dir (suffix)                                    | z-bounds (mm)      | dipole | horizon
+----------------------|-------------------------------------------------------|---------------------|--------|--------
+vesselB  SJ-N15       | floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20 | [-28.14,+16.86] | ACTIVE (w=1.0) | 15
+vesselB  SJ-N1         | same                                                  | same                | ACTIVE | 1
+vesselB  FJ-N15        | same                                                  | same                | ACTIVE | 15
+vesselB  INV-7         | same (schema gap, Sec. 4)                             | same (unverified)   | n/a (not an MPC flag) | n/a
+vesselB' SJ-N15        | floor240_dipolealign_recal_matchedtarget_2026-10-19   | [-63.14,+16.86]     | INACTIVE | 15
+vesselB' SJ-N1         | same                                                  | same                | INACTIVE | 1
+vesselB' INV-7         | same (schema gap)                                     | same (unverified)   | n/a | n/a
+Oct-12 pre-dipole      | floor240_2026-10-12                                   | [-28.14,+16.86]     | IMPOSSIBLE (feature didn't exist) | 15
+
+(Exclusion radius 0.235m / 240mm floor / 5mm tolerance is identical across every vessel
+condition above, confirmed.)
+
+====================================================================================
+SOURCES
+====================================================================================
+- controller_metadata.json for each real run cited inline in prior session reports.
+- proper_research/controllers/mpc_delay_aware/{delay_aware_mpc,stagewise_task_nullspace,
+  exact_qn_zero_mpc,insertion_anchor_mpc}.py (main checkout) -- objective/constraint code.
+- proper_research/hardware/online/vessel_stage_a/run_mpc_delay_aware_vessel.py,
+  proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py
+  -- CLI wiring, which flags actually reach the controller.
+- git log -p -- proper_research/parameters.py and delay_aware_mpc.py -- B_r recalibration
+  and dipole-alignment-feature-added commit timestamps.
+- This session's empirical dipole-alignment-angle check (Sec. 1), 2026-10-28.

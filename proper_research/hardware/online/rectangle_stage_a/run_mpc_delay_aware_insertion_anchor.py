@@ -1,0 +1,935 @@
+#!/usr/bin/env python3
+"""Live validation of gamma=0/R700 with the planner<->live FRAME-MISMATCH
+FIX, w_L=0 (2026-09-21).
+
+Root-cause finding (2026-09-21, from the two nullq_r700 live runs): the
+process-isolated MPC worker is spawned+warmed BEFORE preflight/the live
+planner->robot frame registration exists (by design -- see
+worker_process.py), so it was permanently solving against the RAW,
+un-registered planner-frame reference (p_des^P, p_nominal^P), while the
+harness's own live tip measurement and logged `desired_mm` are in the
+live-registered robot frame R. Direct verification: for every affected
+live run, E_chosen^QP (=||p_hat - p_des^P||, the QP's OWN internal task
+error) was ~0.06-0.45mm -- i.e. the optimizer was tracking its own target
+almost perfectly -- while E_chosen^harness/e_actual (measured against the
+CORRECT, frame-registered target) matched Delta_p_target = p_des^P -
+p_des^harness to within 0.02-0.04mm at every tested run. The "insertion
+authority" pathology investigated all day (MT rejection, R700 selection,
+the w_L insertion anchor) was, to first order, the optimizer successfully
+cancelling a rigid coordinate-frame translation it had no way of knowing
+about, not a genuine control-design failure -- see
+CONTROLLER_JUSTIFICATION.md's frame-mismatch section for the full
+diagnostic chain.
+
+Fix, corrected design (2026-09-21, superseding an earlier measurement-
+transform attempt at the adapter boundary -- reverted after an equivalence
+unit test showed it mixes frames): p_des and p_nominal (both default from
+reference.desired_position_m, the raw un-registered array) are the ONLY
+things wrong. The schedule (J), the task-nullspace projector C, z_ref,
+u_ref, and the measured beam position are already natively robot-frame --
+J is built from real robot FK in build_or_load_schedule (labelled
+"R.x,R.y,R.z" in its own console dump), independent of the planner's own
+abstract path coordinates -- and must NOT be touched. The fix is applied
+ONCE, worker-side, via `MPCWorkerHandle.set_frame_transform(R_fit, t_fit)`
+(see worker_process.py's `_apply_frame_transform`): p_des^R = R_fit@p_des^P
++ t_fit, p_nominal^R = R_fit@p_nominal^P + t_fit. Neither is baked into any
+constructor-time cached quantity (H/the OSQP sparsity pattern depend only
+on cost weights and prediction matrices; the nullspace projectors depend
+only on the schedule/C/state scale), so no re-warm is needed. The worker
+refuses any real solve between `require_frame_transform()` and
+`set_frame_transform()` (see main(), called right after spawn/warm-up and
+right after the live registration is computed, respectively) -- this
+adapter itself stays completely frame-agnostic.
+
+This is the FIRST CORRECTED validation, run at w_L=0 (gamma=0, R700 as
+originally selected) -- the insertion-anchor tuning from earlier today is
+DISCARDED as contaminated by the frame bug, not carried into this run. If
+this performs well live, most of today's "insertion authority instability"
+story was the frame bug, not a control-design problem.
+
+Everything else is frozen identically to nullq_r700: gamma_q=0, R=700*R0,
+original Qp/Rd/u_ref, d=2, beta_d=1, N=15, V_f=0, insertion authority
+(s_u,L=5mm/s, |u_L|<=2mm/s unchanged), execution-C, process isolation, same
+plan/schedule.
+
+Independent, non-optimization safety monitor kept from the insertion-anchor
+attempt (not silent clipping): if the live insertion accumulator ever
+drifts more than `--insertion-offset-abort-mm` from L_ref, the run
+aborts/holds via the generic adapter_abort_reason hook in
+close_loop_path_follow.py. RESTORED to the original conservative 5mm
+default -- the earlier 10mm relaxation was itself contaminated by the
+frame bug (the large excursions it was sized against were largely
+frame-induced); there is no reason to grant that much runway now.
+Threshold rationale, from the two nullq_r700 live runs: the completed
+run's insertion offset stayed under ~2.8mm throughout; the aborted run
+crossed 5mm by roughly tick 14 -- long before its eventual
+tcp_out_of_workspace abort near tick 240 -- so 5mm sits outside normal
+operation but well inside the early-warning zone of a runaway trajectory.
+
+Usage
+-----
+    python -m proper_research.hardware.online.rectangle_stage_a.run_mpc_delay_aware_insertion_anchor \\
+        --plan-dir plans/rectangle_10x15mm_skipglobal_2026-09-12/time_parameterized_configuration_path \\
+        --out-dir close_loop_logs/myrun --schedule-cache /tmp/rectangle_genuine_ltv_schedule.npy
+"""
+import argparse
+import json
+import hashlib
+import math
+import os
+import glob
+from pathlib import Path
+
+import numpy as np
+
+import proper_research.hardware.online.close_loop_path_follow as pf
+from proper_research.controllers import mpc_variants
+from proper_research.controllers.beam_jacobian_providers import from_model_bundle
+from proper_research.controllers.mpc_delay_aware.process_isolated_adapter import (
+    ProcessIsolatedDelayAwareAdapter,
+)
+from proper_research.hardware.online import controller_adapters
+from proper_research.controllers.mpc_delay_aware.worker_process import MPCWorkerHandle
+from proper_research.planning.planning_context import build_planning_context
+from proper_research.simulation.simulations.simulate_time_parameterized_configuration_mpc import (
+    load_configuration_reference,
+)
+from proper_research.hardware import ur_magnet_ik_jacobian_validation as urik
+from proper_research.simulation.simulations.controller_factory_joint_space import (
+    _resolve_robot_kinematics,
+)
+from proper_research.planning.planning_context import make_robot_config
+
+from . import common
+
+# 2026-11-18: magnet-to-beam-base hard keep-out + dipole-to-beam-base
+# alignment preference, ported from the vessel runner's own magnet_
+# exclusion/dipole_alignment_preference wiring (both already generic,
+# fixed-point mechanisms in delay_aware_mpc.py -- the vessel runner's
+# "vessel-centreline" exclusion was itself repurposed to a single fixed
+# beam-base point back on 2026-09-28, so there is no vessel-specific
+# geometry left to port, only the plumbing). _robot_kin.dh/T_F_M (NOT
+# urik.CONFIG's own dh/T_F_TCP, which this file's existing TCP-workspace
+# block uses for the literal UR TCP point) is the magnet-mount forward-
+# kinematics model both new blocks below need -- same factory call the
+# vessel runner uses, with the same corrected tcp_to_magnet_pose6 (a bare
+# JointSpaceRobotConfig() would silently fall back to a stale 0.47m tool
+# offset -- see that class's own docstring warning).
+_robot_kin = _resolve_robot_kinematics(make_robot_config())
+
+# 2026-10-23: physical rig's middle marker is permanently gone (removed
+# 2026-09-29, see common.py's patch_state_stream_config_two_markers) --
+# this script's own live-tracking warmup needs 3-4 markers by default and
+# fails outright against the current rig without this patch. Must run
+# before anything else reassigns pf.StateStreamConfig.
+common.patch_state_stream_config_two_markers(pf)
+
+_real_build_offline_solver = controller_adapters.build_offline_solver
+_real_make_output_dir = pf._make_output_dir
+_LAST_OUTPUT_DIR: Path | None = None
+_METADATA_WRITTEN = False
+
+# Frozen controller spec (see module docstring) -- module-level constants,
+# not CLI flags, so this run cannot silently drift from the offline-
+# validated formulation.
+_GAMMA = 0.0
+_INPUT_TRACKING_WEIGHT = 7.0          # 700 * default 1.0e-2 = R700
+_INPUT_INCREMENT_WEIGHT = 1.0e-3      # unchanged from M0/nullq_r700
+_INSERTION_RATE_LIMIT_M_S = 2.0e-3    # unchanged -- s_u,L stays 5mm/s via defaults
+_INSERTION_STATE_ANCHOR_WEIGHT = 0.0  # RESTORED to 0 -- w_L=0.1 tuning discarded as
+# contaminated by the frame-mismatch bug (see module docstring); this run
+# isolates the frame fix alone, on the originally-selected gamma=0/R700.
+_INSERTION_STATE_ANCHOR_SCALE = 0.25e-3  # s_L, matches state_error_scale[6]
+
+
+def _wrapped_make_output_dir(cfg):
+    global _LAST_OUTPUT_DIR
+    out = _real_make_output_dir(cfg)
+    _LAST_OUTPUT_DIR = out
+    return out
+
+
+pf._make_output_dir = _wrapped_make_output_dir
+
+
+_DEADLINE_MS = 70.0
+_INSERTION_OFFSET_ABORT_M = 0.02  # 5mm, see module docstring for rationale
+_WORKER: MPCWorkerHandle | None = None
+_ALLOW_UNVERIFIED_PLAN = False
+_SCHEDULE_CACHE_PATH: str | None = None
+# 2026-11-04: in-QP TCP-workspace constraint, same mechanism as the vessel
+# runner's --disable-tcp-workspace-in-qp/--tcp-workspace-robust-margin-mm.
+# Reads the SAME box the post-hoc tcp_out_of_workspace monitor uses
+# (common.WORKSPACE_XYZ_MIN_M/MAX_M), so the QP always acts before that
+# monitor would ever fire. Set in main(); logged into controller_metadata.json.
+_TCP_WORKSPACE_IN_QP: bool = False
+# 2026-11-18: same provenance pattern, for the two new optional QP terms.
+_MAGNET_EXCLUSION_IN_QP: bool = False
+# 2026-11-19: explicit floor/margin/radius provenance, one consistent
+# definition shared with common.py's MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM /
+# MAGNET_EXCLUSION_ROBUST_MARGIN_MM -- logged into controller_metadata.json
+# so the effective boundary used by a given run is never implicit.
+_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM: float = common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM
+_MAGNET_EXCLUSION_ROBUST_MARGIN_MM: float = common.MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+# 2026-11-19 (rectangle-experiment config): the measured-clearance
+# post-hoc monitor's own abort radius, set in main() from
+# --measured-clearance-abort-mm. Deliberately SEPARATE from the unapproved
+# common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM=250.0 constant,
+# which is left untouched elsewhere and NOT used as this default -- the
+# operator directed this monitor to detect a breach of the ALREADY-
+# REVIEWED 230mm boundary (common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM)
+# for this experiment, not to enforce the still-provisional 250mm
+# early-trigger proposal. This is a measured-BOUNDARY-BREACH detector --
+# it reports that the magnet's measured position crossed the reviewed
+# limit, not that the robot is guaranteed to stop before reaching it.
+_MEASURED_CLEARANCE_ABORT_MM: float = common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM
+_DIPOLE_ALIGNMENT_WEIGHT: float = 0.0
+_INPUT_PENALTY_MODE: str = "planned"
+_JACOBIAN_ADAPTATION_MODE: str = "off"
+
+
+def build_magnet_exclusion_schedule(reference) -> tuple[np.ndarray, np.ndarray]:
+    """Analytic magnet-position Jacobian + nominal magnet position at every
+    reference sample -- the schedule the in-QP magnet-exclusion constraint
+    linearizes about (see `delay_aware_mpc.py`'s `_configure_magnet_
+    exclusion` docstring). Identical in construction to the vessel runner's
+    own `build_magnet_exclusion_schedule` (position Jacobian only, rows 0:3
+    of the 6x6 spatial Jacobian -- the magnet is rigidly on the end
+    effector, its position never depends on insertion L)."""
+    q = np.asarray(reference.state[:, :6], dtype=float)
+    jacobians = np.empty((q.shape[0], 3, 6), dtype=float)
+    positions = np.empty((q.shape[0], 3), dtype=float)
+    for i in range(q.shape[0]):
+        fk = urik.forward_kinematics(q[i], _robot_kin.dh, _robot_kin.T_F_M)
+        positions[i] = fk.T_R_target[:3, 3]
+        jacobians[i] = urik.geometric_jacobian(q[i], _robot_kin.dh, _robot_kin.T_F_M)[:3, :]
+    return jacobians, positions
+
+
+def spawn_and_warm_worker(
+    *, plan_dir: str, schedule_cache: str, control_hz: float, prediction_horizon: int,
+    joint_velocity_limit_rad_s: float, insertion_rate_limit_m_s: float,
+    joint_acceleration_limit_rad_s2: float, position_error_scale_mm: float,
+    position_tracking_weight: float,
+    tcp_workspace_kwargs: dict | None = None,
+    magnet_exclusion_kwargs: dict | None = None,
+    dipole_alignment_preference_kwargs: dict | None = None,
+    zero_centered_input_penalty: bool = False,
+    jacobian_adaptation_kwargs: dict | None = None,
+    insertion_command_min_m: float = -0.05,
+    insertion_command_max_m: float = 0.20,
+) -> MPCWorkerHandle:
+    """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
+    identical lifecycle ordering to nullq_r700's runner.
+
+    2026-11-20: insertion_command_min_m/max_m now drive the QP's OWN
+    insertion state_min[6]/state_max[6] box bound too -- previously a
+    separate, hardcoded (-0.05, 0.20)m regardless of what
+    --insertion-command-min-mm/max-mm requested for the dispatch-level
+    clip. For this run's comparison, both now come from the SAME
+    source: the QP is genuinely constrained to the approved envelope at
+    every horizon stage (state_min/state_max apply identically to each
+    of the N stages -- see ConfigurationMPCConfig's own box-constraint
+    construction, which tiles these once per stage, not just stage 0),
+    not merely post-hoc clipped at dispatch. Defaults (-0.05, 0.20)
+    match the PRIOR hardcoded QP bound exactly, so any caller that
+    doesn't pass these explicitly is unaffected.
+    """
+    dt = 1.0 / control_hz
+    mpc_config_kwargs = dict(
+        sample_period_s=dt, prediction_horizon=int(prediction_horizon),
+        state_min=tuple([-2.0 * math.pi] * 6 + [float(insertion_command_min_m)]),
+        state_max=tuple([2.0 * math.pi] * 6 + [float(insertion_command_max_m)]),
+        velocity_limit=tuple([joint_velocity_limit_rad_s] * 6 + [insertion_rate_limit_m_s]),
+        acceleration_limit=tuple([joint_acceleration_limit_rad_s2] * 6 + [10.0 * insertion_rate_limit_m_s]),
+        # 2026-11-18: real fix, see stagewise_task_nullspace.py/delay_aware_
+        # mpc.py's own 2026-11-18 comments -- this field previously reached
+        # ConfigurationMPCConfig correctly but was never read by the QP-
+        # construction code any real rectangle/vessel run actually used.
+        diagnostic_zero_input_reference_in_R=bool(zero_centered_input_penalty),
+    )
+    increment_scale = tuple(
+        dt * a for a in ([joint_acceleration_limit_rad_s2] * 6 + [10.0 * insertion_rate_limit_m_s])
+    )
+    nullspace_r700_config_kwargs = dict(
+        mpc_config_kwargs,
+        input_tracking_weight=_INPUT_TRACKING_WEIGHT,
+        input_increment_weight=_INPUT_INCREMENT_WEIGHT,
+        input_increment_scale=increment_scale,
+    )
+    s = float(position_error_scale_mm) * 1.0e-3
+    beam_config_kwargs = dict(
+        position_error_scale_m=(s, s, s), position_tracking_weight=float(position_tracking_weight),
+        use_dare_terminal_cost=False, directional_damping=0.0,
+    )
+    print("[insertion_anchor] spawning + warming process-isolated MPC worker "
+          "(BEFORE any hardware connection); building M0 + nullspace/R700/w_L...")
+    worker = MPCWorkerHandle(
+        plan_dir=plan_dir, schedule_path=schedule_cache,
+        mpc_config_kwargs=mpc_config_kwargs, beam_config_kwargs=beam_config_kwargs,
+        delay_samples=2, beta_d=1.0, single_threaded=True,
+        enable_nullspace_r700=True,
+        nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
+        insertion_state_anchor_weight=_INSERTION_STATE_ANCHOR_WEIGHT,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
+    )
+    spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
+    print(f"[insertion_anchor] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
+    _insertion_abort_desc = (
+        "disabled (insertion-offset abort off by default; pass "
+        "--enable-insertion-offset-abort to turn it on)"
+        if _INSERTION_OFFSET_ABORT_M is None
+        else f"|L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm"
+    )
+    print(f"[insertion_anchor] CONTROLLER CONFIRMED: gamma={_GAMMA}, R700 "
+          f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), "
+          f"insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT} s_L={_INSERTION_STATE_ANCHOR_SCALE*1e3}mm, "
+          f"safety abort at {_insertion_abort_desc}")
+    # Gate real solves until the live planner->robot registration is
+    # applied (see module docstring's frame-mismatch fix) -- offline
+    # replay callers never call this, so this is purely additive for the
+    # live path.
+    worker.require_frame_transform()
+    print("[insertion_anchor] worker will refuse solves until set_frame_transform() is called "
+          "(happens once preflight computes the live registration)")
+    return worker
+
+
+def _wrapped_build_offline_solver(kind, **kwargs):
+    global _METADATA_WRITTEN
+    if kind != "mpc_delay_aware":
+        return _real_build_offline_solver(kind, **kwargs)
+    assert _LAST_OUTPUT_DIR is not None, "output dir not yet created"
+    assert _WORKER is not None, "worker must be spawned+warmed BEFORE pf.main() -- see main()"
+    cfg = pf.CONFIG
+
+    transform = pf._PLANNER_TO_LIVE_TRANSFORM
+    if transform is None:
+        raise RuntimeError(
+            "pf._PLANNER_TO_LIVE_TRANSFORM is not set -- _load_plan_reference() must run "
+            "(reference_source='plan_dir') and compute the live planner->R fit BEFORE "
+            "build_offline_solver() is called, or the worker (which solves entirely in "
+            "planner frame) would be paired with an unregistered live measurement."
+        )
+    r_fit, t_fit = transform
+
+    if not _METADATA_WRITTEN:
+        meta = {
+            "controller_variant": "nullspace_Q_R700_frame_fix",
+            "gamma": _GAMMA,
+            "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
+            "input_increment_weight": _INPUT_INCREMENT_WEIGHT,
+            "insertion_state_anchor_weight": _INSERTION_STATE_ANCHOR_WEIGHT,
+            "insertion_state_anchor_scale_m": _INSERTION_STATE_ANCHOR_SCALE,
+            "insertion_offset_abort_m": _INSERTION_OFFSET_ABORT_M,
+            "insertion_offset_monitor_disabled": _INSERTION_OFFSET_ABORT_M is None,
+            "state_scale_q_rad": math.radians(0.5),
+            "state_scale_L_m": 0.25e-3,
+            "input_scale_q_rad_s": 0.05,
+            "input_scale_L_m_s": 5.0e-3,
+            "delay_samples": 2,
+            "beta_d": 1.0,
+            "horizon": int(cfg.mpc_prediction_horizon),
+            "terminal_cost": False,
+            "insertion_rate_limit_m_s": _INSERTION_RATE_LIMIT_M_S,
+            "plan_dir": str(cfg.plan_dir),
+            "planner_to_live_R_fit": r_fit.tolist(),
+            "planner_to_live_t_fit_m": t_fit.tolist(),
+            "planner_to_live_t_fit_norm_m": float(np.linalg.norm(t_fit)),
+            "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
+            "magnet_exclusion_in_qp": _MAGNET_EXCLUSION_IN_QP,
+            "magnet_beam_base_exclusion_floor_mm": _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM,
+            "magnet_exclusion_robust_margin_mm": _MAGNET_EXCLUSION_ROBUST_MARGIN_MM,
+            "magnet_beam_base_exclusion_commanded_radius_mm": (
+                _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM + _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+            ),
+            # 2026-11-19: BOTH thresholds recorded explicitly, by name, so
+            # neither is ever implicit from the other. "measured_clearance_
+            # abort_mm" is THIS run's actual post-hoc monitor radius (the
+            # operator-directed 230mm reviewed boundary for this
+            # experiment, not the unapproved 250mm proposal -- see
+            # common.py's own docstring on MAGNET_MEASURED_CLEARANCE_
+            # PROTECTIVE_RADIUS_MM, which stays separately recorded here
+            # too so a reader can see it was NOT the value used).
+            "measured_clearance_abort_mm": _MEASURED_CLEARANCE_ABORT_MM,
+            "magnet_measured_clearance_protective_radius_mm_UNUSED_provisional": (
+                common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM
+            ),
+            "dipole_alignment_weight": _DIPOLE_ALIGNMENT_WEIGHT,
+            "input_penalty_mode": _INPUT_PENALTY_MODE,
+            "jacobian_adaptation_mode": _JACOBIAN_ADAPTATION_MODE,
+            "workspace_xyz_min_m": list(common.WORKSPACE_XYZ_MIN_M),
+            "workspace_xyz_max_m": list(common.WORKSPACE_XYZ_MAX_M),
+            "unverified_plan_bypass": _ALLOW_UNVERIFIED_PLAN,
+            # Z4b step 5 (2026-11-11): automatic provenance, additive only.
+            "argv": __import__("sys").argv[:],
+            # 2026-11-14: provenance repair -- Z4b step 5's "automatic
+            # provenance" never actually recorded a commit hash (confirmed
+            # absent from both K2 runs' controller_metadata.json). This was
+            # a real gap, not a minor omission -- closing it here, for
+            # every run from now on. The two existing K2 runs remain
+            # permanently without this field; nothing can add it
+            # retroactively to a log that already exists.
+            "code_provenance": common.capture_code_provenance(source_files=[
+                __file__,
+                str(Path(common.__file__)),
+            ]),
+            "plan_file_sha256": {
+                str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(Path(cfg.plan_dir).glob("*.npz"))
+            },
+            "schedule_cache_sha256": (
+                hashlib.sha256(Path(_SCHEDULE_CACHE_PATH).read_bytes()).hexdigest()
+                if _SCHEDULE_CACHE_PATH and Path(_SCHEDULE_CACHE_PATH).exists() else None
+            ),
+            "schedule_cache_path": _SCHEDULE_CACHE_PATH,
+            # NOTE on "resolved settings": gamma/input_tracking_weight/
+            # insertion_state_anchor_weight/horizon/etc. above are already
+            # the POST-DEFAULT-RESOLUTION values the worker actually
+            # constructed with (not raw CLI flags) -- this dict's other
+            # fields already satisfy that requirement; no separate
+            # duplicate field is added here. summary.json's own "config"
+            # section separately captures the full resolved PathFollowConfig.
+        }
+        (_LAST_OUTPUT_DIR / "controller_metadata.json").write_text(json.dumps(meta, indent=2))
+        print(f"[insertion_anchor] wrote controller_metadata.json -> {_LAST_OUTPUT_DIR} "
+              f"(includes planner->live R_fit/t_fit, |t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm)")
+        # 2026-11-16: explicit console confirmation that code_provenance
+        # actually ran and captured something real -- the field was already
+        # written into the JSON above, but nothing printed it, so a dry
+        # read of the console alone couldn't confirm it fired.
+        _cp = meta["code_provenance"]
+        print(f"[insertion_anchor] code provenance: commit={_cp['git_commit']} "
+              f"dirty={_cp['git_dirty']} error={_cp['git_error']}")
+        # 2026-11-19 (point 2a): the real hardware runner now persists
+        # late-response timing records into ITS OWN run directory, not
+        # only the test harness. _WORKER was already spawned before
+        # _LAST_OUTPUT_DIR existed (see spawn_and_warm_worker's lifecycle
+        # note), so the path is set here, now that it does -- same timing
+        # as prediction_log_path below, same one-time guard.
+        _WORKER.set_late_response_log_path(str(_LAST_OUTPUT_DIR / "late_responses.jsonl"))
+        _METADATA_WRITTEN = True
+
+    # 2026-11-19: independent, per-tick MEASURED-clearance BREACH DETECTOR
+    # (same mechanism the vessel runner already uses) -- computes the
+    # magnet's real FK position from MEASURED joints every tick and
+    # reports/aborts if it drops below _MEASURED_CLEARANCE_ABORT_MM. This
+    # is wholly separate from the in-QP linearized constraint above: it
+    # exists to detect a real geometric breach of the REVIEWED boundary
+    # that the QP's own (linearized, schedule-anchored) prediction might
+    # not reflect -- see the comparison this session already did (part
+    # 2/3 of the pilotA review): the QP's own exclusion rows were
+    # satisfied with margin at every exactly-reconstructible horizon
+    # stage, so this monitor is a detector of what actually happened
+    # physically, not evidence the QP itself needed correcting. It is
+    # NOT a guarantee that motion stops before reaching the boundary --
+    # see common.py's own docstring on stopping-distance limitations --
+    # and it is independent of, and does not modify, the robot's own
+    # safety-rated configuration or any established lab E-stop procedure.
+    _magnet_measured_clearance_radius_m = _MEASURED_CLEARANCE_ABORT_MM * 1e-3
+    # 2026-11-19: recomputed locally rather than reused from main()'s own
+    # `_beam_base_xyz_r` local -- this function is a module-level callback
+    # with no closure over main()'s locals (same scoping class of bug as
+    # the --protective-config-reviewed check fixed earlier). Same formula
+    # main() uses for the in-QP constraint's own beam-base point.
+    _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
+
+    def _magnet_transform_fn(q6: np.ndarray) -> np.ndarray:
+        fk = urik.forward_kinematics(np.asarray(q6, dtype=float).reshape(6), _robot_kin.dh, _robot_kin.T_F_M)
+        return fk.T_R_target[:3, 3]
+
+    print(f"[insertion_anchor] measured-clearance BREACH DETECTOR active: "
+          f"abort_radius={_MEASURED_CLEARANCE_ABORT_MM:.1f}mm "
+          f"(separate from the QP's own {_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM + _MAGNET_EXCLUSION_ROBUST_MARGIN_MM:.1f}mm "
+          f"commanded linearized boundary -- this detector reports a measured breach of the "
+          f"{_MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM:.1f}mm reviewed boundary, it does NOT guarantee "
+          f"motion stops before reaching it; confirmed via --protective-config-reviewed for this "
+          f"run. The still-UNAPPROVED {common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM:.1f}mm "
+          f"proposal in common.py is NOT the value active here.)")
+
+    adapter = ProcessIsolatedDelayAwareAdapter(
+        reference=kwargs["reference"], worker=_WORKER, deadline_s=_DEADLINE_MS / 1e3,
+        joint_velocity_limit_rad_s=float(cfg.joint_velocity_limit_rad_s),
+        max_joint_step_rad=float(cfg.max_joint_step_rad),
+        config=kwargs.get("adapter_config"),
+        prediction_log_path=str(_LAST_OUTPUT_DIR / "predicted_beam_positions.jsonl"),
+        controller_kind="nullspace_r700",
+        controller_label="mpc_delay_aware_nullspace_r700_frame_fix_process_isolated",
+        insertion_offset_abort_m=_INSERTION_OFFSET_ABORT_M,
+        magnet_transform_fn=_magnet_transform_fn,
+        magnet_exclusion_lumen_C_m=_beam_base_xyz_r,
+        magnet_exclusion_radius_m=_magnet_measured_clearance_radius_m,
+    )
+    _WORKER.set_frame_transform(r_fit, t_fit)
+    print(f"[insertion_anchor] worker frame transform applied: "
+          f"|t_fit|={np.linalg.norm(t_fit)*1e3:.1f}mm det(R_fit)={np.linalg.det(r_fit):+.3f}")
+
+    # Regression check #4 (2026-09-21): verify the worker/harness target
+    # discrepancy is now essentially zero, not just trust the fix silently.
+    # p_des^P: the SAME raw planner-frame reference the worker was built
+    # from (load_configuration_reference, no frame fit -- mirrors
+    # _worker_main exactly). p_des^harness: the live, frame-fit-corrected
+    # target the harness itself uses (kwargs["reference"]).
+    p_des_P = np.asarray(
+        load_configuration_reference(cfg.plan_dir, require_planned_beam_feasible=False).desired_position_m,
+        dtype=float,
+    )
+    p_des_R = p_des_P @ r_fit.T + t_fit
+    p_des_harness = np.asarray(kwargs["reference"].desired_position_m, dtype=float)
+    discrepancy = float(np.max(np.linalg.norm(p_des_R - p_des_harness, axis=1)))
+    print(f"[insertion_anchor] frame-fix check: max_i||R_fit@p_des_i^P+t_fit - p_des_i^harness|| "
+          f"= {discrepancy*1e3:.6f}mm (should be numerical noise)")
+    assert discrepancy < 1e-6, (
+        f"worker/harness target discrepancy after frame fix is {discrepancy*1e3:.3f}mm, "
+        f"not numerical noise -- refusing to proceed live"
+    )
+    return adapter
+
+
+pf.build_offline_solver = _wrapped_build_offline_solver
+
+
+def build_or_load_schedule(plan_dir: str, cache_path: str, allow_unverified: bool = False) -> np.ndarray:
+    # Z4 (2026-11-10): consolidated into common.py -- see its docstring.
+    return common.build_or_load_schedule(plan_dir, cache_path, allow_unverified, label="insertion_anchor")
+
+
+def main() -> None:
+    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _ALLOW_UNVERIFIED_PLAN, _SCHEDULE_CACHE_PATH
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--plan-dir", required=True)
+    p.add_argument("--out-dir", required=True)
+    p.add_argument("--run-name", default="mpc_delay_aware_insertion_anchor_accumC")
+    p.add_argument("--schedule-cache", required=True)
+    p.add_argument("--horizon", type=int, default=15)
+    p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
+    p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
+    p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
+    p.add_argument("--max-control-steps", type=int, default=800)
+    p.add_argument("--skip-preflight", action="store_true")
+    p.add_argument(
+        "--enable-reader-diagnostic-log", action="store_true",
+        help="additive, observation-only RobotJointStream RTDE diagnostic "
+             "logging to <out-dir>/robot_joint_stream_diagnostics.jsonl "
+             "(off by default; zero control-path effect)",
+    )
+    p.add_argument("--deadline-ms", type=float, default=70.0,
+                    help="process-isolated worker solve deadline; miss -> hold q_cmd (u=0) for that tick")
+    p.add_argument("--insertion-offset-abort-mm", type=float, default=5.0,
+                    help="independent safety monitor: abort/hold if |L-L_ref| exceeds this (mm); "
+                         "see module docstring for how the default was chosen")
+    p.add_argument("--disable-insertion-offset-abort", action="store_true",
+                    help="(no-op since Z4b step 2, 2026-11-11: the monitor now defaults off. "
+                         "Kept for backward-compatible invocations.) turn the insertion-offset "
+                         "monitor off by design (threshold -> None), regardless of "
+                         "--insertion-offset-abort-mm.")
+    p.add_argument("--enable-insertion-offset-abort", action="store_true",
+                    help="Z4b step 2 (2026-11-11): the insertion-offset monitor now defaults "
+                         "OFF (it was never part of the protocol -- Round 4's author decision "
+                         "reclassified it as 'interrupted', not 'failed', and the real safety "
+                         "net is now the tracking-error abort below, on by default). Pass this "
+                         "to opt back in and re-enable it at --insertion-offset-abort-mm. "
+                         "Records insertion_offset_monitor_disabled in controller_metadata.json "
+                         "either way, so provenance always shows which state was used.")
+    p.add_argument("--insertion-tol-mm", type=float, default=3.0,
+                    help="preflight refuses to proceed unless the camera-measured physical "
+                         "insertion is within this of the plan's expected L0 (see common.py's "
+                         "check_camera_healthy)")
+    p.add_argument("--max-tracking-error-mm", type=float, default=0.0,
+                    help="Z4b step 2 (2026-11-11): ported from the vessel runner -- stop the "
+                         "run and report failure if the measured beam-tip tracking error ever "
+                         "exceeds this. Default 0.0 means 'let close_loop_path_follow.main() "
+                         "fill in the controller-aware default' (7mm for this MPC path); pass "
+                         "a nonzero value to override.")
+    p.add_argument("--insertion-command-min-mm", type=float, default=5.0,
+                    help="2026-11-19: the ONLINE dispatched insertion command's own clip "
+                         "bound (close_loop_path_follow.py's cfg.insertion_command_min_m). "
+                         "Default (5mm) matches the prior hardcoded physical-safety value -- "
+                         "this is NOT the same as the plan's generated reference range (e.g. a "
+                         "'30-50mm' plan-family name is a label on the GENERATED trajectory, "
+                         "not an enforced execution bound). Pass 30.0 to enforce this plan's "
+                         "intended envelope online; left at the default, nothing stops the "
+                         "dispatched command from going below 30mm.")
+    p.add_argument("--insertion-command-max-mm", type=float, default=200.0,
+                    help="see --insertion-command-min-mm. Default (200mm) matches the prior "
+                         "hardcoded value. Pass 50.0 to enforce this plan's intended envelope.")
+    p.add_argument("--disable-tcp-workspace-in-qp", action="store_true",
+                    help="disable the linearized TCP Cartesian-workspace constraint wired "
+                         "directly into the QP (2026-11-04): keeps the robot's TCP within "
+                         "common.WORKSPACE_XYZ_MIN_M/MAX_M (the SAME box close_loop_path_"
+                         "follow.py's post-hoc tcp_out_of_workspace monitor already checks "
+                         "-- that monitor stays on regardless of this flag). Same mechanism "
+                         "as the vessel runner's own flag of the same name.")
+    p.add_argument("--tcp-workspace-robust-margin-mm", type=float, default=15.0,
+                    help="inward safety margin (mm) subtracted from common.WORKSPACE_XYZ_"
+                         "MIN_M/MAX_M before becoming the QP's own hard bound, so the "
+                         "optimizer always acts before the post-hoc monitor would ever "
+                         "fire. Default matches the vessel runner's own default for the "
+                         "equivalent flag.")
+    p.add_argument("--disable-magnet-exclusion-in-qp", action="store_true",
+                    help="disable the linearized magnet-to-beam-base keep-out sphere wired "
+                         "directly into the QP (hard constraint: magnet stays >= "
+                         "--beam-base-exclusion-floor-mm + --magnet-exclusion-robust-margin-mm "
+                         "from the beam base at all times). ON by default (same convention as "
+                         "--disable-tcp-workspace-in-qp above); pass this flag to turn it off. "
+                         "Same mechanism as the vessel runner's own flag of the same name, "
+                         "ported here fresh rather than inherited from any shared default -- "
+                         "see delay_aware_mpc.py's _configure_magnet_exclusion docstring.")
+    p.add_argument("--beam-base-exclusion-floor-mm", type=float,
+                    default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
+                    help="reviewed magnet-to-beam-base exclusion boundary (mm) around the beam "
+                         "base the magnet must never violate in the QP's own constraint set. "
+                         "2026-11-19 correction: the previous default here was 97.0mm, a value "
+                         "correctly derived 2026-10-03 for a DIFFERENT, older vessel campaign "
+                         "whose own start position sat only ~101.8mm from the beam base -- the "
+                         "vessel runner's own default was already corrected away from 97.0mm to "
+                         "210.0mm on 2026-10-07 for ITS current campaign, but that fix was never "
+                         "propagated here. This default is now the rectangle plan family's own "
+                         "reviewed boundary (MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM in common.py), "
+                         "NOT a measured collision radius -- it is the boundary established "
+                         "after a documented live breach (see offline_inverse_configuration_"
+                         "head_exclusion.py's magnet_beam_base_exclusion_radius_m docstring), "
+                         "shared with the offline planner's own default and preflight.")
+    p.add_argument("--measured-clearance-abort-mm", type=float,
+                    default=common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM,
+                    help="Abort radius for the independent, per-tick MEASURED-clearance breach "
+                         "detector (computed from real FK on measured joints, wholly separate "
+                         "from the in-QP linearized constraint). Default is the ALREADY-REVIEWED "
+                         "230mm boundary (common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM) -- this "
+                         "detector reports a measured breach of that boundary, it is NOT a "
+                         "guarantee that motion stops before reaching it (stopping-distance is "
+                         "still unverified, see common.py). The separate, still-UNAPPROVED "
+                         "common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM=250.0mm early-"
+                         "trigger proposal is NOT used here and is not this flag's default.")
+    p.add_argument("--protective-config-reviewed", action="store_true",
+                    help="REQUIRED to start a real (non-dry-run) run. States that a human "
+                         "reviewed --measured-clearance-abort-mm's ACTUAL value for this run "
+                         "(printed at startup) before starting. Without this flag, the runner "
+                         "REFUSES to start rather than silently running protected by an "
+                         "unreviewed value or running with no protection at all -- this applies "
+                         "regardless of what --measured-clearance-abort-mm is set to, so passing "
+                         "an unreviewed value (e.g. the 250.0mm proposal) still requires this "
+                         "flag, and this flag does NOT by itself mean 250.0mm has been approved.")
+    p.add_argument("--magnet-exclusion-robust-margin-mm", type=float,
+                    default=common.MAGNET_EXCLUSION_ROBUST_MARGIN_MM,
+                    help="PROVISIONAL additional commanded-clearance margin (mm) added on top "
+                         "of --beam-base-exclusion-floor-mm before becoming the QP's hard "
+                         "bound (230mm + 3mm = 233mm commanded boundary by default). Intended "
+                         "to cover commanded-vs-measured joint drift between ticks (same "
+                         "rationale as --tcp-workspace-robust-margin-mm above). This margin is "
+                         "NOT shown to guarantee measured clearance -- recorded signed "
+                         "measured-minus-commanded radial clearance error on real runs has "
+                         "exceeded 3mm (see magnet_clearance_signed_error.py); treat this value "
+                         "as provisional, reviewed per-run, not as a proven bound.")
+    p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
+                    help="soft actuation-preference cost weight: encourages the source "
+                         "magnet's own dipole moment to point TOWARD the beam base. PURE "
+                         "KINEMATIC alignment (controllers.dipole_alignment: residual is "
+                         "m_hat - u_hat, both unit vectors -- zero only at genuine alignment, "
+                         "distance-blind by construction), deliberately NOT a torque-"
+                         "minimization term: minimizing m x B can be satisfied by moving the "
+                         "magnet FARTHER away (B -> 0) just as well as by genuine alignment, "
+                         "so that term cannot be used here -- see that module's docstring for "
+                         "the full comparison. 0.0 (default) disables this term entirely.")
+    p.add_argument("--dipole-alignment-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                    help="+1.0 (default): dipole points TOWARD the beam base. -1.0: away "
+                         "from it. Ignored when --dipole-alignment-weight is 0.0.")
+    p.add_argument("--allow-unverified-plan", action="store_true",
+                    help="bypass the beam-base provenance guard in build_or_load_schedule "
+                         "(missing or mismatched beam_base_xyz_m in the plan's "
+                         "plan_shape_summary.json). Recovery/debugging only -- NEVER pass "
+                         "this for a real campaign run. Logged into controller_metadata.json "
+                         "as unverified_plan_bypass=true so provenance shows it was used.")
+    p.add_argument("--dry-run", action="store_true",
+                    help="real camera+robot connection, real solves, but no servoJ motion "
+                         "-- integration smoke test before committing real robot time")
+    p.add_argument("--input-penalty", choices=("planned", "zero_centered"), default="planned",
+                    help="2026-11-18 (EXPERIMENTAL, default='planned'=baseline, UNCHANGED "
+                         "behaviour): 'planned' is the existing (u-u_ref)^T R (u-u_ref) cost "
+                         "(u_ref = the offline plan's own recorded input) -- what every real "
+                         "run to date has used. 'zero_centered' sets u_ref=0 in the R-term "
+                         "ONLY (cost becomes u^T R u), reusing ConfigurationMPCConfig's "
+                         "existing diagnostic_zero_input_reference_in_R field -- this flag was "
+                         "previously a dead no-op for this controller class (see delay_aware_"
+                         "mpc.py/stagewise_task_nullspace.py's 2026-11-18 fix comments: the "
+                         "field reached the worker correctly but the QP-construction code this "
+                         "runner actually uses never read it). Q's state-tracking, Rd's input-"
+                         "increment penalty, the beam-tip tracking cost, the reference schedule "
+                         "and all constraints are UNCHANGED either way. Recorded into "
+                         "controller_metadata.json as input_penalty_mode.")
+    p.add_argument("--jacobian-adaptation-mode", choices=("off", "shadow", "active"), default="off",
+                    help="2026-11-18 (EXPERIMENTAL, default='off'=baseline, UNCHANGED "
+                         "behaviour): online joint-Jacobian scalar correction (see "
+                         "controllers.mpc_delay_aware.jacobian_adaptation's module docstring "
+                         "for the full derivation and why it is a single bounded scalar, not "
+                         "an unconstrained 21-parameter Jacobian). 'off': feature fully inert, "
+                         "no estimator object constructed, bit-identical to baseline. "
+                         "'shadow': the estimator updates and logs every tick but its result "
+                         "can never reach the QP (g_used forced to 0.0) -- commands are "
+                         "therefore identical to 'off'. 'active': the estimator's current "
+                         "bounded g_hat IS applied to the joint columns of every horizon-stage "
+                         "schedule Jacobian this tick (insertion column NEVER adapted -- this "
+                         "rig has no independent insertion sensor, see this script's module "
+                         "docstring / the 2026-11-18 audit trail). Recorded into "
+                         "controller_metadata.json as jacobian_adaptation_mode.")
+    p.add_argument("--jacobian-adaptation-g-min", type=float, default=-0.3,
+                    help="lower bound on the adaptation scalar g (dimensionless). Default -0.3.")
+    p.add_argument("--jacobian-adaptation-g-max", type=float, default=0.5,
+                    help="upper bound on the adaptation scalar g (dimensionless). Default 0.5.")
+    p.add_argument("--freeze-jacobian", action="store_true",
+                    help="2026-11-20, condition B: use ONE fixed Jacobian for the whole run "
+                         "instead of the scheduled (per-reference-sample) LTV Jacobian baseline "
+                         "A uses. Implemented additively at this runner's level, not inside the "
+                         "worker: every row of the loaded --schedule-cache array is overwritten "
+                         "with the row at --freeze-jacobian-index (default 0) before being "
+                         "written to a temporary .npy file and handed to the worker exactly as "
+                         "the unfrozen schedule would be -- the worker itself is unmodified and "
+                         "unaware a freeze happened. Off by default; baseline A's behavior "
+                         "(scheduled, per-sample Jacobian) is completely unchanged when this "
+                         "flag is not passed.")
+    p.add_argument("--freeze-jacobian-index", type=int, default=0,
+                    help="reference-sample index whose Jacobian is held fixed for the whole run "
+                         "when --freeze-jacobian is set. Default 0 (the plan's own start).")
+    args = p.parse_args()
+
+    # 2026-11-19 (point 5, corrected): this check was previously placed
+    # inside _wrapped_build_offline_solver(), a module-level function with
+    # no `args` in scope (it runs later, as pf.main()'s monkeypatched
+    # solver-builder callback) -- that caused a NameError at runtime
+    # instead of ever actually refusing anything. Moved here, where `args`
+    # genuinely exists, and made to fail BEFORE any schedule/worker setup.
+    global _MEASURED_CLEARANCE_ABORT_MM
+    _MEASURED_CLEARANCE_ABORT_MM = float(args.measured_clearance_abort_mm)
+    if not args.dry_run and not args.protective_config_reviewed:
+        raise SystemExit(
+            "[insertion_anchor] REFUSING to start: the measured-clearance breach detector's "
+            f"abort radius for THIS run ({_MEASURED_CLEARANCE_ABORT_MM:.1f}mm, from "
+            "--measured-clearance-abort-mm) has not been confirmed reviewed. Pass "
+            "--protective-config-reviewed only after a human has reviewed this run's ACTUAL "
+            "value (printed above/below) -- this flag is never implied by any other argument, "
+            "and does not by itself mean the separate, still-unapproved "
+            f"common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM="
+            f"{common.MAGNET_MEASURED_CLEARANCE_PROTECTIVE_RADIUS_MM:.1f}mm proposal has been "
+            "approved."
+        )
+
+    _DEADLINE_MS = args.deadline_ms
+    _INSERTION_OFFSET_ABORT_M = (
+        args.insertion_offset_abort_mm * 1e-3
+        if (args.enable_insertion_offset_abort and not args.disable_insertion_offset_abort)
+        else None
+    )
+
+    _ALLOW_UNVERIFIED_PLAN = bool(args.allow_unverified_plan)
+    _SCHEDULE_CACHE_PATH = str(args.schedule_cache)
+    schedule = build_or_load_schedule(args.plan_dir, args.schedule_cache, allow_unverified=args.allow_unverified_plan)
+    if args.freeze_jacobian:
+        # Condition B: hold ONE Jacobian fixed for every tick instead of
+        # baseline A's scheduled, per-reference-sample LTV Jacobian.
+        # Implemented by overwriting the schedule array in memory and
+        # writing it to a NEW .npy file -- spawn_and_warm_worker's own
+        # schedule_cache argument is a PATH the worker process reloads
+        # independently, so the override must be a real file on disk,
+        # not just the in-memory `schedule` variable here.
+        if not (0 <= args.freeze_jacobian_index < schedule.shape[0]):
+            raise ValueError(
+                f"--freeze-jacobian-index={args.freeze_jacobian_index} is out of range "
+                f"for a schedule with {schedule.shape[0]} reference samples"
+            )
+        frozen_row = schedule[args.freeze_jacobian_index]
+        schedule = np.tile(frozen_row[None, :, :], (schedule.shape[0], 1, 1))
+        _frozen_schedule_path = os.path.join(
+            args.out_dir, f"{args.run_name}_frozen_jacobian_schedule.npy"
+        )
+        os.makedirs(args.out_dir, exist_ok=True)
+        np.save(_frozen_schedule_path, schedule)
+        args.schedule_cache = _frozen_schedule_path
+        _SCHEDULE_CACHE_PATH = _frozen_schedule_path
+        print(
+            f"[insertion_anchor] CONDITION B: Jacobian FROZEN at reference-sample index "
+            f"{args.freeze_jacobian_index} for the whole run -- every one of the "
+            f"{schedule.shape[0]} schedule rows now holds that single Jacobian; "
+            f"written to {_frozen_schedule_path}"
+        )
+    pf._SCHEDULE_OVERRIDE = schedule
+    print(f"[insertion_anchor] schedule: {schedule.shape} "
+          f"(nullq_r700 -> +insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT}, "
+          f"d=2, beta_d=1.0, V_f=0, N={args.horizon}, process-isolated, "
+          f"deadline={args.deadline_ms:.0f}ms, insertion-offset-abort={args.insertion_offset_abort_mm:.1f}mm)")
+
+    global _TCP_WORKSPACE_IN_QP
+    tcp_workspace_kwargs = None
+    _TCP_WORKSPACE_IN_QP = not args.disable_tcp_workspace_in_qp
+    if not args.disable_tcp_workspace_in_qp:
+        _tcp_dh = urik.corrected_dh_from_config(urik.CONFIG)
+        _tcp_T_F_TCP = urik.pose6_to_T(urik.CONFIG.offline_active_T_flange_tcp_pose6)
+        _tcp_reference = load_configuration_reference(args.plan_dir, require_planned_beam_feasible=False)
+        _tcp_ref_states_q = np.asarray(_tcp_reference.state[:, :6], dtype=float)
+        _tcp_S = _tcp_ref_states_q.shape[0]
+        tcp_jacobians = np.zeros((_tcp_S, 3, 6))
+        tcp_positions = np.zeros((_tcp_S, 3))
+        for _i in range(_tcp_S):
+            _res = urik.forward_kinematics(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)
+            tcp_positions[_i] = _res.T_R_target[:3, 3]
+            tcp_jacobians[_i] = urik.geometric_jacobian(_tcp_ref_states_q[_i], _tcp_dh, _tcp_T_F_TCP)[:3, :6]
+        _tcp_margin_m = args.tcp_workspace_robust_margin_mm * 1e-3
+        _tcp_xyz_min = np.asarray(common.WORKSPACE_XYZ_MIN_M, dtype=float) + _tcp_margin_m
+        _tcp_xyz_max = np.asarray(common.WORKSPACE_XYZ_MAX_M, dtype=float) - _tcp_margin_m
+        if np.any(_tcp_xyz_min >= _tcp_xyz_max):
+            raise ValueError(
+                f"--tcp-workspace-robust-margin-mm {args.tcp_workspace_robust_margin_mm:.1f}mm "
+                f"is too large: it would invert the QP's own TCP-workspace bounds "
+                f"(post-hoc bounds min={common.WORKSPACE_XYZ_MIN_M}, max={common.WORKSPACE_XYZ_MAX_M})."
+            )
+        tcp_workspace_kwargs = dict(
+            position_jacobians=tcp_jacobians, nominal_positions_m=tcp_positions,
+            xyz_min=_tcp_xyz_min, xyz_max=_tcp_xyz_max,
+        )
+        print(f"[insertion_anchor] TCP Cartesian-workspace constraint will be wired INTO the QP "
+              f"(x in [{_tcp_xyz_min[0]*1e3:.1f},{_tcp_xyz_max[0]*1e3:.1f}]mm, "
+              f"y in [{_tcp_xyz_min[1]*1e3:.1f},{_tcp_xyz_max[1]*1e3:.1f}]mm, "
+              f"z in [{_tcp_xyz_min[2]*1e3:.1f},{_tcp_xyz_max[2]*1e3:.1f}]mm "
+              f"= post-hoc bounds +/- {args.tcp_workspace_robust_margin_mm:.1f}mm robust margin) "
+              f"-- pass --disable-tcp-workspace-in-qp to turn this off")
+    else:
+        print("[insertion_anchor] --disable-tcp-workspace-in-qp set: tcp_out_of_workspace "
+              "stays ONLY a post-hoc monitor, not visible to the optimizer")
+
+    global _MAGNET_EXCLUSION_IN_QP, _DIPOLE_ALIGNMENT_WEIGHT
+    global _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM, _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+    magnet_exclusion_kwargs = None
+    _MAGNET_EXCLUSION_IN_QP = not args.disable_magnet_exclusion_in_qp
+    _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM = float(args.beam_base_exclusion_floor_mm)
+    _MAGNET_EXCLUSION_ROBUST_MARGIN_MM = float(args.magnet_exclusion_robust_margin_mm)
+    _beam_base_xyz_r = common._calibrated_default_initial_poses_for_guard().reshape(1, 3)
+    if not args.disable_magnet_exclusion_in_qp:
+        _magnet_reference = load_configuration_reference(args.plan_dir, require_planned_beam_feasible=False)
+        _magnet_jacobians, _magnet_positions = build_magnet_exclusion_schedule(_magnet_reference)
+        _magnet_floor_m = args.beam_base_exclusion_floor_mm * 1.0e-3
+        _magnet_margin_m = args.magnet_exclusion_robust_margin_mm * 1.0e-3
+        _magnet_radius_m = _magnet_floor_m + _magnet_margin_m
+        magnet_exclusion_kwargs = dict(
+            position_jacobians=_magnet_jacobians, nominal_positions_m=_magnet_positions,
+            lumen_C_m=_beam_base_xyz_r, radius_m=_magnet_radius_m,
+        )
+        print(f"[insertion_anchor] magnet-to-beam-base exclusion constraint will be wired "
+              f"INTO the QP (beam_base_xyz_r={_beam_base_xyz_r[0].tolist()}, "
+              f"floor={args.beam_base_exclusion_floor_mm:.1f}mm + "
+              f"{args.magnet_exclusion_robust_margin_mm:.1f}mm robust margin = "
+              f"{_magnet_radius_m*1e3:.1f}mm hard radius) -- pass "
+              f"--disable-magnet-exclusion-in-qp to turn this off")
+    else:
+        print("[insertion_anchor] --disable-magnet-exclusion-in-qp set: no magnet-to-beam-base "
+              "keep-out constraint visible to the optimizer")
+
+    _DIPOLE_ALIGNMENT_WEIGHT = float(args.dipole_alignment_weight)
+    dipole_alignment_preference_kwargs = None
+    if args.dipole_alignment_weight > 0.0:
+        print("[insertion_anchor] building model bundle once to read the calibrated "
+              "source-magnet dipole moment (m_body) for --dipole-alignment-weight ...")
+        _, _dipole_bundle, _dipole_controller_pack, _ = build_planning_context()
+        _dipole_m_body = np.asarray(
+            _dipole_controller_pack["plant_diagnostic_joint_adapter"].model.m_body, dtype=float,
+        ).reshape(3)
+        _dipole_target = _beam_base_xyz_r.reshape(3)
+        dipole_alignment_preference_kwargs = dict(
+            dh=_robot_kin.dh, T_F_M=_robot_kin.T_F_M, m_body=_dipole_m_body,
+            target_point_m=_dipole_target, weight=float(args.dipole_alignment_weight),
+            sign=float(args.dipole_alignment_sign),
+        )
+        print(f"[insertion_anchor] dipole-to-beam-base alignment PREFERENCE requested "
+              f"(target_point_m={_dipole_target.tolist()}, weight={args.dipole_alignment_weight:.3g}, "
+              f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
+              f"PURE KINEMATIC alignment (m_hat vs u_hat unit-vector residual, distance-blind "
+              f"by construction), NOT torque minimization -- live-relinearized every solve, "
+              f"wired INTO the QP cost, no schedule file")
+
+    global _INPUT_PENALTY_MODE, _JACOBIAN_ADAPTATION_MODE
+    _INPUT_PENALTY_MODE = args.input_penalty
+    _JACOBIAN_ADAPTATION_MODE = args.jacobian_adaptation_mode
+    jacobian_adaptation_kwargs = None
+    if args.jacobian_adaptation_mode != "off":
+        jacobian_adaptation_kwargs = dict(
+            mode=args.jacobian_adaptation_mode,
+            g_min=args.jacobian_adaptation_g_min, g_max=args.jacobian_adaptation_g_max,
+        )
+    print(f"[insertion_anchor] input_penalty={_INPUT_PENALTY_MODE!r} "
+          f"jacobian_adaptation_mode={_JACOBIAN_ADAPTATION_MODE!r} (both default/baseline "
+          f"unless explicitly requested above)")
+
+    _WORKER = spawn_and_warm_worker(
+        plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
+        control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
+        joint_velocity_limit_rad_s=args.joint_velocity_limit_rad_s,
+        insertion_rate_limit_m_s=_INSERTION_RATE_LIMIT_M_S,
+        joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
+        position_error_scale_mm=0.5, position_tracking_weight=1.0,
+        tcp_workspace_kwargs=tcp_workspace_kwargs,
+        magnet_exclusion_kwargs=magnet_exclusion_kwargs,
+        dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        zero_centered_input_penalty=(args.input_penalty == "zero_centered"),
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
+        insertion_command_min_m=args.insertion_command_min_mm / 1000.0,
+        insertion_command_max_m=args.insertion_command_max_mm / 1000.0,
+    )
+
+    if args.skip_preflight:
+        q0, l0 = common.load_plan_initial_state(args.plan_dir)
+    else:
+        q0, l0 = common.preflight(args.plan_dir, insertion_tol_mm=args.insertion_tol_mm)
+
+    cfg = pf.CONFIG
+    cfg.controller_kind = "mpc_delay_aware"  # gate string this script's own
+    # _wrapped_build_offline_solver intercepts -- unchanged, no edits to
+    # close_loop_path_follow.py's validity gate needed.
+    cfg.plan_dir = args.plan_dir
+    cfg.reference_source = "plan_dir"
+    cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
+    cfg.insertion_command_min_m = args.insertion_command_min_mm / 1000.0
+    cfg.insertion_command_max_m = args.insertion_command_max_mm / 1000.0
+    cfg.mpc_prediction_horizon = args.horizon
+    cfg.mpc_use_dare_terminal_cost = False  # V_f=0 -- required
+
+    cfg.feedforward_joint_trajectory = False
+    cfg.accumulator_seam = True
+    cfg.servo_stream_hz = args.servo_stream_hz
+    cfg.reader_diagnostic_log = args.enable_reader_diagnostic_log
+    cfg.force_mpc_feedforward = False
+
+    cfg.joint_velocity_limit_rad_s = args.joint_velocity_limit_rad_s
+    cfg.max_joint_step_rad = args.max_joint_step_rad
+    cfg.joint_acceleration_limit_rad_s2 = common.JOINT_ACCELERATION_LIMIT_RAD_S2
+    cfg.control_insertion = True
+    cfg.control_hz = common.CONTROL_HZ
+    cfg.max_control_steps = args.max_control_steps
+    cfg.initial_insertion_m = l0
+
+    cfg.workspace_xyz_min_m = common.WORKSPACE_XYZ_MIN_M
+    cfg.workspace_xyz_max_m = common.WORKSPACE_XYZ_MAX_M
+
+    cfg.output_root = args.out_dir
+    cfg.run_name = args.run_name
+    cfg.dry_run = args.dry_run
+
+    print(
+        f"[insertion_anchor] plan={args.plan_dir}\n"
+        f"[insertion_anchor] q0={q0.tolist()} L0={l0*1000:.2f}mm\n"
+        f"[insertion_anchor] horizon={cfg.mpc_prediction_horizon} d=2 beta_d=1.0 V_f=0 "
+        f"servo_stream_hz={cfg.servo_stream_hz} "
+        f"joint_velocity_limit_rad_s={cfg.joint_velocity_limit_rad_s} "
+        f"max_joint_step_rad={cfg.max_joint_step_rad}\n"
+        f"[insertion_anchor] CONTROLLER = gamma=0 exact task-nullspace Q_N, R700, "
+        f"insertion anchor w_L={_INSERTION_STATE_ANCHOR_WEIGHT}, "
+        f"safety abort |L-Lref|>{args.insertion_offset_abort_mm:.1f}mm"
+    )
+    try:
+        pf.main()
+    finally:
+        _WORKER.close()
+
+
+if __name__ == "__main__":
+    main()

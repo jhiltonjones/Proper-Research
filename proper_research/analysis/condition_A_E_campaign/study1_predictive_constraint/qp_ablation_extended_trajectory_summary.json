@@ -1,0 +1,23 @@
+{
+  "n_total_states_checked": 1995,
+  "n_runs": 10,
+  "n_solved_both_radii": 1995,
+  "n_274mm_infeasible_or_non_solved": 0,
+  "failures_274_detail": [],
+  "n_states_with_nonzero_joint_delta": 10,
+  "n_states_with_nonzero_insertion_delta": 0,
+  "joint_delta_rad_stats": {
+    "mean": 7.84848542225285e-06,
+    "max": 0.004298722251865612,
+    "p95": 0.0
+  },
+  "insertion_delta_m_stats": {
+    "mean": 0.0,
+    "max": 0.0,
+    "p95": 0.0
+  },
+  "n_fk_horizon_states_checked": 20,
+  "min_nonlinear_fk_gap_mm_233": 272.7951142562629,
+  "min_nonlinear_fk_gap_mm_274": 274.98431078513516,
+  "elapsed_s": 26.607160806655884
+}

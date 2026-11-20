@@ -1,0 +1,53 @@
+{
+  "shape": "rectangle",
+  "size_mm": [
+    15.0,
+    10.0
+  ],
+  "closed": false,
+  "centreline_points": 81,
+  "perimeter_mm": 38.73416342656874,
+  "time_param_dir": "/home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/time_parameterized_configuration_path",
+  "note": "2026-11-19: NEW L0=30mm/30-50mm-window rectangle plan, PLAN A (dipole_alignment_weight=0.0). Recipe = verbatim step6_rebuild_rectangle.py (itself verbatim AE1), with L0 0.025->0.030m (documented initial_poses override) and acceleration_safety_factor=0.6 (matching marginfix's own recorded effective config, not step6's uncorrected 0.8).",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "tcp_box_activation_margin_m": 0.027,
+  "tcp_box_gate_margin_m": 0.025,
+  "source_centreline_file": "/home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_zraise30mm_2026-09-24/shape_rectangle/shape_centreline.npz",
+  "source_centreline_sha256": "721ebb01ebf07517478690149a1923bbf75c2c2b21cd555d67888a05b5df70a5",
+  "reanchor_delta_m": [
+    0.139995594808066,
+    -0.049899669865683616,
+    -0.05321232177130514
+  ],
+  "reanchor_delta_mm": 157.86163183833278,
+  "L0_m": 0.03,
+  "dipole_alignment_weight": 0.0,
+  "acceleration_safety_factor": 0.6,
+  "git_commit": "f4baa5c5a4c50b8f75a68bf856613f69f549b4bb",
+  "git_dirty": true,
+  "interpreter": "/usr/bin/python3",
+  "python_version": "3.10.12",
+  "argv_this_script": [
+    "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/.claude_new_plans_tmp/build_rectangle_L30to50_A_nodipole.py"
+  ],
+  "time_param_samples": 214
+}

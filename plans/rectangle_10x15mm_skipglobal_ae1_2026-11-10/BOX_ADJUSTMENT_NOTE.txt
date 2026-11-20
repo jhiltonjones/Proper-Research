@@ -1,0 +1,53 @@
+TCP workspace box z_min — REVERTED, 2026-11-10 (Round 33, AF1)
+================================================================
+
+Source of truth: proper_research/hardware/online/rectangle_stage_a/common.py
+  WORKSPACE_XYZ_MIN_M z-component
+
+  2026-11-10 (earlier): z_min loosened 0.36544 -> 0.36414 m (+1.3mm) to
+  pass the 25mm gate at node 0.
+  2026-11-10 (this change, AF1): REVERTED back to 0.36544 m. The box is
+  the rig's measured physical limit (jogged to the real arm limits,
+  Round 27), not a value sized to a plan's requirement -- loosening it to
+  pass a specific node's gate check is exactly the practice this box
+  exists to prevent. WORKSPACE_XYZ_MAX_M unchanged: (0.58971, -0.49576,
+  0.46496).
+
+DOCUMENTED EXCEPTION (not a box change):
+  Node 0 -- the shared, hardware-fixed shape-start pose used by every
+  shape plan this session (rectangle, triangle-35, and any future shape
+  reusing this start) -- clears the restored z_min by 24.7336 mm against
+  the general 25mm QP/tracking clearance gate (0.2664mm short).
+
+  In the L1 inverse-configuration solver, node 0's termination reason is
+  "fixed_initial_state_feasible_and_committed": its state is the real,
+  measured hardware pose, not something the optimizer solves for. Its
+  box-clearance residual is therefore never evaluated by L1, so no
+  planner cost weight or threshold could ever move this node closer to
+  or further from this face. This is accepted as a known, documented,
+  one-time exception specific to this one fixed node -- not a change to
+  the general 25mm gate, which still applies, unmodified, to every other
+  (solved) node.
+
+Verification performed (no L1/L3 rebuild needed):
+  - Reverted common.py's WORKSPACE_XYZ_MIN_M z-component to 0.36544 and
+    confirmed live via a real Python import (not a file-content check).
+  - Recomputed the full 6-face clearance table for both plans (rectangle:
+    plans/rectangle_10x15mm_skipglobal_ae1_2026-11-10; triangle-35:
+    plans/triangle_base35mm_skipglobal_ad2_2026-11-10) against the
+    reverted box, from each plan's own already-saved L1 node data (zero
+    re-solve, zero change to the solved joint trajectories).
+  - Result: 11 of 12 face-checks (6 faces x 2 plans) PASS with the same
+    margins as before the 2026-11-10 loosening episode. The sole
+    exception on both plans is z_min at node 0 (24.7336mm, 0.2664mm
+    short of the 25mm gate) -- the documented exception above, not a
+    regression; no other node or face is affected.
+  - Triangle-35's next-tightest faces remain x_min (26.9896mm @ node 307)
+    and y_min (26.9844mm @ node 301) -- passing, ~2mm above the 25mm
+    gate, unchanged by this revert.
+
+Provenance:
+  Both plans' plan_shape_summary.json record the actual box bounds used
+  for gate evaluation (workspace_box_xyz_min_m / workspace_box_xyz_max_m)
+  and a start_pose_exception field documenting node 0's 24.7336mm z_min
+  clearance as a known, accepted, non-blocking exception.

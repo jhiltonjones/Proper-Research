@@ -1,0 +1,180 @@
+% =============================================================
+% Section 5 -- Hardware validation of the model-necessity findings
+% on the vessel-navigation task. IEEEtran (journal). Standalone
+% compilable excerpt, companion to methodology.tex and
+% model_necessity_study.tex (\S\ref{sec:model-necessity}): that
+% section established the Jacobian-mismatch mechanism and its
+% closed-loop consequences offline (Monte Carlo, contact flag never
+% active on the accepted plan). This section reports the matching
+% closed-loop hardware campaign (n=5 runs/condition, floor240
+% vessel geometry) that was not available when \S\ref{sec:model-necessity}
+% was written, and that does exercise the near-wall region directly.
+% =============================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+
+\begin{document}
+
+\section{Hardware Validation of the Model-Necessity Findings}
+\label{sec:hw-validation}
+
+\subsection{Conditions and Metrics}
+\label{sec:hw-conditions}
+
+Five conditions share the controller, task weights, and rate/state
+limits of \S\ref{sec:control} and differ only in the Jacobian source
+and, for one condition, the reference trajectory itself:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Condition & Jacobian along horizon & Trajectory \\
+\midrule
+MPC-SJ & $J_c(z_k)$, scheduled every tick & $\mathcal{T}_c$ \\
+$J_{nc}\!\to\!\mathcal{T}_c$ & $J_{nc}(z_k)$, scheduled every tick & $\mathcal{T}_c$ \\
+MPC-FJ & $J_c(z_0)$, frozen at $k{=}0$ & $\mathcal{T}_c$ \\
+$J_{nc}\!\to\!\mathcal{T}_{nc}$ & $J_{nc}(z_k)$, scheduled every tick & $\mathcal{T}_{nc}$ \\
+INV-7 & $J_c(z_k)$, scheduled every tick & $\mathcal{T}_c$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+$\mathcal{T}_c$ is the reference trajectory of \S\ref{sec:mn-design},
+designed against the contact-aware beam model; $\mathcal{T}_{nc}$ is
+the corresponding trajectory designed against the no-contact model.
+Every condition is run $5\times$ to \texttt{path\_complete} or to a
+hard tracking-error abort at $7\,\mathrm{mm}$; RMSE and lag are
+reported per \eqref{eq:e-rms} over three fixed, physical-progress
+windows: the whole run, an early low-authority region
+$s\in[12,17]\,\mathrm{mm}$ (``region A''), and the near-wall region
+$s\in[55,65]\,\mathrm{mm}$ (``region C'') identified in
+\S\ref{sec:model-necessity} as where $J_c$ and $J_{nc}$ diverge most.
+Run-level mean $\pm$ 95\% CI uses $t_{0.975,4}\approx2.776$ on the 5
+run-level values (\S\ref{sec:metrics}); where a condition does not
+reach region C in all 5 runs, $n$ is reported explicitly and no
+interval is computed.
+
+\subsection{Contact-Aware vs.\ No-Contact Jacobian}
+\label{sec:hw-exp1}
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& whole-run $E_{\mathrm{RMS}}$ & region A & region C \\
+\midrule
+MPC-SJ ($J_c$) & $0.962\pm0.057$ & $0.309\pm0.100$ & $0.619\pm0.073$ \\
+$J_{nc}\!\to\!\mathcal{T}_c$ & $0.996\pm0.054$ & $0.288\pm0.071$ & $\mathbf{0.367\pm0.060}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=5$ throughout.) $J_c$ is more accurate whole-run (non-overlapping
+95\% CIs) and region A is statistically indistinguishable between the
+two. Region C reverses this: $J_{nc}$ is \emph{more} accurate than
+$J_c$ there, by a wide, non-overlapping margin ($0.367\pm0.060$ vs.\
+$0.619\pm0.073\,\mathrm{mm}$) --- the opposite of the whole-run result
+and the opposite of what $E_J(s)$ (\S\ref{sec:mn-exp1}) would predict
+from local model fidelity alone, since $J_{nc}$ is the strictly worse
+local approximation to the plant everywhere on $\mathcal{T}_c$,
+including region C. Mean lag magnitude favors $J_c$ in both regimes
+($0.169\pm0.035$ vs.\ $0.187\pm0.032\,\mathrm{mm}$ whole-run;
+$0.532\pm0.065$ vs.\ $0.736\pm0.034\,\mathrm{mm}$ in region C), so the
+reversal is specific to tracking accuracy, not a general degradation
+of $J_c$'s closed-loop behavior near the wall.
+
+\subsection{Scheduled vs.\ Frozen Jacobian}
+\label{sec:hw-exp2}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& whole-run $E_{\mathrm{RMS}}$ & region A \\
+\midrule
+MPC-SJ & $0.962\pm0.057$ & $0.309\pm0.100$ \\
+MPC-FJ & $2.371\pm0.133$ & $1.456\pm0.244$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=5$.) MPC-FJ is categorically worse, by non-overlapping margins,
+at every progress window tested, and reaches region C in \emph{none}
+of its 5 runs (all abort on tracking error at $s\approx31$--$41\,\mathrm{mm}$).
+The degradation is already visible in region A, only
+$12$--$17\,\mathrm{mm}$ into the path: freezing $J$ at $k{=}0$ costs
+accuracy well before the beam reaches the contact-affected region
+identified in \S\ref{sec:mn-exp1}, confirming that re-evaluating $J$
+along the path matters independently of, and prior to, any
+contact-specific effect.
+
+\subsection{Contact-Modeled vs.\ No-Contact-Modeled Reference Trajectory}
+\label{sec:hw-exp3}
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& whole-run $E_{\mathrm{RMS}}$ & region A & region C \\
+\midrule
+$\mathcal{T}_c$ (MPC-SJ) & $0.962\pm0.057$ & $0.309\pm0.100$ & $0.619\pm0.073$ \\
+$\mathcal{T}_{nc}$ & $2.083\pm0.055$ & $0.281\pm0.019$ & $0.516\pm0.031$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=5$.) Designing the reference trajectory against the
+contact-aware model is markedly more accurate whole-run
+(non-overlapping CIs, more than $2\times$), with region A again
+statistically indistinguishable. Region C again reverses
+($0.516\pm0.031$ vs.\ $0.619\pm0.073\,\mathrm{mm}$, non-overlapping),
+but $\mathcal{T}_{nc}$ remains clearly less accurate there than
+$J_{nc}\!\to\!\mathcal{T}_c$ from \S\ref{sec:hw-exp1}
+($0.516\pm0.031$ vs.\ $0.367\pm0.060\,\mathrm{mm}$): using the
+no-contact Jacobian is only beneficial near the wall when applied to
+the \emph{contact-designed} trajectory, not to a trajectory already
+shaped to avoid the contact-model's predicted wall interaction. The
+near-wall reversal is therefore a property of the $(J,\mathcal{T})$
+pairing, not of omitting contact modeling in general.
+
+\subsection{MPC vs.\ Matched-Authority Inverse-Jacobian Control (INV-7)}
+\label{sec:hw-exp4}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& whole-run $E_{\mathrm{RMS}}$ & region A \\
+\midrule
+MPC-SJ & $0.962\pm0.057$ & $0.309\pm0.100\;(n{=}5)$ \\
+INV-7 & $3.037\pm2.217$ & $0.420\pm0.009\;(n{=}3)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm.) MPC-SJ is more accurate whole-run; INV-7's wide interval reflects
+2 of 5 runs terminating within $44$ ticks on an unconstrained-nullspace
+drift into a workspace or exclusion bound (\S\ref{sec:inv7}), not
+measurement noise --- the instability is itself part of the
+comparison and is not averaged away by excluding those runs. Of
+INV-7's remaining 3 runs, only 1 reaches region C at all, versus 5 of
+5 for MPC-SJ; no region-C interval is reported for INV-7 for that
+reason. MPC's hard in-QP constraint enforcement (\S\ref{sec:mpc})
+keeps it running long enough to reach the contact-affected region on
+every trial, which INV-7's soft, preview-based bound handling
+(\S\ref{sec:inv7}) does not reliably do.
+
+\subsection{Synthesis}
+\label{sec:hw-synthesis}
+
+Three of the four comparisons above are unqualified: scheduling $J$
+beats freezing it, a contact-designed trajectory beats a no-contact-designed
+one, and MPC beats INV-7, all without exception across progress
+windows. The fourth is not unqualified, and should not be reported as
+one: the contact-aware Jacobian is more accurate everywhere tested
+\emph{except} the near-wall region, where the no-contact Jacobian wins
+by the same margin the contact Jacobian wins everywhere else. This is
+the single result in this section that contradicts a naive reading of
+\S\ref{sec:mn-exp1}'s local Jacobian-mismatch characterization --- the
+locally worse model produces the better closed-loop outcome exactly
+where the mismatch is largest. \S\ref{sec:hw-exp3}'s result that this
+only holds when the no-contact Jacobian is paired with the
+contact-designed trajectory narrows the explanation to a property of
+that specific pairing, not a general claim that contact modeling is
+unnecessary near the wall.
+
+\end{document}

@@ -1,0 +1,5343 @@
+{
+  "configuration": {
+    "position_tolerance_m": 0.005,
+    "tangent_tolerance_rad": 3.139847324337799,
+    "mode": "recover_partial",
+    "path_step_m": 0.003,
+    "minimum_path_step_m": 0.0015,
+    "dense_validation_samples_per_interval": 5,
+    "maximum_refinement_rounds": 1,
+    "maximum_nodes": 200,
+    "configuration_scale": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      0.01
+    ],
+    "first_difference_weight": [
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05
+    ],
+    "second_difference_weight": [
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08
+    ],
+    "seed_deviation_weight": [
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05,
+      1e-05
+    ],
+    "untrusted_seed_weight_scale": 0.0,
+    "joint_centre_weight": [
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      1e-08,
+      0.0
+    ],
+    "quadratic_regularization": 1e-12,
+    "maximum_adjacent_joint_change_rad": [
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5
+    ],
+    "maximum_adjacent_insertion_change_m": 0.003,
+    "insertion_non_decreasing": false,
+    "fix_initial_state": true,
+    "require_contact_model": true,
+    "allow_tolerance_override": true,
+    "maximum_iterations": 40,
+    "constraint_tolerance": 1e-06,
+    "optimality_tolerance": 1e-06,
+    "step_tolerance": 1e-06,
+    "maximum_multistart_attempts": 1,
+    "multistart_joint_perturbation_rad": 0.03,
+    "multistart_insertion_perturbation_m": 0.00025,
+    "random_seed": 13,
+    "maximum_wall_time_s": 180.0,
+    "stagnation_function_evaluations": 4000,
+    "stagnation_relative_improvement": 1e-06,
+    "feasibility_restoration_enabled": true,
+    "feasibility_restoration_maximum_slack": 1000.0,
+    "feasibility_restoration_slack_weight": 10000.0,
+    "feasibility_restoration_iterations": 200,
+    "use_failed_nodes_as_warm_start": true,
+    "partial_extrapolation_gain": 0.5,
+    "dense_validation_enabled": true,
+    "compute_node_jacobian_diagnostics": false,
+    "coarsen_complete_seed": false,
+    "keep_feasible_complete_seed": true,
+    "preserve_feasible_seed_on_failure": true,
+    "preserve_feasible_seed_against_physical_tolerance": true,
+    "debug": true,
+    "trust_constr_verbose": 0,
+    "source_magnet_lumen_exclusion_radius_m": null,
+    "source_magnet_lumen_constraint_tolerance_m": 1e-06,
+    "require_analytical_magnet_position_jacobian": false,
+    "magnet_jacobian_joint_step_rad": 1e-06,
+    "magnet_jacobian_insertion_step_m": 1e-06,
+    "enforce_magnet_z_no_decrease": true,
+    "magnet_beam_base_exclusion_radius_m": 0.23,
+    "dense_magnet_exclusion_acceptance_slack_m": 0.0,
+    "dense_position_acceptance_slack_m": 0.0,
+    "dense_tangent_acceptance_slack_rad": 0.0,
+    "tolerance_spend_fraction": 1.0,
+    "tip_centring_weight": 0.0,
+    "tip_curvature_weight": 0.0,
+    "magnet_path_weight": 0.0,
+    "magnet_curvature_weight": 0.0
+  },
+  "summary": {
+    "globally_feasible": true,
+    "source_magnet_lumen_exclusion": {
+      "enabled": false,
+      "radius_m": null
+    },
+    "dense_validation_feasible": true,
+    "optimizer_success": false,
+    "termination_reason": "optimizer_diverged_from_seed",
+    "optimizer_message": "inverse configuration path returned unchanged: no global round produced a feasible path (inverse seed retained)",
+    "optimizer_status": -2,
+    "optimizer_iterations": 0,
+    "objective_value": 274745.3243863449,
+    "selected_seed_fallback": true,
+    "fallback_to_inverse_path": true,
+    "any_feasible_global_round": false,
+    "dense_magnet_exclusion_acceptance_slack_m": 0.0,
+    "dense_position_acceptance_slack_m": 0.0,
+    "dense_tangent_acceptance_slack_rad": 0.0,
+    "best_round_dense_slack_excused_count": 0,
+    "best_round_dense_slack_excused_worst_position_m": null,
+    "best_round_dense_slack_excused_worst_tangent_rad": null,
+    "best_round_dense_slack_excused_worst_exclusion_m": null,
+    "maximum_normalized_state_change_from_seed": 0.0,
+    "normalized_constraint_violation": 0.0,
+    "selected_candidate_feasible": true,
+    "candidate_selection_rule": "feasible_then_objective_else_violation",
+    "candidate_acceptance_tolerance": 1e-06,
+    "restoration_slack_maximum": 0.0,
+    "number_nodes": 19,
+    "number_dense_samples": 90,
+    "refinement_rounds": 0,
+    "maximum_position_error_m": 0.004978249342828983,
+    "maximum_tangent_error_rad": 1.5121577529088253,
+    "maximum_first_difference": [
+      263.7322720233992,
+      509.8084271710595,
+      228.60683990044254,
+      280.11761415604815,
+      299.8695999381325,
+      135.17586794268436,
+      299.9999599999992
+    ],
+    "maximum_second_difference": [
+      1703666.1387541685,
+      2576271.3441229016,
+      1326813.4715805203,
+      1283073.1543568522,
+      1524364.0761696212,
+      488298.92882031016,
+      987241.3756272271
+    ],
+    "contact_model": {
+      "enabled": true,
+      "use_in_jacobian": true
+    },
+    "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+    "path_parameter": "lumen_arc_length_m",
+    "time_parameterized": false
+  },
+  "nodes": [
+    {
+      "node_index": 0,
+      "s_m": 0.0008770895455707463,
+      "q_rad": [
+        -0.6261474240012534,
+        -1.7615389876435543,
+        -1.8847219220049554,
+        -1.06562546993467,
+        1.5728815012991109,
+        -1.0911614607481046
+      ],
+      "insertion_m": 0.030420000000000003,
+      "magnet_pose6": [
+        0.4959672625747584,
+        -0.5726263186715215,
+        -0.03965600387803947,
+        -2.6740649511006542,
+        1.6483562138035472,
+        -0.0008255627375347738
+      ],
+      "desired_position_m": [
+        0.5215540506069506,
+        -0.6749930744250563,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5215615567580938,
+        -0.6754400406851407,
+        -0.013166471079316967
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.01679118444080918,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09747720612519485,
+        -0.17471075729193472,
+        0.9797828053055968
+      ],
+      "position_error_m": 0.003429786016701416,
+      "tangent_error_rad": 1.4702298331284762,
+      "feasible": true,
+      "position_constraint_margin_m": 0.001570213983298584,
+      "tangent_constraint_margin_rad": 1.6696174912093227,
+      "minimum_joint_margin_rad": 4.398463385174631,
+      "minimum_state_margin": 0.030420000000000003,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 187.62127488215458,
+      "contact_force_norm": 3608653.164424503,
+      "seed_state": [
+        -0.6261474240012534,
+        -1.7615389876435543,
+        -1.8847219220049554,
+        -1.06562546993467,
+        1.5728815012991109,
+        -1.0911614607481046,
+        0.030420000000000003
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 1,
+      "s_m": 0.0011270895455707463,
+      "q_rad": [
+        -0.5930462161329478,
+        -1.7833703331982038,
+        -1.8570775959318753,
+        -1.0328860995876294,
+        1.5859669689416556,
+        -1.0930856488299794
+      ],
+      "insertion_m": 0.0296756634397255,
+      "magnet_pose6": [
+        0.5482344690060565,
+        -0.569849776728548,
+        -0.034342279717744006,
+        -2.6928616455780676,
+        1.5949669296772515,
+        -0.062215908770225314
+      ],
+      "desired_position_m": [
+        0.5213040858524195,
+        -0.6749972722211665,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216821001573577,
+        -0.6753138766259011,
+        -0.013813366399347767
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.01679118444079093,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09467843811916977,
+        -0.1758639350470926,
+        0.9798509425953862
+      ],
+      "position_error_m": 0.002797432960854702,
+      "tangent_error_rad": 1.4730225658544838,
+      "feasible": true,
+      "position_constraint_margin_m": 0.002202567039145298,
+      "tangent_constraint_margin_rad": 1.6668247584833151,
+      "minimum_joint_margin_rad": 4.426107711247711,
+      "minimum_state_margin": 0.0296756634397255,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 185.945756174095,
+      "contact_force_norm": 3633071.57850615,
+      "seed_state": [
+        -0.5930462161329478,
+        -1.7833703331982038,
+        -1.8570775959318753,
+        -1.0328860995876294,
+        1.5859669689416556,
+        -1.0930856488299794,
+        0.0296756634397255
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 2,
+      "s_m": 0.0013770895455707463,
+      "q_rad": [
+        -0.5937898023330618,
+        -1.780872094229216,
+        -1.8485323182312445,
+        -1.0274194785757418,
+        1.5839006149521393,
+        -1.093537770367519
+      ],
+      "insertion_m": 0.0289256635397255,
+      "magnet_pose6": [
+        0.5558063914891613,
+        -0.5770044960729404,
+        -0.026066751214959494,
+        -2.6947651394090584,
+        1.5965155576336678,
+        -0.08791700769892095
+      ],
+      "desired_position_m": [
+        0.5210541210978883,
+        -0.6750014700172766,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217629747692444,
+        -0.6751993232443346,
+        -0.014468205071343188
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09270827959043976,
+        -0.1780896219125984,
+        0.979637311183281
+      ],
+      "position_error_m": 0.0022240862347058,
+      "tangent_error_rad": 1.4749641650916712,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0027759137652942,
+      "tangent_constraint_margin_rad": 1.6648831592461277,
+      "minimum_joint_margin_rad": 4.434652988948342,
+      "minimum_state_margin": 0.0289256635397255,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 184.23406089712515,
+      "contact_force_norm": 3658567.1099431445,
+      "seed_state": [
+        -0.5937898023330618,
+        -1.780872094229216,
+        -1.8485323182312445,
+        -1.0274194785757418,
+        1.5839006149521393,
+        -1.093537770367519,
+        0.0289256635397255
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 3,
+      "s_m": 0.0016270895455707463,
+      "q_rad": [
+        -0.5634776035682346,
+        -1.7483884954580524,
+        -1.7998191937842098,
+        -1.0103959568648953,
+        1.6151459578173433,
+        -1.0808551953473478
+      ],
+      "insertion_m": 0.028721863392743,
+      "magnet_pose6": [
+        0.6265530269101651,
+        -0.5734681868118002,
+        0.0374062353820615,
+        -2.6792284727584534,
+        1.5501765925817974,
+        -0.24068470108689025
+      ],
+      "desired_position_m": [
+        0.5208041563433572,
+        -0.6750056678133869,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218000264880852,
+        -0.6751829520654625,
+        -0.014647734336916652
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09016380012040383,
+        -0.18009992982050457,
+        0.9795072763519919
+      ],
+      "position_error_m": 0.002169508639458571,
+      "tangent_error_rad": 1.4774857990668873,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0028304913605414293,
+      "tangent_constraint_margin_rad": 1.6623615252709116,
+      "minimum_joint_margin_rad": 4.483366113395377,
+      "minimum_state_margin": 0.028721863392743,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 183.77135117488982,
+      "contact_force_norm": 3665714.6689572725,
+      "seed_state": [
+        -0.5634776035682346,
+        -1.7483884954580524,
+        -1.7998191937842098,
+        -1.0103959568648953,
+        1.6151459578173433,
+        -1.0808551953473478,
+        0.028721863392743
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 4,
+      "s_m": 0.0018770895455707463,
+      "q_rad": [
+        -0.5683551023517874,
+        -1.7642307144219773,
+        -1.7473681728423105,
+        -0.9405266273719464,
+        1.6102684590338399,
+        -1.0720030652321595
+      ],
+      "insertion_m": 0.02867343640984027,
+      "magnet_pose6": [
+        0.6827927058297407,
+        -0.61726214664405,
+        0.07931099251641421,
+        -2.662270005573549,
+        1.5616935915349144,
+        -0.40566990100261424
+      ],
+      "desired_position_m": [
+        0.520554191588826,
+        -0.675009865609497,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218014375777156,
+        -0.6751757664561615,
+        -0.014690092661454594
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09012308141125522,
+        -0.18038505719473355,
+        0.979458555191486
+      ],
+      "position_error_m": 0.0022596297938402977,
+      "tangent_error_rad": 1.4775218813159674,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0027403702061597024,
+      "tangent_constraint_margin_rad": 1.6623254430218315,
+      "minimum_joint_margin_rad": 4.518954592757609,
+      "minimum_state_margin": 0.02867343640984027,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 183.66190528750033,
+      "contact_force_norm": 3667430.248445707,
+      "seed_state": [
+        -0.5683551023517874,
+        -1.7642307144219773,
+        -1.7473681728423105,
+        -0.9405266273719464,
+        1.6102684590338399,
+        -1.0720030652321595,
+        0.02867343640984027
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 5,
+      "s_m": 0.002127089545570746,
+      "q_rad": [
+        -0.5900906614468119,
+        -1.7756716553549532,
+        -1.7590413187111258,
+        -0.9508493700263009,
+        1.6151451341920489,
+        -1.0655652328267238
+      ],
+      "insertion_m": 0.02867202178985673,
+      "magnet_pose6": [
+        0.6583853031995829,
+        -0.6215192979399864,
+        0.057464207357735275,
+        -2.641617813741211,
+        1.6001961186016633,
+        -0.3542107770497095
+      ],
+      "desired_position_m": [
+        0.5203042268342949,
+        -0.6750140634056072,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218035052774125,
+        -0.6751768331049787,
+        -0.01469151648556817
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0900018473837335,
+        -0.18045902159572982,
+        0.9794560781332806
+      ],
+      "position_error_m": 0.0024066092823589254,
+      "tangent_error_rad": 1.4776423794200912,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0025933907176410747,
+      "tangent_constraint_margin_rad": 1.6622049449177076,
+      "minimum_joint_margin_rad": 4.507513651824633,
+      "minimum_state_margin": 0.02867202178985673,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 183.6587106134453,
+      "contact_force_norm": 3667480.45844182,
+      "seed_state": [
+        -0.5900906614468119,
+        -1.7756716553549532,
+        -1.7590413187111258,
+        -0.9508493700263009,
+        1.6151451341920489,
+        -1.0655652328267238,
+        0.02867202178985673
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 6,
+      "s_m": 0.0023770895455707463,
+      "q_rad": [
+        -0.6560237294526617,
+        -1.78174869614167,
+        -1.7380876404117407,
+        -0.9192511518116832,
+        1.5401777342075156,
+        -1.0510080546597935
+      ],
+      "insertion_m": 0.02830936556083003,
+      "magnet_pose6": [
+        0.6149457952424908,
+        -0.7143596979775899,
+        0.07605508979129977,
+        2.5459645265816024,
+        -1.7029833390048799,
+        0.4169349306300496
+      ],
+      "desired_position_m": [
+        0.5200542620797637,
+        -0.6750182612017174,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221075806853738,
+        -0.6752129272015286,
+        -0.015012272686666444
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05956807171491255,
+        -0.1920952288129431,
+        0.9795667756204628
+      ],
+      "position_error_m": 0.0025828645273131205,
+      "tangent_error_rad": 1.5079698236948222,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0024171354726868796,
+      "tangent_constraint_margin_rad": 1.6318775006429767,
+      "minimum_joint_margin_rad": 4.501436611037916,
+      "minimum_state_margin": 0.02830936556083003,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 182.84446352478926,
+      "contact_force_norm": 3680535.8245388386,
+      "seed_state": [
+        -0.6560237294526617,
+        -1.78174869614167,
+        -1.7380876404117407,
+        -0.9192511518116832,
+        1.5401777342075156,
+        -1.0510080546597935,
+        0.02830936556083003
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 7,
+      "s_m": 0.0026270895455707466,
+      "q_rad": [
+        -0.6154776637863758,
+        -1.7383351321912748,
+        -1.7952393503868513,
+        -0.9430406692459409,
+        1.5604830889835837,
+        -1.0172140876741225
+      ],
+      "insertion_m": 0.028148779975725447,
+      "magnet_pose6": [
+        0.61081161900013,
+        -0.6522865518979934,
+        0.06404071410190537,
+        2.58582542205914,
+        -1.7114450778788883,
+        0.36656880380643025
+      ],
+      "desired_position_m": [
+        0.5198042973252326,
+        -0.6750224589978275,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221119551710928,
+        -0.6751848722921622,
+        -0.015152291078985575
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440788986,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05991267612353554,
+        -0.19241722025780716,
+        0.9794825596139908
+      ],
+      "position_error_m": 0.0027116533965340153,
+      "tangent_error_rad": 1.507619165558253,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0022883466034659848,
+      "tangent_constraint_margin_rad": 1.632228158779546,
+      "minimum_joint_margin_rad": 4.487945956792735,
+      "minimum_state_margin": 0.028148779975725447,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 182.4868947179607,
+      "contact_force_norm": 3686434.9925262923,
+      "seed_state": [
+        -0.6154776637863758,
+        -1.7383351321912748,
+        -1.7952393503868513,
+        -0.9430406692459409,
+        1.5604830889835837,
+        -1.0172140876741225,
+        0.028148779975725447
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 8,
+      "s_m": 0.0028770895455707468,
+      "q_rad": [
+        -0.5723037029855291,
+        -1.6892805695869058,
+        -1.80351360218109,
+        -0.9674028089525516,
+        1.6052486388475,
+        -1.0139388037397206
+      ],
+      "insertion_m": 0.027921117923155027,
+      "magnet_pose6": [
+        0.6405366383925788,
+        -0.5976399993870535,
+        0.0943888515423037,
+        -2.611682619398467,
+        1.6444287409134748,
+        -0.39160449404941394
+      ],
+      "desired_position_m": [
+        0.5195543325707014,
+        -0.6750266567939378,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221173948042654,
+        -0.6751457946766675,
+        -0.015350959361630723
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440797958,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06033712518686253,
+        -0.19270510226377013,
+        0.9793999054960618
+      ],
+      "position_error_m": 0.002839407804875738,
+      "tangent_error_rad": 1.5071890785730597,
+      "feasible": true,
+      "position_constraint_margin_m": 0.002160592195124262,
+      "tangent_constraint_margin_rad": 1.6326582457647392,
+      "minimum_joint_margin_rad": 4.479671704998497,
+      "minimum_state_margin": 0.027921117923155027,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 181.98259179701634,
+      "contact_force_norm": 3694920.905942127,
+      "seed_state": [
+        -0.5723037029855291,
+        -1.6892805695869058,
+        -1.80351360218109,
+        -0.9674028089525516,
+        1.6052486388475,
+        -1.0139388037397206,
+        0.027921117923155027
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 9,
+      "s_m": 0.003127089545570747,
+      "q_rad": [
+        -0.5890186281906564,
+        -1.6818813836803825,
+        -1.7855588719700597,
+        -0.9495567939897547,
+        1.5882037259276744,
+        -1.030412743895948
+      ],
+      "insertion_m": 0.027489373785878277,
+      "magnet_pose6": [
+        0.6433250281774392,
+        -0.6280209501571659,
+        0.11973638820640842,
+        -2.6207613248863355,
+        1.6538744308603248,
+        -0.4615265697038758
+      ],
+      "desired_position_m": [
+        0.5193043678161703,
+        -0.675030854590048,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221270238185681,
+        -0.6750683332566508,
+        -0.01572714099932932
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440806937,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06135004579634924,
+        -0.19306928121665004,
+        0.9792652472804659
+      ],
+      "position_error_m": 0.002945191793301486,
+      "tangent_error_rad": 1.506168087755647,
+      "feasible": true,
+      "position_constraint_margin_m": 0.002054808206698514,
+      "tangent_constraint_margin_rad": 1.633679236582152,
+      "minimum_joint_margin_rad": 4.4976264352095265,
+      "minimum_state_margin": 0.027489373785878277,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 181.033207095448,
+      "contact_force_norm": 3711406.0639191223,
+      "seed_state": [
+        -0.5890186281906564,
+        -1.6818813836803825,
+        -1.7855588719700597,
+        -0.9495567939897547,
+        1.5882037259276744,
+        -1.030412743895948,
+        0.027489373785878277
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 10,
+      "s_m": 0.0033770895455707472,
+      "q_rad": [
+        -0.5971264665556009,
+        -1.6757085037525932,
+        -1.7964405013308424,
+        -0.9772647777632688,
+        1.5830518969848952,
+        -1.0353518865274076
+      ],
+      "insertion_m": 0.027395466196017446,
+      "magnet_pose6": [
+        0.6196052309121312,
+        -0.6240144382809235,
+        0.10894708472202141,
+        -2.628357623286728,
+        1.6663249035820276,
+        -0.41189468392965073
+      ],
+      "desired_position_m": [
+        0.5190544030616391,
+        -0.6750350523861582,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522123978855499,
+        -0.6750515349842595,
+        -0.015809139819337785
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.016791184440815905,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06200278848136702,
+        -0.1931469924252422,
+        0.979208809977534
+      ],
+      "position_error_m": 0.0031617905186340617,
+      "tangent_error_rad": 1.5055127501835452,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0018382094813659384,
+      "tangent_constraint_margin_rad": 1.6343345741542536,
+      "minimum_joint_margin_rad": 4.486744805848744,
+      "minimum_state_margin": 0.027395466196017446,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 180.82768933635472,
+      "contact_force_norm": 3715059.274587707,
+      "seed_state": [
+        -0.5971264665556009,
+        -1.6757085037525932,
+        -1.7964405013308424,
+        -0.9772647777632688,
+        1.5830518969848952,
+        -1.0353518865274076,
+        0.027395466196017446
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 11,
+      "s_m": 0.0036270895455707474,
+      "q_rad": [
+        -0.5914068390984367,
+        -1.654074171953967,
+        -1.8136585265322074,
+        -1.0041258860464144,
+        1.5948940416669648,
+        -1.0336191752593205
+      ],
+      "insertion_m": 0.02677840157287767,
+      "magnet_pose6": [
+        0.6071366589526608,
+        -0.6019503628615285,
+        0.10703282530869229,
+        -2.62525607059983,
+        1.654693766113494,
+        -0.37581538520019786
+      ],
+      "desired_position_m": [
+        0.518804438307108,
+        -0.6750392501822684,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221466128912101,
+        -0.6749406142508413,
+        -0.01634671340060094
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.01679118444082488,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06297442793356303,
+        -0.19368315767391395,
+        0.9790408856936988
+      ],
+      "position_error_m": 0.0033508784196776744,
+      "tangent_error_rad": 1.504530119997737,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0016491215803223257,
+      "tangent_constraint_margin_rad": 1.635317204340062,
+      "minimum_joint_margin_rad": 4.469526780647379,
+      "minimum_state_margin": 0.02677840157287767,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.4827697863976,
+      "contact_force_norm": 3739658.2790712975,
+      "seed_state": [
+        -0.5914068390984367,
+        -1.654074171953967,
+        -1.8136585265322074,
+        -1.0041258860464144,
+        1.5948940416669648,
+        -1.0336191752593205,
+        0.02677840157287767
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 12,
+      "s_m": 0.0038770895455707477,
+      "q_rad": [
+        -0.5795181910198335,
+        -1.6407825508703944,
+        -1.8012870897286555,
+        -1.0012334477946967,
+        1.6024052250443606,
+        -1.0341878035455412
+      ],
+      "insertion_m": 0.026778362809504908,
+      "magnet_pose6": [
+        0.6253502884147488,
+        -0.5970405081635138,
+        0.12896788656332375,
+        -2.6249184941643793,
+        1.6292665816999137,
+        -0.4190637175267214
+      ],
+      "desired_position_m": [
+        0.5185544735525768,
+        -0.6750434479783787,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221429453255436,
+        -0.6749391097638648,
+        -0.016346539665954347
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.016791184440820953,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06324639823899851,
+        -0.19358895825340558,
+        0.9790419849792731
+      ],
+      "position_error_m": 0.003596751157263347,
+      "tangent_error_rad": 1.5042591726453953,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0014032488427366532,
+      "tangent_constraint_margin_rad": 1.6355881516924036,
+      "minimum_joint_margin_rad": 4.481898217450931,
+      "minimum_state_margin": 0.026778362809504908,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.48268462647292,
+      "contact_force_norm": 3739659.8487144117,
+      "seed_state": [
+        -0.5795181910198335,
+        -1.6407825508703944,
+        -1.8012870897286555,
+        -1.0012334477946967,
+        1.6024052250443606,
+        -1.0341878035455412,
+        0.026778362809504908
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 13,
+      "s_m": 0.004127089545570748,
+      "q_rad": [
+        -0.6024471269794837,
+        -1.6888293949644309,
+        -1.7951931473363414,
+        -0.9743494103136909,
+        1.5870334853322199,
+        -1.0380391302042047
+      ],
+      "insertion_m": 0.02679454463902484,
+      "magnet_pose6": [
+        0.6185747830137746,
+        -0.6262371458963238,
+        0.09937484544062636,
+        -2.625359256117976,
+        1.6684130440936762,
+        -0.3977679654093248
+      ],
+      "desired_position_m": [
+        0.5183045087980457,
+        -0.6750476457744888,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221414607530933,
+        -0.6749431871170563,
+        -0.016332733694421814
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440811825,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06335935766253385,
+        -0.1936316901230682,
+        0.9790262306887775
+      ],
+      "position_error_m": 0.0038455159105620267,
+      "tangent_error_rad": 1.5041452591312243,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0011544840894379734,
+      "tangent_constraint_margin_rad": 1.6357020652065746,
+      "minimum_joint_margin_rad": 4.487992159843245,
+      "minimum_state_margin": 0.02679454463902484,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.51787565180734,
+      "contact_force_norm": 3739001.710268329,
+      "seed_state": [
+        -0.6024471269794837,
+        -1.6888293949644309,
+        -1.7951931473363414,
+        -0.9743494103136909,
+        1.5870334853322199,
+        -1.0380391302042047,
+        0.02679454463902484
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 14,
+      "s_m": 0.004377089545570748,
+      "q_rad": [
+        -0.5663209653714796,
+        -1.6611600053403548,
+        -1.8043125536099227,
+        -0.9969221823986071,
+        1.5980075472403623,
+        -1.0589722371152834
+      ],
+      "insertion_m": 0.026755483429379175,
+      "magnet_pose6": [
+        0.6309471823301167,
+        -0.5901583827251922,
+        0.11027236341004781,
+        -2.662593137642482,
+        1.5849244770623485,
+        -0.39025329634385264
+      ],
+      "desired_position_m": [
+        0.5180545440435145,
+        -0.675051843570599,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221440400150779,
+        -0.6749357041057705,
+        -0.016366635330552267
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440802694,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06332734901718504,
+        -0.1936337785027973,
+        0.9790278886166549
+      ],
+      "position_error_m": 0.00409604830018967,
+      "tangent_error_rad": 1.5041772993041131,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0009039516998103304,
+      "tangent_constraint_margin_rad": 1.6356700250336857,
+      "minimum_joint_margin_rad": 4.4788727535696635,
+      "minimum_state_margin": 0.026755483429379175,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.43293509626992,
+      "contact_force_norm": 3740591.608072772,
+      "seed_state": [
+        -0.5663209653714796,
+        -1.6611600053403548,
+        -1.8043125536099227,
+        -0.9969221823986071,
+        1.5980075472403623,
+        -1.0589722371152834,
+        0.026755483429379175
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 15,
+      "s_m": 0.004627089545570748,
+      "q_rad": [
+        -0.5810163505622064,
+        -1.6789375714771626,
+        -1.7900117283297519,
+        -0.9721962710671604,
+        1.5656061837377928,
+        -1.0808411719100064
+      ],
+      "insertion_m": 0.026974054351088957,
+      "magnet_pose6": [
+        0.6299230041446426,
+        -0.6255675744476823,
+        0.11259978492759443,
+        2.660999356343875,
+        -1.5784895602869335,
+        0.4212956425944228
+      ],
+      "desired_position_m": [
+        0.5178045792889834,
+        -0.6750560413667093,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221367141376675,
+        -0.6749759843426572,
+        -0.016176359549789222
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440793572,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06281574816955394,
+        -0.19346689643623488,
+        0.9790938370581393
+      ],
+      "position_error_m": 0.0043504484177638815,
+      "tangent_error_rad": 1.5046927647710202,
+      "feasible": true,
+      "position_constraint_margin_m": 0.0006495515822361186,
+      "tangent_constraint_margin_rad": 1.6351545595667787,
+      "minimum_joint_margin_rad": 4.493173578849834,
+      "minimum_state_margin": 0.026974054351088957,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.90842643577633,
+      "contact_force_norm": 3731747.5685360017,
+      "seed_state": [
+        -0.5810163505622064,
+        -1.6789375714771626,
+        -1.7900117283297519,
+        -0.9721962710671604,
+        1.5656061837377928,
+        -1.0808411719100064,
+        0.026974054351088957
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 16,
+      "s_m": 0.0048770895455707486,
+      "q_rad": [
+        -0.5691116270983215,
+        -1.6322705193909952,
+        -1.825698330073635,
+        -1.0271966998153585,
+        1.5869220924167953,
+        -1.0775456995398256
+      ],
+      "insertion_m": 0.026837585734333272,
+      "magnet_pose6": [
+        0.6026687890254077,
+        -0.5821237286644706,
+        0.10999085728081265,
+        -2.688446836399461,
+        1.5746348959707064,
+        -0.3560808095472271
+      ],
+      "desired_position_m": [
+        0.5175546145344522,
+        -0.6750602391628194,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221371461138236,
+        -0.6749507534782079,
+        -0.016295267408004056
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078444,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0634504387680435,
+        -0.1935459222762113,
+        0.979037291317544
+      ],
+      "position_error_m": 0.004591886474274347,
+      "tangent_error_rad": 1.5040554312912482,
+      "feasible": true,
+      "position_constraint_margin_m": 0.000408113525725653,
+      "tangent_constraint_margin_rad": 1.6357918930465507,
+      "minimum_joint_margin_rad": 4.457486977105951,
+      "minimum_state_margin": 0.026837585734333272,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.61148269763748,
+      "contact_force_norm": 3737254.5080292122,
+      "seed_state": [
+        -0.5691116270983215,
+        -1.6322705193909952,
+        -1.825698330073635,
+        -1.0271966998153585,
+        1.5869220924167953,
+        -1.0775456995398256,
+        0.026837585734333272
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 17,
+      "s_m": 0.005127089545570749,
+      "q_rad": [
+        -0.5632525516349065,
+        -1.6389599069279994,
+        -1.7854112640930315,
+        -1.0082882709993273,
+        1.5767244301447956,
+        -1.0979120615663964
+      ],
+      "insertion_m": 0.02684081861958404,
+      "magnet_pose6": [
+        0.6334995209593398,
+        -0.6024451215166458,
+        0.1413143473567679,
+        2.696727439268106,
+        -1.5341855061296519,
+        0.43663297735476364
+      ],
+      "desired_position_m": [
+        0.5173046497799211,
+        -0.6750644369589296,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221365526576096,
+        -0.6749504835658735,
+        -0.016292283863672662
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782564,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06347453198142144,
+        -0.19349932547563148,
+        0.9790449401484159
+      ],
+      "position_error_m": 0.004841047381586172,
+      "tangent_error_rad": 1.504032071865666,
+      "feasible": true,
+      "position_constraint_margin_m": 0.00015895261841382836,
+      "tangent_constraint_margin_rad": 1.635815252472133,
+      "minimum_joint_margin_rad": 4.4977740430865545,
+      "minimum_state_margin": 0.02684081861958404,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.61851430441214,
+      "contact_force_norm": 3737123.471889278,
+      "seed_state": [
+        -0.5632525516349065,
+        -1.6389599069279994,
+        -1.7854112640930315,
+        -1.0082882709993273,
+        1.5767244301447956,
+        -1.0979120615663964,
+        0.02684081861958404
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "node_index": 18,
+      "s_m": 0.005252089545570749,
+      "q_rad": [
+        -0.5702909376361444,
+        -1.702685960324382,
+        -1.7963649218428983,
+        -0.9732735692298212,
+        1.600847729849343,
+        -1.101114849289274
+      ],
+      "insertion_m": 0.026982498740480712,
+      "magnet_pose6": [
+        0.6411627340248897,
+        -0.5988301065858387,
+        0.08690560311650025,
+        -2.696174963177828,
+        1.535538433900652,
+        -0.3759209794963059
+      ],
+      "desired_position_m": [
+        0.5171796674026555,
+        -0.6750665358569847,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221411188643942,
+        -0.6749760224011119,
+        -0.01616853641760565
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078264,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06237191614101592,
+        -0.19337380005412244,
+        0.9791406015121252
+      ],
+      "position_error_m": 0.004978249342828983,
+      "tangent_error_rad": 1.505139065603082,
+      "feasible": true,
+      "position_constraint_margin_m": 2.1750657171017325e-05,
+      "tangent_constraint_margin_rad": 1.6347082587347168,
+      "minimum_joint_margin_rad": 4.486820385336688,
+      "minimum_state_margin": 0.026982498740480712,
+      "jacobian_condition": null,
+      "jacobian_effective_rank": 0,
+      "contact_active": true,
+      "contact_diagnostic_available": true,
+      "minimum_gap_m": -0.01959853030421034,
+      "contact_energy": 179.9268119237516,
+      "contact_force_norm": 3731408.4758085962,
+      "seed_state": [
+        -0.5702909376361444,
+        -1.702685960324382,
+        -1.7963649218428983,
+        -0.9732735692298212,
+        1.600847729849343,
+        -1.101114849289274,
+        0.026982498740480712
+      ],
+      "state_change_from_seed": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "dense_samples": [
+    {
+      "interval_index": 0,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.000918756212237413,
+      "state": [
+        -0.6206305560232026,
+        -1.765177545235996,
+        -1.8801145343261088,
+        -1.0601689082101633,
+        1.5750624125728683,
+        -1.0914821587617505,
+        0.030295943906620923
+      ],
+      "desired_position_m": [
+        0.5215123898145287,
+        -0.6749937740577413,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.521579580445835,
+        -0.6754137200894007,
+        -0.013273372531070802
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.01679118444080614,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09720774439157286,
+        -0.17455505510150668,
+        0.9798373268909553
+      ],
+      "position_error_m": 0.0033209714173004787,
+      "tangent_error_rad": 1.4705032489949765,
+      "position_margin_m": 0.0016790285826995214,
+      "tangent_margin_rad": 1.6693440753428224,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 0,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0009604228789040797,
+      "state": [
+        -0.6151136880451515,
+        -1.7688161028284375,
+        -1.8755071466472621,
+        -1.0547123464856565,
+        1.577243323846626,
+        -1.0918028567753963,
+        0.030171887813241836
+      ],
+      "desired_position_m": [
+        0.5214707290221069,
+        -0.6749944736904263,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216030426416928,
+        -0.675391527010699,
+        -0.013380766983096247
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440803096,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0964315611147702,
+        -0.17454226196059017,
+        0.9799162988799855
+      ],
+      "position_error_m": 0.0032136021955237546,
+      "tangent_error_rad": 1.4712834277675064,
+      "position_margin_m": 0.0017863978044762455,
+      "tangent_margin_rad": 1.6685638965702925,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 0,
+      "fraction": 0.5,
+      "s_m": 0.0010020895455707464,
+      "state": [
+        -0.6095968200671007,
+        -1.772454660420879,
+        -1.8708997589684153,
+        -1.04925578476115,
+        1.579424235120383,
+        -1.092123554789042,
+        0.03004783171986275
+      ],
+      "desired_position_m": [
+        0.521429068229685,
+        -0.6749951733231113,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216229162408803,
+        -0.6753721868013477,
+        -0.013488910197854701
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440800053,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09598152719568079,
+        -0.17489677568110806,
+        0.9798972723166123
+      ],
+      "position_error_m": 0.0031071454816739954,
+      "tangent_error_rad": 1.4717296432312492,
+      "position_margin_m": 0.0018928545183260048,
+      "tangent_margin_rad": 1.6681176811065497,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 0,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.001043756212237413,
+      "state": [
+        -0.6040799520890496,
+        -1.7760932180133207,
+        -1.8662923712895687,
+        -1.0437992230366429,
+        1.5816051463941405,
+        -1.0924442528026879,
+        0.02992377562648367
+      ],
+      "desired_position_m": [
+        0.5213874074372632,
+        -0.6749958729557964,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216425592509845,
+        -0.6753523713049392,
+        -0.01359697501386909
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440797014,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09554368485100186,
+        -0.1752100122137542,
+        0.9798841033026041
+      ],
+      "position_error_m": 0.003002206178667391,
+      "tangent_error_rad": 1.4721642860005135,
+      "position_margin_m": 0.001997793821332609,
+      "tangent_margin_rad": 1.6676830383372854,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 0,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0010854228789040797,
+      "state": [
+        -0.5985630841109988,
+        -1.7797317756057622,
+        -1.8616849836107219,
+        -1.0383426613121363,
+        1.5837860576678982,
+        -1.0927649508163335,
+        0.029799719533104584
+      ],
+      "desired_position_m": [
+        0.5213457466448413,
+        -0.6749965725884814,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216623577624566,
+        -0.6753324913844375,
+        -0.01370503538881953
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440793975,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09510326634650272,
+        -0.17550624042097374,
+        0.9798739349036291
+      ],
+      "position_error_m": 0.00289895247855558,
+      "tangent_error_rad": 1.4726017853145057,
+      "position_margin_m": 0.00210104752144442,
+      "tangent_margin_rad": 1.6672455390232932,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 1,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.001168756212237413,
+      "state": [
+        -0.5931701471663002,
+        -1.782953960036706,
+        -1.85565338298177,
+        -1.0319749960856481,
+        1.5856225766100696,
+        -1.0931610024195693,
+        0.02955066345639217
+      ],
+      "desired_position_m": [
+        0.5212624250599976,
+        -0.6749979718538515,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5216951785903836,
+        -0.6752917680300038,
+        -0.013922138554228738
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078789,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09466794416261433,
+        -0.17601539970185628,
+        0.979824759544185
+      ],
+      "position_error_m": 0.002696086771324411,
+      "tangent_error_rad": 1.4730305532054822,
+      "position_margin_m": 0.002303913228675589,
+      "tangent_margin_rad": 1.6668167711323167,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 1,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0012104228789040798,
+      "state": [
+        -0.5932940781996525,
+        -1.782537586875208,
+        -1.8542291700316653,
+        -1.031063892583667,
+        1.5852781842784835,
+        -1.0932363560091594,
+        0.029425663473058836
+      ],
+      "desired_position_m": [
+        0.5212207642675757,
+        -0.6749986714865366,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217208286673344,
+        -0.6752704765303269,
+        -0.014030477290747422
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440784843,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09372737690512847,
+        -0.17618774166353157,
+        0.9798842066826001
+      ],
+      "position_error_m": 0.0025995941683828088,
+      "tangent_error_rad": 1.4739725491485018,
+      "position_margin_m": 0.0024004058316171913,
+      "tangent_margin_rad": 1.665874775189297,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 1,
+      "fraction": 0.5,
+      "s_m": 0.0012520895455707462,
+      "state": [
+        -0.5934180092330048,
+        -1.78212121371371,
+        -1.85280495708156,
+        -1.0301527890816855,
+        1.5849337919468973,
+        -1.0933117095987492,
+        0.0293006634897255
+      ],
+      "desired_position_m": [
+        0.5211791034751538,
+        -0.6749993711192216,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217387777585546,
+        -0.6752500103627455,
+        -0.014139379110426242
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09342973678586843,
+        -0.17644818999812276,
+        0.9798657665877045
+      ],
+      "position_error_m": 0.002503876697720805,
+      "tangent_error_rad": 1.4742671497177273,
+      "position_margin_m": 0.002496123302279195,
+      "tangent_margin_rad": 1.6655801746200716,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 1,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.001293756212237413,
+      "state": [
+        -0.5935419402663571,
+        -1.7817048405522118,
+        -1.851380744131455,
+        -1.0292416855797044,
+        1.5845893996153113,
+        -1.0933870631883393,
+        0.02917566350639217
+      ],
+      "desired_position_m": [
+        0.521137442682732,
+        -0.6750000707519066,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.521740762553201,
+        -0.6752296714767934,
+        -0.014248869791364041
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09401921949211599,
+        -0.17671028182370938,
+        0.979762145963947
+      ],
+      "position_error_m": 0.0024063331072737763,
+      "tangent_error_rad": 1.4736705547553595,
+      "position_margin_m": 0.002593666892726224,
+      "tangent_margin_rad": 1.6661767695824394,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 1,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0013354228789040797,
+      "state": [
+        -0.5936658712997095,
+        -1.781288467390714,
+        -1.8499565311813497,
+        -1.028330582077723,
+        1.5842450072837253,
+        -1.0934624167779292,
+        0.029050663523058833
+      ],
+      "desired_position_m": [
+        0.5210957818903101,
+        -0.6750007703845916,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217493754029255,
+        -0.6752109526927258,
+        -0.01435797495367909
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09357802669009303,
+        -0.17712584917867558,
+        0.9797293434788618
+      ],
+      "position_error_m": 0.002313255873797503,
+      "tangent_error_rad": 1.4741067540852342,
+      "position_margin_m": 0.0026867441262024973,
+      "tangent_margin_rad": 1.6657405702525647,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 2,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.0014187562122374132,
+      "state": [
+        -0.5887377692055906,
+        -1.7754581611006888,
+        -1.8404134641567387,
+        -1.0245822249572674,
+        1.5891081720963398,
+        -1.0914240078641573,
+        0.02889169684856175
+      ],
+      "desired_position_m": [
+        0.5210124603054664,
+        -0.6750021696499617,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217651606471521,
+        -0.6751948882830526,
+        -0.014497956646641314
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09256137624450796,
+        -0.17833238480002425,
+        0.9796070396639965
+      ],
+      "position_error_m": 0.00221012186858368,
+      "tangent_error_rad": 1.4751076287331861,
+      "position_margin_m": 0.00278987813141632,
+      "tangent_margin_rad": 1.6647396956046128,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 2,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0014604228789040796,
+      "state": [
+        -0.5836857360781194,
+        -1.7700442279721615,
+        -1.832294610082233,
+        -1.021744971338793,
+        1.5943157292405408,
+        -1.0893102453607955,
+        0.028857730157398002
+      ],
+      "desired_position_m": [
+        0.5209707995130446,
+        -0.6750028692826467,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5217947002213793,
+        -0.6752031852240354,
+        -0.014528524857680525
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08982223154863733,
+        -0.1798111271767225,
+        0.9795917135536925
+      ],
+      "position_error_m": 0.002207786167051347,
+      "tangent_error_rad": 1.477833676551958,
+      "position_margin_m": 0.002792213832948653,
+      "tangent_margin_rad": 1.662013647785841,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 2,
+      "fraction": 0.5,
+      "s_m": 0.0015020895455707464,
+      "state": [
+        -0.5786337029506482,
+        -1.7646302948436343,
+        -1.8241757560077272,
+        -1.0189077177203185,
+        1.5995232863847413,
+        -1.0871964828574334,
+        0.02882376346623425
+      ],
+      "desired_position_m": [
+        0.5209291387206227,
+        -0.6750035689153318,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221165235742662,
+        -0.675348727660107,
+        -0.01457234818013506
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.055307085164143094,
+        -0.19687039888598373,
+        0.9788683120691567
+      ],
+      "position_error_m": 0.0023468389872863473,
+      "tangent_error_rad": 1.5121577529088253,
+      "position_margin_m": 0.002653161012713653,
+      "tangent_margin_rad": 1.6276895714289736,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 2,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.0015437562122374128,
+      "state": [
+        -0.573581669823177,
+        -1.7592163617151069,
+        -1.8160569019332213,
+        -1.016070464101844,
+        1.6047308435289418,
+        -1.0850827203540716,
+        0.0287897967750705
+      ],
+      "desired_position_m": [
+        0.5208874779282009,
+        -0.6750042685480168,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221076788223126,
+        -0.6753358963303423,
+        -0.01460091109524204
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0567439737279718,
+        -0.1961393077532852,
+        0.9789328339572748
+      ],
+      "position_error_m": 0.0023375997923967746,
+      "tangent_error_rad": 1.5107308301383489,
+      "position_margin_m": 0.0026624002076032255,
+      "tangent_margin_rad": 1.62911649419945,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 2,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0015854228789040795,
+      "state": [
+        -0.5685296366957058,
+        -1.7538024285865796,
+        -1.8079380478587157,
+        -1.0132332104833697,
+        1.6099384006731428,
+        -1.0829689578507096,
+        0.028755830083906753
+      ],
+      "desired_position_m": [
+        0.520845817135779,
+        -0.6750049681807018,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221070706219538,
+        -0.6753262559853339,
+        -0.014629828817459571
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05712153092365481,
+        -0.19576736686791163,
+        0.9789853261283044
+      ],
+      "position_error_m": 0.0023337991345140363,
+      "tangent_error_rad": 1.5103588965976689,
+      "position_margin_m": 0.002666200865485964,
+      "tangent_margin_rad": 1.62948842774013,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 3,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.001668756212237413,
+      "state": [
+        -0.5642905200321602,
+        -1.7510288652853734,
+        -1.79107735696056,
+        -0.9987510686160704,
+        1.6143330413534263,
+        -1.0793798403281498,
+        0.02871379222892588
+      ],
+      "desired_position_m": [
+        0.5207624955509353,
+        -0.6750063674460719,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218029785341499,
+        -0.6751808965253704,
+        -0.014654520864768674
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08999490365527732,
+        -0.18010033179317494,
+        0.979522734705053
+      ],
+      "position_error_m": 0.002184179864520098,
+      "tangent_error_rad": 1.4776554014478582,
+      "position_margin_m": 0.002815820135479902,
+      "tangent_margin_rad": 1.6621919228899407,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 3,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0017104228789040798,
+      "state": [
+        -0.5651034364960856,
+        -1.7536692351126941,
+        -1.7823355201369102,
+        -0.9871061803672457,
+        1.6135201248895088,
+        -1.0779044853089517,
+        0.028705721065108762
+      ],
+      "desired_position_m": [
+        0.5207208347585134,
+        -0.6750070670787569,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218048957133419,
+        -0.6751796052792435,
+        -0.014661506119208415
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08988762645907779,
+        -0.18011846309834623,
+        0.9795292511511042
+      ],
+      "position_error_m": 0.002199059915997055,
+      "tangent_error_rad": 1.4777628241591132,
+      "position_margin_m": 0.0028009400840029453,
+      "tangent_margin_rad": 1.6620845001786857,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 3,
+      "fraction": 0.5,
+      "s_m": 0.0017520895455707462,
+      "state": [
+        -0.5659163529600111,
+        -1.7563096049400149,
+        -1.7735936833132602,
+        -0.9754612921184208,
+        1.6127072084255916,
+        -1.0764291302897537,
+        0.028697649901291637
+      ],
+      "desired_position_m": [
+        0.5206791739660915,
+        -0.6750077667114419,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221039180304794,
+        -0.6753074565273447,
+        -0.014679012545661702
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05809469831791861,
+        -0.19473778231254418,
+        0.9791333934491981
+      ],
+      "position_error_m": 0.0023841573485202457,
+      "tangent_error_rad": 1.5094013782884161,
+      "position_margin_m": 0.0026158426514797544,
+      "tangent_margin_rad": 1.6304459460493828,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 3,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.001793756212237413,
+      "state": [
+        -0.5667292694239365,
+        -1.7589499747673356,
+        -1.7648518464896101,
+        -0.963816403869596,
+        1.6118942919616743,
+        -1.0749537752705556,
+        0.028689578737474512
+      ],
+      "desired_position_m": [
+        0.5206375131736697,
+        -0.6750084663441269,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221024131881066,
+        -0.6753041819954961,
+        -0.01468572876809979
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05831058169646712,
+        -0.19448340632544864,
+        0.979171119225986
+      ],
+      "position_error_m": 0.002402615501227201,
+      "tangent_error_rad": 1.5091893958480336,
+      "position_margin_m": 0.002597384498772799,
+      "tangent_margin_rad": 1.6306579284897653,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 3,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0018354228789040795,
+      "state": [
+        -0.567542185887862,
+        -1.7615903445946566,
+        -1.7561100096659603,
+        -0.9521715156207712,
+        1.6110813754977573,
+        -1.0734784202513574,
+        0.02868150757365739
+      ],
+      "desired_position_m": [
+        0.5205958523812478,
+        -0.6750091659768119,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218024796004982,
+        -0.6751775754161718,
+        -0.014683092285214461
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.09003851287453589,
+        -0.1804053785697012,
+        0.9794625901903885
+      ],
+      "position_error_m": 0.002243528306781493,
+      "tangent_error_rad": 1.4776064640504099,
+      "position_margin_m": 0.0027564716932185073,
+      "tangent_margin_rad": 1.662240860287389,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 4,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.001918756212237413,
+      "state": [
+        -0.5719776955342915,
+        -1.7661375379108066,
+        -1.7493136971537797,
+        -0.9422470844810055,
+        1.6110812382268749,
+        -1.0709300931645869,
+        0.028673200639843015
+      ],
+      "desired_position_m": [
+        0.5205125307964041,
+        -0.6750105652421821,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218039342893674,
+        -0.6751776500260693,
+        -0.014690596976886166
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08997365213175179,
+        -0.18049043565779163,
+        0.9794528802133031
+      ],
+      "position_error_m": 0.0022839721127446396,
+      "tangent_error_rad": 1.477670163645696,
+      "position_margin_m": 0.0027160278872553605,
+      "tangent_margin_rad": 1.662177160692103,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 4,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0019604228789040796,
+      "state": [
+        -0.5756002887167957,
+        -1.7680443613996362,
+        -1.751259221465249,
+        -0.9439675415900646,
+        1.6118940174199095,
+        -1.0698571210970143,
+        0.02867296486984576
+      ],
+      "desired_position_m": [
+        0.5204708700039823,
+        -0.6750112648748671,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218037899404845,
+        -0.6751773573371257,
+        -0.014690757814660869
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08998445140436745,
+        -0.18047716264010868,
+        0.9794543339384593
+      ],
+      "position_error_m": 0.0023074979959233567,
+      "tangent_error_rad": 1.4776595427384847,
+      "position_margin_m": 0.0026925020040766434,
+      "tangent_margin_rad": 1.6621877815993142,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 4,
+      "fraction": 0.5,
+      "s_m": 0.002002089545570746,
+      "state": [
+        -0.5792228818992997,
+        -1.7699511848884653,
+        -1.7532047457767181,
+        -0.9456879986991236,
+        1.6127067966129442,
+        -1.0687841490294416,
+        0.0286727290998485
+      ],
+      "desired_position_m": [
+        0.5204292092115604,
+        -0.6750119645075521,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218036761058913,
+        -0.6751771589988254,
+        -0.014690935801890414
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08999201266469381,
+        -0.18046898032681352,
+        0.9794551469038069
+      ],
+      "position_error_m": 0.0023315371193671974,
+      "tangent_error_rad": 1.4776520876211123,
+      "position_margin_m": 0.0026684628806328027,
+      "tangent_margin_rad": 1.6621952367166866,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 4,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.002043756212237413,
+      "state": [
+        -0.5828454750818037,
+        -1.7718580083772948,
+        -1.7551502700881874,
+        -0.9474084558081828,
+        1.613519575805979,
+        -1.067711176961869,
+        0.028672493329851244
+      ],
+      "desired_position_m": [
+        0.5203875484191386,
+        -0.6750126641402371,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5218035947123466,
+        -0.6751770187146173,
+        -0.014691123980508407
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.08999698775128331,
+        -0.1804639407453718,
+        0.9794556183341573
+      ],
+      "position_error_m": 0.002356079449240092,
+      "tangent_error_rad": 1.4776471765669548,
+      "position_margin_m": 0.0026439205507599083,
+      "tangent_margin_rad": 1.6622001477708441,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 4,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0020854228789040793,
+      "state": [
+        -0.5864680682643078,
+        -1.7737648318661239,
+        -1.7570957943996566,
+        -0.9491289129172418,
+        1.6143323549990138,
+        -1.0666382048942964,
+        0.028672257559853986
+      ],
+      "desired_position_m": [
+        0.5203458876267167,
+        -0.6750133637729222,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.521803539837566,
+        -0.6751769143790711,
+        -0.01469131830340303
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0900000871316119,
+        -0.18046085309106252,
+        0.9794559024366275
+      ],
+      "position_error_m": 0.0023811091103757283,
+      "tangent_error_rad": 1.477644116201081,
+      "position_margin_m": 0.002618890889624272,
+      "tangent_margin_rad": 1.662203208136718,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 5,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.002168756212237413,
+      "state": [
+        -0.6010795061144535,
+        -1.7766844954860728,
+        -1.7555490389945616,
+        -0.9455830003238646,
+        1.6026505675279599,
+        -1.0631390364655688,
+        0.02861157908501895
+      ],
+      "desired_position_m": [
+        0.520262566041873,
+        -0.6750147630382922,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221036505204733,
+        -0.6752859235444361,
+        -0.014752812826734827
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05866909767636289,
+        -0.19422816136651577,
+        0.9792003667840531
+      ],
+      "position_error_m": 0.0025989219259290298,
+      "tangent_error_rad": 1.508834539192739,
+      "position_margin_m": 0.0024010780740709703,
+      "tangent_margin_rad": 1.63101278514506,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 5,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.00221042287890408,
+      "state": [
+        -0.6120683507820952,
+        -1.7776973356171923,
+        -1.7520567592779974,
+        -0.9403166306214283,
+        1.590156000863871,
+        -1.0607128401044137,
+        0.028551136380181166
+      ],
+      "desired_position_m": [
+        0.5202209052494512,
+        -0.6750154626709772,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221037063300575,
+        -0.6752729924711789,
+        -0.014805067167935731
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.058950710908318646,
+        -0.19400124739545888,
+        0.9792284359088077
+      ],
+      "position_error_m": 0.002591460748657084,
+      "tangent_error_rad": 1.5085562393536849,
+      "position_margin_m": 0.002408539251342916,
+      "tangent_margin_rad": 1.631291084984114,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 5,
+      "fraction": 0.5,
+      "s_m": 0.0022520895455707462,
+      "state": [
+        -0.6230571954497368,
+        -1.7787101757483117,
+        -1.7485644795614332,
+        -0.935050260918992,
+        1.5776614341997823,
+        -1.0582866437432585,
+        0.028490693675343383
+      ],
+      "desired_position_m": [
+        0.5201792444570292,
+        -0.6750161623036622,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221044935158038,
+        -0.6752572301416256,
+        -0.014856730927379541
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05918685283664782,
+        -0.19348179779658292,
+        0.9793169611380655
+      ],
+      "position_error_m": 0.002586448905657081,
+      "tangent_error_rad": 1.5083284101316359,
+      "position_margin_m": 0.0024135510943429192,
+      "tangent_margin_rad": 1.631518914206163,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 5,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.002293756212237413,
+      "state": [
+        -0.6340460401173784,
+        -1.7797230158794313,
+        -1.745072199844869,
+        -0.9297838912165557,
+        1.5651668675356933,
+        -1.0558604473821036,
+        0.028430250970505597
+      ],
+      "desired_position_m": [
+        0.5201375836646074,
+        -0.6750168619363472,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221054961886257,
+        -0.6752441579944103,
+        -0.01490892315868693
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05933561381627659,
+        -0.1932096731893445,
+        0.9793616835056967
+      ],
+      "position_error_m": 0.0025833238302423018,
+      "tangent_error_rad": 1.508183957013481,
+      "position_margin_m": 0.0024166761697576983,
+      "tangent_margin_rad": 1.631663367324318,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 5,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.00233542287890408,
+      "state": [
+        -0.64503488478502,
+        -1.7807358560105504,
+        -1.7415799201283049,
+        -0.9245175215141195,
+        1.5526723008716043,
+        -1.0534342510209487,
+        0.028369808265667817
+      ],
+      "desired_position_m": [
+        0.5200959228721855,
+        -0.6750175615690324,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221077539437745,
+        -0.6752292411079931,
+        -0.01496070242239448
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05935320321714896,
+        -0.19274274586874166,
+        0.9794526181407867
+      ],
+      "position_error_m": 0.0025831113788698373,
+      "tangent_error_rad": 1.5081741912159536,
+      "position_margin_m": 0.0024168886211301628,
+      "tangent_margin_rad": 1.6316731331218453,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 6,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.002418756212237413,
+      "state": [
+        -0.649266051841614,
+        -1.7745131021499374,
+        -1.7476129254075925,
+        -0.9232160713840595,
+        1.5435619600035269,
+        -1.0453757268288484,
+        0.028282601296645934
+      ],
+      "desired_position_m": [
+        0.5200126012873418,
+        -0.6750189608344024,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221073159086392,
+        -0.6752093126434032,
+        -0.015035860437863913
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05972246652867115,
+        -0.19221792976509233,
+        0.9795333044203008
+      ],
+      "position_error_m": 0.0026016247835929924,
+      "tangent_error_rad": 1.507813080337147,
+      "position_margin_m": 0.0023983752164070077,
+      "tangent_margin_rad": 1.632034244000652,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 6,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.00246042287890408,
+      "state": [
+        -0.6425083742305665,
+        -1.767277508158205,
+        -1.7571382104034443,
+        -0.9271809909564357,
+        1.5469461857995384,
+        -1.0397433989979032,
+        0.028255837032461838
+      ],
+      "desired_position_m": [
+        0.51997094049492,
+        -0.6750196604670874,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221061852273958,
+        -0.67520484666969,
+        -0.015059280994023913
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.0167911844407832,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05989867343507038,
+        -0.19227301909567165,
+        0.9795117329815679
+      ],
+      "position_error_m": 0.002620454273247622,
+      "tangent_error_rad": 1.507635620399983,
+      "position_margin_m": 0.002379545726752378,
+      "tangent_margin_rad": 1.632211703937816,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 6,
+      "fraction": 0.5,
+      "s_m": 0.0025020895455707464,
+      "state": [
+        -0.6357506966195188,
+        -1.7600419141664725,
+        -1.7666634953992961,
+        -0.931145910528812,
+        1.5503304115955496,
+        -1.0341110711669579,
+        0.02822907276827774
+      ],
+      "desired_position_m": [
+        0.5199292797024981,
+        -0.6750203600997724,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221056485282204,
+        -0.675200367254778,
+        -0.015082689327965321
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440784496,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06004267863470485,
+        -0.1923229538405777,
+        0.9794931128744115
+      ],
+      "position_error_m": 0.0026404851850644648,
+      "tangent_error_rad": 1.507490507021515,
+      "position_margin_m": 0.0023595148149355353,
+      "tangent_margin_rad": 1.632356817316284,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 6,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.002543756212237413,
+      "state": [
+        -0.6289930190084712,
+        -1.7528063201747397,
+        -1.7761887803951477,
+        -0.9351108301011883,
+        1.553714637391561,
+        -1.028478743336013,
+        0.028202308504093644
+      ],
+      "desired_position_m": [
+        0.5198876189100763,
+        -0.6750210597324575,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221060770506221,
+        -0.6751989632734576,
+        -0.01510672822091879
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078599,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06013746532267954,
+        -0.19251401036377955,
+        0.979449764448498
+      ],
+      "position_error_m": 0.0026618790092780694,
+      "tangent_error_rad": 1.5073923286609474,
+      "position_margin_m": 0.0023381209907219307,
+      "tangent_margin_rad": 1.6324549956768515,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 6,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.00258542287890408,
+      "state": [
+        -0.6222353413974235,
+        -1.7455707261830073,
+        -1.7857140653909995,
+        -0.9390757496735646,
+        1.5570988631875724,
+        -1.0228464155050676,
+        0.028175544239909544
+      ],
+      "desired_position_m": [
+        0.5198459581176544,
+        -0.6750217593651425,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221114826516442,
+        -0.6751888212812059,
+        -0.015128796473601448
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078749,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.05984735781959657,
+        -0.19234527146927777,
+        0.9795006841781292
+      ],
+      "position_error_m": 0.002688668905100352,
+      "tangent_error_rad": 1.5076858155863753,
+      "position_margin_m": 0.0023113310948996483,
+      "tangent_margin_rad": 1.6321615087514236,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 7,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.0026687562122374134,
+      "state": [
+        -0.6082820036529014,
+        -1.7301593717572132,
+        -1.7966183923525578,
+        -0.9471010258637094,
+        1.5679440139609033,
+        -1.0166682070183888,
+        0.028110836300297044
+      ],
+      "desired_position_m": [
+        0.5197626365328107,
+        -0.6750231586305125,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221100963232328,
+        -0.6751796851660424,
+        -0.015185737951211371
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.01679118444079048,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06016275437500898,
+        -0.19254981150721243,
+        0.9794411738713813
+      ],
+      "position_error_m": 0.0027281775732890105,
+      "tangent_error_rad": 1.5073663898886573,
+      "position_margin_m": 0.0022718224267109896,
+      "tangent_margin_rad": 1.6324809344491416,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 7,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0027104228789040802,
+      "state": [
+        -0.6010863435194269,
+        -1.721983611323152,
+        -1.7979974343182643,
+        -0.9511613824814779,
+        1.5754049389382225,
+        -1.0161223263626553,
+        0.028072892624868645
+      ],
+      "desired_position_m": [
+        0.5197209757403889,
+        -0.6750238582631977,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221096844759362,
+        -0.675173531053504,
+        -0.01521895845808579
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440791977,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0603332300714458,
+        -0.19261205887586644,
+        0.9794184479193486
+      ],
+      "position_error_m": 0.002746915973626519,
+      "tangent_error_rad": 1.5071945465046483,
+      "position_margin_m": 0.002253084026373481,
+      "tangent_margin_rad": 1.6326527778331505,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 7,
+      "fraction": 0.5,
+      "s_m": 0.0027520895455707467,
+      "state": [
+        -0.5938906833859525,
+        -1.7138078508890904,
+        -1.7993764762839706,
+        -0.9552217390992462,
+        1.5828658639155417,
+        -1.0155764457069214,
+        0.02803494894944024
+      ],
+      "desired_position_m": [
+        0.519679314947967,
+        -0.6750245578958827,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221095644156808,
+        -0.6751673666085932,
+        -0.015252187234190633
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440793475,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06053218761154236,
+        -0.1926693272763006,
+        0.9793949073738637
+      ],
+      "position_error_m": 0.0027668103319317522,
+      "tangent_error_rad": 1.5069942491498605,
+      "position_margin_m": 0.002233189668068248,
+      "tangent_margin_rad": 1.6328530751879384,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 7,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.0027937562122374135,
+      "state": [
+        -0.586695023252478,
+        -1.7056320904550288,
+        -1.800755518249677,
+        -0.9592820957170147,
+        1.5903267888928614,
+        -1.015030565051188,
+        0.027997005274011832
+      ],
+      "desired_position_m": [
+        0.5196376541555451,
+        -0.6750252575285677,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221151498566071,
+        -0.6751603757506982,
+        -0.015285070028483443
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.01679118444079497,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.060226066232421,
+        -0.19269683820113595,
+        0.9794083670734355
+      ],
+      "position_error_m": 0.0027927739497863105,
+      "tangent_error_rad": 1.5073004855331011,
+      "position_margin_m": 0.0022072260502136896,
+      "tangent_margin_rad": 1.6325468388046978,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 7,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.00283542287890408,
+      "state": [
+        -0.5794993631190035,
+        -1.6974563300209673,
+        -1.8021345602153835,
+        -0.9633424523347831,
+        1.5977877138701806,
+        -1.0144846843954543,
+        0.02795906159858343
+      ],
+      "desired_position_m": [
+        0.5195959933631232,
+        -0.6750259571612527,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221175908846294,
+        -0.6751550410914561,
+        -0.01531838769468576
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440796462,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0601697702447132,
+        -0.19279474290239057,
+        0.9793925596296409
+      ],
+      "position_error_m": 0.002816762221147694,
+      "tangent_error_rad": 1.5073552398932042,
+      "position_margin_m": 0.002183237778852306,
+      "tangent_margin_rad": 1.6324920844445947,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 8,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.002918756212237413,
+      "state": [
+        -0.5750895238530503,
+        -1.6880473719358187,
+        -1.8005211471459184,
+        -0.9644284731254188,
+        1.6024078200275291,
+        -1.0166844604324252,
+        0.027849160566942234
+      ],
+      "desired_position_m": [
+        0.5195126717782795,
+        -0.6750273564266228,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522114905271405,
+        -0.6751331470212548,
+        -0.015413809519094924
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440799457,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.060801102929811245,
+        -0.1927744822180675,
+        0.9793575572221181
+      ],
+      "position_error_m": 0.0028482730009440423,
+      "tangent_error_rad": 1.5067230519250288,
+      "position_margin_m": 0.002151726999055958,
+      "tangent_margin_rad": 1.6331242724127701,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 8,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0029604228789040805,
+      "state": [
+        -0.5778753447205716,
+        -1.6868141742847316,
+        -1.7975286921107467,
+        -0.9614541372982861,
+        1.5995670012075585,
+        -1.0194301171251299,
+        0.027777203210729445
+      ],
+      "desired_position_m": [
+        0.5194710109858577,
+        -0.6750280560593078,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221145234223453,
+        -0.6751223902554391,
+        -0.015477025500916725
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440800952,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.061170031165056905,
+        -0.19294348331772843,
+        0.9793013017108103
+      ],
+      "position_error_m": 0.002860961613002938,
+      "tangent_error_rad": 1.5063505691920298,
+      "position_margin_m": 0.0021390383869970622,
+      "tangent_margin_rad": 1.633496755145769,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 8,
+      "fraction": 0.5,
+      "s_m": 0.003002089545570747,
+      "state": [
+        -0.5806611655880928,
+        -1.685580976633644,
+        -1.7945362370755749,
+        -0.9584798014711531,
+        1.5967261823875871,
+        -1.0221757738178343,
+        0.027705245854516652
+      ],
+      "desired_position_m": [
+        0.5194293501934358,
+        -0.6750287556919928,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221218516878778,
+        -0.6751051576149043,
+        -0.015538664021346028
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440802444,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06091552442803144,
+        -0.19279350632908582,
+        0.9793467020422312
+      ],
+      "position_error_m": 0.0028832059302781685,
+      "tangent_error_rad": 1.506608090798352,
+      "position_margin_m": 0.0021167940697218316,
+      "tangent_margin_rad": 1.633239233539447,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 8,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.0030437562122374133,
+      "state": [
+        -0.583446986455614,
+        -1.684347778982557,
+        -1.791543782040403,
+        -0.9555054656440203,
+        1.5938853635676162,
+        -1.0249214305105387,
+        0.02763328849830386
+      ],
+      "desired_position_m": [
+        0.519387689401014,
+        -0.675029455324678,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221236478348426,
+        -0.6750944704230851,
+        -0.01560180377619716
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.01679118444080394,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.061004067081044965,
+        -0.19295734970037876,
+        0.9793089221467234
+      ],
+      "position_error_m": 0.002901947495235194,
+      "tangent_error_rad": 1.5065166208662137,
+      "position_margin_m": 0.002098052504764806,
+      "tangent_margin_rad": 1.6333307034715852,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 8,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0030854228789040806,
+      "state": [
+        -0.5862328073231352,
+        -1.6831145813314696,
+        -1.7885513270052316,
+        -0.9525311298168875,
+        1.5910445447476453,
+        -1.0276670872032434,
+        0.02756133114209107
+      ],
+      "desired_position_m": [
+        0.5193460286085921,
+        -0.675030154957363,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221255452516,
+        -0.6750830579290018,
+        -0.015664809839224206
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440805438,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06114788559761015,
+        -0.19309262504190153,
+        0.9792732888429916
+      ],
+      "position_error_m": 0.00292274846323915,
+      "tangent_error_rad": 1.5063702482105406,
+      "position_margin_m": 0.00207725153676085,
+      "tangent_margin_rad": 1.6334770761272583,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 9,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.003168756212237414,
+      "state": [
+        -0.5903699345848138,
+        -1.6808525703590842,
+        -1.7873724768635237,
+        -0.9541747912853404,
+        1.5873450877705446,
+        -1.0312359343345248,
+        0.027473722520901474
+      ],
+      "desired_position_m": [
+        0.5192627070237484,
+        -0.6750315542227331,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221261878435483,
+        -0.6750653465343911,
+        -0.015740779617053783
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440808432,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06149105193682494,
+        -0.1930633047875038,
+        0.9792575814749815
+      ],
+      "position_error_m": 0.0029804872834629558,
+      "tangent_error_rad": 1.5060269064606349,
+      "position_margin_m": 0.0020195127165370443,
+      "tangent_margin_rad": 1.633820417877164,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 9,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.0032104228789040807,
+      "state": [
+        -0.5917212409789713,
+        -1.679823757037786,
+        -1.7891860817569873,
+        -0.9587927885809261,
+        1.5864864496134148,
+        -1.0320591247731012,
+        0.027458071255924667
+      ],
+      "desired_position_m": [
+        0.5192210462313266,
+        -0.6750322538554181,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221262385664821,
+        -0.6750619932172477,
+        -0.0157543131547881
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440809924,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06155361094021005,
+        -0.19304649384307213,
+        0.9792569653544049
+      ],
+      "position_error_m": 0.0030168670574403597,
+      "tangent_error_rad": 1.5059645075882446,
+      "position_margin_m": 0.0019831329425596404,
+      "tangent_margin_rad": 1.6338828167495543,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 9,
+      "fraction": 0.5,
+      "s_m": 0.003252089545570747,
+      "state": [
+        -0.5930725473731286,
+        -1.678794943716488,
+        -1.790999686650451,
+        -0.9634107858765117,
+        1.585627811456285,
+        -1.032882315211678,
+        0.02744241999094786
+      ],
+      "desired_position_m": [
+        0.5191793854389047,
+        -0.6750329534881031,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221264229263419,
+        -0.6750598613446852,
+        -0.01576809985542071
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.01679118444081142,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.061607273855399686,
+        -0.19309368064983998,
+        0.9792442873467292
+      ],
+      "position_error_m": 0.0030535218070475182,
+      "tangent_error_rad": 1.5059099451925022,
+      "position_margin_m": 0.0019464781929524819,
+      "tangent_margin_rad": 1.6339373791452967,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 9,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.0032937562122374135,
+      "state": [
+        -0.594423853767286,
+        -1.6777661303951896,
+        -1.792813291543915,
+        -0.9680287831720974,
+        1.584769173299155,
+        -1.0337055056502544,
+        0.027426768725971058
+      ],
+      "desired_position_m": [
+        0.5191377246464828,
+        -0.6750336531207881,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221248577616965,
+        -0.6750572560247834,
+        -0.01578183834421003
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440812918,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06180456016744971,
+        -0.19312319654235746,
+        0.9792260348355584
+      ],
+      "position_error_m": 0.0030886890699463702,
+      "tangent_error_rad": 1.5057117727823255,
+      "position_margin_m": 0.0019113109300536299,
+      "tangent_margin_rad": 1.6341355515554734,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 9,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.003335422878904081,
+      "state": [
+        -0.5957751601614435,
+        -1.6767373170738913,
+        -1.7946268964373786,
+        -0.9726467804676832,
+        1.583910535142025,
+        -1.0345286960888311,
+        0.02741111746099425
+      ],
+      "desired_position_m": [
+        0.5190960638540609,
+        -0.6750343527534732,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221242793534067,
+        -0.6750542559435503,
+        -0.01579546172959286
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440814413,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.061908390441175506,
+        -0.1931277677675348,
+        0.9792185744307101
+      ],
+      "position_error_m": 0.003125021047954046,
+      "tangent_error_rad": 1.5056076596039796,
+      "position_margin_m": 0.001874978952045954,
+      "tangent_margin_rad": 1.6342396647338193,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 10,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.003418756212237414,
+      "state": [
+        -0.5961731953127403,
+        -1.6721027817861556,
+        -1.7993101721977367,
+        -0.9817416291437931,
+        1.5850255877652402,
+        -1.0350631013160598,
+        0.027292622092160816
+      ],
+      "desired_position_m": [
+        0.5190127422692172,
+        -0.6750357520188432,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221263759562906,
+        -0.6750327768232425,
+        -0.015898693858480136
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.0167911844408174,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06222018945343775,
+        -0.19321308551184824,
+        0.979181980844914
+      ],
+      "position_error_m": 0.003184549683685331,
+      "tangent_error_rad": 1.5052938021077544,
+      "position_margin_m": 0.001815450316314669,
+      "tangent_margin_rad": 1.6345535222300445,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 10,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.003460422878904081,
+      "state": [
+        -0.5952199240698794,
+        -1.668497059819718,
+        -1.802179843064631,
+        -0.9862184805243174,
+        1.586999278545585,
+        -1.0347743161047118,
+        0.02718977798830419
+      ],
+      "desired_position_m": [
+        0.5189710814767954,
+        -0.6750364516515283,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221341506161755,
+        -0.675014308917175,
+        -0.01598817830171241
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.0167911844408189,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06208834144838771,
+        -0.19330341860878197,
+        0.979172521167923
+      ],
+      "position_error_m": 0.0032156696409289575,
+      "tangent_error_rad": 1.5054243942250092,
+      "position_margin_m": 0.0017843303590710426,
+      "tangent_margin_rad": 1.6344229301127897,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 10,
+      "fraction": 0.5,
+      "s_m": 0.0035020895455707473,
+      "state": [
+        -0.5942666528270188,
+        -1.6648913378532801,
+        -1.8050495139315248,
+        -0.9906953319048416,
+        1.58897296932593,
+        -1.034485530893364,
+        0.027086933884447557
+      ],
+      "desired_position_m": [
+        0.5189294206843735,
+        -0.6750371512842134,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221372550739148,
+        -0.674995837800841,
+        -0.016077794476891533
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.016791184440820395,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.062303916287224446,
+        -0.1933949544087763,
+        0.9791407527135728
+      ],
+      "position_error_m": 0.0032451857140188517,
+      "tangent_error_rad": 1.5052068465579531,
+      "position_margin_m": 0.0017548142859811484,
+      "tangent_margin_rad": 1.6346404777798458,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 10,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.003543756212237414,
+      "state": [
+        -0.5933133815841581,
+        -1.6612856158868425,
+        -1.8079191847984193,
+        -0.9951721832853659,
+        1.5909466601062747,
+        -1.0341967456820162,
+        0.026984089780590928
+      ],
+      "desired_position_m": [
+        0.5188877598919517,
+        -0.6750378509168984,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221403300467042,
+        -0.6749772939283879,
+        -0.016167402323191464
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.016791184440821887,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06252881568644411,
+        -0.19348260396788436,
+        0.9791090997282467
+      ],
+      "position_error_m": 0.0032775841810326234,
+      "tangent_error_rad": 1.5049800177058001,
+      "position_margin_m": 0.0017224158189673767,
+      "tangent_margin_rad": 1.6348673066319988,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 10,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0035854228789040806,
+      "state": [
+        -0.5923601103412974,
+        -1.6576798939204047,
+        -1.8107888556653131,
+        -0.9996490346658901,
+        1.5929203508866199,
+        -1.0339079604706682,
+        0.0268812456767343
+      ],
+      "desired_position_m": [
+        0.5188460990995298,
+        -0.6750385505495834,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221437492783486,
+        -0.674958941000247,
+        -0.016257045556244885
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.016791184440823382,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06273246713044847,
+        -0.19358264631632502,
+        0.979076297646356
+      ],
+      "position_error_m": 0.0033131414306383916,
+      "tangent_error_rad": 1.504774268279439,
+      "position_margin_m": 0.0016868585693616085,
+      "tangent_margin_rad": 1.63507305605836,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 11,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.003668756212237414,
+      "state": [
+        -0.5894253977520029,
+        -1.6518589017733716,
+        -1.811596620398282,
+        -1.0036438130044614,
+        1.5961459055631975,
+        -1.0337139466403573,
+        0.026778395112315542
+      ],
+      "desired_position_m": [
+        0.5187627775146861,
+        -0.6750399498149535,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221431765581537,
+        -0.6749397800376384,
+        -0.016346638472509365
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.01679118444082638,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06321050119580038,
+        -0.193630104027887,
+        0.9790361665192586
+      ],
+      "position_error_m": 0.00338905457025431,
+      "tangent_error_rad": 1.5042944517650294,
+      "position_margin_m": 0.00161094542974569,
+      "tangent_margin_rad": 1.6355528725727695,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 11,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.003710422878904081,
+      "state": [
+        -0.587443956405569,
+        -1.6496436315927765,
+        -1.809534714264357,
+        -1.0031617399625086,
+        1.5973977694594301,
+        -1.0338087180213942,
+        0.02677838865175342
+      ],
+      "desired_position_m": [
+        0.5187211167222643,
+        -0.6750406494476385,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221431062334317,
+        -0.6749396570375253,
+        -0.016346621409977207
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.016791184440827035,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06321840656284557,
+        -0.19362254635219878,
+        0.9790371507842516
+      ],
+      "position_error_m": 0.003430565318483382,
+      "tangent_error_rad": 1.5042866571833902,
+      "position_margin_m": 0.001569434681516618,
+      "tangent_margin_rad": 1.6355606671544087,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 11,
+      "fraction": 0.5,
+      "s_m": 0.0037520895455707476,
+      "state": [
+        -0.585462515059135,
+        -1.6474283614121807,
+        -1.8074728081304314,
+        -1.0026796669205555,
+        1.5986496333556626,
+        -1.0339034894024308,
+        0.02677838219119129
+      ],
+      "desired_position_m": [
+        0.5186794559298424,
+        -0.6750413490803235,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221430400692094,
+        -0.6749395266890378,
+        -0.016346602827170376
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.016791184440825516,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06322647049151477,
+        -0.1936145367731942,
+        0.9790382140546339
+      ],
+      "position_error_m": 0.003472082632028356,
+      "tangent_error_rad": 1.5042787113118619,
+      "position_margin_m": 0.0015279173679716442,
+      "tangent_margin_rad": 1.635568613025937,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 11,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.003793756212237414,
+      "state": [
+        -0.5834810737127012,
+        -1.6452130912315854,
+        -1.8054109019965061,
+        -1.0021975938786025,
+        1.5999014972518952,
+        -1.0339982607834677,
+        0.02677837573062916
+      ],
+      "desired_position_m": [
+        0.5186377951374206,
+        -0.6750420487130085,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221429805000315,
+        -0.6749393885324432,
+        -0.01634658257620316
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.01679118444082399,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06323457697984615,
+        -0.19360604799085965,
+        0.979039369206132
+      ],
+      "position_error_m": 0.003513608882566286,
+      "tangent_error_rad": 1.5042707308523573,
+      "position_margin_m": 0.001486391117433714,
+      "tangent_margin_rad": 1.6355765934854416,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 11,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0038354228789040812,
+      "state": [
+        -0.5814996323662673,
+        -1.64299782105099,
+        -1.8033489958625808,
+        -1.0017155208366497,
+        1.601153361148128,
+        -1.0340930321645043,
+        0.026778369270067034
+      ],
+      "desired_position_m": [
+        0.5185961343449986,
+        -0.6750427483456936,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221429305659138,
+        -0.674939242393585,
+        -0.01634656055176611
+      ],
+      "desired_tangent": [
+        -0.9998590181245925,
+        -0.01679118444082247,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06324256630337133,
+        -0.19359707064358114,
+        0.9790406283937292
+      ],
+      "position_error_m": 0.003555147038472172,
+      "tangent_error_rad": 1.5042628760184424,
+      "position_margin_m": 0.0014448529615278282,
+      "tangent_margin_rad": 1.6355844483193565,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 12,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.003918756212237415,
+      "state": [
+        -0.5833396803464419,
+        -1.6487903582194006,
+        -1.8002714326632698,
+        -0.9967527748811957,
+        1.5998432684256705,
+        -1.0348296913219852,
+        0.026781059781091562
+      ],
+      "desired_position_m": [
+        0.5185128127601549,
+        -0.6750441476110637,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221426465810185,
+        -0.6749411574672004,
+        -0.01634452857442838
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.01679118444081943,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06327149493746087,
+        -0.19366412770384173,
+        0.9790254968942785
+      ],
+      "position_error_m": 0.0036381030870515302,
+      "tangent_error_rad": 1.5042327588298492,
+      "position_margin_m": 0.0013618969129484699,
+      "tangent_margin_rad": 1.6356145655079497,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 12,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.003960422878904081,
+      "state": [
+        -0.5871611696730502,
+        -1.6567981655684068,
+        -1.7992557755978842,
+        -0.9922721019676948,
+        1.5972813118069804,
+        -1.035471579098429,
+        0.02678375675267822
+      ],
+      "desired_position_m": [
+        0.5184711519677331,
+        -0.6750448472437487,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221435162652682,
+        -0.6749412190236508,
+        -0.016342072236584713
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.01679118444081791,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06323148915191945,
+        -0.19364018672877814,
+        0.9790328170512339
+      ],
+      "position_error_m": 0.0036807052096801333,
+      "tangent_error_rad": 1.5042732505885867,
+      "position_margin_m": 0.0013192947903198668,
+      "tangent_margin_rad": 1.6355740737492122,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 12,
+      "fraction": 0.5,
+      "s_m": 0.004002089545570748,
+      "state": [
+        -0.5909826589996585,
+        -1.6648059729174127,
+        -1.7982401185324983,
+        -0.9877914290541938,
+        1.5947193551882903,
+        -1.0361134668748728,
+        0.026786453724264872
+      ],
+      "desired_position_m": [
+        0.5184294911753112,
+        -0.6750455468764337,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522142998811511,
+        -0.6749417100921642,
+        -0.016339737442485926
+      ],
+      "desired_tangent": [
+        -0.9998590181245927,
+        -0.016791184440816384,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06326364243834703,
+        -0.19363797985954456,
+        0.9790311763684278
+      ],
+      "position_error_m": 0.003721903990154722,
+      "tangent_error_rad": 1.5042410676731204,
+      "position_margin_m": 0.001278096009845278,
+      "tangent_margin_rad": 1.6356062566646785,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 12,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.004043756212237414,
+      "state": [
+        -0.5948041483262669,
+        -1.6728137802664187,
+        -1.797224461467113,
+        -0.9833107561406929,
+        1.5921573985696003,
+        -1.0367553546513169,
+        0.026789150695851527
+      ],
+      "desired_position_m": [
+        0.5183878303828894,
+        -0.6750462465091188,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221424857300541,
+        -0.6749422013869759,
+        -0.016337402619732197
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440814868,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06329555481156907,
+        -0.19363580301854183,
+        0.9790295442582211
+      ],
+      "position_error_m": 0.0037631073756218946,
+      "tangent_error_rad": 1.5042091255975316,
+      "position_margin_m": 0.0012368926243781055,
+      "tangent_margin_rad": 1.6356381987402673,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 12,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.0040854228789040815,
+      "state": [
+        -0.5986256376528752,
+        -1.6808215876154247,
+        -1.796208804401727,
+        -0.9788300832271919,
+        1.58959544195091,
+        -1.0373972424277609,
+        0.026791847667438185
+      ],
+      "desired_position_m": [
+        0.5183461695904675,
+        -0.6750469461418038,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221419734253075,
+        -0.6749426936433305,
+        -0.01633506800957671
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.016791184440813345,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06332743619711369,
+        -0.19363370078027986,
+        0.9790278983495995
+      ],
+      "position_error_m": 0.0038043117359393436,
+      "tangent_error_rad": 1.50417721325064,
+      "position_margin_m": 0.0011956882640606565,
+      "tangent_margin_rad": 1.635670111087159,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 13,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.004168756212237414,
+      "state": [
+        -0.5964261000448163,
+        -1.6842178300270847,
+        -1.7967130483819382,
+        -0.9781115389945103,
+        1.5888624956502435,
+        -1.0415279813560512,
+        0.02678803443741723
+      ],
+      "desired_position_m": [
+        0.5182628480056238,
+        -0.6750483454071738,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221439957575875,
+        -0.6749419941802434,
+        -0.0163383259110492
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.0167911844408103,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06317017754840329,
+        -0.19363662777305984,
+        0.9790374788807529
+      ],
+      "position_error_m": 0.0038893328855987472,
+      "tangent_error_rad": 1.504334749207044,
+      "position_margin_m": 0.0011106671144012529,
+      "tangent_margin_rad": 1.6355125751307549,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 13,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.004210422878904082,
+      "state": [
+        -0.590405073110149,
+        -1.679606265089739,
+        -1.7982329494275353,
+        -0.9818736676753297,
+        1.5906915059682674,
+        -1.0450168325078977,
+        0.02678152423580962
+      ],
+      "desired_position_m": [
+        0.518221187213202,
+        -0.6750490450398589,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221448059403249,
+        -0.674940815885869,
+        -0.016343978842841684
+      ],
+      "desired_tangent": [
+        -0.9998590181245928,
+        -0.01679118444080878,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06313424946621803,
+        -0.19364217790870317,
+        0.9790386986626788
+      ],
+      "position_error_m": 0.003931441962199488,
+      "tangent_error_rad": 1.5043706582663652,
+      "position_margin_m": 0.0010685580378005117,
+      "tangent_margin_rad": 1.6354766660714337,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 13,
+      "fraction": 0.5,
+      "s_m": 0.004252089545570748,
+      "state": [
+        -0.5843840461754817,
+        -1.6749947001523928,
+        -1.7997528504731322,
+        -0.9856357963561491,
+        1.592520516286291,
+        -1.048505683659744,
+        0.02677501403420201
+      ],
+      "desired_position_m": [
+        0.5181795264207801,
+        -0.675049744672544,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522145652842294,
+        -0.6749396380373964,
+        -0.01634963110356649
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440807263,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0630963994655612,
+        -0.19364778197040133,
+        0.9790400302911144
+      ],
+      "position_error_m": 0.0039736043461409696,
+      "tangent_error_rad": 1.5044084922225367,
+      "position_margin_m": 0.0010263956538590305,
+      "tangent_margin_rad": 1.6354388321152622,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 13,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.004293756212237414,
+      "state": [
+        -0.5783630192408142,
+        -1.6703831352150469,
+        -1.801272751518729,
+        -0.9893979250369684,
+        1.5943495266043148,
+        -1.0519945348115907,
+        0.026768503832594395
+      ],
+      "desired_position_m": [
+        0.5181378656283583,
+        -0.675050444305229,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221440886383465,
+        -0.674938626269227,
+        -0.016355394600159043
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.01679118444080574,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06325805904537102,
+        -0.19365463193723614,
+        0.9790282434613753
+      ],
+      "position_error_m": 0.0040133655358285236,
+      "tangent_error_rad": 1.5042463824366945,
+      "position_margin_m": 0.0009866344641714766,
+      "tangent_margin_rad": 1.6356009419011044,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 13,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.004335422878904082,
+      "state": [
+        -0.5723419923061469,
+        -1.665771570277701,
+        -1.8027926525643259,
+        -0.9931600537177877,
+        1.5961785369223387,
+        -1.055483385963437,
+        0.026761993630986785
+      ],
+      "desired_position_m": [
+        0.5180962048359364,
+        -0.675051143937914,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221440475101747,
+        -0.6749369132128443,
+        -0.016360962374960694
+      ],
+      "desired_tangent": [
+        -0.9998590181245929,
+        -0.016791184440804217,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0632934889524399,
+        -0.1936309493071086,
+        0.9790306377875287
+      ],
+      "position_error_m": 0.004054692402250318,
+      "tangent_error_rad": 1.5042112774335263,
+      "position_margin_m": 0.0009453075977496825,
+      "tangent_margin_rad": 1.6356360469042726,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 14,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.0044187562122374145,
+      "state": [
+        -0.5687701962366007,
+        -1.6641229330298228,
+        -1.8019290827298942,
+        -0.9928011971766993,
+        1.5926073199899342,
+        -1.0626170595810707,
+        0.026791911916330804
+      ],
+      "desired_position_m": [
+        0.5180128832510926,
+        -0.675052543203284,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221447255945016,
+        -0.6749428650911753,
+        -0.016334953941623934
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440801177,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06307512554890668,
+        -0.19362084665502266,
+        0.9790467283422083
+      ],
+      "position_error_m": 0.004139806252987131,
+      "tangent_error_rad": 1.504430263358916,
+      "position_margin_m": 0.0008601937470128695,
+      "tangent_margin_rad": 1.635417060978883,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 14,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.004460422878904082,
+      "state": [
+        -0.5712194271017219,
+        -1.6670858607192909,
+        -1.799545611849866,
+        -0.9886802119547916,
+        1.5872070927395059,
+        -1.066261882046858,
+        0.026828340403282438
+      ],
+      "desired_position_m": [
+        0.5179712224586708,
+        -0.6750532428359691,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221420317138376,
+        -0.6749468198167918,
+        -0.016302705677442922
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440799654,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06310612324153918,
+        -0.19345046948312636,
+        0.9790784100705018
+      ],
+      "position_error_m": 0.004180529534751732,
+      "tangent_error_rad": 1.504402068776462,
+      "position_margin_m": 0.000819470465248268,
+      "tangent_margin_rad": 1.6354452555613368,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 14,
+      "fraction": 0.5,
+      "s_m": 0.004502089545570748,
+      "state": [
+        -0.573668657966843,
+        -1.6700487884087587,
+        -1.7971621409698373,
+        -0.9845592267328838,
+        1.5818068654890776,
+        -1.069906704512645,
+        0.026864768890234064
+      ],
+      "desired_position_m": [
+        0.5179295616662489,
+        -0.6750539424686541,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221398248330197,
+        -0.6749525288611347,
+        -0.016270815162899105
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.01679118444079813,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06311150865531581,
+        -0.193374018619553,
+        0.9790931653311521
+      ],
+      "position_error_m": 0.004221886558279972,
+      "tangent_error_rad": 1.5043979587663812,
+      "position_margin_m": 0.0007781134417200282,
+      "tangent_margin_rad": 1.6354493655714177,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 14,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.004543756212237415,
+      "state": [
+        -0.576117888831964,
+        -1.6730117160982267,
+        -1.794778670089809,
+        -0.980438241510976,
+        1.5764066382386492,
+        -1.0735515269784321,
+        0.026901197377185694
+      ],
+      "desired_position_m": [
+        0.5178879008738271,
+        -0.6750546421013391,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221396530208845,
+        -0.6749610471768113,
+        -0.016239442913985956
+      ],
+      "desired_tangent": [
+        -0.999859018124593,
+        -0.016791184440796608,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06291943777116195,
+        -0.19344198043330926,
+        0.9790921021827313
+      ],
+      "position_error_m": 0.004265378057628979,
+      "tangent_error_rad": 1.5045892817916156,
+      "position_margin_m": 0.000734621942371021,
+      "tangent_margin_rad": 1.6352580425461833,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 14,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.004585422878904082,
+      "state": [
+        -0.5785671196970852,
+        -1.6759746437876946,
+        -1.7923951992097804,
+        -0.9763172562890682,
+        1.5710064109882211,
+        -1.0771963494442192,
+        0.026937625864137327
+      ],
+      "desired_position_m": [
+        0.5178462400814052,
+        -0.6750553417340242,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221380959476878,
+        -0.6749687497158007,
+        -0.01620796093266522
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440795092,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06290158837990349,
+        -0.19346493121060618,
+        0.9790887143517489
+      ],
+      "position_error_m": 0.004307717958088324,
+      "tangent_error_rad": 1.50460678162571,
+      "position_margin_m": 0.0006922820419116762,
+      "tangent_margin_rad": 1.6352405427120889,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 15,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.004668756212237416,
+      "state": [
+        -0.5790322299848922,
+        -1.6711597294628013,
+        -1.7959594952870659,
+        -0.9813630091918601,
+        1.5691588351842933,
+        -1.0802919265149762,
+        0.026951309581629675
+      ],
+      "desired_position_m": [
+        0.5177629184965615,
+        -0.6750567409993943,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221403424337803,
+        -0.674972801678964,
+        -0.016196303146411233
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440792046,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06269997666012526,
+        -0.19353199971161392,
+        0.9790883913183955
+      ],
+      "position_error_m": 0.004393893750753483,
+      "tangent_error_rad": 1.504807677335996,
+      "position_margin_m": 0.000606106249246517,
+      "tangent_margin_rad": 1.635039647001803,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 15,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.004710422878904082,
+      "state": [
+        -0.5770481094075781,
+        -1.6633818874484403,
+        -1.8019072622443797,
+        -0.9905297473165598,
+        1.5727114866307936,
+        -1.0797426811199462,
+        0.026928564812170395
+      ],
+      "desired_position_m": [
+        0.5177212577041397,
+        -0.6750574406320793,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221381243406626,
+        -0.6749665705878631,
+        -0.016215762227953442
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440790526,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06298423845208986,
+        -0.1934423151170795,
+        0.979087869615774
+      ],
+      "position_error_m": 0.004431741894817179,
+      "tangent_error_rad": 1.5045243422119152,
+      "position_margin_m": 0.0005682581051828211,
+      "tangent_margin_rad": 1.6353229821258837,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 15,
+      "fraction": 0.5,
+      "s_m": 0.0047520895455707484,
+      "state": [
+        -0.575063988830264,
+        -1.655604045434079,
+        -1.8078550292016935,
+        -0.9996964854412596,
+        1.5762641380772942,
+        -1.079193435724916,
+        0.026905820042711116
+      ],
+      "desired_position_m": [
+        0.5176795969117178,
+        -0.6750581402647643,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221375267292012,
+        -0.6749623536360296,
+        -0.01623559966148485
+      ],
+      "desired_tangent": [
+        -0.9998590181245931,
+        -0.016791184440789003,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06315005075417533,
+        -0.19345618481249294,
+        0.9790744484703601
+      ],
+      "position_error_m": 0.0044712570402762305,
+      "tangent_error_rad": 1.5043579542279821,
+      "position_margin_m": 0.0005287429597237697,
+      "tangent_margin_rad": 1.6354893701098168,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 15,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.004793756212237415,
+      "state": [
+        -0.5730798682529498,
+        -1.6478262034197177,
+        -1.8138027961590073,
+        -1.0088632235659591,
+        1.5798167895237945,
+        -1.0786441903298858,
+        0.02688307527325183
+      ],
+      "desired_position_m": [
+        0.517637936119296,
+        -0.6750588398974493,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221365305659483,
+        -0.6749584200839666,
+        -0.016255498621224034
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440787487,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06331113632551079,
+        -0.19348266134778097,
+        0.9790588132359325
+      ],
+      "position_error_m": 0.00451048436904182,
+      "tangent_error_rad": 1.504196088813761,
+      "position_margin_m": 0.0004895156309581801,
+      "tangent_margin_rad": 1.6356512355240378,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 15,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.004835422878904082,
+      "state": [
+        -0.5710957476756356,
+        -1.6400483614053565,
+        -1.819750563116321,
+        -1.0180299616906587,
+        1.5833694409702948,
+        -1.0780949449348558,
+        0.026860330503792555
+      ],
+      "desired_position_m": [
+        0.5175962753268741,
+        -0.6750595395301344,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221358489701677,
+        -0.6749543655785254,
+        -0.016275371027079627
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440785964,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06347397496497892,
+        -0.19350372152859985,
+        0.9790441074112685
+      ],
+      "position_error_m": 0.004550147017496205,
+      "tangent_error_rad": 1.50403255606739,
+      "position_margin_m": 0.00044985298250379505,
+      "tangent_margin_rad": 1.635814768270409,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 16,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.004918756212237415,
+      "state": [
+        -0.5681351145210857,
+        -1.6333854173138294,
+        -1.818983819076868,
+        -1.0240452950126866,
+        1.5852224820381287,
+        -1.0809400932109208,
+        0.026838124548541734
+      ],
+      "desired_position_m": [
+        0.5175129537420303,
+        -0.6750609387955044,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221398426967672,
+        -0.6749500294908187,
+        -0.016294562710047113
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782918,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06330300236525861,
+        -0.19350503687799928,
+        0.9790549170472452
+      ],
+      "position_error_m": 0.004636229540293332,
+      "tangent_error_rad": 1.5042038631491237,
+      "position_margin_m": 0.00036377045970666794,
+      "tangent_margin_rad": 1.6356434611886752,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 16,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.004960422878904082,
+      "state": [
+        -0.5671586019438499,
+        -1.6345003152366635,
+        -1.8122693080801007,
+        -1.0208938902100149,
+        1.583522871659462,
+        -1.084334486882016,
+        0.026838663362750197
+      ],
+      "desired_position_m": [
+        0.5174712929496085,
+        -0.6750616384281894,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522140049319994,
+        -0.6749491416893317,
+        -0.016293875966360827
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.01679118444078246,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0632725620866714,
+        -0.19345469176652802,
+        0.9790668338374588
+      ],
+      "position_error_m": 0.004678091309500128,
+      "tangent_error_rad": 1.5042352139452886,
+      "position_margin_m": 0.0003219086904998718,
+      "tangent_margin_rad": 1.6356121103925103,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 16,
+      "fraction": 0.5,
+      "s_m": 0.005002089545570749,
+      "state": [
+        -0.5661820893666141,
+        -1.6356152131594972,
+        -1.8055547970833332,
+        -1.017742485407343,
+        1.5818232612807954,
+        -1.0877288805531111,
+        0.026839202176958656
+      ],
+      "desired_position_m": [
+        0.5174296321571866,
+        -0.6750623380608746,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221382265441938,
+        -0.674949775332925,
+        -0.016293562951796906
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782484,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06337603483304895,
+        -0.1934805294795144,
+        0.9790550356957299
+      ],
+      "position_error_m": 0.00471787020682101,
+      "tangent_error_rad": 1.5041310910131283,
+      "position_margin_m": 0.00028212979317899026,
+      "tangent_margin_rad": 1.6357162333246706,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 16,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.005043756212237415,
+      "state": [
+        -0.5652055767893782,
+        -1.6367301110823314,
+        -1.7988402860865662,
+        -1.014591080604671,
+        1.5801236509021286,
+        -1.091123274224206,
+        0.026839740991167114
+      ],
+      "desired_position_m": [
+        0.5173879713647648,
+        -0.6750630376935596,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221376117324948,
+        -0.6749501827356357,
+        -0.01629317499013118
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782512,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0634156235340134,
+        -0.19349545659180273,
+        0.9790495222255726
+      ],
+      "position_error_m": 0.004758865411033252,
+      "tangent_error_rad": 1.50409116851646,
+      "position_margin_m": 0.00024113458896674825,
+      "tangent_margin_rad": 1.635756155821339,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 16,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.005085422878904082,
+      "state": [
+        -0.5642290642121424,
+        -1.6378450090051653,
+        -1.7921257750897988,
+        -1.0114396758019992,
+        1.5784240405234622,
+        -1.0945176678953012,
+        0.02684027980537558
+      ],
+      "desired_position_m": [
+        0.5173463105723429,
+        -0.6750637373262446,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221370876028406,
+        -0.6749503578061553,
+        -0.016292734657868586
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782536,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06344539415291188,
+        -0.19349864403832012,
+        0.9790469634885312
+      ],
+      "position_error_m": 0.0047999605154015945,
+      "tangent_error_rad": 1.5040612820775323,
+      "position_margin_m": 0.00020003948459840562,
+      "tangent_margin_rad": 1.6357860422602666,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 17,
+      "fraction": 0.16666666666666666,
+      "s_m": 0.005147922878904082,
+      "state": [
+        -0.5644256159684462,
+        -1.6495809158273964,
+        -1.7872368737180095,
+        -1.0024524873710763,
+        1.5807449800955535,
+        -1.0984458595202093,
+        0.02686443197306682
+      ],
+      "desired_position_m": [
+        0.5172838193837102,
+        -0.6750647867752722,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.522142214981136,
+        -0.674955152600261,
+        -0.016271601621652546
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782574,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.0629193457600278,
+        -0.19349303116254948,
+        0.9790820204766599
+      ],
+      "position_error_m": 0.004868602226034443,
+      "tangent_error_rad": 1.5045885149073948,
+      "position_margin_m": 0.00013139777396555669,
+      "tangent_margin_rad": 1.6352588094304041,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 17,
+      "fraction": 0.3333333333333333,
+      "s_m": 0.005168756212237416,
+      "state": [
+        -0.5655986803019858,
+        -1.6602019247267936,
+        -1.7890624833429873,
+        -0.9966167037428253,
+        1.5847655300463115,
+        -1.0989796574740223,
+        0.0268880453265496
+      ],
+      "desired_position_m": [
+        0.5172629889874992,
+        -0.6750651365916146,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221422333509628,
+        -0.6749594810119905,
+        -0.01625101616056059
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782588,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06280075325267132,
+        -0.19347670076264734,
+        0.9790928616085903
+      ],
+      "position_error_m": 0.004890606756495896,
+      "tangent_error_rad": 1.5047076253966218,
+      "position_margin_m": 0.0001093932435041042,
+      "tangent_margin_rad": 1.635139698941177,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 17,
+      "fraction": 0.5,
+      "s_m": 0.005189589545570749,
+      "state": [
+        -0.5667717446355254,
+        -1.6708229336261908,
+        -1.790888092967965,
+        -0.9907809201145743,
+        1.5887860799970692,
+        -1.0995134554278352,
+        0.026911658680032376
+      ],
+      "desired_position_m": [
+        0.5172421585912883,
+        -0.6750654864079572,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221423169396447,
+        -0.6749637478035634,
+        -0.016230416456301727
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782602,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06267808085483408,
+        -0.1934575706778635,
+        0.9791045023529278
+      ],
+      "position_error_m": 0.0049127579896102985,
+      "tangent_error_rad": 1.5048308702667863,
+      "position_margin_m": 8.724201038970165e-05,
+      "tangent_margin_rad": 1.6350164540710126,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 17,
+      "fraction": 0.6666666666666666,
+      "s_m": 0.0052104228789040825,
+      "state": [
+        -0.5679448089690651,
+        -1.6814439425255878,
+        -1.792713702592943,
+        -0.9849451364863233,
+        1.5928066299478272,
+        -1.100047253381648,
+        0.026935272033515156
+      ],
+      "desired_position_m": [
+        0.5172213281950774,
+        -0.6750658362242997,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221421731332647,
+        -0.6749705410418667,
+        -0.016210355600458207
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782612,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.06257462096331824,
+        -0.19356375777914267,
+        0.9790901329733206
+      ],
+      "position_error_m": 0.00493467236047171,
+      "tangent_error_rad": 1.5049327538129575,
+      "position_margin_m": 6.532763952829014e-05,
+      "tangent_margin_rad": 1.6349145705248413,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    },
+    {
+      "interval_index": 17,
+      "fraction": 0.8333333333333334,
+      "s_m": 0.005231256212237415,
+      "state": [
+        -0.5691178733026048,
+        -1.6920649514249848,
+        -1.7945393122179205,
+        -0.9791093528580722,
+        1.5968271798985851,
+        -1.100581051335461,
+        0.026958885386997932
+      ],
+      "desired_position_m": [
+        0.5172004977988665,
+        -0.6750661860406422,
+        -0.016567
+      ],
+      "achieved_position_m": [
+        0.5221412486466966,
+        -0.6749718212702376,
+        -0.016189148379464478
+      ],
+      "desired_tangent": [
+        -0.9998590181245932,
+        -0.016791184440782626,
+        0.0
+      ],
+      "achieved_tangent": [
+        -0.062497345362225294,
+        -0.19339569906178267,
+        0.9791282783206086
+      ],
+      "position_error_m": 0.004956076623436078,
+      "tangent_error_rad": 1.5050130142349565,
+      "position_margin_m": 4.392337656392194e-05,
+      "tangent_margin_rad": 1.6348343101028424,
+      "feasible": true,
+      "source_magnet_lumen_distance_m": null,
+      "source_magnet_lumen_margin_m": null,
+      "source_magnet_lumen_constraint_satisfied": true
+    }
+  ]
+}

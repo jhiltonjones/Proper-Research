@@ -1,0 +1,17 @@
+{
+  "source_plan_dir": "plans/rectangle_10x15mm_skipglobal_2026-09-12/time_parameterized_configuration_path",
+  "z_shift_m": 0.03,
+  "ik_converged_count": 265,
+  "ik_total": 265,
+  "fk_translation_error_max_mm": 0.0009963642579619778,
+  "fk_translation_error_mean_mm": 0.00011621680079056975,
+  "orientation_error_max_deg": 4.9007756888181105e-05,
+  "joint_continuity_jump_count": 0,
+  "radius_floor_violations": 0,
+  "z_window_violations": 0,
+  "achieved_vs_desired_orig_mean_mm": 0.9852199449885678,
+  "achieved_vs_desired_orig_max_mm": 2.5561724565331567,
+  "achieved_vs_desired_shift_mean_mm": 3.0311526083035494,
+  "achieved_vs_desired_shift_max_mm": 4.560935015353255,
+  "verdict_ok": false
+}

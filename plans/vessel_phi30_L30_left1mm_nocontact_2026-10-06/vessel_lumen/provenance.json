@@ -1,0 +1,30 @@
+{
+  "manual_boundary_path": "/home/jack/Proper-Research/manual_vessel_boundaries.json",
+  "calibration_points_path": "/home/jack/Proper-Research/calibration_points.json",
+  "metres_per_pixel": 0.000370868128638602,
+  "known_calibration_distance_mm": 80.62257748298549,
+  "saved_axis_convention": "image_cartesian",
+  "positive_axis_signs": [
+    -1.0,
+    1.0
+  ],
+  "beam_axial_axis_R": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "beam_plane_normal_axis_R": [
+    0.0,
+    0.0,
+    -1.0
+  ],
+  "T_robot_beam_pose6": [
+    0.670575,
+    -0.719727,
+    -0.016567,
+    0.0,
+    -1.5707963,
+    0.0
+  ],
+  "z_recalibration_note": "Z shifted by -23.060mm on 2026-10-05 to match the current BEAM_BASE_PIVOT_Z=-0.039627 (build_vessel_plan.py) -- this file as mapped used the old unraised reference height -0.016567, the same stale-Z issue documented in vessel_lumen_robot_frame_left1p5mm_zcorrected.json (2026-10-03)."
+}

@@ -1,0 +1,58 @@
+BASE-CORRECTED SHAPE PLAN -- PROVENANCE
+built 2026-11-03
+
+Beam-base override (the fix this plan exists to apply):
+  pivot_point xyz (m)  = [0.670575, -0.719727, -0.039627]
+  start_point xyz (m)  = [0.390575, -0.719727, -0.039627]
+  source               = rig_calibration.BEAM_BASE_XYZ_M, via
+                          plan_shape_path.py's new --use-calibrated-beam-base
+                          flag (_calibrated_initial_poses()), which overrides
+                          only the Z component of initial_conditions.
+                          make_initial_poses()'s stale -0.016567m pivot/start
+                          with the single calibrated rig_calibration value --
+                          same mechanism build_vessel_plan.py uses for the
+                          vessel plans. No raise applied (author confirmed:
+                          the rig was never physically raised during the
+                          shape-tracking campaign).
+
+Gravity:               OFF (build_model_bundle's own default, use_gravity=
+                       False; never overridden by build_planning_context).
+
+Magnetization:         default_magnet_params() / parameters.py defaults,
+                       moment_per_length ~0.688 A*m (printed at build time,
+                       "[COMPOSITE BEAM MAGNETISATION]" block in the build
+                       log), source_dipole_body_axis = rig_calibration.
+                       SOURCE_DIPOLE_BODY_AXIS, source_dipole_yaw_deg=0.0.
+
+Beam model:            bimaterial (nitinol wire + PDMS/iron-particle
+                       composite tip), effective_youngs_modulus=1.60e6 Pa
+                       (composite), wire_youngs_modulus_pa=75.0e9.
+
+Lumen (L1 solve & FD validation): generic straight, wide-bore
+                       (LumenConfig(length=0.06, radius=0.05, bends=()))
+                       -- this is DELIBERATE for the shape conditions (no
+                       real vessel wall; confirmed in planning_context.py's
+                       own comment: a generic lumen is required for the
+                       analytic contact Jacobian to pass FD validation).
+                       Not the same situation as the vessel plans, which
+                       swap in the real digitized vessel geometry.
+
+Magnet-pose convention: pose6 = [x, y, z, rx, ry, rz] rotation VECTOR
+                       (not quaternion), robot-base frame R.
+
+Magnet exclusion:      ON during L1 (source magnet must stay >= 240mm from
+                       the planned tip path), confirmed from the build log's
+                       own "[layer1] magnet exclusion ON" line.
+
+Code change:           proper_research/planning/plan_shape_path.py --
+                       new --use-calibrated-beam-base flag (opt-in, default
+                       off, existing behavior/callers unaffected). Left
+                       UNCOMMITTED in the main checkout for the author's
+                       review, same pattern as this session's other fixes.
+
+Git commit:            NOT RECORDED -- this fork's git operations are
+                       isolated to its own worktree and cannot read the
+                       main checkout's git state; ask the coordinator/
+                       author for the commit this plan's code should be
+                       pinned to once the --use-calibrated-beam-base change
+                       above is committed.

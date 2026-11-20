@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian_ltv,inv_ltv,1,close_loop_logs/rectangle_fair_seam_2026-09-17/INV_LTV_1.0/runs/inv_ltv_rep1_20260917T133254Z,path_complete,285,263,7.552780225392492,5.560638783269963,13.515,13.194099999999999,0.24763636363636368,0.19,62.1146

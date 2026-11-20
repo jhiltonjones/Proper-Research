@@ -1,0 +1,29 @@
+{
+  "manual_boundary_path": "/home/jack/Proper-Research/manual_vessel_boundaries.json",
+  "calibration_points_path": "/home/jack/Proper-Research/calibration_points.json",
+  "metres_per_pixel": 0.00037254901960784314,
+  "known_calibration_distance_mm": 38.0,
+  "saved_axis_convention": "image_cartesian",
+  "positive_axis_signs": [
+    -1.0,
+    1.0
+  ],
+  "beam_axial_axis_R": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "beam_plane_normal_axis_R": [
+    0.0,
+    0.0,
+    -1.0
+  ],
+  "T_robot_beam_pose6": [
+    0.525575,
+    -0.670028,
+    -0.016567,
+    0.0,
+    -1.5707963,
+    0.0
+  ]
+}

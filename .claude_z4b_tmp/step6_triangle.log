@@ -1,0 +1,2537 @@
+[bypass] loaded centreline: 161 pts from /home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_magdist_2026-11-04/shape_triangle/shape_centreline.npz
+[INIT] start_point (magnet in R) = [ 0.390575   -0.719727   -0.016567   -3.07793295  0.5753727   0.04503358]
+[INIT] pivot_point  (beam base)  = [ 0.670575   -0.719727   -0.016567    3.14159265  0.          0.        ]
+[INIT] L0=0.0250, dt=0.0100
+[use-calibrated-beam-base] pivot_point (beam base)  = [0.670575, -0.719727, -0.039627, 3.14159265, 0.0, 0.0]
+[use-calibrated-beam-base] start_point (magnet in R) = [0.390575, -0.719727, -0.039627, -3.07793295, 0.5753727, 0.04503358]
+L_ins=0.025 -> L_model=0.025, wire_len=0.000, tip_len=0.025
+
+[COMPOSITE BEAM MAGNETISATION]
+  moment_per_length: 0.6883145406820589 A m
+  profile shape: (3, 5)
+  profile norms: [0.34415727 0.68831454 0.68831454 0.68831454 0.68831454]
+  approximate total moment: 0.01720786351705147 A m^2
+[UR-IK DEBUG][09:18:47.175][CUSTOM IK] seed q [rad]: [-0.85634357 -1.94584002 -1.76176286 -1.0331945   1.56234264 -2.05640871]
+[UR-IK DEBUG][09:18:47.175][CUSTOM IK] target pose [m, rotvec rad]: [ 0.390575   -0.719727   -0.039627   -3.07793295  0.5753727   0.04503358]
+[UR-IK DEBUG][09:18:47.176][CUSTOM IK] iteration=0 position_error=66.160873 mm orientation_error=0.000000 deg scaled_cost=6.616087e-02 m condition=2.918207e+01 damping=1.000000e-04
+[UR-IK DEBUG][09:18:47.180][CUSTOM IK] finished converged=True reason=pose_tolerance iterations=3 position_error=0.000007 mm orientation_error=0.000000 deg
+[UR-IK DEBUG][09:18:47.180][CUSTOM IK] solution q [rad]: [-0.85328198 -1.87444702 -1.73188623 -1.13449395  1.56258198 -2.05351987]
+[shape] triangle (loaded) -> 161 points, perimeter 77.21 mm
+[layer1] magnet exclusion: magnet@[0.391, -0.72, -0.04]  min gap 241.0 mm
+[layer1] tangent tol=180deg, position tol=1.00mm, magnet_distance_weight=1.0, tcp_box_weight=1.0, tcp_box_margin_m=0.027
+
+[layer1] inverse planning -> /home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/shape_triangle/offline_inverse_configuration_60
+[INIT] start_point (magnet in R) = [ 0.390575   -0.719727   -0.016567   -3.07793295  0.5753727   0.04503358]
+[INIT] pivot_point  (beam base)  = [ 0.670575   -0.719727   -0.016567    3.14159265  0.          0.        ]
+[INIT] L0=0.0250, dt=0.0100
+[INVERSE PATH] initial projection s=0.000000 m distance=0.0000 mm
+[INVERSE PATH] node=0000 s=0.000000 m
+  position_error=0.0000 mm
+  tangent_error=50.5337 deg
+  evaluations=1 attempts=1
+  ||delta_q||=0.000000 rad delta_L=0.0000 mm
+  cond_eff(J)=3.704e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.001 mm margin=-0.000 mm segment=80
+[INVERSE PATH] node=0001 s=0.000250 m
+  position_error=0.0549 mm
+  tangent_error=49.8113 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.017234 rad delta_L=0.1353 mm
+  cond_eff(J)=3.558e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=245.152 mm margin=4.151 mm segment=72
+[INVERSE PATH] node=0002 s=0.000500 m
+  position_error=0.0412 mm
+  tangent_error=49.0887 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.010635 rad delta_L=0.1574 mm
+  cond_eff(J)=3.550e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=246.886 mm margin=5.885 mm segment=64
+[INVERSE PATH] node=0003 s=0.000750 m
+  position_error=0.0347 mm
+  tangent_error=48.3778 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.007751 rad delta_L=0.1623 mm
+  cond_eff(J)=3.429e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=246.875 mm margin=5.873 mm segment=56
+[INVERSE PATH] node=0004 s=0.001000 m
+  position_error=0.0320 mm
+  tangent_error=47.6780 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.006223 rad delta_L=0.1647 mm
+  cond_eff(J)=3.279e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=245.945 mm margin=4.944 mm segment=48
+[INVERSE PATH] node=0005 s=0.001250 m
+  position_error=0.0309 mm
+  tangent_error=46.9888 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.005373 rad delta_L=0.1666 mm
+  cond_eff(J)=3.106e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=244.572 mm margin=3.570 mm segment=48
+[INVERSE PATH] node=0006 s=0.001500 m
+  position_error=0.0306 mm
+  tangent_error=46.3104 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.004823 rad delta_L=0.1684 mm
+  cond_eff(J)=2.934e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=242.996 mm margin=1.994 mm segment=48
+[INVERSE PATH] node=0007 s=0.001750 m
+  position_error=0.0307 mm
+  tangent_error=45.6424 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.004430 rad delta_L=0.1701 mm
+  cond_eff(J)=2.767e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.334 mm margin=0.333 mm segment=47
+[INVERSE PATH] node=0008 s=0.002000 m
+  position_error=0.0307 mm
+  tangent_error=44.9830 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.004635 rad delta_L=0.1719 mm
+  cond_eff(J)=2.679e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=47
+[INVERSE PATH] node=0009 s=0.002250 m
+  position_error=0.0309 mm
+  tangent_error=44.3314 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.004660 rad delta_L=0.1736 mm
+  cond_eff(J)=2.594e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=47
+[INVERSE PATH] node=0010 s=0.002500 m
+  position_error=0.0311 mm
+  tangent_error=43.6888 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.004491 rad delta_L=0.1752 mm
+  cond_eff(J)=2.518e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=47
+[INVERSE PATH] node=0011 s=0.002750 m
+  position_error=0.0314 mm
+  tangent_error=43.0554 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004339 rad delta_L=0.1769 mm
+  cond_eff(J)=2.455e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=47
+[INVERSE PATH] node=0012 s=0.003000 m
+  position_error=0.0317 mm
+  tangent_error=42.4309 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004199 rad delta_L=0.1784 mm
+  cond_eff(J)=2.380e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=46
+[INVERSE PATH] node=0013 s=0.003250 m
+  position_error=0.0320 mm
+  tangent_error=41.8153 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004062 rad delta_L=0.1800 mm
+  cond_eff(J)=2.316e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=46
+[INVERSE PATH] node=0014 s=0.003500 m
+  position_error=0.0322 mm
+  tangent_error=41.2086 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.003929 rad delta_L=0.1815 mm
+  cond_eff(J)=2.245e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0015 s=0.003750 m
+  position_error=0.0325 mm
+  tangent_error=40.6106 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.003800 rad delta_L=0.1830 mm
+  cond_eff(J)=2.180e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0016 s=0.004000 m
+  position_error=0.0328 mm
+  tangent_error=40.0211 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003675 rad delta_L=0.1845 mm
+  cond_eff(J)=2.118e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0017 s=0.004250 m
+  position_error=0.0331 mm
+  tangent_error=39.4403 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003554 rad delta_L=0.1859 mm
+  cond_eff(J)=2.053e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=46
+[INVERSE PATH] node=0018 s=0.004500 m
+  position_error=0.0333 mm
+  tangent_error=38.8678 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.003437 rad delta_L=0.1873 mm
+  cond_eff(J)=1.990e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0019 s=0.004750 m
+  position_error=0.0336 mm
+  tangent_error=38.3037 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003324 rad delta_L=0.1887 mm
+  cond_eff(J)=1.931e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0020 s=0.005000 m
+  position_error=0.0338 mm
+  tangent_error=37.7479 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003213 rad delta_L=0.1900 mm
+  cond_eff(J)=1.868e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0021 s=0.005250 m
+  position_error=0.0341 mm
+  tangent_error=37.2002 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.003105 rad delta_L=0.1914 mm
+  cond_eff(J)=1.817e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0022 s=0.005500 m
+  position_error=0.0343 mm
+  tangent_error=36.6607 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003001 rad delta_L=0.1926 mm
+  cond_eff(J)=1.759e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0023 s=0.005750 m
+  position_error=0.0345 mm
+  tangent_error=36.1290 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002900 rad delta_L=0.1939 mm
+  cond_eff(J)=1.699e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=46
+[INVERSE PATH] node=0024 s=0.006000 m
+  position_error=0.0347 mm
+  tangent_error=35.6053 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002800 rad delta_L=0.1951 mm
+  cond_eff(J)=1.655e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0025 s=0.006250 m
+  position_error=0.0350 mm
+  tangent_error=35.0893 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002704 rad delta_L=0.1963 mm
+  cond_eff(J)=1.598e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0026 s=0.006500 m
+  position_error=0.0352 mm
+  tangent_error=34.5811 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002611 rad delta_L=0.1975 mm
+  cond_eff(J)=1.545e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0027 s=0.006750 m
+  position_error=0.0354 mm
+  tangent_error=34.0805 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002520 rad delta_L=0.1987 mm
+  cond_eff(J)=1.488e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=46
+[INVERSE PATH] node=0028 s=0.007000 m
+  position_error=0.0356 mm
+  tangent_error=33.5874 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.002430 rad delta_L=0.1998 mm
+  cond_eff(J)=1.464e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0029 s=0.007250 m
+  position_error=0.0358 mm
+  tangent_error=33.1018 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002347 rad delta_L=0.2009 mm
+  cond_eff(J)=1.411e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0030 s=0.007500 m
+  position_error=0.0360 mm
+  tangent_error=32.6235 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002263 rad delta_L=0.2020 mm
+  cond_eff(J)=1.359e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0031 s=0.007750 m
+  position_error=0.0362 mm
+  tangent_error=32.1525 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002182 rad delta_L=0.2030 mm
+  cond_eff(J)=1.332e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0032 s=0.008000 m
+  position_error=0.0364 mm
+  tangent_error=31.6888 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002103 rad delta_L=0.2041 mm
+  cond_eff(J)=1.294e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0033 s=0.008250 m
+  position_error=0.0366 mm
+  tangent_error=31.2321 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002027 rad delta_L=0.2051 mm
+  cond_eff(J)=1.247e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0034 s=0.008500 m
+  position_error=0.0368 mm
+  tangent_error=30.7826 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001950 rad delta_L=0.2061 mm
+  cond_eff(J)=1.219e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0035 s=0.008750 m
+  position_error=0.0370 mm
+  tangent_error=30.3399 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.001880 rad delta_L=0.2070 mm
+  cond_eff(J)=1.169e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0036 s=0.009000 m
+  position_error=0.0372 mm
+  tangent_error=29.9041 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.001811 rad delta_L=0.2080 mm
+  cond_eff(J)=1.127e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0037 s=0.009250 m
+  position_error=0.0373 mm
+  tangent_error=29.4750 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001744 rad delta_L=0.2089 mm
+  cond_eff(J)=1.106e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0038 s=0.009500 m
+  position_error=0.0375 mm
+  tangent_error=29.0528 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001680 rad delta_L=0.2098 mm
+  cond_eff(J)=1.079e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0039 s=0.009750 m
+  position_error=0.0377 mm
+  tangent_error=28.6371 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.001617 rad delta_L=0.2106 mm
+  cond_eff(J)=1.040e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0040 s=0.010000 m
+  position_error=0.0378 mm
+  tangent_error=28.2281 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.001556 rad delta_L=0.2115 mm
+  cond_eff(J)=1.022e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0041 s=0.010250 m
+  position_error=0.0380 mm
+  tangent_error=27.8255 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.001498 rad delta_L=0.2123 mm
+  cond_eff(J)=9.861e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0042 s=0.010500 m
+  position_error=0.0381 mm
+  tangent_error=27.4293 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001442 rad delta_L=0.2132 mm
+  cond_eff(J)=9.533e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0043 s=0.010750 m
+  position_error=0.0383 mm
+  tangent_error=27.0394 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.001391 rad delta_L=0.2140 mm
+  cond_eff(J)=9.202e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0044 s=0.011000 m
+  position_error=0.0384 mm
+  tangent_error=26.6558 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001335 rad delta_L=0.2147 mm
+  cond_eff(J)=9.091e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0045 s=0.011250 m
+  position_error=0.0386 mm
+  tangent_error=26.2784 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001284 rad delta_L=0.2155 mm
+  cond_eff(J)=8.777e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0046 s=0.011500 m
+  position_error=0.0387 mm
+  tangent_error=25.9071 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001237 rad delta_L=0.2162 mm
+  cond_eff(J)=8.545e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0047 s=0.011750 m
+  position_error=0.0388 mm
+  tangent_error=25.5418 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001189 rad delta_L=0.2169 mm
+  cond_eff(J)=8.254e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0048 s=0.012000 m
+  position_error=0.0390 mm
+  tangent_error=25.1825 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001144 rad delta_L=0.2176 mm
+  cond_eff(J)=7.975e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0049 s=0.012250 m
+  position_error=0.0391 mm
+  tangent_error=24.8291 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001100 rad delta_L=0.2183 mm
+  cond_eff(J)=7.865e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0050 s=0.012500 m
+  position_error=0.0392 mm
+  tangent_error=24.4815 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.001058 rad delta_L=0.2190 mm
+  cond_eff(J)=7.603e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0051 s=0.012750 m
+  position_error=0.0393 mm
+  tangent_error=24.1397 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001018 rad delta_L=0.2196 mm
+  cond_eff(J)=7.351e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0052 s=0.013000 m
+  position_error=0.0395 mm
+  tangent_error=23.8036 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.000979 rad delta_L=0.2203 mm
+  cond_eff(J)=7.352e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0053 s=0.013250 m
+  position_error=0.0396 mm
+  tangent_error=23.4731 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000943 rad delta_L=0.2209 mm
+  cond_eff(J)=7.110e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0054 s=0.013500 m
+  position_error=0.0397 mm
+  tangent_error=23.1481 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000908 rad delta_L=0.2215 mm
+  cond_eff(J)=6.878e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0055 s=0.013750 m
+  position_error=0.0398 mm
+  tangent_error=22.8286 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000873 rad delta_L=0.2221 mm
+  cond_eff(J)=6.745e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0056 s=0.014000 m
+  position_error=0.0399 mm
+  tangent_error=22.5146 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.000840 rad delta_L=0.2226 mm
+  cond_eff(J)=6.528e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0057 s=0.014250 m
+  position_error=0.0400 mm
+  tangent_error=22.2059 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000809 rad delta_L=0.2232 mm
+  cond_eff(J)=6.319e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0058 s=0.014500 m
+  position_error=0.0401 mm
+  tangent_error=21.9026 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000779 rad delta_L=0.2237 mm
+  cond_eff(J)=6.214e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0059 s=0.014750 m
+  position_error=0.0402 mm
+  tangent_error=21.6044 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000749 rad delta_L=0.2243 mm
+  cond_eff(J)=6.018e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0060 s=0.015000 m
+  position_error=0.0403 mm
+  tangent_error=21.3115 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.000722 rad delta_L=0.2248 mm
+  cond_eff(J)=5.829e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0061 s=0.015250 m
+  position_error=0.0404 mm
+  tangent_error=21.0236 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000696 rad delta_L=0.2253 mm
+  cond_eff(J)=5.647e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0062 s=0.015500 m
+  position_error=0.0405 mm
+  tangent_error=20.7407 deg
+  evaluations=36 attempts=1
+  ||delta_q||=0.000669 rad delta_L=0.2257 mm
+  cond_eff(J)=5.706e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0063 s=0.015750 m
+  position_error=0.0405 mm
+  tangent_error=20.4629 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000647 rad delta_L=0.2262 mm
+  cond_eff(J)=5.531e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0064 s=0.016000 m
+  position_error=0.0406 mm
+  tangent_error=20.1901 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000623 rad delta_L=0.2267 mm
+  cond_eff(J)=5.362e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0065 s=0.016250 m
+  position_error=0.0407 mm
+  tangent_error=19.9221 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.000602 rad delta_L=0.2271 mm
+  cond_eff(J)=5.200e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0066 s=0.016500 m
+  position_error=0.0408 mm
+  tangent_error=19.6589 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.000578 rad delta_L=0.2275 mm
+  cond_eff(J)=5.120e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0067 s=0.016750 m
+  position_error=0.0408 mm
+  tangent_error=19.4005 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.000559 rad delta_L=0.2279 mm
+  cond_eff(J)=4.967e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0068 s=0.017000 m
+  position_error=0.0409 mm
+  tangent_error=19.1468 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.000540 rad delta_L=0.2283 mm
+  cond_eff(J)=4.820e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0069 s=0.017250 m
+  position_error=0.0410 mm
+  tangent_error=18.8977 deg
+  evaluations=39 attempts=1
+  ||delta_q||=0.000520 rad delta_L=0.2287 mm
+  cond_eff(J)=4.678e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0070 s=0.017500 m
+  position_error=0.0410 mm
+  tangent_error=18.6533 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.000505 rad delta_L=0.2291 mm
+  cond_eff(J)=4.541e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0071 s=0.017750 m
+  position_error=0.0411 mm
+  tangent_error=18.4133 deg
+  evaluations=56 attempts=1
+  ||delta_q||=0.000489 rad delta_L=0.2295 mm
+  cond_eff(J)=4.607e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0072 s=0.018000 m
+  position_error=0.0412 mm
+  tangent_error=18.1779 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000474 rad delta_L=0.2298 mm
+  cond_eff(J)=4.475e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0073 s=0.018250 m
+  position_error=0.0412 mm
+  tangent_error=17.9469 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000458 rad delta_L=0.2302 mm
+  cond_eff(J)=4.346e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0074 s=0.018500 m
+  position_error=0.0506 mm
+  tangent_error=17.5283 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001742 rad delta_L=0.2380 mm
+  cond_eff(J)=4.873e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0075 s=0.018750 m
+  position_error=0.0556 mm
+  tangent_error=16.8718 deg
+  evaluations=38 attempts=1
+  ||delta_q||=0.003323 rad delta_L=0.2660 mm
+  cond_eff(J)=4.161e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0076 s=0.019000 m
+  position_error=0.0553 mm
+  tangent_error=16.2775 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002907 rad delta_L=0.2685 mm
+  cond_eff(J)=3.806e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0077 s=0.019250 m
+  position_error=0.0542 mm
+  tangent_error=15.7373 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002509 rad delta_L=0.2666 mm
+  cond_eff(J)=3.472e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0078 s=0.019500 m
+  position_error=0.0531 mm
+  tangent_error=15.2409 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002178 rad delta_L=0.2643 mm
+  cond_eff(J)=3.214e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0079 s=0.019750 m
+  position_error=0.0523 mm
+  tangent_error=14.7795 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.001921 rad delta_L=0.2623 mm
+  cond_eff(J)=3.048e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0080 s=0.020000 m
+  position_error=0.0518 mm
+  tangent_error=14.2283 deg
+  evaluations=32 attempts=1
+  ||delta_q||=0.001712 rad delta_L=0.2605 mm
+  cond_eff(J)=2.852e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0081 s=0.020250 m
+  position_error=0.0510 mm
+  tangent_error=13.4451 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.001542 rad delta_L=0.2599 mm
+  cond_eff(J)=2.858e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0082 s=0.020500 m
+  position_error=0.0507 mm
+  tangent_error=12.3514 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001381 rad delta_L=0.2594 mm
+  cond_eff(J)=2.747e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0083 s=0.020750 m
+  position_error=0.0508 mm
+  tangent_error=10.5863 deg
+  evaluations=32 attempts=1
+  ||delta_q||=0.001241 rad delta_L=0.2599 mm
+  cond_eff(J)=2.601e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0084 s=0.021000 m
+  position_error=0.0508 mm
+  tangent_error=7.6859 deg
+  evaluations=33 attempts=1
+  ||delta_q||=0.001057 rad delta_L=0.2619 mm
+  cond_eff(J)=2.608e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0085 s=0.021250 m
+  position_error=0.0511 mm
+  tangent_error=3.5204 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.000857 rad delta_L=0.2636 mm
+  cond_eff(J)=2.481e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0086 s=0.021500 m
+  position_error=0.0521 mm
+  tangent_error=9.0444 deg
+  evaluations=96 attempts=1
+  ||delta_q||=0.000483 rad delta_L=0.2687 mm
+  cond_eff(J)=2.365e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0087 s=0.021750 m
+  position_error=0.0500 mm
+  tangent_error=56.6773 deg
+  evaluations=50 attempts=1
+  ||delta_q||=0.000670 rad delta_L=0.2582 mm
+  cond_eff(J)=2.271e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=45
+[INVERSE PATH] node=0088 s=0.022000 m
+  position_error=0.0124 mm
+  tangent_error=106.2816 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.002356 rad delta_L=0.0649 mm
+  cond_eff(J)=2.447e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=45
+[INVERSE PATH] node=0089 s=0.022250 m
+  position_error=0.0099 mm
+  tangent_error=118.6545 deg
+  evaluations=49 attempts=1
+  ||delta_q||=0.002302 rad delta_L=-0.0510 mm
+  cond_eff(J)=2.558e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=242.618 mm margin=1.616 mm segment=45
+[INVERSE PATH] node=0090 s=0.022500 m
+  position_error=0.0193 mm
+  tangent_error=121.9809 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.003030 rad delta_L=-0.1011 mm
+  cond_eff(J)=2.672e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=244.871 mm margin=3.870 mm segment=45
+[INVERSE PATH] node=0091 s=0.022750 m
+  position_error=0.0217 mm
+  tangent_error=124.2425 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.003153 rad delta_L=-0.1139 mm
+  cond_eff(J)=2.817e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=247.209 mm margin=6.208 mm segment=45
+[INVERSE PATH] node=0092 s=0.023000 m
+  position_error=0.0233 mm
+  tangent_error=125.1372 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.003203 rad delta_L=-0.1222 mm
+  cond_eff(J)=2.942e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=249.580 mm margin=8.579 mm segment=45
+[INVERSE PATH] node=0093 s=0.023250 m
+  position_error=0.0239 mm
+  tangent_error=125.4361 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.003136 rad delta_L=-0.1254 mm
+  cond_eff(J)=3.123e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=251.917 mm margin=10.915 mm segment=45
+[INVERSE PATH] node=0094 s=0.023500 m
+  position_error=0.0242 mm
+  tangent_error=125.2985 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.003059 rad delta_L=-0.1269 mm
+  cond_eff(J)=3.249e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=254.192 mm margin=13.191 mm segment=45
+[INVERSE PATH] node=0095 s=0.023750 m
+  position_error=0.0240 mm
+  tangent_error=124.9391 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.002985 rad delta_L=-0.1258 mm
+  cond_eff(J)=3.430e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=256.415 mm margin=15.413 mm segment=45
+[INVERSE PATH] node=0096 s=0.024000 m
+  position_error=0.0237 mm
+  tangent_error=124.4161 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002902 rad delta_L=-0.1243 mm
+  cond_eff(J)=3.608e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=258.574 mm margin=17.573 mm segment=45
+[INVERSE PATH] node=0097 s=0.024250 m
+  position_error=0.0234 mm
+  tangent_error=123.8858 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.002830 rad delta_L=-0.1227 mm
+  cond_eff(J)=3.802e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=260.675 mm margin=19.674 mm segment=45
+[INVERSE PATH] node=0098 s=0.024500 m
+  position_error=0.0230 mm
+  tangent_error=123.3490 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002788 rad delta_L=-0.1210 mm
+  cond_eff(J)=4.023e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=262.736 mm margin=21.735 mm segment=45
+[INVERSE PATH] node=0099 s=0.024750 m
+  position_error=0.0227 mm
+  tangent_error=122.8059 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002739 rad delta_L=-0.1192 mm
+  cond_eff(J)=4.158e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=264.748 mm margin=23.746 mm segment=45
+[INVERSE PATH] node=0100 s=0.025000 m
+  position_error=0.0224 mm
+  tangent_error=122.2570 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002724 rad delta_L=-0.1174 mm
+  cond_eff(J)=4.394e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=266.736 mm margin=25.734 mm segment=45
+[INVERSE PATH] node=0101 s=0.025250 m
+  position_error=0.0220 mm
+  tangent_error=121.7026 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.002701 rad delta_L=-0.1156 mm
+  cond_eff(J)=4.606e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=268.685 mm margin=27.684 mm segment=45
+[INVERSE PATH] node=0102 s=0.025500 m
+  position_error=0.0217 mm
+  tangent_error=121.1428 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002696 rad delta_L=-0.1138 mm
+  cond_eff(J)=4.818e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=270.609 mm margin=29.608 mm segment=45
+[INVERSE PATH] node=0103 s=0.025750 m
+  position_error=0.0213 mm
+  tangent_error=120.5784 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002707 rad delta_L=-0.1119 mm
+  cond_eff(J)=5.088e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=272.521 mm margin=31.519 mm segment=45
+[INVERSE PATH] node=0104 s=0.026000 m
+  position_error=0.0209 mm
+  tangent_error=120.0094 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002725 rad delta_L=-0.1099 mm
+  cond_eff(J)=5.301e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=274.421 mm margin=33.419 mm segment=45
+[INVERSE PATH] node=0105 s=0.026250 m
+  position_error=0.0205 mm
+  tangent_error=119.4361 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002743 rad delta_L=-0.1080 mm
+  cond_eff(J)=5.600e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=276.306 mm margin=35.304 mm segment=45
+[INVERSE PATH] node=0106 s=0.026500 m
+  position_error=0.0202 mm
+  tangent_error=118.8587 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002773 rad delta_L=-0.1060 mm
+  cond_eff(J)=5.871e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=278.183 mm margin=37.182 mm segment=45
+[INVERSE PATH] node=0107 s=0.026750 m
+  position_error=0.0198 mm
+  tangent_error=118.2775 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002810 rad delta_L=-0.1040 mm
+  cond_eff(J)=6.122e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=280.059 mm margin=39.057 mm segment=45
+[INVERSE PATH] node=0108 s=0.027000 m
+  position_error=0.0194 mm
+  tangent_error=117.6927 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.002853 rad delta_L=-0.1020 mm
+  cond_eff(J)=6.493e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=281.936 mm margin=40.934 mm segment=45
+[INVERSE PATH] node=0109 s=0.027250 m
+  position_error=0.0190 mm
+  tangent_error=117.1046 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.002903 rad delta_L=-0.0999 mm
+  cond_eff(J)=6.822e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=283.821 mm margin=42.819 mm segment=45
+[INVERSE PATH] node=0110 s=0.027500 m
+  position_error=0.0186 mm
+  tangent_error=116.5134 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002956 rad delta_L=-0.0978 mm
+  cond_eff(J)=7.180e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=285.713 mm margin=44.712 mm segment=45
+[INVERSE PATH] node=0111 s=0.027750 m
+  position_error=0.0182 mm
+  tangent_error=115.9194 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003015 rad delta_L=-0.0957 mm
+  cond_eff(J)=7.544e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=287.618 mm margin=46.616 mm segment=45
+[INVERSE PATH] node=0112 s=0.028000 m
+  position_error=0.0178 mm
+  tangent_error=115.3227 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.003076 rad delta_L=-0.0936 mm
+  cond_eff(J)=7.981e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=289.535 mm margin=48.534 mm segment=45
+[INVERSE PATH] node=0113 s=0.028250 m
+  position_error=0.0174 mm
+  tangent_error=114.7235 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003141 rad delta_L=-0.0915 mm
+  cond_eff(J)=8.419e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=291.470 mm margin=50.468 mm segment=45
+[INVERSE PATH] node=0114 s=0.028500 m
+  position_error=0.0170 mm
+  tangent_error=114.1222 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003213 rad delta_L=-0.0893 mm
+  cond_eff(J)=8.920e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=293.434 mm margin=52.432 mm segment=45
+[INVERSE PATH] node=0115 s=0.028750 m
+  position_error=0.0166 mm
+  tangent_error=113.5180 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.003284 rad delta_L=-0.0872 mm
+  cond_eff(J)=9.465e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=295.409 mm margin=54.408 mm segment=45
+[INVERSE PATH] node=0116 s=0.029000 m
+  position_error=0.0162 mm
+  tangent_error=112.9129 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.003355 rad delta_L=-0.0850 mm
+  cond_eff(J)=1.003e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=297.408 mm margin=56.407 mm segment=45
+[INVERSE PATH] node=0117 s=0.029250 m
+  position_error=0.0158 mm
+  tangent_error=112.3063 deg
+  evaluations=33 attempts=1
+  ||delta_q||=0.003432 rad delta_L=-0.0828 mm
+  cond_eff(J)=1.065e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=299.433 mm margin=58.432 mm segment=45
+[INVERSE PATH] node=0118 s=0.029500 m
+  position_error=0.0154 mm
+  tangent_error=111.6983 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003511 rad delta_L=-0.0806 mm
+  cond_eff(J)=1.134e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=301.489 mm margin=60.487 mm segment=45
+[INVERSE PATH] node=0119 s=0.029750 m
+  position_error=0.0149 mm
+  tangent_error=111.0891 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003592 rad delta_L=-0.0784 mm
+  cond_eff(J)=1.209e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=303.575 mm margin=62.573 mm segment=45
+[INVERSE PATH] node=0120 s=0.030000 m
+  position_error=0.0145 mm
+  tangent_error=110.4791 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.003674 rad delta_L=-0.0761 mm
+  cond_eff(J)=1.281e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=305.692 mm margin=64.690 mm segment=45
+[INVERSE PATH] node=0121 s=0.030250 m
+  position_error=0.0141 mm
+  tangent_error=109.8684 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003758 rad delta_L=-0.0739 mm
+  cond_eff(J)=1.377e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=307.840 mm margin=66.839 mm segment=45
+[INVERSE PATH] node=0122 s=0.030500 m
+  position_error=0.0137 mm
+  tangent_error=109.2572 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003844 rad delta_L=-0.0717 mm
+  cond_eff(J)=1.462e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=310.023 mm margin=69.021 mm segment=45
+[INVERSE PATH] node=0123 s=0.030750 m
+  position_error=0.0133 mm
+  tangent_error=108.6459 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.003930 rad delta_L=-0.0694 mm
+  cond_eff(J)=1.573e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=312.240 mm margin=71.239 mm segment=45
+[INVERSE PATH] node=0124 s=0.031000 m
+  position_error=0.0129 mm
+  tangent_error=108.0346 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.004018 rad delta_L=-0.0672 mm
+  cond_eff(J)=1.688e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=314.495 mm margin=73.494 mm segment=45
+[INVERSE PATH] node=0125 s=0.031250 m
+  position_error=0.0113 mm
+  tangent_error=107.4782 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.003420 rad delta_L=-0.0637 mm
+  cond_eff(J)=1.603e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=316.420 mm margin=75.418 mm segment=45
+[INVERSE PATH] node=0126 s=0.031500 m
+  position_error=0.0107 mm
+  tangent_error=106.9268 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003421 rad delta_L=-0.0604 mm
+  cond_eff(J)=1.663e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=318.333 mm margin=77.332 mm segment=45
+[INVERSE PATH] node=0127 s=0.031750 m
+  position_error=0.0103 mm
+  tangent_error=106.3731 deg
+  evaluations=21 attempts=1
+  ||delta_q||=0.003511 rad delta_L=-0.0583 mm
+  cond_eff(J)=1.733e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=320.291 mm margin=79.289 mm segment=45
+[INVERSE PATH] node=0128 s=0.032000 m
+  position_error=0.0100 mm
+  tangent_error=105.8171 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.003604 rad delta_L=-0.0564 mm
+  cond_eff(J)=1.799e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=322.292 mm margin=81.290 mm segment=45
+[INVERSE PATH] node=0129 s=0.032250 m
+  position_error=0.0096 mm
+  tangent_error=105.2589 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003701 rad delta_L=-0.0544 mm
+  cond_eff(J)=1.872e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=324.336 mm margin=83.335 mm segment=46
+[INVERSE PATH] node=0130 s=0.032500 m
+  position_error=0.0093 mm
+  tangent_error=104.6986 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.003801 rad delta_L=-0.0525 mm
+  cond_eff(J)=1.951e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=326.428 mm margin=85.427 mm segment=46
+[INVERSE PATH] node=0131 s=0.032750 m
+  position_error=0.0089 mm
+  tangent_error=104.1362 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.003906 rad delta_L=-0.0506 mm
+  cond_eff(J)=2.029e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=328.567 mm margin=87.566 mm segment=46
+[INVERSE PATH] node=0132 s=0.033000 m
+  position_error=0.0086 mm
+  tangent_error=103.5719 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004015 rad delta_L=-0.0486 mm
+  cond_eff(J)=2.107e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=330.760 mm margin=89.758 mm segment=46
+[INVERSE PATH] node=0133 s=0.033250 m
+  position_error=0.0082 mm
+  tangent_error=103.0055 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004130 rad delta_L=-0.0466 mm
+  cond_eff(J)=2.199e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=333.005 mm margin=92.004 mm segment=46
+[INVERSE PATH] node=0134 s=0.033500 m
+  position_error=0.0079 mm
+  tangent_error=102.4373 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.004249 rad delta_L=-0.0447 mm
+  cond_eff(J)=2.291e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=335.305 mm margin=94.303 mm segment=46
+[INVERSE PATH] node=0135 s=0.033750 m
+  position_error=0.0075 mm
+  tangent_error=101.8672 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004374 rad delta_L=-0.0427 mm
+  cond_eff(J)=2.387e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=337.660 mm margin=96.659 mm segment=46
+[INVERSE PATH] node=0136 s=0.034000 m
+  position_error=0.0072 mm
+  tangent_error=101.2953 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.004505 rad delta_L=-0.0407 mm
+  cond_eff(J)=2.483e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=340.073 mm margin=99.072 mm segment=46
+[INVERSE PATH] node=0137 s=0.034250 m
+  position_error=0.0068 mm
+  tangent_error=100.7217 deg
+  evaluations=21 attempts=1
+  ||delta_q||=0.004643 rad delta_L=-0.0387 mm
+  cond_eff(J)=2.591e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=342.543 mm margin=101.541 mm segment=46
+[INVERSE PATH] node=0138 s=0.034500 m
+  position_error=0.0065 mm
+  tangent_error=100.1464 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.004787 rad delta_L=-0.0367 mm
+  cond_eff(J)=2.703e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=345.072 mm margin=104.070 mm segment=46
+[INVERSE PATH] node=0139 s=0.034750 m
+  position_error=0.0061 mm
+  tangent_error=99.5695 deg
+  evaluations=21 attempts=1
+  ||delta_q||=0.004939 rad delta_L=-0.0347 mm
+  cond_eff(J)=2.819e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=347.663 mm margin=106.661 mm segment=46
+[INVERSE PATH] node=0140 s=0.035000 m
+  position_error=0.0058 mm
+  tangent_error=98.9911 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.005098 rad delta_L=-0.0327 mm
+  cond_eff(J)=2.941e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=350.306 mm margin=109.305 mm segment=46
+[INVERSE PATH] node=0141 s=0.035250 m
+  position_error=0.0054 mm
+  tangent_error=98.4111 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.005266 rad delta_L=-0.0307 mm
+  cond_eff(J)=3.067e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=353.018 mm margin=112.017 mm segment=46
+[INVERSE PATH] node=0142 s=0.035500 m
+  position_error=0.0051 mm
+  tangent_error=97.8298 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.005444 rad delta_L=-0.0287 mm
+  cond_eff(J)=3.202e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=355.790 mm margin=114.789 mm segment=46
+[INVERSE PATH] node=0143 s=0.035750 m
+  position_error=0.0048 mm
+  tangent_error=97.2470 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.005631 rad delta_L=-0.0266 mm
+  cond_eff(J)=3.342e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=358.621 mm margin=117.619 mm segment=46
+[INVERSE PATH] node=0144 s=0.036000 m
+  position_error=0.0044 mm
+  tangent_error=96.6629 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.005829 rad delta_L=-0.0246 mm
+  cond_eff(J)=3.489e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=361.508 mm margin=120.506 mm segment=46
+[INVERSE PATH] node=0145 s=0.036250 m
+  position_error=0.0041 mm
+  tangent_error=96.0776 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.006038 rad delta_L=-0.0226 mm
+  cond_eff(J)=3.645e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=364.446 mm margin=123.445 mm segment=46
+[INVERSE PATH] node=0146 s=0.036500 m
+  position_error=0.0038 mm
+  tangent_error=95.4911 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.006258 rad delta_L=-0.0205 mm
+  cond_eff(J)=3.809e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=367.431 mm margin=126.430 mm segment=47
+[INVERSE PATH] node=0147 s=0.036750 m
+  position_error=0.0036 mm
+  tangent_error=94.9035 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.006492 rad delta_L=-0.0185 mm
+  cond_eff(J)=3.979e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=370.455 mm margin=129.453 mm segment=47
+[INVERSE PATH] node=0148 s=0.037000 m
+  position_error=0.0033 mm
+  tangent_error=94.3147 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.006739 rad delta_L=-0.0164 mm
+  cond_eff(J)=4.160e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=373.509 mm margin=132.508 mm segment=47
+[INVERSE PATH] node=0149 s=0.037250 m
+  position_error=0.0031 mm
+  tangent_error=93.7250 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.006999 rad delta_L=-0.0144 mm
+  cond_eff(J)=4.352e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=376.581 mm margin=135.579 mm segment=47
+[INVERSE PATH] node=0150 s=0.037500 m
+  position_error=0.0030 mm
+  tangent_error=93.1344 deg
+  evaluations=20 attempts=1
+  ||delta_q||=0.007270 rad delta_L=-0.0123 mm
+  cond_eff(J)=4.556e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=379.653 mm margin=138.652 mm segment=47
+[INVERSE PATH] node=0151 s=0.037750 m
+  position_error=0.0029 mm
+  tangent_error=92.5429 deg
+  evaluations=20 attempts=1
+  ||delta_q||=0.007559 rad delta_L=-0.0102 mm
+  cond_eff(J)=4.779e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=382.707 mm margin=141.706 mm segment=47
+[INVERSE PATH] node=0152 s=0.038000 m
+  position_error=0.0029 mm
+  tangent_error=91.9506 deg
+  evaluations=20 attempts=1
+  ||delta_q||=0.007857 rad delta_L=-0.0082 mm
+  cond_eff(J)=5.034e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=385.709 mm margin=144.707 mm segment=48
+[INVERSE PATH] node=0153 s=0.038250 m
+  position_error=0.0029 mm
+  tangent_error=91.3575 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.008167 rad delta_L=-0.0061 mm
+  cond_eff(J)=5.357e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=388.631 mm margin=147.629 mm segment=48
+[INVERSE PATH] node=0154 s=0.038500 m
+  position_error=0.0030 mm
+  tangent_error=90.7639 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.008481 rad delta_L=-0.0040 mm
+  cond_eff(J)=5.862e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=391.400 mm margin=150.399 mm segment=58
+[INVERSE PATH] node=0155 s=0.038750 m
+  position_error=0.0032 mm
+  tangent_error=90.1698 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.008798 rad delta_L=-0.0020 mm
+  cond_eff(J)=5.112e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=393.913 mm margin=152.912 mm segment=70
+[INVERSE PATH] node=0156 s=0.039000 m
+  position_error=0.0034 mm
+  tangent_error=89.5752 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.009111 rad delta_L=0.0001 mm
+  cond_eff(J)=4.026e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=396.102 mm margin=155.100 mm segment=82
+[INVERSE PATH] node=0157 s=0.039250 m
+  position_error=0.0037 mm
+  tangent_error=88.9803 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.009408 rad delta_L=0.0022 mm
+  cond_eff(J)=4.749e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=397.894 mm margin=156.893 mm segment=95
+[INVERSE PATH] node=0158 s=0.039500 m
+  position_error=0.0040 mm
+  tangent_error=88.3852 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.009682 rad delta_L=0.0043 mm
+  cond_eff(J)=5.062e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=399.214 mm margin=158.213 mm segment=107
+[INVERSE PATH] node=0159 s=0.039750 m
+  position_error=0.0043 mm
+  tangent_error=87.7901 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.009917 rad delta_L=0.0064 mm
+  cond_eff(J)=5.235e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=400.023 mm margin=159.021 mm segment=110
+[INVERSE PATH] node=0160 s=0.040000 m
+  position_error=0.0045 mm
+  tangent_error=87.1951 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.010101 rad delta_L=0.0084 mm
+  cond_eff(J)=5.329e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=400.334 mm margin=159.332 mm segment=111
+[INVERSE PATH] node=0161 s=0.040250 m
+  position_error=0.0048 mm
+  tangent_error=86.6004 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.010221 rad delta_L=0.0105 mm
+  cond_eff(J)=5.364e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=400.102 mm margin=159.100 mm segment=111
+[INVERSE PATH] node=0162 s=0.040500 m
+  position_error=0.0049 mm
+  tangent_error=86.0060 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.010268 rad delta_L=0.0126 mm
+  cond_eff(J)=5.347e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=399.314 mm margin=158.313 mm segment=111
+[INVERSE PATH] node=0163 s=0.040750 m
+  position_error=0.0051 mm
+  tangent_error=85.4124 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.010238 rad delta_L=0.0146 mm
+  cond_eff(J)=5.286e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=397.975 mm margin=156.973 mm segment=111
+[INVERSE PATH] node=0164 s=0.041000 m
+  position_error=0.0051 mm
+  tangent_error=84.8195 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.010133 rad delta_L=0.0167 mm
+  cond_eff(J)=5.182e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=396.114 mm margin=155.112 mm segment=111
+[INVERSE PATH] node=0165 s=0.041250 m
+  position_error=0.0052 mm
+  tangent_error=84.2277 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.009957 rad delta_L=0.0188 mm
+  cond_eff(J)=5.049e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=393.777 mm margin=152.775 mm segment=112
+[INVERSE PATH] node=0166 s=0.041500 m
+  position_error=0.0053 mm
+  tangent_error=83.6371 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.009724 rad delta_L=0.0208 mm
+  cond_eff(J)=4.887e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=391.032 mm margin=150.030 mm segment=112
+[INVERSE PATH] node=0167 s=0.041750 m
+  position_error=0.0053 mm
+  tangent_error=83.0478 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.009447 rad delta_L=0.0228 mm
+  cond_eff(J)=4.706e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=387.947 mm margin=146.946 mm segment=112
+[INVERSE PATH] node=0168 s=0.042000 m
+  position_error=0.0054 mm
+  tangent_error=82.4601 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.009137 rad delta_L=0.0249 mm
+  cond_eff(J)=4.512e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=384.595 mm margin=143.593 mm segment=112
+[INVERSE PATH] node=0169 s=0.042250 m
+  position_error=0.0056 mm
+  tangent_error=81.8742 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.008807 rad delta_L=0.0269 mm
+  cond_eff(J)=4.314e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=381.040 mm margin=140.038 mm segment=112
+[INVERSE PATH] node=0170 s=0.042500 m
+  position_error=0.0057 mm
+  tangent_error=81.2900 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.008471 rad delta_L=0.0289 mm
+  cond_eff(J)=4.108e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=377.341 mm margin=136.340 mm segment=112
+[INVERSE PATH] node=0171 s=0.042750 m
+  position_error=0.0059 mm
+  tangent_error=80.7077 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.008133 rad delta_L=0.0310 mm
+  cond_eff(J)=3.909e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=373.547 mm margin=132.546 mm segment=112
+[INVERSE PATH] node=0172 s=0.043000 m
+  position_error=0.0061 mm
+  tangent_error=80.1274 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.007801 rad delta_L=0.0330 mm
+  cond_eff(J)=3.711e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=369.699 mm margin=128.698 mm segment=112
+[INVERSE PATH] node=0173 s=0.043250 m
+  position_error=0.0064 mm
+  tangent_error=79.5492 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.007477 rad delta_L=0.0350 mm
+  cond_eff(J)=3.520e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=365.831 mm margin=124.829 mm segment=112
+[INVERSE PATH] node=0174 s=0.043500 m
+  position_error=0.0067 mm
+  tangent_error=78.9731 deg
+  evaluations=22 attempts=1
+  ||delta_q||=0.007166 rad delta_L=0.0370 mm
+  cond_eff(J)=3.335e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=361.968 mm margin=120.967 mm segment=112
+[INVERSE PATH] node=0175 s=0.043750 m
+  position_error=0.0070 mm
+  tangent_error=78.3992 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.006870 rad delta_L=0.0390 mm
+  cond_eff(J)=3.160e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=358.131 mm margin=117.130 mm segment=112
+[INVERSE PATH] node=0176 s=0.044000 m
+  position_error=0.0073 mm
+  tangent_error=77.8278 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.006587 rad delta_L=0.0409 mm
+  cond_eff(J)=2.990e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=354.336 mm margin=113.335 mm segment=112
+[INVERSE PATH] node=0177 s=0.044250 m
+  position_error=0.0076 mm
+  tangent_error=77.2588 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.006319 rad delta_L=0.0429 mm
+  cond_eff(J)=2.829e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=350.594 mm margin=109.592 mm segment=112
+[INVERSE PATH] node=0178 s=0.044500 m
+  position_error=0.0079 mm
+  tangent_error=76.6922 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.006067 rad delta_L=0.0449 mm
+  cond_eff(J)=2.679e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=346.912 mm margin=105.911 mm segment=112
+[INVERSE PATH] node=0179 s=0.044750 m
+  position_error=0.0082 mm
+  tangent_error=76.1282 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005829 rad delta_L=0.0468 mm
+  cond_eff(J)=2.536e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=343.296 mm margin=102.295 mm segment=113
+[INVERSE PATH] node=0180 s=0.045000 m
+  position_error=0.0086 mm
+  tangent_error=75.5668 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005605 rad delta_L=0.0488 mm
+  cond_eff(J)=2.405e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=339.749 mm margin=98.747 mm segment=113
+[INVERSE PATH] node=0181 s=0.045250 m
+  position_error=0.0089 mm
+  tangent_error=75.0082 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005393 rad delta_L=0.0507 mm
+  cond_eff(J)=2.277e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=336.274 mm margin=95.272 mm segment=113
+[INVERSE PATH] node=0182 s=0.045500 m
+  position_error=0.0092 mm
+  tangent_error=74.4523 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005194 rad delta_L=0.0526 mm
+  cond_eff(J)=2.163e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=332.871 mm margin=91.869 mm segment=113
+[INVERSE PATH] node=0183 s=0.045750 m
+  position_error=0.0096 mm
+  tangent_error=73.8993 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.005006 rad delta_L=0.0545 mm
+  cond_eff(J)=2.045e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=329.537 mm margin=88.535 mm segment=113
+[INVERSE PATH] node=0184 s=0.046000 m
+  position_error=0.0099 mm
+  tangent_error=73.3492 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.004830 rad delta_L=0.0564 mm
+  cond_eff(J)=1.943e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=326.276 mm margin=85.274 mm segment=113
+[INVERSE PATH] node=0185 s=0.046250 m
+  position_error=0.0103 mm
+  tangent_error=72.8022 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004663 rad delta_L=0.0583 mm
+  cond_eff(J)=1.839e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=323.083 mm margin=82.082 mm segment=113
+[INVERSE PATH] node=0186 s=0.046500 m
+  position_error=0.0106 mm
+  tangent_error=72.2583 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004506 rad delta_L=0.0602 mm
+  cond_eff(J)=1.747e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=319.957 mm margin=78.956 mm segment=113
+[INVERSE PATH] node=0187 s=0.046750 m
+  position_error=0.0120 mm
+  tangent_error=71.7069 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004542 rad delta_L=0.0615 mm
+  cond_eff(J)=1.808e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=316.754 mm margin=75.752 mm segment=113
+[INVERSE PATH] node=0188 s=0.047000 m
+  position_error=0.0130 mm
+  tangent_error=71.1073 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.005213 rad delta_L=0.0664 mm
+  cond_eff(J)=1.658e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=313.036 mm margin=72.034 mm segment=113
+[INVERSE PATH] node=0189 s=0.047250 m
+  position_error=0.0134 mm
+  tangent_error=70.5083 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.005050 rad delta_L=0.0691 mm
+  cond_eff(J)=1.521e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=309.364 mm margin=68.362 mm segment=113
+[INVERSE PATH] node=0190 s=0.047500 m
+  position_error=0.0138 mm
+  tangent_error=69.9109 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004887 rad delta_L=0.0714 mm
+  cond_eff(J)=1.405e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=305.750 mm margin=64.748 mm segment=113
+[INVERSE PATH] node=0191 s=0.047750 m
+  position_error=0.0142 mm
+  tangent_error=69.3153 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004731 rad delta_L=0.0735 mm
+  cond_eff(J)=1.290e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=302.194 mm margin=61.193 mm segment=113
+[INVERSE PATH] node=0192 s=0.048000 m
+  position_error=0.0145 mm
+  tangent_error=68.7221 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004583 rad delta_L=0.0757 mm
+  cond_eff(J)=1.195e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=298.689 mm margin=57.688 mm segment=113
+[INVERSE PATH] node=0193 s=0.048250 m
+  position_error=0.0149 mm
+  tangent_error=68.1314 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.004443 rad delta_L=0.0778 mm
+  cond_eff(J)=1.101e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=295.232 mm margin=54.230 mm segment=113
+[INVERSE PATH] node=0194 s=0.048500 m
+  position_error=0.0153 mm
+  tangent_error=67.5436 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004311 rad delta_L=0.0799 mm
+  cond_eff(J)=1.023e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=291.818 mm margin=50.817 mm segment=113
+[INVERSE PATH] node=0195 s=0.048750 m
+  position_error=0.0157 mm
+  tangent_error=66.9591 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.004187 rad delta_L=0.0820 mm
+  cond_eff(J)=9.443e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=288.439 mm margin=47.437 mm segment=113
+[INVERSE PATH] node=0196 s=0.049000 m
+  position_error=0.0168 mm
+  tangent_error=66.3784 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.004493 rad delta_L=0.0839 mm
+  cond_eff(J)=8.823e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=285.157 mm margin=44.155 mm segment=113
+[INVERSE PATH] node=0197 s=0.049250 m
+  position_error=0.0185 mm
+  tangent_error=65.8006 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005314 rad delta_L=0.0860 mm
+  cond_eff(J)=8.221e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=281.965 mm margin=40.963 mm segment=113
+[INVERSE PATH] node=0198 s=0.049500 m
+  position_error=0.0195 mm
+  tangent_error=65.2276 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005725 rad delta_L=0.0880 mm
+  cond_eff(J)=7.670e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=278.790 mm margin=37.788 mm segment=113
+[INVERSE PATH] node=0199 s=0.049750 m
+  position_error=0.0202 mm
+  tangent_error=64.6574 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.005924 rad delta_L=0.0902 mm
+  cond_eff(J)=7.194e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=275.682 mm margin=34.680 mm segment=113
+[INVERSE PATH] node=0200 s=0.050000 m
+  position_error=0.0206 mm
+  tangent_error=64.0920 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005974 rad delta_L=0.0921 mm
+  cond_eff(J)=6.709e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=272.582 mm margin=31.580 mm segment=113
+[INVERSE PATH] node=0201 s=0.050250 m
+  position_error=0.0209 mm
+  tangent_error=63.5310 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005943 rad delta_L=0.0942 mm
+  cond_eff(J)=6.258e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=269.537 mm margin=28.535 mm segment=113
+[INVERSE PATH] node=0202 s=0.050500 m
+  position_error=0.0211 mm
+  tangent_error=62.9760 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.005889 rad delta_L=0.0960 mm
+  cond_eff(J)=5.891e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=266.450 mm margin=25.449 mm segment=113
+[INVERSE PATH] node=0203 s=0.050750 m
+  position_error=0.0214 mm
+  tangent_error=62.4266 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005820 rad delta_L=0.0979 mm
+  cond_eff(J)=5.523e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=263.400 mm margin=22.399 mm segment=113
+[INVERSE PATH] node=0204 s=0.051000 m
+  position_error=0.0216 mm
+  tangent_error=61.8818 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005733 rad delta_L=0.0998 mm
+  cond_eff(J)=5.181e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=260.408 mm margin=19.406 mm segment=113
+[INVERSE PATH] node=0205 s=0.051250 m
+  position_error=0.0219 mm
+  tangent_error=61.3441 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.005674 rad delta_L=0.1016 mm
+  cond_eff(J)=4.864e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=257.385 mm margin=16.384 mm segment=113
+[INVERSE PATH] node=0206 s=0.051500 m
+  position_error=0.0221 mm
+  tangent_error=60.8123 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.005604 rad delta_L=0.1034 mm
+  cond_eff(J)=4.588e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=254.403 mm margin=13.402 mm segment=113
+[INVERSE PATH] node=0207 s=0.051750 m
+  position_error=0.0224 mm
+  tangent_error=60.2892 deg
+  evaluations=41 attempts=1
+  ||delta_q||=0.005578 rad delta_L=0.1051 mm
+  cond_eff(J)=4.293e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=251.333 mm margin=10.332 mm segment=113
+[INVERSE PATH] node=0208 s=0.052000 m
+  position_error=0.0226 mm
+  tangent_error=59.7721 deg
+  evaluations=35 attempts=1
+  ||delta_q||=0.005520 rad delta_L=0.1069 mm
+  cond_eff(J)=4.066e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=248.332 mm margin=7.330 mm segment=113
+[INVERSE PATH] node=0209 s=0.052250 m
+  position_error=0.0228 mm
+  tangent_error=59.2647 deg
+  evaluations=48 attempts=1
+  ||delta_q||=0.005504 rad delta_L=0.1084 mm
+  cond_eff(J)=3.793e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=245.231 mm margin=4.229 mm segment=113
+[INVERSE PATH] node=0210 s=0.052500 m
+  position_error=0.0233 mm
+  tangent_error=58.7652 deg
+  evaluations=68 attempts=1
+  ||delta_q||=0.005431 rad delta_L=0.1100 mm
+  cond_eff(J)=3.584e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=242.165 mm margin=1.163 mm segment=113
+[INVERSE PATH] node=0211 s=0.052750 m
+  position_error=0.0240 mm
+  tangent_error=58.2215 deg
+  evaluations=43 attempts=1
+  ||delta_q||=0.005301 rad delta_L=0.1141 mm
+  cond_eff(J)=3.469e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0212 s=0.053000 m
+  position_error=0.0242 mm
+  tangent_error=57.6492 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.005141 rad delta_L=0.1179 mm
+  cond_eff(J)=3.394e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0213 s=0.053250 m
+  position_error=0.0244 mm
+  tangent_error=57.0792 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.004983 rad delta_L=0.1202 mm
+  cond_eff(J)=3.330e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=113
+[INVERSE PATH] node=0214 s=0.053500 m
+  position_error=0.0247 mm
+  tangent_error=56.5120 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.004879 rad delta_L=0.1223 mm
+  cond_eff(J)=3.262e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=113
+[INVERSE PATH] node=0215 s=0.053750 m
+  position_error=0.0250 mm
+  tangent_error=56.1613 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004803 rad delta_L=0.1243 mm
+  cond_eff(J)=3.189e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=113
+[INVERSE PATH] node=0216 s=0.054000 m
+  position_error=0.0253 mm
+  tangent_error=55.9693 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.004747 rad delta_L=0.1262 mm
+  cond_eff(J)=3.168e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0217 s=0.054250 m
+  position_error=0.0251 mm
+  tangent_error=56.3675 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.004714 rad delta_L=0.1252 mm
+  cond_eff(J)=3.084e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=-0.000 mm segment=113
+[INVERSE PATH] node=0218 s=0.054500 m
+  position_error=0.0250 mm
+  tangent_error=57.1969 deg
+  evaluations=42 attempts=1
+  ||delta_q||=0.004682 rad delta_L=0.1245 mm
+  cond_eff(J)=3.011e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0219 s=0.054750 m
+  position_error=0.0235 mm
+  tangent_error=59.7688 deg
+  evaluations=75 attempts=1
+  ||delta_q||=0.004737 rad delta_L=0.1162 mm
+  cond_eff(J)=2.953e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0220 s=0.055000 m
+  position_error=0.0220 mm
+  tangent_error=64.2899 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.004729 rad delta_L=0.1082 mm
+  cond_eff(J)=2.894e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0221 s=0.055250 m
+  position_error=0.0171 mm
+  tangent_error=76.7627 deg
+  evaluations=90 attempts=1
+  ||delta_q||=0.004871 rad delta_L=0.0798 mm
+  cond_eff(J)=2.860e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0222 s=0.055500 m
+  position_error=0.0121 mm
+  tangent_error=133.5918 deg
+  evaluations=37 attempts=1
+  ||delta_q||=0.004410 rad delta_L=-0.0523 mm
+  cond_eff(J)=2.835e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=241.002 mm margin=0.000 mm segment=113
+[INVERSE PATH] node=0223 s=0.055750 m
+  position_error=0.0416 mm
+  tangent_error=173.9771 deg
+  evaluations=47 attempts=1
+  ||delta_q||=0.007057 rad delta_L=-0.2147 mm
+  cond_eff(J)=3.051e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=245.859 mm margin=4.858 mm segment=113
+[INVERSE PATH] node=0224 s=0.056000 m
+  position_error=0.0481 mm
+  tangent_error=175.0828 deg
+  evaluations=55 attempts=1
+  ||delta_q||=0.006877 rad delta_L=-0.2493 mm
+  cond_eff(J)=3.327e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=251.140 mm margin=10.139 mm segment=113
+[INVERSE PATH] node=0225 s=0.056250 m
+  position_error=0.0488 mm
+  tangent_error=171.0569 deg
+  evaluations=43 attempts=1
+  ||delta_q||=0.006566 rad delta_L=-0.2520 mm
+  cond_eff(J)=3.643e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=256.272 mm margin=15.270 mm segment=113
+[INVERSE PATH] node=0226 s=0.056500 m
+  position_error=0.0489 mm
+  tangent_error=168.6549 deg
+  evaluations=32 attempts=1
+  ||delta_q||=0.005960 rad delta_L=-0.2512 mm
+  cond_eff(J)=3.895e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=260.942 mm margin=19.940 mm segment=113
+[INVERSE PATH] node=0227 s=0.056750 m
+  position_error=0.0491 mm
+  tangent_error=166.9881 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.005413 rad delta_L=-0.2512 mm
+  cond_eff(J)=4.239e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=265.204 mm margin=24.203 mm segment=113
+[INVERSE PATH] node=0228 s=0.057000 m
+  position_error=0.0492 mm
+  tangent_error=166.1381 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.004964 rad delta_L=-0.2509 mm
+  cond_eff(J)=4.589e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=269.184 mm margin=28.183 mm segment=113
+[INVERSE PATH] node=0229 s=0.057250 m
+  position_error=0.0497 mm
+  tangent_error=165.4297 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.004734 rad delta_L=-0.2517 mm
+  cond_eff(J)=4.954e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=273.034 mm margin=32.033 mm segment=113
+[INVERSE PATH] node=0230 s=0.057500 m
+  position_error=0.0503 mm
+  tangent_error=165.0026 deg
+  evaluations=41 attempts=1
+  ||delta_q||=0.004446 rad delta_L=-0.2533 mm
+  cond_eff(J)=5.373e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=276.756 mm margin=35.754 mm segment=113
+[INVERSE PATH] node=0231 s=0.057750 m
+  position_error=0.0511 mm
+  tangent_error=164.5998 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.004224 rad delta_L=-0.2549 mm
+  cond_eff(J)=5.944e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=280.439 mm margin=39.437 mm segment=113
+[INVERSE PATH] node=0232 s=0.058000 m
+  position_error=0.0521 mm
+  tangent_error=164.1573 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004089 rad delta_L=-0.2569 mm
+  cond_eff(J)=6.647e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=284.190 mm margin=43.188 mm segment=113
+[INVERSE PATH] node=0233 s=0.058250 m
+  position_error=0.0532 mm
+  tangent_error=163.6678 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004051 rad delta_L=-0.2591 mm
+  cond_eff(J)=7.805e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=288.127 mm margin=47.125 mm segment=113
+[INVERSE PATH] node=0234 s=0.058500 m
+  position_error=0.0547 mm
+  tangent_error=163.1204 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004171 rad delta_L=-0.2620 mm
+  cond_eff(J)=9.574e+06 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=292.415 mm margin=51.414 mm segment=113
+[INVERSE PATH] node=0235 s=0.058750 m
+  position_error=0.0568 mm
+  tangent_error=162.4985 deg
+  evaluations=32 attempts=1
+  ||delta_q||=0.004564 rad delta_L=-0.2655 mm
+  cond_eff(J)=1.253e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=297.318 mm margin=56.316 mm segment=113
+[INVERSE PATH] node=0236 s=0.059000 m
+  position_error=0.0444 mm
+  tangent_error=162.2199 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.002087 rad delta_L=-0.2462 mm
+  cond_eff(J)=1.027e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=298.599 mm margin=57.598 mm segment=113
+[INVERSE PATH] node=0237 s=0.059250 m
+  position_error=0.0419 mm
+  tangent_error=161.9768 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.001839 rad delta_L=-0.2322 mm
+  cond_eff(J)=1.067e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=299.428 mm margin=58.426 mm segment=113
+[INVERSE PATH] node=0238 s=0.059500 m
+  position_error=0.0415 mm
+  tangent_error=161.7282 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001747 rad delta_L=-0.2298 mm
+  cond_eff(J)=1.094e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=300.214 mm margin=59.212 mm segment=113
+[INVERSE PATH] node=0239 s=0.059750 m
+  position_error=0.0413 mm
+  tangent_error=161.4738 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001650 rad delta_L=-0.2291 mm
+  cond_eff(J)=1.136e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=300.952 mm margin=59.951 mm segment=113
+[INVERSE PATH] node=0240 s=0.060000 m
+  position_error=0.0413 mm
+  tangent_error=161.2136 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001551 rad delta_L=-0.2288 mm
+  cond_eff(J)=1.179e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=301.643 mm margin=60.641 mm segment=113
+[INVERSE PATH] node=0241 s=0.060250 m
+  position_error=0.0412 mm
+  tangent_error=160.9477 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001462 rad delta_L=-0.2284 mm
+  cond_eff(J)=1.224e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=302.295 mm margin=61.293 mm segment=113
+[INVERSE PATH] node=0242 s=0.060500 m
+  position_error=0.0412 mm
+  tangent_error=160.6746 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.001188 rad delta_L=-0.2281 mm
+  cond_eff(J)=1.269e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=302.818 mm margin=61.817 mm segment=113
+[INVERSE PATH] node=0243 s=0.060750 m
+  position_error=0.0411 mm
+  tangent_error=160.3955 deg
+  evaluations=33 attempts=1
+  ||delta_q||=0.001102 rad delta_L=-0.2277 mm
+  cond_eff(J)=1.274e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=303.275 mm margin=62.273 mm segment=113
+[INVERSE PATH] node=0244 s=0.061000 m
+  position_error=0.0411 mm
+  tangent_error=160.1109 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.001042 rad delta_L=-0.2273 mm
+  cond_eff(J)=1.319e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=303.700 mm margin=62.699 mm segment=113
+[INVERSE PATH] node=0245 s=0.061250 m
+  position_error=0.0410 mm
+  tangent_error=159.8208 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000983 rad delta_L=-0.2269 mm
+  cond_eff(J)=1.367e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=304.110 mm margin=63.108 mm segment=113
+[INVERSE PATH] node=0246 s=0.061500 m
+  position_error=0.0409 mm
+  tangent_error=159.5255 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000929 rad delta_L=-0.2264 mm
+  cond_eff(J)=1.417e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=304.512 mm margin=63.510 mm segment=113
+[INVERSE PATH] node=0247 s=0.061750 m
+  position_error=0.0408 mm
+  tangent_error=159.2250 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000893 rad delta_L=-0.2260 mm
+  cond_eff(J)=1.452e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=304.916 mm margin=63.914 mm segment=113
+[INVERSE PATH] node=0248 s=0.062000 m
+  position_error=0.0407 mm
+  tangent_error=158.9192 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000847 rad delta_L=-0.2255 mm
+  cond_eff(J)=1.506e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=305.323 mm margin=64.321 mm segment=113
+[INVERSE PATH] node=0249 s=0.062250 m
+  position_error=0.0406 mm
+  tangent_error=158.6081 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000802 rad delta_L=-0.2249 mm
+  cond_eff(J)=1.562e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=305.733 mm margin=64.731 mm segment=113
+[INVERSE PATH] node=0250 s=0.062500 m
+  position_error=0.0405 mm
+  tangent_error=158.2916 deg
+  evaluations=32 attempts=1
+  ||delta_q||=0.000761 rad delta_L=-0.2244 mm
+  cond_eff(J)=1.622e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=306.150 mm margin=65.149 mm segment=113
+[INVERSE PATH] node=0251 s=0.062750 m
+  position_error=0.0404 mm
+  tangent_error=157.9697 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000725 rad delta_L=-0.2239 mm
+  cond_eff(J)=1.684e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=306.578 mm margin=65.576 mm segment=113
+[INVERSE PATH] node=0252 s=0.063000 m
+  position_error=0.0403 mm
+  tangent_error=157.6426 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000715 rad delta_L=-0.2233 mm
+  cond_eff(J)=1.683e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=307.019 mm margin=66.017 mm segment=113
+[INVERSE PATH] node=0253 s=0.063250 m
+  position_error=0.0401 mm
+  tangent_error=157.3099 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000684 rad delta_L=-0.2227 mm
+  cond_eff(J)=1.749e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=307.477 mm margin=66.476 mm segment=113
+[INVERSE PATH] node=0254 s=0.063500 m
+  position_error=0.0400 mm
+  tangent_error=156.9717 deg
+  evaluations=35 attempts=1
+  ||delta_q||=0.000660 rad delta_L=-0.2221 mm
+  cond_eff(J)=1.819e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=307.953 mm margin=66.951 mm segment=113
+[INVERSE PATH] node=0255 s=0.063750 m
+  position_error=0.0399 mm
+  tangent_error=156.6280 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000641 rad delta_L=-0.2215 mm
+  cond_eff(J)=1.894e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=308.445 mm margin=67.443 mm segment=113
+[INVERSE PATH] node=0256 s=0.064000 m
+  position_error=0.0398 mm
+  tangent_error=156.2787 deg
+  evaluations=42 attempts=1
+  ||delta_q||=0.000638 rad delta_L=-0.2209 mm
+  cond_eff(J)=1.932e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=308.963 mm margin=67.961 mm segment=113
+[INVERSE PATH] node=0257 s=0.064250 m
+  position_error=0.0397 mm
+  tangent_error=155.9237 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000625 rad delta_L=-0.2202 mm
+  cond_eff(J)=2.013e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=309.504 mm margin=68.502 mm segment=113
+[INVERSE PATH] node=0258 s=0.064500 m
+  position_error=0.0395 mm
+  tangent_error=155.5630 deg
+  evaluations=31 attempts=1
+  ||delta_q||=0.000624 rad delta_L=-0.2196 mm
+  cond_eff(J)=2.100e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=310.076 mm margin=69.074 mm segment=113
+[INVERSE PATH] node=0259 s=0.064750 m
+  position_error=0.0394 mm
+  tangent_error=155.1966 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000627 rad delta_L=-0.2189 mm
+  cond_eff(J)=2.144e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=310.674 mm margin=69.673 mm segment=113
+[INVERSE PATH] node=0260 s=0.065000 m
+  position_error=0.0392 mm
+  tangent_error=154.8243 deg
+  evaluations=33 attempts=1
+  ||delta_q||=0.000636 rad delta_L=-0.2182 mm
+  cond_eff(J)=2.239e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=311.305 mm margin=70.303 mm segment=113
+[INVERSE PATH] node=0261 s=0.065250 m
+  position_error=0.0391 mm
+  tangent_error=154.4461 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000651 rad delta_L=-0.2175 mm
+  cond_eff(J)=2.340e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=311.970 mm margin=70.969 mm segment=113
+[INVERSE PATH] node=0262 s=0.065500 m
+  position_error=0.0390 mm
+  tangent_error=154.0620 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.000675 rad delta_L=-0.2167 mm
+  cond_eff(J)=2.413e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=312.675 mm margin=71.674 mm segment=113
+[INVERSE PATH] node=0263 s=0.065750 m
+  position_error=0.0388 mm
+  tangent_error=153.6718 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.000701 rad delta_L=-0.2160 mm
+  cond_eff(J)=2.527e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=313.421 mm margin=72.420 mm segment=113
+[INVERSE PATH] node=0264 s=0.066000 m
+  position_error=0.0387 mm
+  tangent_error=153.2756 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.000732 rad delta_L=-0.2152 mm
+  cond_eff(J)=2.649e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=314.211 mm margin=73.209 mm segment=113
+[INVERSE PATH] node=0265 s=0.066250 m
+  position_error=0.0385 mm
+  tangent_error=152.8732 deg
+  evaluations=35 attempts=1
+  ||delta_q||=0.000770 rad delta_L=-0.2144 mm
+  cond_eff(J)=2.748e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=315.049 mm margin=74.047 mm segment=113
+[INVERSE PATH] node=0266 s=0.066500 m
+  position_error=0.0383 mm
+  tangent_error=152.4645 deg
+  evaluations=33 attempts=1
+  ||delta_q||=0.000811 rad delta_L=-0.2136 mm
+  cond_eff(J)=2.886e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=315.937 mm margin=74.936 mm segment=113
+[INVERSE PATH] node=0267 s=0.066750 m
+  position_error=0.0382 mm
+  tangent_error=152.0495 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.000857 rad delta_L=-0.2128 mm
+  cond_eff(J)=3.001e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=316.881 mm margin=75.879 mm segment=113
+[INVERSE PATH] node=0268 s=0.067000 m
+  position_error=0.0380 mm
+  tangent_error=151.6281 deg
+  evaluations=47 attempts=1
+  ||delta_q||=0.000908 rad delta_L=-0.2119 mm
+  cond_eff(J)=3.160e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=317.884 mm margin=76.882 mm segment=113
+[INVERSE PATH] node=0269 s=0.067250 m
+  position_error=0.0378 mm
+  tangent_error=151.2002 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.000964 rad delta_L=-0.2111 mm
+  cond_eff(J)=3.302e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=318.949 mm margin=77.948 mm segment=113
+[INVERSE PATH] node=0270 s=0.067500 m
+  position_error=0.0377 mm
+  tangent_error=150.7657 deg
+  evaluations=35 attempts=1
+  ||delta_q||=0.001024 rad delta_L=-0.2102 mm
+  cond_eff(J)=3.485e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=320.082 mm margin=79.081 mm segment=113
+[INVERSE PATH] node=0271 s=0.067750 m
+  position_error=0.0375 mm
+  tangent_error=150.3245 deg
+  evaluations=37 attempts=1
+  ||delta_q||=0.001091 rad delta_L=-0.2093 mm
+  cond_eff(J)=3.631e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=321.289 mm margin=80.288 mm segment=113
+[INVERSE PATH] node=0272 s=0.068000 m
+  position_error=0.0373 mm
+  tangent_error=149.8766 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.001161 rad delta_L=-0.2083 mm
+  cond_eff(J)=3.843e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=322.572 mm margin=81.570 mm segment=113
+[INVERSE PATH] node=0273 s=0.068250 m
+  position_error=0.0371 mm
+  tangent_error=149.4220 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001236 rad delta_L=-0.2074 mm
+  cond_eff(J)=4.052e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=323.936 mm margin=82.934 mm segment=113
+[INVERSE PATH] node=0274 s=0.068500 m
+  position_error=0.0369 mm
+  tangent_error=148.9603 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.001317 rad delta_L=-0.2064 mm
+  cond_eff(J)=4.266e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=325.387 mm margin=84.386 mm segment=113
+[INVERSE PATH] node=0275 s=0.068750 m
+  position_error=0.0367 mm
+  tangent_error=148.4917 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001405 rad delta_L=-0.2054 mm
+  cond_eff(J)=4.537e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=326.932 mm margin=85.931 mm segment=113
+[INVERSE PATH] node=0276 s=0.069000 m
+  position_error=0.0365 mm
+  tangent_error=148.0160 deg
+  evaluations=23 attempts=1
+  ||delta_q||=0.001501 rad delta_L=-0.2044 mm
+  cond_eff(J)=4.763e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=328.582 mm margin=87.581 mm segment=113
+[INVERSE PATH] node=0277 s=0.069250 m
+  position_error=0.0363 mm
+  tangent_error=147.5331 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.001604 rad delta_L=-0.2033 mm
+  cond_eff(J)=5.044e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=330.342 mm margin=89.341 mm segment=113
+[INVERSE PATH] node=0278 s=0.069500 m
+  position_error=0.0361 mm
+  tangent_error=147.0429 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.001717 rad delta_L=-0.2023 mm
+  cond_eff(J)=5.389e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=332.222 mm margin=91.221 mm segment=113
+[INVERSE PATH] node=0279 s=0.069750 m
+  position_error=0.0359 mm
+  tangent_error=146.5454 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001838 rad delta_L=-0.2012 mm
+  cond_eff(J)=5.706e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=334.233 mm margin=93.232 mm segment=113
+[INVERSE PATH] node=0280 s=0.070000 m
+  position_error=0.0357 mm
+  tangent_error=146.0404 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.001971 rad delta_L=-0.2001 mm
+  cond_eff(J)=6.137e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=336.387 mm margin=95.386 mm segment=113
+[INVERSE PATH] node=0281 s=0.070250 m
+  position_error=0.0354 mm
+  tangent_error=145.5279 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.002115 rad delta_L=-0.1989 mm
+  cond_eff(J)=6.544e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=338.697 mm margin=97.695 mm segment=113
+[INVERSE PATH] node=0282 s=0.070500 m
+  position_error=0.0352 mm
+  tangent_error=145.0078 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.002273 rad delta_L=-0.1978 mm
+  cond_eff(J)=7.051e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=341.176 mm margin=100.174 mm segment=113
+[INVERSE PATH] node=0283 s=0.070750 m
+  position_error=0.0350 mm
+  tangent_error=144.4799 deg
+  evaluations=30 attempts=1
+  ||delta_q||=0.002445 rad delta_L=-0.1966 mm
+  cond_eff(J)=7.549e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=343.842 mm margin=102.841 mm segment=113
+[INVERSE PATH] node=0284 s=0.071000 m
+  position_error=0.0347 mm
+  tangent_error=143.9442 deg
+  evaluations=29 attempts=1
+  ||delta_q||=0.002635 rad delta_L=-0.1954 mm
+  cond_eff(J)=8.179e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=346.714 mm margin=105.712 mm segment=113
+[INVERSE PATH] node=0285 s=0.071250 m
+  position_error=0.0345 mm
+  tangent_error=143.4007 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.002844 rad delta_L=-0.1941 mm
+  cond_eff(J)=8.848e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=349.811 mm margin=108.809 mm segment=113
+[INVERSE PATH] node=0286 s=0.071500 m
+  position_error=0.0342 mm
+  tangent_error=142.8491 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.003075 rad delta_L=-0.1929 mm
+  cond_eff(J)=9.620e+07 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=353.159 mm margin=112.157 mm segment=113
+[INVERSE PATH] node=0287 s=0.071750 m
+  position_error=0.0340 mm
+  tangent_error=142.2895 deg
+  evaluations=26 attempts=1
+  ||delta_q||=0.003332 rad delta_L=-0.1916 mm
+  cond_eff(J)=1.047e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=356.785 mm margin=115.784 mm segment=113
+[INVERSE PATH] node=0288 s=0.072000 m
+  position_error=0.0337 mm
+  tangent_error=141.7217 deg
+  evaluations=27 attempts=1
+  ||delta_q||=0.003619 rad delta_L=-0.1902 mm
+  cond_eff(J)=1.149e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=360.723 mm margin=119.721 mm segment=113
+[INVERSE PATH] node=0289 s=0.072250 m
+  position_error=0.0334 mm
+  tangent_error=141.1457 deg
+  evaluations=24 attempts=1
+  ||delta_q||=0.003940 rad delta_L=-0.1889 mm
+  cond_eff(J)=1.266e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=365.008 mm margin=124.006 mm segment=113
+[INVERSE PATH] node=0290 s=0.072500 m
+  position_error=0.0332 mm
+  tangent_error=140.5614 deg
+  evaluations=25 attempts=1
+  ||delta_q||=0.004303 rad delta_L=-0.1875 mm
+  cond_eff(J)=1.392e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=369.686 mm margin=128.685 mm segment=113
+[INVERSE PATH] node=0291 s=0.072750 m
+  position_error=0.0329 mm
+  tangent_error=139.9686 deg
+  evaluations=28 attempts=1
+  ||delta_q||=0.004715 rad delta_L=-0.1861 mm
+  cond_eff(J)=1.550e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=374.810 mm margin=133.809 mm segment=113
+[INVERSE PATH] node=0292 s=0.073000 m
+  position_error=0.0326 mm
+  tangent_error=139.3674 deg
+  evaluations=34 attempts=1
+  ||delta_q||=0.005186 rad delta_L=-0.1847 mm
+  cond_eff(J)=1.737e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=380.445 mm margin=139.443 mm segment=113
+[INVERSE PATH] node=0293 s=0.073250 m
+  position_error=0.0323 mm
+  tangent_error=138.7598 deg
+  evaluations=42 attempts=1
+  ||delta_q||=0.006331 rad delta_L=-0.1833 mm
+  cond_eff(J)=1.933e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=386.195 mm margin=145.194 mm segment=113
+[INVERSE PATH] node=0294 s=0.073500 m
+  position_error=0.0320 mm
+  tangent_error=138.1428 deg
+  evaluations=51 attempts=1
+  ||delta_q||=0.007787 rad delta_L=-0.1818 mm
+  cond_eff(J)=2.145e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=392.345 mm margin=151.344 mm segment=113
+[INVERSE PATH] node=0295 s=0.073750 m
+  position_error=0.0317 mm
+  tangent_error=137.5159 deg
+  evaluations=44 attempts=1
+  ||delta_q||=0.008626 rad delta_L=-0.1802 mm
+  cond_eff(J)=2.399e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=399.222 mm margin=158.220 mm segment=113
+[INVERSE PATH] node=0296 s=0.074000 m
+  position_error=0.0315 mm
+  tangent_error=136.8813 deg
+  evaluations=49 attempts=1
+  ||delta_q||=0.009561 rad delta_L=-0.1787 mm
+  cond_eff(J)=2.701e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=406.928 mm margin=165.927 mm segment=113
+[INVERSE PATH] node=0297 s=0.074250 m
+  position_error=0.0314 mm
+  tangent_error=136.2387 deg
+  evaluations=62 attempts=1
+  ||delta_q||=0.010661 rad delta_L=-0.1771 mm
+  cond_eff(J)=3.062e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=415.622 mm margin=174.621 mm segment=113
+[INVERSE PATH] node=0298 s=0.074500 m
+  position_error=0.0315 mm
+  tangent_error=135.5887 deg
+  evaluations=59 attempts=1
+  ||delta_q||=0.011965 rad delta_L=-0.1755 mm
+  cond_eff(J)=3.490e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=425.505 mm margin=184.504 mm segment=113
+[INVERSE PATH] node=0299 s=0.074750 m
+  position_error=0.0319 mm
+  tangent_error=134.9317 deg
+  evaluations=44 attempts=1
+  ||delta_q||=0.013534 rad delta_L=-0.1738 mm
+  cond_eff(J)=4.024e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=436.839 mm margin=195.837 mm segment=113
+[INVERSE PATH] node=0300 s=0.075000 m
+  position_error=0.0329 mm
+  tangent_error=134.2688 deg
+  evaluations=50 attempts=1
+  ||delta_q||=0.015448 rad delta_L=-0.1722 mm
+  cond_eff(J)=4.679e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=449.969 mm margin=208.968 mm segment=113
+[INVERSE PATH] node=0301 s=0.075250 m
+  position_error=0.0349 mm
+  tangent_error=133.6025 deg
+  evaluations=61 attempts=1
+  ||delta_q||=0.017868 rad delta_L=-0.1705 mm
+  cond_eff(J)=5.516e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=465.393 mm margin=224.391 mm segment=113
+[INVERSE PATH] node=0302 s=0.075500 m
+  position_error=0.0475 mm
+  tangent_error=132.9827 deg
+  evaluations=60 attempts=1
+  ||delta_q||=0.019406 rad delta_L=-0.1696 mm
+  cond_eff(J)=6.503e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=481.975 mm margin=240.973 mm segment=113
+[INVERSE PATH] node=0303 s=0.075750 m
+  position_error=0.1361 mm
+  tangent_error=132.6330 deg
+  evaluations=84 attempts=1
+  ||delta_q||=0.035033 rad delta_L=-0.1724 mm
+  cond_eff(J)=6.125e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=482.265 mm margin=241.264 mm segment=113
+[INVERSE PATH] node=0304 s=0.076000 m
+  position_error=0.1779 mm
+  tangent_error=132.0755 deg
+  evaluations=66 attempts=1
+  ||delta_q||=0.052981 rad delta_L=-0.1670 mm
+  cond_eff(J)=5.623e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=482.764 mm margin=241.762 mm segment=113
+[INVERSE PATH] node=0305 s=0.076250 m
+  position_error=0.1827 mm
+  tangent_error=131.3660 deg
+  evaluations=72 attempts=1
+  ||delta_q||=0.060781 rad delta_L=-0.1617 mm
+  cond_eff(J)=5.166e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=483.436 mm margin=242.435 mm segment=112
+[INVERSE PATH] node=0306 s=0.076500 m
+  position_error=0.1721 mm
+  tangent_error=130.5888 deg
+  evaluations=46 attempts=1
+  ||delta_q||=0.061076 rad delta_L=-0.1586 mm
+  cond_eff(J)=4.737e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=484.200 mm margin=243.199 mm segment=112
+[INVERSE PATH] node=0307 s=0.076750 m
+  position_error=0.1594 mm
+  tangent_error=129.7968 deg
+  evaluations=79 attempts=1
+  ||delta_q||=0.058998 rad delta_L=-0.1565 mm
+  cond_eff(J)=4.231e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=485.042 mm margin=244.041 mm segment=111
+[INVERSE PATH] node=0308 s=0.077000 m
+  position_error=0.1500 mm
+  tangent_error=129.0136 deg
+  evaluations=45 attempts=1
+  ||delta_q||=0.056866 rad delta_L=-0.1548 mm
+  cond_eff(J)=3.584e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=484.941 mm margin=243.940 mm segment=109
+[INVERSE PATH] node=0309 s=0.077211 m
+  position_error=0.1214 mm
+  tangent_error=128.2567 deg
+  evaluations=49 attempts=1
+  ||delta_q||=0.051464 rad delta_L=-0.1326 mm
+  cond_eff(J)=4.857e+08 rank=5
+  contact_active=False feasible=True
+  EPM-lumen distance=470.247 mm margin=229.245 mm segment=48
+[layer1] done in 2087.8s  all_nodes_feasible=True
+
+[layer3] time-parameterising the INVERSE path -> /home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path
+[TIME PARAMETERIZATION] post-collocation dilation round=1 factor=1.080862534 duration=40.100000 s
+[TIME PARAMETERIZATION] post-collocation dilation round=2 factor=1.024937656 duration=41.100000 s
+[TIME BEAM VALIDATION] sample=1/1647
+[TIME BEAM VALIDATION] sample=82/1647
+[TIME BEAM VALIDATION] sample=164/1647
+[TIME BEAM VALIDATION] sample=246/1647
+[TIME BEAM VALIDATION] sample=328/1647
+[TIME BEAM VALIDATION] sample=410/1647
+[TIME BEAM VALIDATION] sample=492/1647
+[TIME BEAM VALIDATION] sample=574/1647
+[TIME BEAM VALIDATION] sample=656/1647
+[TIME BEAM VALIDATION] sample=738/1647
+[TIME BEAM VALIDATION] sample=820/1647
+[TIME BEAM VALIDATION] sample=902/1647
+[TIME BEAM VALIDATION] sample=984/1647
+[TIME BEAM VALIDATION] sample=1066/1647
+[TIME BEAM VALIDATION] sample=1148/1647
+[TIME BEAM VALIDATION] sample=1230/1647
+[TIME BEAM VALIDATION] sample=1312/1647
+[TIME BEAM VALIDATION] sample=1394/1647
+[TIME BEAM VALIDATION] sample=1476/1647
+[TIME BEAM VALIDATION] sample=1558/1647
+[TIME BEAM VALIDATION] sample=1640/1647
+[TIME BEAM VALIDATION] sample=1647/1647
+[layer3] done in 110.2s
+[bypass] wrote /home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/shape_triangle/plan_shape_summary.json
+[bypass] DONE

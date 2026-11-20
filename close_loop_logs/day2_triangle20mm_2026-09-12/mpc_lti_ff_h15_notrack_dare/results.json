@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/day2_triangle20mm_2026-09-12/mpc_lti_ff_h15_notrack_dare/runs/lti_rep1_20260912T094502Z",
+    "stop_reason": "rc4",
+    "rms_track_mm": NaN,
+    "mean_track_mm": NaN,
+    "max_track_mm": NaN,
+    "p95_track_mm": NaN,
+    "mean_hold_mm": NaN,
+    "final_mm": NaN,
+    "duration_s": NaN,
+    "steps": 0,
+    "n_track": 0
+  }
+]

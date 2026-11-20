@@ -1,0 +1,192 @@
+% =============================================================
+% Hardware results -- shape-tracking campaign (rectangle, triangle).
+% IEEEtran (journal). Standalone compilable excerpt, companion to
+% methodology.tex (\S\ref{sec:protocol}--\S\ref{sec:metrics} define
+% the protocol and statistics used here) and prediction_horizon_study.tex
+% (the vessel-geometry analogue of \S\ref{sec:shape-horizon} below,
+% to which this section's rectangle/triangle result is the
+% free-space, non-contact counterpart). Written 2026-10-24 from the
+% completed n=10 hardware campaign: 7 conditions x 2 paths x 10 clean
+% repetitions = 140 live runs, all reaching path_complete.
+% =============================================================
+\documentclass[journal]{IEEEtran}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+
+\begin{document}
+
+\section{Hardware Results: Shape-Tracking Campaign}
+\label{sec:shape-results}
+
+\subsection{Conditions and Metrics}
+\label{sec:shape-conditions}
+
+Seven conditions share the beam, platform, and controller parameters of
+\S\ref{sec:beam-model}--\S\ref{sec:mpc} and differ only in controller
+choice, Jacobian source, and (for two conditions) prediction horizon:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Condition & Controller & Jacobian / horizon \\
+\midrule
+Open-loop & feedforward only & --- \\
+INV-7-FJ & INV-7 & frozen, $N/A$ \\
+INV-7-SJ & INV-7 & scheduled, $N/A$ \\
+MPC-FJ ($N{=}15$) & MPC & frozen, $N{=}15$ \\
+MPC-SJ ($N{=}15$) & MPC & scheduled, $N{=}15$ \\
+MPC-SJ ($N{=}1$) & MPC & scheduled, $N{=}1$ \\
+MPC-FJ ($N{=}1$) & MPC & frozen, $N{=}1$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every condition was run $n=10$ times to \texttt{path\_complete} on both
+the rectangle and triangle paths (\S\ref{sec:protocol}); no run in this
+campaign failed to complete, so no condition reports a reduced $n$ here,
+unlike the vessel-geometry campaigns of \S\ref{sec:hw-validation} and
+\S\ref{sec:horizon-necessity}. $E_{\mathrm{RMS}}$ \eqref{eq:e-rms} and the
+final-tick error (the task error at the last logged control tick) are
+reported as run-level mean $\pm$ 95\% CI, $t_{0.975,9}\approx2.262$
+(\S\ref{sec:metrics}), alongside the two-sided Mann-Whitney $U$ test on
+the 10 run-level RMSE values for every primary comparison below.
+
+\subsection{Open-Loop vs.\ Closed-Loop Feedback}
+\label{sec:shape-exp1}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& Triangle $E_{\mathrm{RMS}}$ & Rectangle $E_{\mathrm{RMS}}$ \\
+\midrule
+Open-loop & $1.536\pm0.098$ & $1.811\pm0.197$ \\
+MPC-SJ ($N{=}15$) & $0.801\pm0.060$ & $0.450\pm0.036$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=10$.) Closed-loop feedback beats open-loop feedforward
+decisively and without exception on both paths (non-overlapping 95\%
+CIs; Mann-Whitney $p=1.8\times10^{-4}$ on both). The margin is
+proportionally larger on the rectangle ($4.0\times$) than the triangle
+($1.9\times$), consistent with the rectangle's sharper corners
+demanding more active correction than the triangle's gentler turns.
+
+\subsection{Controller Architecture: INV-7 vs.\ MPC}
+\label{sec:shape-exp2}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& Triangle $E_{\mathrm{RMS}}$ & Rectangle $E_{\mathrm{RMS}}$ \\
+\midrule
+MPC-SJ ($N{=}15$) & $0.801\pm0.060$ & $0.450\pm0.036$ \\
+INV-7-SJ & $0.876\pm0.109$ & $0.599\pm0.035$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=10$.) The two paths disagree. On the rectangle, MPC is more
+accurate by a wide, non-overlapping margin ($p=1.8\times10^{-4}$). On
+the triangle, the two controllers' 95\% CIs overlap substantially and
+the difference is not statistically significant
+($p=0.31$). MPC's advantage over INV-7 --- unqualified in the
+vessel-geometry comparison of \S\ref{sec:hw-exp4} --- is therefore not a
+uniform property of the controller architecture; it is geometry-dependent,
+and on at least one of the two free-space paths tested here the simpler,
+single-solve INV-7 controller matches MPC's receding-horizon QP.
+
+\subsection{Jacobian Robustness: Scheduled vs.\ Frozen}
+\label{sec:shape-exp3}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& Triangle $E_{\mathrm{RMS}}$ & Rectangle $E_{\mathrm{RMS}}$ \\
+\midrule
+MPC-SJ ($N{=}15$) & $0.801\pm0.060$ & $0.450\pm0.036$ \\
+MPC-FJ ($N{=}15$) & $0.627\pm0.020$ & $0.887\pm0.045$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=10$.) This is the sharpest reversal in the campaign. On the
+rectangle, scheduling $J$ beats freezing it by a wide, non-overlapping
+margin ($p=1.8\times10^{-4}$), matching the direction (though not the
+geometry) of the vessel result in \S\ref{sec:hw-exp2}. On the triangle,
+the \emph{frozen} Jacobian is significantly \emph{more} accurate than
+the scheduled one ($p=2.5\times10^{-4}$, non-overlapping CIs, the
+opposite direction). Separately, the frozen-Jacobian MPC condition is
+reproducibly less reliable on the rectangle than on the triangle: across
+the full campaign (including retries needed to reach $n=10$ clean
+completions), rectangle MPC-FJ required more retries for genuine,
+reproducible Cartesian workspace-boundary violations at near-identical
+tool-center-point positions, a failure mode essentially absent from the
+triangle's MPC-FJ condition. A single scheduled-vs-frozen conclusion does
+not generalize across geometry here: freezing $J$ is a liability on the
+rectangle's sharper corners and, on this evidence, a mild asset on the
+triangle's gentler ones.
+
+\subsection{Prediction Horizon: $N{=}15$ vs.\ $N{=}1$}
+\label{sec:shape-horizon}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+& Triangle $E_{\mathrm{RMS}}$ & Rectangle $E_{\mathrm{RMS}}$ \\
+\midrule
+MPC-SJ ($N{=}15$) & $0.801\pm0.060$ & $0.450\pm0.036$ \\
+MPC-SJ ($N{=}1$) & $1.073\pm0.049$ & $1.798\pm0.192$ \\
+\midrule
+MPC-FJ ($N{=}15$) & $0.627\pm0.020$ & $0.887\pm0.045$ \\
+MPC-FJ ($N{=}1$) & $1.263\pm0.054$ & $1.877\pm0.169$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(mm; $n=10$.) $N{=}15$ beats $N{=}1$ by a wide, non-overlapping margin
+on both paths and both Jacobian conditions (all four comparisons
+$p\le2.5\times10^{-4}$), the free-space counterpart to the vessel-geometry
+result of \S\ref{sec:horizon-necessity}. The effect is markedly larger on
+the rectangle ($4.0\times$ SJ, $2.1\times$ FJ) than the triangle
+($1.3\times$ SJ, $2.0\times$ FJ), and on the rectangle the degradation is
+striking in absolute terms: MPC-SJ($N{=}1$)'s $1.798\pm0.192$\,mm and
+MPC-FJ($N{=}1$)'s $1.877\pm0.169$\,mm are statistically indistinguishable
+from rectangle open-loop's $1.811\pm0.197$\,mm (\S\ref{sec:shape-exp1}).
+This is not merely a weaker closed-loop controller; at $N{=}1$ the
+command-tracking term $R$ in \eqref{eq:mpc-objective}, weighted
+$7.0\times$ against the feedforward reference input, has no multi-step
+horizon budget left to justify a large single-tick deviation from
+$u_{\mathrm{ref}}$, so the optimized command collapses toward the
+feedforward trajectory itself. INV-7 carries no analogous
+reference-tracking term in its correction law
+\eqref{eq:inv7-pinv}--\eqref{eq:inv7-preview-error} and applies its full
+proportional correction every tick independent of any horizon concept,
+which is consistent with INV-7-SJ ($0.599\pm0.035$\,mm on the rectangle,
+\S\ref{sec:shape-exp2}) outperforming MPC-SJ($N{=}1$) by a wide margin on
+the same path despite losing to MPC-SJ($N{=}15$) there.
+
+\subsection{Synthesis}
+\label{sec:shape-synthesis}
+
+Two of the four comparisons above are unqualified across both paths:
+closed-loop feedback beats open-loop, and a longer prediction horizon
+beats a short one, regardless of Jacobian source or path geometry. The
+other two are not, and should not be reported as if they were. MPC's
+advantage over INV-7, unqualified on the vessel geometry
+(\S\ref{sec:hw-exp4}), disappears on the triangle path while remaining
+large on the rectangle. The scheduled-vs-frozen-Jacobian comparison
+reverses sign outright between the two paths: scheduling helps on the
+rectangle and frozen is mildly better on the triangle, the opposite of a
+uniform claim that re-linearizing $J$ is always beneficial. Both
+reversals are consistent with a single underlying read: the rectangle's
+sharper corners create larger, more rapidly varying local demands on the
+Jacobian and on controller authority, so the choices that matter least
+on the gentler triangle (which Jacobian source, which controller
+architecture) matter most on the rectangle. The horizon result is the one
+finding in this section with no such qualification, and the mechanism
+behind it --- a reference-tracking cost term with no room left to act
+once the horizon is cut to one step --- is specific to the implemented
+MPC objective, not a general property of short-horizon predictive
+control.
+
+\end{document}

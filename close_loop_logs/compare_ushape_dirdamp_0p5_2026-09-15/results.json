@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_ushape_dirdamp_0p5_2026-09-15/runs/lti_rep1_20260915T181726Z",
+    "stop_reason": "path_complete",
+    "steps": 234,
+    "n_track": 212,
+    "rms_track_mm": 1.4555226870278697,
+    "mean_track_mm": 1.2945849056603773,
+    "max_track_mm": 3.134,
+    "p95_track_mm": 2.6375999999999995,
+    "mean_hold_mm": 1.2825454545454547,
+    "final_mm": 1.19,
+    "duration_s": 46.0496
+  }
+]

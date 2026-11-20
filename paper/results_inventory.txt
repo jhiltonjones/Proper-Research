@@ -1,0 +1,190 @@
+RESULTS INVENTORY — hardware campaigns for the paper
+Generated 2026-10-23. All run directories live under close_loop_logs/myrun/ in the
+main checkout (/home/jack/Proper-Research), not the worktree. Metrics below are
+RMSE and median tick-error of error_norm_mm across path_follow.jsonl, computed
+over the "kept" run (original rep, or the retry suffix b/c/etc. when the first
+attempt failed and was retried after an on-hardware safety check).
+
+================================================================================
+SECTION 1 — SHAPE WORK (triangle base25mm, rectangle 10x15mm; both
+"skipglobal_zraise30mm_2026-09-24" plans, B_r=0.80T hardware-calibrated default)
+================================================================================
+
+7 conditions x 2 shapes, n=10 each, all complete (120 reps total + retries).
+
+Run-name prefix pattern: close_loop_logs/myrun/<shape>_rerun1023_<cond>_rep<N>[retry-suffix]_<timestamp>/
+
+  <shape>    = triangle | rectangle
+  <cond>     = openloop | invjac_FJ | invjac_SJ | mpc_FJ | mpc_SJ | mpc_N1 | mpc_N1_FJ
+               (FJ = frozen Jacobian schedule, SJ = scheduled/genuine Jacobian schedule,
+                mpc_SJ/mpc_FJ use horizon=15 (MPC default), mpc_N1/mpc_N1_FJ use horizon=1)
+
+--------------------------------------------------------------------------------
+Condition                              | n  | RMSE median | RMSE range      | tick-median
+--------------------------------------------------------------------------------
+TRIANGLE
+  Open loop                            | 10 | 1.582 mm    | 1.279-1.683 mm  | 1.508 mm
+  InvJac, frozen Jacobian              | 10 | 0.924 mm    | 0.831-0.978 mm  | 0.618 mm
+  InvJac, scheduled Jacobian           | 10 | 0.866 mm    | 0.615-1.184 mm  | 0.605 mm
+  MPC (N=15), frozen Jacobian          | 10 | 0.619 mm    | 0.598-0.688 mm  | 0.463 mm
+  MPC (N=15), scheduled Jacobian       | 10 | 0.809 mm    | 0.665-0.970 mm  | 0.485 mm
+  MPC (N=1),  scheduled Jacobian       | 10 | 1.094 mm    | 0.939-1.156 mm  | 0.825 mm
+  MPC (N=1),  frozen Jacobian          | 10 | 1.251 mm    | 1.160-1.356 mm  | 0.850 mm
+
+RECTANGLE
+  Open loop                            | 10 | 1.900 mm    | 1.034-1.967 mm  | 1.589 mm
+  InvJac, frozen Jacobian              | 10 | 1.027 mm    | 0.478-1.861 mm  | 0.673 mm
+  InvJac, scheduled Jacobian           | 10 | 0.598 mm    | 0.535-0.693 mm  | 0.450 mm
+  MPC (N=15), frozen Jacobian          | 10 | 0.871 mm    | 0.815-0.970 mm  | 0.400 mm
+  MPC (N=15), scheduled Jacobian       | 10 | 0.464 mm    | 0.386-0.522 mm  | 0.320 mm
+  MPC (N=1),  scheduled Jacobian       | 10 | 1.870 mm    | 1.049-2.001 mm  | 1.572 mm
+  MPC (N=1),  frozen Jacobian          | 10 | 1.944 mm    | 1.213-2.020 mm  | 1.678 mm
+--------------------------------------------------------------------------------
+
+Notes on retries (all benign, robot safety-verified before each retry — see
+conversation log for the exact rtde_receive safety checks run after every one):
+  - Triangle open-loop rep8:        transient RTDE disconnect -> retried as rep8b
+  - Rectangle MPC-N1 (sched) rep6:  transient RTDE disconnect -> retried as rep6b
+  - Rectangle MPC-N1-frozen rep3:   transient RTDE disconnect -> retried as rep3b
+  - Several reps in the original n=5 -> n=10 extension campaign (MPC-SJ/FJ,
+    InvJac-SJ/FJ) needed retries, mostly from the known reproducible rectangle
+    MPC-frozen workspace-violation failure mode (documented separately —
+    frozen Jacobian is structurally less reliable on the rectangle's sharper
+    corners) and one anomalous joint-configuration excursion on rectangle
+    MPC-SJ rep8 that required manual robot repositioning before resuming.
+
+Key findings already reported to the user:
+  - Closed-loop beats open-loop on both shapes, all controllers/conditions.
+  - MPC(N=15) vs InvJac: mixed — rectangle favors MPC-scheduled clearly
+    (0.464 vs 0.598mm), triangle slightly favors MPC-frozen/InvJac over
+    MPC-scheduled (frozen-Jacobian MPC is actually tighter than scheduled on
+    the triangle specifically).
+  - Frozen vs scheduled MPC: scheduled clearly wins on rectangle; frozen
+    slightly wins on triangle (both small effects except rectangle's large gap).
+  - MPC horizon N=1 vs N=15: N=15 wins decisively on both shapes and with
+    both schedule types. N=1's cost structure (R=700x weight pulling the
+    command back toward the feedforward reference input, no nullspace/
+    anchor regularization to compensate) has no multi-step budget to spread
+    a correction over, so N=1 collapses close to open-loop behavior
+    (rectangle MPC-N1 RMSE 1.87-1.94mm vs open-loop's 1.90mm) rather than
+    behaving like a weaker reactive controller. InvJac has no such
+    "stay-near-feedforward" cost term and reacts with full proportional
+    authority every tick regardless of horizon, which is why it beats
+    MPC-N1 by a wide margin on both shapes.
+
+================================================================================
+SECTION 2 — VESSEL MODEL
+================================================================================
+
+IMPORTANT CAVEAT discovered during this inventory: the vessel work spans TWO
+different offline-solved plans, not one:
+  - BASE plan:          vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_
+                         dipolealign_recal_matchedtarget_2026-10-19
+                         (used by all "nodipole"-tagged runs)
+  - DIPOLE-ALIGNED plan: ..._dipolealign_recal_matchedtarget_dipolealigned_2026-10-20
+                         (a separately re-solved offline path, used by all
+                         "dipolealigned"-tagged runs)
+These are NOT the same planned trajectory. Dipole-alignment changes the
+offline-solved path itself, not just a controller flag. "Dipole-aligned vs
+not" is therefore not a clean controlled toggle the way frozen-vs-scheduled
+or N1-vs-N15 are for the shape work above -- flag this explicitly in the
+paper if comparing across that boundary.
+
+Also: the "scheduled Jacobian" condition below actually uses the HYBRID
+schedule (contact-model joint sensitivity + no-contact-model insertion
+sensitivity), not a pure single-model schedule. There is no plain
+non-hybrid scheduled-Jacobian group for this plan at all.
+
+--------------------------------------------------------------------------------
+# | Condition                          | Plan           | n_complete | Status
+--------------------------------------------------------------------------------
+1 | Open loop                          | base (10-19)   | 10/10      | DONE, clean
+  | (extra, not originally requested)
+  | Open loop, dipole-aligned          | dipole (10-20) | 10/10      | DONE, exists but
+  |                                     |                |            | wasn't on the list
+2 | MPC (N=15), frozen Jacobian        | dipole (10-20) | 0/16       | FAILED EVERY
+  |                                     |                | attempts   | ATTEMPT (tracking-
+  |                                     |                |            | error-exceeded /
+  |                                     |                |            | protective-stop /
+  |                                     |                |            | max-control-steps).
+  |                                     |                |            | NO USABLE DATA.
+3 | MPC (N=15), "scheduled"=hybrid     | base (10-19)   | 10/10      | DONE, clean
+  | Jacobian                           |                |            |
+4 | MPC (N=1), hybrid schedule         | base (10-19)   | 10/10      | DONE, clean.
+  |                                     |                |            | horizon=1 directly
+  |                                     |                |            | confirmed from
+  |                                     |                |            | controller_metadata.
+  |                                     |                |            | json (not just the
+  |                                     |                |            | directory name).
+5 | MPC (N=15), dipole-aligned, hybrid | dipole (10-20) | 10/10      | DONE, clean, BUT
+  | schedule                           |                |            | not directly
+  |                                     |                |            | comparable to 1/3/4
+  |                                     |                |            | (different plan --
+  |                                     |                |            | see caveat above)
+6 | Inverse Jacobian                  | dipole (10-20) | 0/30+      | FAILED EVERY
+  |                                     | attempted      | attempts   | ATTEMPT on the
+  |                                     |                |            | current vessel plan
+  |                                     |                |            | (tcp_out_of_workspace
+  |                                     |                |            | / magnet exclusion-
+  |                                     |                |            | zone violations /
+  |                                     |                |            | tracking-error-
+  |                                     |                |            | exceeded). Only
+  |                                     |                |            | InvJac successes
+  |                                     |                |            | anywhere in the
+  |                                     |                |            | vessel work are on
+  |                                     |                |            | an unrelated older
+  |                                     |                |            | no-contact-only plan
+  |                                     |                |            | from 2026-10-06 --
+  |                                     |                |            | NOT COMPARABLE.
+--------------------------------------------------------------------------------
+
+VESSEL METRICS (RMSE / median tick-error of error_norm_mm, same methodology
+as Section 1 -- rmse = sqrt(mean(error_norm_mm^2)) per rep, med = per-rep
+median; table shows across-rep median RMSE, RMSE range, and median of the
+per-rep medians). All 50 reps below are data-complete (no missing
+error_norm_mm fields); no retries were needed within these specific v1-v10
+slots -- the retries noted during the original audit belonged to the
+FAILED conditions 2/6, not these five.
+
+--------------------------------------------------------------------------------
+Condition                              | n  | RMSE median | RMSE range      | tick-median
+--------------------------------------------------------------------------------
+1.  Open loop (base, nodipole)         | 10 | 3.656 mm    | 3.169-3.944 mm  | 3.424 mm
+1b. Open loop (dipole-aligned)         | 10 | 4.982 mm    | 4.715-5.613 mm  | 4.753 mm
+3.  MPC (N=15), hybrid (base)          | 10 | 0.701 mm    | 0.615-0.793 mm  | 0.433 mm
+4.  MPC (N=1), hybrid (base)           | 10 | 1.871 mm    | 1.659-2.133 mm  | 1.319 mm
+5.  MPC (N=15), hybrid (dipole-aligned)| 10 | 0.708 mm    | 0.626-0.786 mm  | 0.417 mm
+--------------------------------------------------------------------------------
+
+Comparability caveats (important for how these are presented in the paper):
+  - 1 vs 1b is NOT a clean open-loop comparison -- different solved paths.
+  - 3 vs 4 (MPC N=15 vs N=1, both on the base/nodipole plan) IS a clean
+    same-plan horizon comparison: N=15 beats N=1 by a wide margin (0.701mm
+    vs 1.871mm RMSE median), consistent with the same mechanism identified
+    in the shape work -- N=1 has no multi-step budget to spread a
+    correction over and collapses toward open-loop-like behavior (though
+    less severely here than on the rectangle shape, since vessel open-loop
+    itself is much worse at 3.656mm -- the vessel's contact dynamics make
+    open-loop fail harder than any closed-loop variant regardless of
+    horizon).
+  - 5 vs 3 crosses plans (dipole-aligned vs base) -- do not present as a
+    clean "dipole-alignment helps/hurts" result without that caveat; at
+    face value they are nearly identical (0.708mm vs 0.701mm RMSE median),
+    which itself is worth noting but should be framed as "comparable
+    performance across the two solved paths," not "dipole-alignment has no
+    effect."
+
+================================================================================
+OPEN ITEMS BEFORE THIS CAN BE CALLED A COMPLETE RESULTS SET
+================================================================================
+1. Decide fate of vessel MPC-frozen (0/16) and vessel InvJac (0/30+): rerun
+   vs report as failed/not-achieved. This is the ONLY remaining gap -- every
+   other number in this file (shape work in full, and vessel conditions
+   1/1b/3/4/5) is now pulled, verified, and complete.
+2. Decide whether to include the "extra" vessel open-loop dipole-aligned
+   run (1b: 10/10, exists, wasn't on the original requested list).
+3. When presenting vessel condition 5 (dipole-aligned) alongside 1/3/4
+   (base plan), use the explicit caveat above -- they are on different
+   solved paths, not a controlled toggle.
+4. Shape work (Section 1) is fully complete and internally consistent --
+   no open items there.

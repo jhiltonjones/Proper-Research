@@ -1,0 +1,437 @@
+{
+  "NEW_rep1": {
+    "condition": "NEW",
+    "rep": 1,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0030044362433488923,
+        "p01": 0.0031811431815708547
+      },
+      "z_tight_max": {
+        "min": 0.0016866252394291056,
+        "p01": 0.0019285221085799562
+      },
+      "exclusion_gap": {
+        "min": 0.0045958826107377615,
+        "p01": 0.00481875198363562
+      },
+      "insertion_margin": {
+        "min": 0.01245097294384306,
+        "p01": 0.012645820850039903
+      }
+    },
+    "min_margin_overall_m": 0.0016866252394291056,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.011778262712029738,
+    "cmd_increment_p90": 0.025974139374336385,
+    "cmd_increment_p99": 0.061291717677370225,
+    "cmd_increment_max": 0.09459171786684076
+  },
+  "NEW_rep2": {
+    "condition": "NEW",
+    "rep": 2,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.004450061553767589,
+        "p01": 0.004662203532045266
+      },
+      "z_tight_max": {
+        "min": 0.0017598541584718172,
+        "p01": 0.0019289446137419261
+      },
+      "exclusion_gap": {
+        "min": 0.004705436744299518,
+        "p01": 0.004850271065654847
+      },
+      "insertion_margin": {
+        "min": 0.011900965019184789,
+        "p01": 0.012134971719416061
+      }
+    },
+    "min_margin_overall_m": 0.0017598541584718172,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.013120009018606946,
+    "cmd_increment_p90": 0.027318536439824154,
+    "cmd_increment_p99": 0.06189573708211479,
+    "cmd_increment_max": 0.09797958971132713
+  },
+  "NEW_rep3": {
+    "condition": "NEW",
+    "rep": 3,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.004271058800533297,
+        "p01": 0.005574482971124071
+      },
+      "z_tight_max": {
+        "min": 0.0018424896336791882,
+        "p01": 0.0019313510060909487
+      },
+      "exclusion_gap": {
+        "min": 0.004680051580824324,
+        "p01": 0.00489846358486233
+      },
+      "insertion_margin": {
+        "min": 0.012159924920490988,
+        "p01": 0.012293184340393984
+      }
+    },
+    "min_margin_overall_m": 0.0018424896336791882,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.012584663626085717,
+    "cmd_increment_p90": 0.02745178977949044,
+    "cmd_increment_p99": 0.06774662488601838,
+    "cmd_increment_max": 0.09713221468184487
+  },
+  "NEW_rep4": {
+    "condition": "NEW",
+    "rep": 4,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.004319116208734038,
+        "p01": 0.006529063501447351
+      },
+      "z_tight_max": {
+        "min": 0.0017341906535078486,
+        "p01": 0.0019326078956220735
+      },
+      "exclusion_gap": {
+        "min": 0.004858369184427863,
+        "p01": 0.004985475051984741
+      },
+      "insertion_margin": {
+        "min": 0.01191337945121813,
+        "p01": 0.012262144634603182
+      }
+    },
+    "min_margin_overall_m": 0.0017341906535078486,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.012950007509324742,
+    "cmd_increment_p90": 0.02811323405009012,
+    "cmd_increment_p99": 0.06624647709611035,
+    "cmd_increment_max": 0.09583824299829374
+  },
+  "NEW_rep5": {
+    "condition": "NEW",
+    "rep": 5,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.00409090244445753,
+        "p01": 0.007474607420606542
+      },
+      "z_tight_max": {
+        "min": 0.0018531076512882314,
+        "p01": 0.0019499666472854729
+      },
+      "exclusion_gap": {
+        "min": 0.00497448280186083,
+        "p01": 0.005096697027013416
+      },
+      "insertion_margin": {
+        "min": 0.012708252949676143,
+        "p01": 0.013055479216608518
+      }
+    },
+    "min_margin_overall_m": 0.0018531076512882314,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.01188509855689611,
+    "cmd_increment_p90": 0.02560863919355175,
+    "cmd_increment_p99": 0.05777072177561856,
+    "cmd_increment_max": 0.07674410495275842
+  },
+  "OLD-C_rep1": {
+    "condition": "OLD-C",
+    "rep": 1,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0050118075156204665,
+        "p01": 0.007750688375559648
+      },
+      "z_tight_max": {
+        "min": 0.0017199455016740015,
+        "p01": 0.002019110567809251
+      },
+      "exclusion_gap": {
+        "min": 0.004940509860345499,
+        "p01": 0.0050442219750629555
+      },
+      "insertion_margin": {
+        "min": 0.012354612402433515,
+        "p01": 0.012614058638721053
+      }
+    },
+    "min_margin_overall_m": 0.0017199455016740015,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.011907088151215415,
+    "cmd_increment_p90": 0.025490137104207753,
+    "cmd_increment_p99": 0.057757265802238424,
+    "cmd_increment_max": 0.07406111040215371
+  },
+  "OLD-C_rep2": {
+    "condition": "OLD-C",
+    "rep": 2,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0050076378895029215,
+        "p01": 0.005800115489776002
+      },
+      "z_tight_max": {
+        "min": 0.001651312189340913,
+        "p01": 0.0019992928420104993
+      },
+      "exclusion_gap": {
+        "min": 0.00464013013136208,
+        "p01": 0.004843664722153574
+      },
+      "insertion_margin": {
+        "min": 0.01213688688187987,
+        "p01": 0.01259632690824341
+      }
+    },
+    "min_margin_overall_m": 0.001651312189340913,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.01263921602051819,
+    "cmd_increment_p90": 0.02759328071341965,
+    "cmd_increment_p99": 0.06140745959572042,
+    "cmd_increment_max": 0.09579230430989748
+  },
+  "OLD-C_rep3": {
+    "condition": "OLD-C",
+    "rep": 3,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0050019865711175525,
+        "p01": 0.0072763151538523954
+      },
+      "z_tight_max": {
+        "min": 0.0017677017356379707,
+        "p01": 0.0020074291726804765
+      },
+      "exclusion_gap": {
+        "min": 0.00495895363645707,
+        "p01": 0.005154708302506394
+      },
+      "insertion_margin": {
+        "min": 0.012387888390386539,
+        "p01": 0.012725707815543635
+      }
+    },
+    "min_margin_overall_m": 0.0017677017356379707,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.012344749178958257,
+    "cmd_increment_p90": 0.026022331258445053,
+    "cmd_increment_p99": 0.06153402548928584,
+    "cmd_increment_max": 0.07494737248229587
+  },
+  "OLD-C_rep4": {
+    "condition": "OLD-C",
+    "rep": 4,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.00500297099364477,
+        "p01": 0.006852878116220694
+      },
+      "z_tight_max": {
+        "min": 0.0018473289645483323,
+        "p01": 0.002149050309642496
+      },
+      "exclusion_gap": {
+        "min": 0.0048742957189841785,
+        "p01": 0.0050479605922658195
+      },
+      "insertion_margin": {
+        "min": 0.011924022327461325,
+        "p01": 0.012187298034402182
+      }
+    },
+    "min_margin_overall_m": 0.0018473289645483323,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.01176764557320403,
+    "cmd_increment_p90": 0.026032149721979897,
+    "cmd_increment_p99": 0.05753544417515199,
+    "cmd_increment_max": 0.0795383525162547
+  },
+  "OLD-C_rep5": {
+    "condition": "OLD-C",
+    "rep": 5,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.004998568447672543,
+        "p01": 0.006424252001190801
+      },
+      "z_tight_max": {
+        "min": 0.0016602505928899544,
+        "p01": 0.001960118344194459
+      },
+      "exclusion_gap": {
+        "min": 0.004698574316500254,
+        "p01": 0.004852222728379084
+      },
+      "insertion_margin": {
+        "min": 0.012282206397597372,
+        "p01": 0.012478565374941719
+      }
+    },
+    "min_margin_overall_m": 0.0016602505928899544,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.012271541460669777,
+    "cmd_increment_p90": 0.0269414355813539,
+    "cmd_increment_p99": 0.06682126609972198,
+    "cmd_increment_max": 0.09528442947302565
+  },
+  "NC_rep1": {
+    "condition": "NC",
+    "rep": 1,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.004254161596953351,
+        "p01": 0.00427365759342215
+      },
+      "z_tight_max": {
+        "min": 0.008885284622944599,
+        "p01": 0.009152747427103728
+      },
+      "exclusion_gap": {
+        "min": 0.005521074642539009,
+        "p01": 0.005804648066509644
+      },
+      "insertion_margin": {
+        "min": 0.012243400266055634,
+        "p01": 0.012867205155592337
+      }
+    },
+    "min_margin_overall_m": 0.004254161596953351,
+    "closest_face_overall": "z_tight_min",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.0071335226034070385,
+    "cmd_increment_p90": 0.013435853809621614,
+    "cmd_increment_p99": 0.04045959058025659,
+    "cmd_increment_max": 0.061560782597364694
+  },
+  "NC_rep2": {
+    "condition": "NC",
+    "rep": 2,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0035844050736305,
+        "p01": 0.003641315890716469
+      },
+      "z_tight_max": {
+        "min": 0.0017740475878011627,
+        "p01": 0.001911223898378321
+      },
+      "exclusion_gap": {
+        "min": 0.005536186697495282,
+        "p01": 0.005713088375790109
+      },
+      "insertion_margin": {
+        "min": 0.012634062065581163,
+        "p01": 0.012817462728267094
+      }
+    },
+    "min_margin_overall_m": 0.0017740475878011627,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.0075897768853629395,
+    "cmd_increment_p90": 0.01418375034319243,
+    "cmd_increment_p99": 0.041615760976391386,
+    "cmd_increment_max": 0.058863758604085076
+  },
+  "NC_rep3": {
+    "condition": "NC",
+    "rep": 3,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.003901000828006703,
+        "p01": 0.003930436032065942
+      },
+      "z_tight_max": {
+        "min": 0.0017061634959370728,
+        "p01": 0.0019148550134277262
+      },
+      "exclusion_gap": {
+        "min": 0.005586027766030649,
+        "p01": 0.005636413557732641
+      },
+      "insertion_margin": {
+        "min": 0.012343124457621407,
+        "p01": 0.012935594125354643
+      }
+    },
+    "min_margin_overall_m": 0.0017061634959370728,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.007361275753735992,
+    "cmd_increment_p90": 0.015133134094524488,
+    "cmd_increment_p99": 0.039031163444593515,
+    "cmd_increment_max": 0.0685159431811312
+  },
+  "NC_rep4": {
+    "condition": "NC",
+    "rep": 4,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.003645713350044596,
+        "p01": 0.0037475458819484714
+      },
+      "z_tight_max": {
+        "min": 0.002284547972574512,
+        "p01": 0.002708869583614424
+      },
+      "exclusion_gap": {
+        "min": 0.005263266837101183,
+        "p01": 0.005608774790003026
+      },
+      "insertion_margin": {
+        "min": 0.01223763726266416,
+        "p01": 0.012758092668618168
+      }
+    },
+    "min_margin_overall_m": 0.002284547972574512,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.00729769816629464,
+    "cmd_increment_p90": 0.014547963367135703,
+    "cmd_increment_p99": 0.03318015039162405,
+    "cmd_increment_max": 0.04661311828230332
+  },
+  "NC_rep5": {
+    "condition": "NC",
+    "rep": 5,
+    "faces": {
+      "z_tight_min": {
+        "min": 0.0033228216166132883,
+        "p01": 0.0034101411792999245
+      },
+      "z_tight_max": {
+        "min": 0.0016495622723281186,
+        "p01": 0.0019555523259200654
+      },
+      "exclusion_gap": {
+        "min": 0.005478344972188326,
+        "p01": 0.005738668388053674
+      },
+      "insertion_margin": {
+        "min": 0.012885902904017959,
+        "p01": 0.01318838294223796
+      }
+    },
+    "min_margin_overall_m": 0.0016495622723281186,
+    "closest_face_overall": "z_tight_max",
+    "n_ticks_any_face_violated": 0,
+    "cmd_increment_mean": 0.0075896248831798215,
+    "cmd_increment_p90": 0.014931705250073698,
+    "cmd_increment_p99": 0.03694426943584037,
+    "cmd_increment_max": 0.05925877496202567
+  }
+}

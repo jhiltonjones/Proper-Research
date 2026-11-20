@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cosserat-clean"
+version = "0.1.0"
+description = "Clean modular Cosserat magnetic-beam simulation and sensitivity analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "matplotlib>=3.8",
+  "pandas>=2.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cosserat_clean*"]

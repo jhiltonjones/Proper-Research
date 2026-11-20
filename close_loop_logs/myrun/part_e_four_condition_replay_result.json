@@ -1,0 +1,86 @@
+[
+  {
+    "label": "A: planned-input, adaptation=off",
+    "n_ticks": 212,
+    "per_axis_one_step_rmse_mm": [
+      0.6480105285135962,
+      0.5992505381646356,
+      0.7079705473065281
+    ],
+    "aggregate_one_step_rmse_mm": 1.131477418426272,
+    "mean_solve_time_ms": 2.9196510943396228,
+    "max_solve_time_ms": 11.303178,
+    "n_over_deadline": 0,
+    "mean_iterations": 86.20283018867924,
+    "n_qp_failures": 0,
+    "final_g_hat": null,
+    "g_hat_accepted_fraction": null,
+    "g_hat_trace_summary": null,
+    "wall_time_s": 1.4970406368374825
+  },
+  {
+    "label": "B: planned-input, adaptation=active",
+    "n_ticks": 212,
+    "per_axis_one_step_rmse_mm": [
+      2.321168504766728,
+      0.43802850042877955,
+      2.078669291465271
+    ],
+    "aggregate_one_step_rmse_mm": 3.146515249921669,
+    "mean_solve_time_ms": 2.592862033018868,
+    "max_solve_time_ms": 5.098515000000001,
+    "n_over_deadline": 0,
+    "mean_iterations": 83.25471698113208,
+    "n_qp_failures": 0,
+    "final_g_hat": -0.3,
+    "g_hat_accepted_fraction": 0.5283018867924528,
+    "g_hat_trace_summary": {
+      "min": -0.3,
+      "max": 0.0,
+      "final": -0.3
+    },
+    "wall_time_s": 1.5048945974558592
+  },
+  {
+    "label": "C: zero-centered-input, adaptation=off",
+    "n_ticks": 212,
+    "per_axis_one_step_rmse_mm": [
+      0.6485555412624215,
+      0.599205921095419,
+      0.7079509543741792
+    ],
+    "aggregate_one_step_rmse_mm": 1.1317537628730523,
+    "mean_solve_time_ms": 2.9211297075471703,
+    "max_solve_time_ms": 24.133899,
+    "n_over_deadline": 0,
+    "mean_iterations": 84.08018867924528,
+    "n_qp_failures": 0,
+    "final_g_hat": null,
+    "g_hat_accepted_fraction": null,
+    "g_hat_trace_summary": null,
+    "wall_time_s": 1.3981423554942012
+  },
+  {
+    "label": "D: zero-centered-input, adaptation=active",
+    "n_ticks": 212,
+    "per_axis_one_step_rmse_mm": [
+      2.321715318838508,
+      0.4380025456531591,
+      2.0786514641858496
+    ],
+    "aggregate_one_step_rmse_mm": 3.1469032653213262,
+    "mean_solve_time_ms": 2.818333226415094,
+    "max_solve_time_ms": 14.764162,
+    "n_over_deadline": 0,
+    "mean_iterations": 80.54245283018868,
+    "n_qp_failures": 0,
+    "final_g_hat": -0.3,
+    "g_hat_accepted_fraction": 0.5283018867924528,
+    "g_hat_trace_summary": {
+      "min": -0.3,
+      "max": 0.0,
+      "final": -0.3
+    },
+    "wall_time_s": 2.0452787037938833
+  }
+]

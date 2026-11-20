@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 574, in run_experiment_grid
+    result = run_experiment(
+             ^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/run_experiment_grid.py", line 121, in run_experiment
+    controller_pack = build_controller(
+                      ^^^^^^^^^^^^^^^^^
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/controller_factory_joint_space.py", line 275, in build_controller
+    design_cfg.validate()
+  File "/Users/jackhilton-jones/Proper-Research/proper_research/simulation/simulations/controller_factory.py", line 183, in validate
+    raise ValueError(
+ValueError: w_tracking must have length n_out=3; got 6.

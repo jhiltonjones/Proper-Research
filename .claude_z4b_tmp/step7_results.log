@@ -1,0 +1,48 @@
+
+======================================================================
+[rectangle_sj (campaign)] plan_dir=/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/rectangle_10x15mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path
+======================================================================
+[preflight] progress_mode='counter' (expect 'counter' per Z4b step 1 default)
+[period] n_ticks=300 total_wall_s=30.17s mean_period_ms=100.57 std_period_ms=0.22 (target=100ms)
+[index] counter-mode monotonic: YES (first 5: [0, 1, 2, 3, 4], matches raw tick count: False)
+[latency] mean_solve_call_ms=5.74 max=43.50 (70ms deadline per campaign-2 decision -- real worker-process deadline enforcement is NOT exercised here, this is the solve call in-process, not the isolated-worker IPC path the real runners use)
+[deadline_misses] 0/300
+[abort] N/A -- no tracking-error ramp injected in this run (abort logic lives in close_loop_path_follow.py's run loop, not in this adapter-level harness; see test_step2_tracking_abort.py for that check)
+
+======================================================================
+[triangle35_sj (campaign)] plan_dir=/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/triangle_base35mm_skipglobal_z4b_2026-11-11/time_parameterized_configuration_path
+======================================================================
+[preflight] progress_mode='counter' (expect 'counter' per Z4b step 1 default)
+[period] n_ticks=300 total_wall_s=30.18s mean_period_ms=100.62 std_period_ms=0.21 (target=100ms)
+[index] counter-mode monotonic: YES (first 5: [0, 1, 2, 3, 4], matches raw tick count: True)
+[latency] mean_solve_call_ms=4.07 max=68.11 (70ms deadline per campaign-2 decision -- real worker-process deadline enforcement is NOT exercised here, this is the solve call in-process, not the isolated-worker IPC path the real runners use)
+[deadline_misses] 0/300
+[abort] N/A -- no tracking-error ramp injected in this run (abort logic lives in close_loop_path_follow.py's run loop, not in this adapter-level harness; see test_step2_tracking_abort.py for that check)
+
+======================================================================
+[vessel_planB (reference)] plan_dir=/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_dipolealigned_2026-10-20/time_parameterized_configuration_path
+======================================================================
+[preflight] progress_mode='counter' (expect 'counter' per Z4b step 1 default)
+[period] n_ticks=300 total_wall_s=30.18s mean_period_ms=100.61 std_period_ms=0.26 (target=100ms)
+[index] counter-mode monotonic: YES (first 5: [0, 1, 2, 3, 4], matches raw tick count: True)
+[latency] mean_solve_call_ms=5.14 max=52.03 (70ms deadline per campaign-2 decision -- real worker-process deadline enforcement is NOT exercised here, this is the solve call in-process, not the isolated-worker IPC path the real runners use)
+[deadline_misses] 0/300
+[abort] N/A -- no tracking-error ramp injected in this run (abort logic lives in close_loop_path_follow.py's run loop, not in this adapter-level harness; see test_step2_tracking_abort.py for that check)
+
+======================================================================
+[vessel_planBprime (reference)] plan_dir=/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/vessel_phi30_L30_left1mm_newwall_tol0p5_floor240_dipolealign_recal_matchedtarget_2026-10-19/time_parameterized_configuration_path
+======================================================================
+[preflight] progress_mode='counter' (expect 'counter' per Z4b step 1 default)
+[period] n_ticks=300 total_wall_s=30.18s mean_period_ms=100.60 std_period_ms=0.28 (target=100ms)
+[index] counter-mode monotonic: YES (first 5: [0, 1, 2, 3, 4], matches raw tick count: True)
+[latency] mean_solve_call_ms=4.90 max=57.21 (70ms deadline per campaign-2 decision -- real worker-process deadline enforcement is NOT exercised here, this is the solve call in-process, not the isolated-worker IPC path the real runners use)
+[deadline_misses] 0/300
+[abort] N/A -- no tracking-error ramp injected in this run (abort logic lives in close_loop_path_follow.py's run loop, not in this adapter-level harness; see test_step2_tracking_abort.py for that check)
+
+======================================================================
+[SUMMARY]
+======================================================================
+{'label': 'rectangle_sj (campaign)', 'n_ticks': 300, 'mean_period_ms': 100.57368601694155, 'deadline_misses': 0, 'indices_monotonic': True, 'progress_mode': 'counter'}
+{'label': 'triangle35_sj (campaign)', 'n_ticks': 300, 'mean_period_ms': 100.616753487583, 'deadline_misses': 0, 'indices_monotonic': True, 'progress_mode': 'counter'}
+{'label': 'vessel_planB (reference)', 'n_ticks': 300, 'mean_period_ms': 100.60510823945437, 'deadline_misses': 0, 'indices_monotonic': True, 'progress_mode': 'counter'}
+{'label': 'vessel_planBprime (reference)', 'n_ticks': 300, 'mean_period_ms': 100.60055980016556, 'deadline_misses': 0, 'indices_monotonic': True, 'progress_mode': 'counter'}

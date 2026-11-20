@@ -1,0 +1,13 @@
+{
+  "description": "Live joint state saved 2026-09-22, manually jogged by the user to the closest safe radial approach of the source magnet to the beam base for the detect_blue-sourced vessel shape. Verified in-lab: at this configuration the beam can successfully travel through the vessel. Used as --magnet-exclusion-reference-joints for proper_research.planning.plan_vessel_path, defining the minimum magnet-to-tip-path exclusion radius so the offline planner does not reject configurations that are physically fine.",
+  "joints_rad": [
+    -0.44476110139955694,
+    -1.8079539738097132,
+    -1.9497392177581787,
+    -0.9160397809794922,
+    1.4976052045822144,
+    -0.5941060225116175
+  ],
+  "safety_mode_at_read": 1,
+  "robot_ip_source": "common.ROBOT_IP (rectangle_stage_a)"
+}

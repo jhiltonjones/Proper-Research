@@ -1,0 +1,9 @@
+{
+  "kind": "open_loop",
+  "speed_scale": 1.0,
+  "rep": 3,
+  "plan_dir": "plans/ushape_10x15mm_2026-09-12/time_parameterized_configuration_path",
+  "stop_reason": "path_complete",
+  "samples": 214,
+  "playback_dt_s": 0.09999999999999964
+}

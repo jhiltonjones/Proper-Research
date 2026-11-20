@@ -1,0 +1,2 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+mpc_lti,lti,1,close_loop_logs/compare_ushape_dirdamp_2p0_2026-09-15/runs/lti_rep1_20260915T182251Z,path_complete,232,211,1.7865421882847679,1.6230284360189573,3.332,2.947,1.7917619047619044,1.696,41.7401

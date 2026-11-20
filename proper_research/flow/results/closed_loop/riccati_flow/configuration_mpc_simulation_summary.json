@@ -1,0 +1,41 @@
+{
+  "controller": "riccati_flow",
+  "description": "DARE inverse Jacobian, simulated flow feedback",
+  "samples": 776,
+  "max_beam_position_error_mm": 0.6664439432963436,
+  "rms_beam_position_error_mm": 0.17223177616030996,
+  "p95_beam_position_error_mm": 0.38927516638179277,
+  "final_beam_position_error_mm": 0.033380332721708775,
+  "max_beam_tangent_error_deg": 24.219046944330948,
+  "beam_feasible_fraction": 1.0,
+  "flow_estimate_error_rms_mm": 0.05979883667655665,
+  "flow_estimate_error_max_mm": 0.2787328129780492,
+  "flow_low_gain_held_fraction": 0.0,
+  "sample_period_s": 0.009999999999999898,
+  "position_tolerance_m": 0.0015,
+  "mpc_configuration": {
+    "sample_period_s": 0.009999999999999898,
+    "velocity_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.16000000000000003
+    ],
+    "acceleration_limit": [
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.4,
+      0.016
+    ]
+  },
+  "simulation_configuration": {
+    "position_tolerance_m": 0.0015,
+    "tangent_tolerance_rad": 1.5707963267948966
+  }
+}

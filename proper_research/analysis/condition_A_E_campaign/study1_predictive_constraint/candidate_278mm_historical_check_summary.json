@@ -1,0 +1,20 @@
+{
+  "candidate_mm": 278.0,
+  "n_states": 1995,
+  "n_failures": 1,
+  "failures": [
+    {
+      "run_dir": "close_loop_logs/baseline_A_pilot_2026-11-20_retry1_20261120T122825Z",
+      "step": 109,
+      "ref_index": 109,
+      "qp_status": "primal infeasible",
+      "logged_gap_mm": 274.6006387863223
+    }
+  ],
+  "n_nonzero_joint": 60,
+  "n_nonzero_insertion": 1,
+  "joint_delta_max": 0.007891010959245826,
+  "insertion_delta_max": 0.0001999999999999988,
+  "min_logged_gap_mm": 272.97626356682224,
+  "elapsed_s": 26.483320951461792
+}

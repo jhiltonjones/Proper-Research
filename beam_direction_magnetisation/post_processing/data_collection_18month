@@ -1,0 +1,367 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+
+
+# ------------------------------------------------------------
+# User settings
+# ------------------------------------------------------------
+out_dir = Path("mpc_boundary_condition_figures_17np")
+out_dir.mkdir(exist_ok=True)
+
+dt = 0.02  # control timestep [s], change if needed
+
+csv_files = {
+    "With boundary conditions": Path("/Users/jackhilton-jones/Proper-Research/control_run_log_test_run_testing.csv"),
+    "Without boundary conditions": Path("/Users/jackhilton-jones/Proper-Research/lti_60_15np_17s_nobc.csv"),
+
+    # Uncomment this when you have the advancement-weight CSV:
+    # "BC + advancement weight": Path("with_boundary_conditions_advancement_weight.csv"),
+}
+# ------------------------------------------------------------
+# Data window settings
+# ------------------------------------------------------------
+start_step = 2     # first controller step to include
+end_step = None     # last controller step to include; use None for end of file
+
+# ------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------
+def filter_dataframe_by_step(df, start_step=None, end_step=None):
+    """
+    Filters the dataframe by the 'step' column.
+
+    If the CSV does not contain a 'step' column, it filters by row index instead.
+    """
+
+    df = df.copy()
+
+    if "step" in df.columns:
+        if start_step is not None:
+            df = df[df["step"] >= start_step]
+
+        if end_step is not None:
+            df = df[df["step"] <= end_step]
+
+    else:
+        if start_step is not None:
+            df = df.iloc[start_step:]
+
+        if end_step is not None:
+            df = df.iloc[:end_step + 1]
+
+    df = df.reset_index(drop=True)
+
+    return df
+def save_bar_figure(fig, filename):
+    png_path = out_dir / f"{filename}.png"
+    pdf_path = out_dir / f"{filename}.pdf"
+
+    fig.savefig(png_path, dpi=300, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"Saved: {png_path}")
+    print(f"Saved: {pdf_path}")
+
+
+def safe_mean(df, column):
+    if column not in df.columns:
+        return np.nan
+    return df[column].replace([np.inf, -np.inf], np.nan).mean()
+
+
+def safe_max(df, column):
+    if column not in df.columns:
+        return np.nan
+    return df[column].replace([np.inf, -np.inf], np.nan).max()
+
+
+def safe_min(df, column):
+    if column not in df.columns:
+        return np.nan
+    return df[column].replace([np.inf, -np.inf], np.nan).min()
+
+
+def summarise_run(csv_path, condition, dt=None, start_step=None, end_step=None):
+    """
+    Reads one MPC CSV file and computes the key metrics for comparison.
+
+    Assumes error columns are stored in metres and wall-clearance columns
+    are stored in millimetres, based on your CSV file.
+    """
+
+    df_full = pd.read_csv(csv_path)
+
+    df = filter_dataframe_by_step(
+        df_full,
+        start_step=start_step,
+        end_step=end_step,
+    )
+
+    if len(df) == 0:
+        raise ValueError(
+            f"No data left for '{condition}' after filtering "
+            f"start_step={start_step}, end_step={end_step}."
+        )
+
+    n_steps = len(df)
+
+    if "step" in df.columns:
+        first_step = int(df["step"].min())
+        final_step = int(df["step"].max())
+    else:
+        first_step = 0
+        final_step = n_steps - 1
+
+    if dt is not None:
+        total_time = n_steps * dt
+    else:
+        total_time = np.nan
+
+    summary = {
+        "condition": condition,
+
+        # Data window
+        "first_step": first_step,
+        "final_step": final_step,
+
+        # Runtime / progress proxy
+        "n_steps": n_steps,
+        "total_time_s": total_time,
+
+        # Prediction and model errors, converted from m to mm
+        "mean_pred_meas_error": 1e3 * safe_mean(df, "pred_meas_err_xy"),
+        "max_pred_meas_error": 1e3 * safe_max(df, "pred_meas_err_xy"),
+
+        "mean_one_step_error": 1e3 * safe_mean(df, "one_step_pred_err_xy"),
+        "max_one_step_error": 1e3 * safe_max(df, "one_step_pred_err_xy"),
+
+        "mean_raw_model_error": 1e3 * safe_mean(df, "raw_model_err_xy"),
+        "max_raw_model_error": 1e3 * safe_max(df, "raw_model_err_xy"),
+
+        # Boundary / wall-clearance metrics.
+        # These columns are already in mm in your CSV.
+        "mean_wall_clearance": safe_mean(df, "closest_distance_mm"),
+        # "minimum_wall_clearance": safe_min(df, "closest_distance_mm"),
+
+        # Jacobian quality metrics
+        "mean_jacobian_gain": safe_mean(df, "jac_gain_real_over_pred"),
+        "mean_jacobian_cosine": safe_mean(df, "jac_cos_xy"),
+
+        # Optional diagnostic quantities
+        "mean_meas_ref_error": 1e3 * safe_mean(df, "meas_ref_err_xy"),
+        "max_meas_ref_error": 1e3 * safe_max(df, "meas_ref_err_xy"),
+        "mean_pred_ref_error": 1e3 * safe_mean(df, "pred_ref_err_xy"),
+        "max_pred_ref_error": 1e3 * safe_max(df, "pred_ref_err_xy"),
+    }
+
+    return summary, df
+
+
+def make_summary_dataframe(csv_files, dt=None, start_step=None, end_step=None):
+    summaries = []
+    raw_data = {}
+
+    for condition, csv_path in csv_files.items():
+        summary, df = summarise_run(
+            csv_path,
+            condition,
+            dt=dt,
+            start_step=start_step,
+            end_step=end_step,
+        )
+
+        summaries.append(summary)
+        raw_data[condition] = df
+
+    summary_df = pd.DataFrame(summaries)
+    return summary_df, raw_data
+
+
+def plot_grouped_bar(summary_df, metrics, ylabel, title, filename):
+    """
+    Creates a grouped bar chart from the computed summary dataframe.
+
+    metrics should be a list of tuples:
+        [
+            ("mean_pred_meas_error", "Mean predicted-measured"),
+            ...
+        ]
+    """
+
+    conditions = summary_df["condition"].tolist()
+    metric_keys = [m[0] for m in metrics]
+    metric_labels = [m[1] for m in metrics]
+
+    x = np.arange(len(metric_labels))
+    n_conditions = len(conditions)
+
+    width = 0.75 / n_conditions
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+
+    for i, condition in enumerate(conditions):
+        values = [
+            summary_df.loc[summary_df["condition"] == condition, key].iloc[0]
+            for key in metric_keys
+        ]
+
+        offset = (i - (n_conditions - 1) / 2) * width
+
+        ax.bar(
+            x + offset,
+            values,
+            width,
+            label=condition,
+        )
+
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.set_xticks(x)
+    ax.set_xticklabels(metric_labels, rotation=20, ha="right")
+    ax.legend()
+    ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+    fig.tight_layout()
+    save_bar_figure(fig, filename)
+
+
+def print_report_table(summary_df):
+    """
+    Prints a compact table containing only the most report-relevant metrics.
+    """
+
+    report_columns = [
+        "condition",
+        "n_steps",
+        "total_time_s",
+        "mean_pred_meas_error",
+        "max_pred_meas_error",
+        "mean_one_step_error",
+        "mean_raw_model_error",
+        "mean_wall_clearance",
+        # "minimum_wall_clearance",
+        "mean_jacobian_gain",
+        "mean_jacobian_cosine",
+    ]
+
+    available_columns = [c for c in report_columns if c in summary_df.columns]
+
+    print("\nSummary table:")
+    print(summary_df[available_columns].round(3).to_string(index=False))
+
+
+def save_latex_table(summary_df, filename="mpc_summary_table.tex"):
+    """
+    Saves a compact LaTeX table for the report.
+    """
+
+    table_df = summary_df[
+        [
+            "condition",
+            "n_steps",
+            "total_time_s",
+            "mean_pred_meas_error",
+            "max_pred_meas_error",
+            "mean_one_step_error",
+            "mean_raw_model_error",
+            "mean_wall_clearance",
+            # "minimum_wall_clearance",
+        ]
+    ].copy()
+
+    table_df = table_df.rename(
+        columns={
+            "condition": "Condition",
+            "n_steps": "Steps",
+            "total_time_s": "Time [s]",
+            "mean_pred_meas_error": "Mean pred.-meas. error [mm]",
+            "max_pred_meas_error": "Max pred.-meas. error [mm]",
+            "mean_one_step_error": "Mean one-step error [mm]",
+            "mean_raw_model_error": "Mean raw model error [mm]",
+            "mean_wall_clearance": "Mean clearance [mm]",
+            # "minimum_wall_clearance": "Min. clearance [mm]",
+        }
+    )
+
+    latex = table_df.round(3).to_latex(
+        index=False,
+        escape=False,
+        caption=(
+            "Comparison of LTI-MPC performance in the 60-degree vessel with "
+            "prediction horizon $N_p=3$ and receding-horizon control."
+        ),
+        label="tab:lti_mpc_boundary_comparison",
+    )
+
+    tex_path = out_dir / filename
+    tex_path.write_text(latex)
+
+    print(f"Saved LaTeX table: {tex_path}")
+
+
+# ------------------------------------------------------------
+# Main script
+# ------------------------------------------------------------
+if __name__ == "__main__":
+
+    summary_df, raw_data = make_summary_dataframe(
+        csv_files,
+        dt=dt,
+        start_step=start_step,
+        end_step=end_step,
+    )
+    print_report_table(summary_df)
+    save_latex_table(summary_df)
+
+    # ------------------------------------------------------------
+    # Figure 1: prediction/model error comparison
+    # ------------------------------------------------------------
+    prediction_error_metrics = [
+        ("mean_pred_meas_error", "Mean predicted-measured"),
+        ("mean_one_step_error", "Mean one-step"),
+        ("mean_raw_model_error", "Mean raw model"),
+    ]
+
+    plot_grouped_bar(
+        summary_df,
+        metrics=prediction_error_metrics,
+        ylabel="Error [mm]",
+        title="Prediction error for LTI-MPC, $N_p=3$, 60-degree vessel",
+        filename="lti_h3_prediction_error_comparison",
+    )
+
+    # ------------------------------------------------------------
+    # Figure 2: wall-clearance comparison
+    # ------------------------------------------------------------
+    clearance_metrics = [
+        ("mean_wall_clearance", "Mean wall clearance"),
+        # ("minimum_wall_clearance", "Minimum wall clearance"),
+    ]
+
+    plot_grouped_bar(
+        summary_df,
+        metrics=clearance_metrics,
+        ylabel="Closest wall/centre distance [mm]",
+        title="Wall clearance for LTI-MPC, $N_p=3$, 60-degree vessel",
+        filename="lti_h3_wall_clearance_comparison",
+    )
+
+    # ------------------------------------------------------------
+    # Figure 3: number of control steps / time comparison
+    # ------------------------------------------------------------
+    runtime_metrics = [
+        ("n_steps", "Control steps"),
+    ]
+
+    plot_grouped_bar(
+        summary_df,
+        metrics=runtime_metrics,
+        ylabel="Number of control steps",
+        title="Control effort for LTI-MPC, $N_p=3$, 60-degree vessel",
+        filename="lti_h3_control_step_comparison",
+    )
+
+    print("\nAll figures saved in:", out_dir.resolve())

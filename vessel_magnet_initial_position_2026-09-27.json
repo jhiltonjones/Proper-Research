@@ -1,0 +1,29 @@
+{
+  "description": "Live joint state, user-jogged 2026-09-27, defining a NEW plan-initial source-magnet position for the vessel plan. SUPERSEDES the 2026-09-24 reference (which derived its exclusion radius from a tip-path-projected distance). This one uses the magnet-to-BEAM-BASE distance directly as the exclusion radius: the source magnet must never come closer to the beam base than it is at this position.",
+  "joints_rad": [
+    -0.7806833426104944,
+    -1.952172418633932,
+    -1.6917015314102173,
+    -1.097831205730774,
+    1.5646862983703613,
+    -1.9809311071978968
+  ],
+  "magnet_pose6_R": [
+    0.31589505,
+    -0.65229896,
+    0.01329223,
+    -3.07774931,
+    0.57528249,
+    0.04521943
+  ],
+  "beam_base_pivot_xyz_R_raised30mm": [
+    0.525575,
+    -0.670028,
+    0.013433
+  ],
+  "distance_magnet_to_beam_base_m": 0.21043,
+  "distance_magnet_to_beam_base_mm": 210.43,
+  "safety_mode_at_read": 1,
+  "protective_stopped_at_read": false,
+  "supersedes": "vessel_magnet_exclusion_reference_joints_2026-09-24.json"
+}

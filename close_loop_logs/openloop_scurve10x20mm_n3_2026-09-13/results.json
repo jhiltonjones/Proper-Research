@@ -1,0 +1,41 @@
+[
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 1,
+    "run_dir": "close_loop_logs/openloop_scurve10x20mm_n3_2026-09-13/runs/openloop_x1_rep1_20260913T115415Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 3.4659981604950274,
+    "mean_track_mm": 2.9762312138728317,
+    "max_track_mm": 6.7,
+    "p95_track_mm": 6.2086,
+    "mean_hold_mm": 3.0348666666666664,
+    "final_mm": 3.05
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 2,
+    "run_dir": "close_loop_logs/openloop_scurve10x20mm_n3_2026-09-13/runs/openloop_x1_rep2_20260913T115545Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 3.4422819684460793,
+    "mean_track_mm": 2.957393063583815,
+    "max_track_mm": 6.566,
+    "p95_track_mm": 6.1548,
+    "mean_hold_mm": 3.0906666666666665,
+    "final_mm": 3.082
+  },
+  {
+    "key": "openloop_x1",
+    "controller": "open loop x1",
+    "rep": 3,
+    "run_dir": "close_loop_logs/openloop_scurve10x20mm_n3_2026-09-13/runs/openloop_x1_rep3_20260913T115715Z",
+    "stop_reason": "path_complete",
+    "rms_track_mm": 3.4180970638020582,
+    "mean_track_mm": 2.946554913294797,
+    "max_track_mm": 6.555,
+    "p95_track_mm": 6.2234,
+    "mean_hold_mm": 3.0919666666666665,
+    "final_mm": 3.11
+  }
+]

@@ -1,0 +1,4 @@
+controller,key,rep,run_dir,stop_reason,steps,n_track,rms_track_mm,mean_track_mm,max_track_mm,p95_track_mm,mean_hold_mm,final_mm,duration_s
+naive_inverse_jacobian,inv,1,close_loop_logs/compare_FF_ushape10x15mm_bimaterial_h15_1rep_2026-09-15/runs/inv_rep1_20260915T161640Z,path_complete,233,212,1.198851992139398,0.9974198113207547,2.74,2.4969999999999994,0.19566666666666666,0.096,46.2906
+mpc_lti,lti,1,close_loop_logs/compare_FF_ushape10x15mm_bimaterial_h15_1rep_2026-09-15/runs/lti_rep1_20260915T161824Z,path_complete,232,211,1.3721109243153748,1.1877345971563982,2.989,2.5635000000000003,0.5213333333333333,0.435,43.0387
+mpc_ltv_offline,ltv,1,close_loop_logs/compare_FF_ushape10x15mm_bimaterial_h15_1rep_2026-09-15/runs/ltv_rep1_20260915T162004Z,path_complete,234,212,1.185948360659495,1.0393160377358492,2.752,2.306,0.3245454545454546,0.233,43.3616

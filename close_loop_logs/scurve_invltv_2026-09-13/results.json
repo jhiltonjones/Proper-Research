@@ -1,0 +1,34 @@
+[
+  {
+    "controller": "naive_inverse_jacobian",
+    "key": "inv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/scurve_invltv_2026-09-13/runs/inv_rep1_20260913T114601Z",
+    "stop_reason": "path_complete",
+    "steps": 195,
+    "n_track": 173,
+    "rms_track_mm": 2.8703026788490598,
+    "mean_track_mm": 2.291942196531792,
+    "max_track_mm": 6.182,
+    "p95_track_mm": 5.6904,
+    "mean_hold_mm": 1.8015,
+    "final_mm": 1.479,
+    "duration_s": 42.7105
+  },
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/scurve_invltv_2026-09-13/runs/ltv_rep1_20260913T114802Z",
+    "stop_reason": "path_complete",
+    "steps": 195,
+    "n_track": 173,
+    "rms_track_mm": 2.6614558415520992,
+    "mean_track_mm": 2.0556242774566478,
+    "max_track_mm": 5.975,
+    "p95_track_mm": 5.5162,
+    "mean_hold_mm": 1.2019090909090908,
+    "final_mm": 0.884,
+    "duration_s": 45.9845
+  }
+]

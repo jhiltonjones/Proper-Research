@@ -1,0 +1,9 @@
+{
+  "kind": "open_loop",
+  "speed_scale": 3.0,
+  "rep": 1,
+  "plan_dir": "/home/jack/Proper-Research/plans/triangle_8mm_2026-09-10/time_parameterized_configuration_path",
+  "stop_reason": "path_complete",
+  "samples": 132,
+  "playback_dt_s": 0.29999999999999893
+}

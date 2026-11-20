@@ -1,0 +1,94 @@
+[
+  {
+    "label": "A: planned-input, adaptation=off",
+    "n_ticks": 212,
+    "n_misses": 0,
+    "per_axis_one_step_rmse_mm": [
+      0.2259057131283289,
+      0.2840170033543821,
+      0.021411321833775945
+    ],
+    "aggregate_one_step_rmse_mm": 0.36353472202953524,
+    "solver_time_ms_mean": 14.529122254934233,
+    "solver_time_ms_max": 102.32081077992916,
+    "response_wait_ms_mean": 0.4900648908795051,
+    "total_turnaround_ms_mean": 15.019187145813737,
+    "total_turnaround_ms_max": 102.76800580322742,
+    "n_over_70ms_deadline_SOLVER_TIME_ONLY": 3,
+    "n_qp_failures": 0,
+    "final_g_hat": null,
+    "g_hat_accepted_fraction": null,
+    "g_hat_trace_summary": null
+  },
+  {
+    "label": "B: planned-input, adaptation=active",
+    "n_ticks": 212,
+    "n_misses": 0,
+    "per_axis_one_step_rmse_mm": [
+      0.24209377376505006,
+      0.5269731551490632,
+      0.1751409070952625
+    ],
+    "aggregate_one_step_rmse_mm": 0.6057924057643123,
+    "solver_time_ms_mean": 11.338190614896,
+    "solver_time_ms_max": 76.56619977205992,
+    "response_wait_ms_mean": 0.426036837282327,
+    "total_turnaround_ms_mean": 11.764227452178327,
+    "total_turnaround_ms_max": 77.00122334063053,
+    "n_over_70ms_deadline_SOLVER_TIME_ONLY": 1,
+    "n_qp_failures": 0,
+    "final_g_hat": -0.3,
+    "g_hat_accepted_fraction": 0.05660377358490566,
+    "g_hat_trace_summary": {
+      "min": -0.3,
+      "max": 0.0,
+      "final": -0.3
+    }
+  },
+  {
+    "label": "C: zero-centered-input, adaptation=off",
+    "n_ticks": 212,
+    "n_misses": 0,
+    "per_axis_one_step_rmse_mm": [
+      0.2268674365900213,
+      0.2842200179707347,
+      0.021711292159056882
+    ],
+    "aggregate_one_step_rmse_mm": 0.3643092540787675,
+    "solver_time_ms_mean": 8.241315886272856,
+    "solver_time_ms_max": 54.71327528357506,
+    "response_wait_ms_mean": 0.38856202033611964,
+    "total_turnaround_ms_mean": 8.629877906608975,
+    "total_turnaround_ms_max": 55.13404496014118,
+    "n_over_70ms_deadline_SOLVER_TIME_ONLY": 0,
+    "n_qp_failures": 0,
+    "final_g_hat": null,
+    "g_hat_accepted_fraction": null,
+    "g_hat_trace_summary": null
+  },
+  {
+    "label": "D: zero-centered-input, adaptation=active",
+    "n_ticks": 212,
+    "n_misses": 0,
+    "per_axis_one_step_rmse_mm": [
+      0.24208025806834738,
+      0.527227231119426,
+      0.1754905725329083
+    ],
+    "aggregate_one_step_rmse_mm": 0.6061091862265594,
+    "solver_time_ms_mean": 7.271350370192865,
+    "solver_time_ms_max": 55.74611108750105,
+    "response_wait_ms_mean": 0.37845538243791965,
+    "total_turnaround_ms_mean": 7.649805752630785,
+    "total_turnaround_ms_max": 56.22275546193123,
+    "n_over_70ms_deadline_SOLVER_TIME_ONLY": 0,
+    "n_qp_failures": 0,
+    "final_g_hat": -0.3,
+    "g_hat_accepted_fraction": 0.05660377358490566,
+    "g_hat_trace_summary": {
+      "min": -0.3,
+      "max": 0.0,
+      "final": -0.3
+    }
+  }
+]

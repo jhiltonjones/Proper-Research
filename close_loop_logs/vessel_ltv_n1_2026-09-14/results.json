@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_ltv_offline",
+    "key": "ltv",
+    "rep": 1,
+    "run_dir": "close_loop_logs/vessel_ltv_n1_2026-09-14/runs/ltv_rep1_20260914T091137Z",
+    "stop_reason": "path_complete",
+    "steps": 255,
+    "n_track": 233,
+    "rms_track_mm": 2.2118680208436716,
+    "mean_track_mm": 1.8450772532188842,
+    "max_track_mm": 4.377,
+    "p95_track_mm": 3.8571999999999997,
+    "mean_hold_mm": 0.37077272727272725,
+    "final_mm": 0.42,
+    "duration_s": 45.9986
+  }
+]

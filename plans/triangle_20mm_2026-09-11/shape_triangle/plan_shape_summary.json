@@ -1,0 +1,27 @@
+{
+  "shape": "triangle",
+  "size_mm": 14.0,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "skipped_global": false,
+  "planner_tip0_world": [
+    0.5005794864881917,
+    -0.669607395033303,
+    -0.01656004894946191
+  ],
+  "u_axis_world": [
+    -1.0,
+    0.0,
+    0.0
+  ],
+  "v_axis_world": [
+    0.0,
+    1.0,
+    0.0
+  ],
+  "centreline_points": 111,
+  "perimeter_mm": 52.217800704830054,
+  "time_param_samples": 223,
+  "time_param_duration_s": 22.200000000000003,
+  "time_param_dir": "plans/triangle_20mm_2026-09-11/time_parameterized_configuration_path"
+}

@@ -1,0 +1,40 @@
+{
+  "plan_dir": "plans/rectangle_10x15mm_skipglobal_z4b_marginfix_2026-11-11/time_parameterized_configuration_path",
+  "sample_indices": [
+    199,
+    228
+  ],
+  "n_samples": 30,
+  "duration_s": 2.9,
+  "start_joints_rad": [
+    -0.721,
+    -1.801559,
+    -1.800556,
+    -1.245539,
+    1.592344,
+    -2.073434
+  ],
+  "end_joints_rad": [
+    -0.633169,
+    -1.80005,
+    -1.801517,
+    -1.251797,
+    1.616959,
+    -2.078137
+  ],
+  "insertion_start_mm": 31.909,
+  "insertion_end_mm": 27.753,
+  "insertion_range_mm": [
+    27.753,
+    31.909
+  ],
+  "magnet_clearance_range_mm": [
+    274.652,
+    288.377
+  ],
+  "cartesian_mean_mm_s": 26.063,
+  "cartesian_max_mm_s": 58.62,
+  "inward_mean_mm_s": 4.88,
+  "inward_max_mm_s": 8.188,
+  "inward_min_mm_s": 1.698
+}

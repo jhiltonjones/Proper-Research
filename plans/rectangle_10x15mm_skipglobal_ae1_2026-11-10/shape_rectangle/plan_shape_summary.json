@@ -1,0 +1,63 @@
+{
+  "shape": "rectangle",
+  "size_mm": [
+    15.0,
+    10.0
+  ],
+  "closed": false,
+  "centreline_points": 81,
+  "perimeter_mm": 38.73416342656874,
+  "time_param_samples": 214,
+  "time_param_duration_s": 51.88488052692264,
+  "time_param_dir": "/home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_ae1_2026-11-10/time_parameterized_configuration_path",
+  "note": "2026-11-10 (AE1): rebuild from the EXACT campaign-1 shape_centreline.npz (rectangle_10x15mm_skipglobal_zraise30mm_2026-09-24), re-anchored by a rigid translation delta=new_tip0-old_tip0 (|delta|=162.33mm) because that source file predates this session's pivot fixes. u_axis/v_axis confirmed unchanged (np.allclose) so the measured shape (open, 3-sided, 15x10mm, 38.734mm perimeter, hash-confirmed against all 53 real campaign-1 hardware logs) is preserved exactly; only its anchor point moved. Root cause corrected from the prior fork's incorrect 'model-parameter mismatch' diagnosis -- verified to 6.9e-15mm against the real forward solve (plant_diagnostic_joint_adapter.forward_output) before this rebuild. TCP-box L1 activation threshold raised to 27mm per Round 31/AD2/AE1; the 25mm validation gate is unchanged elsewhere. Supersedes the AD2 CLOSED rectangle (archived -- campaign-1 never used --closed).",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "rig_config": {
+    "beam_base_xyz_m": [
+      0.670575,
+      -0.719727,
+      -0.039627
+    ],
+    "tcp_to_magnet_pose6": [
+      0.0,
+      0.0,
+      0.43,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "tcp_box_activation_margin_m": 0.027,
+  "tcp_box_gate_margin_m": 0.025,
+  "source_centreline_file": "/home/jack/Proper-Research/plans/rectangle_10x15mm_skipglobal_zraise30mm_2026-09-24/shape_rectangle/shape_centreline.npz",
+  "source_centreline_sha256": "721ebb01ebf07517478690149a1923bbf75c2c2b21cd555d67888a05b5df70a5",
+  "reanchor_delta_m": [
+    0.14499439244603995,
+    -0.05000490056907936,
+    -0.053164805066801823
+  ],
+  "reanchor_delta_mm": 162.32794096984904,
+  "workspace_box_xyz_min_m": [
+    0.24469,
+    -0.89361,
+    0.36544
+  ],
+  "workspace_box_xyz_max_m": [
+    0.58971,
+    -0.49576,
+    0.46496
+  ],
+  "start_pose_exception": {
+    "node": 0,
+    "face": "z_min",
+    "clearance_mm": 24.7336,
+    "gate_mm": 25.0,
+    "shortfall_mm": 0.2664,
+    "reason": "Node 0 is the shared, hardware-fixed shape-start pose used by every shape plan. In L1 its termination reason is 'fixed_initial_state_feasible_and_committed': its state is the real, measured hardware pose, not solved for, so this face's residual is never evaluated and no planner weight can move it. Accepted as a known, documented, one-time exception specific to this node; the general 25mm gate is unchanged for every other node.",
+    "decided": "2026-11-10, Round 33 AF1 (revert chosen over loosening the box)"
+  }
+}

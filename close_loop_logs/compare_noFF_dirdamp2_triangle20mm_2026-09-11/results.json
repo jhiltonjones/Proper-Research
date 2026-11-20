@@ -1,0 +1,18 @@
+[
+  {
+    "controller": "mpc_lti",
+    "key": "lti",
+    "rep": 1,
+    "run_dir": "close_loop_logs/compare_noFF_dirdamp2_triangle20mm_2026-09-11/runs/lti_rep1_20260911T154643Z",
+    "stop_reason": "path_complete",
+    "steps": 169,
+    "n_track": 148,
+    "rms_track_mm": 5.0932576311529045,
+    "mean_track_mm": 4.407594594594595,
+    "max_track_mm": 10.704,
+    "p95_track_mm": 8.5866,
+    "mean_hold_mm": 0.34266666666666673,
+    "final_mm": 0.296,
+    "duration_s": 47.9642
+  }
+]

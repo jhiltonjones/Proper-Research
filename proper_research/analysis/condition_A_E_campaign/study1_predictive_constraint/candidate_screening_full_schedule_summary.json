@@ -1,0 +1,60 @@
+{
+  "candidate_set_mm": [
+    274.0,
+    276.0,
+    278.0,
+    280.0
+  ],
+  "production_radius_mm": 233.0,
+  "n_ref_samples": 214,
+  "per_candidate_summary": {
+    "274.0": {
+      "radius_mm": 274.0,
+      "n_ref_samples": 214,
+      "n_infeasible": 0,
+      "full_schedule_feasible": true,
+      "n_states_nonzero_joint_delta": 0,
+      "n_states_nonzero_insertion_delta": 0,
+      "longest_consecutive_nonzero_joint_run": 0,
+      "longest_consecutive_nonzero_joint_range": null,
+      "elapsed_s": 1.7375116348266602
+    },
+    "276.0": {
+      "radius_mm": 276.0,
+      "n_ref_samples": 214,
+      "n_infeasible": 0,
+      "full_schedule_feasible": true,
+      "n_states_nonzero_joint_delta": 0,
+      "n_states_nonzero_insertion_delta": 0,
+      "longest_consecutive_nonzero_joint_run": 0,
+      "longest_consecutive_nonzero_joint_range": null,
+      "elapsed_s": 1.5558063983917236
+    },
+    "278.0": {
+      "radius_mm": 278.0,
+      "n_ref_samples": 214,
+      "n_infeasible": 0,
+      "full_schedule_feasible": true,
+      "n_states_nonzero_joint_delta": 0,
+      "n_states_nonzero_insertion_delta": 0,
+      "longest_consecutive_nonzero_joint_run": 0,
+      "longest_consecutive_nonzero_joint_range": null,
+      "elapsed_s": 1.5610918998718262
+    },
+    "280.0": {
+      "radius_mm": 280.0,
+      "n_ref_samples": 214,
+      "n_infeasible": 0,
+      "full_schedule_feasible": true,
+      "n_states_nonzero_joint_delta": 14,
+      "n_states_nonzero_insertion_delta": 14,
+      "longest_consecutive_nonzero_joint_run": 11,
+      "longest_consecutive_nonzero_joint_range": [
+        96,
+        106
+      ],
+      "elapsed_s": 1.5592479705810547
+    }
+  },
+  "selected_radius_mm": 280.0
+}

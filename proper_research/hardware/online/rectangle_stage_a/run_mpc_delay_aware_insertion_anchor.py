@@ -171,6 +171,14 @@ _MAGNET_EXCLUSION_IN_QP: bool = False
 # so the effective boundary used by a given run is never implicit.
 _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM: float = common.MAGNET_BEAM_BASE_REVIEWED_BOUNDARY_MM
 _MAGNET_EXCLUSION_ROBUST_MARGIN_MM: float = common.MAGNET_EXCLUSION_ROBUST_MARGIN_MM
+# 2026-11-20, constraint study: None unless --experimental-magnet-exclusion-
+# radius-mm is passed (additive, non-destructive, see that flag's own
+# help text). _EFFECTIVE_RADIUS_MM is always the real floor+margin UNLESS
+# the experimental value is larger, in which case it's the experimental
+# value -- logged explicitly so a constraint-study run's controller_
+# metadata.json never leaves this implicit.
+_MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM: "float | None" = None
+_MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM: "float | None" = None
 # 2026-11-19 (rectangle-experiment config): the measured-clearance
 # post-hoc monitor's own abort radius, set in main() from
 # --measured-clearance-abort-mm. Deliberately SEPARATE from the unapproved
@@ -346,6 +354,8 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "magnet_beam_base_exclusion_commanded_radius_mm": (
                 _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM + _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
             ),
+            "magnet_exclusion_experimental_radius_mm": _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM,
+            "magnet_exclusion_effective_radius_mm": _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM,
             # 2026-11-19: BOTH thresholds recorded explicitly, by name, so
             # neither is ever implicit from the other. "measured_clearance_
             # abort_mm" is THIS run's actual post-hoc monitor radius (the
@@ -624,6 +634,23 @@ def main() -> None:
                          "measured-minus-commanded radial clearance error on real runs has "
                          "exceeded 3mm (see magnet_clearance_signed_error.py); treat this value "
                          "as provisional, reviewed per-run, not as a proven bound.")
+    p.add_argument("--experimental-magnet-exclusion-radius-mm", type=float, default=None,
+                    help="2026-11-20, constraint study (see proper_research/analysis/"
+                         "condition_A_E_campaign/study1_predictive_constraint/"
+                         "CONSTRAINT_STUDY_HARDWARE_PROPOSAL.md for the frozen design this "
+                         "flag implements): ADDITIVE, non-destructive, same pattern as "
+                         "--freeze-jacobian. Default None -- behavior is byte-identical to "
+                         "not passing this flag at all (condition A unchanged). When set, "
+                         "the QP's single magnet-exclusion radius becomes "
+                         "max(--beam-base-exclusion-floor-mm + --magnet-exclusion-robust-"
+                         "margin-mm, this value) -- i.e. this value is layered ON TOP of the "
+                         "real, reviewed floor+margin, never used to shrink it below the real "
+                         "233mm boundary. --beam-base-exclusion-floor-mm/--magnet-exclusion-"
+                         "robust-margin-mm themselves, and --measured-clearance-abort-mm (the "
+                         "separate, real, physical external check), are NEVER modified by "
+                         "this flag -- it only raises the single QP radius value actually "
+                         "used for the in-QP constraint this run. INV (run_inv_7dof_delay_"
+                         "aware.py) has no QP to put this in and cannot be affected by it.")
     p.add_argument("--dipole-alignment-weight", type=float, default=0.0,
                     help="soft actuation-preference cost weight: encourages the source "
                          "magnet's own dipole moment to point TOWARD the beam base. PURE "
@@ -799,6 +826,9 @@ def main() -> None:
               "stays ONLY a post-hoc monitor, not visible to the optimizer")
 
     global _MAGNET_EXCLUSION_IN_QP, _DIPOLE_ALIGNMENT_WEIGHT
+    global _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM, _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM
+    _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM = args.experimental_magnet_exclusion_radius_mm
+    _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM = None
     global _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM, _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
     magnet_exclusion_kwargs = None
     _MAGNET_EXCLUSION_IN_QP = not args.disable_magnet_exclusion_in_qp
@@ -811,10 +841,21 @@ def main() -> None:
         _magnet_floor_m = args.beam_base_exclusion_floor_mm * 1.0e-3
         _magnet_margin_m = args.magnet_exclusion_robust_margin_mm * 1.0e-3
         _magnet_radius_m = _magnet_floor_m + _magnet_margin_m
+        _experimental_radius_mm = args.experimental_magnet_exclusion_radius_mm
+        if _experimental_radius_mm is not None:
+            _magnet_radius_m = max(_magnet_radius_m, _experimental_radius_mm * 1.0e-3)
+        _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM = _magnet_radius_m * 1.0e3
         magnet_exclusion_kwargs = dict(
             position_jacobians=_magnet_jacobians, nominal_positions_m=_magnet_positions,
             lumen_C_m=_beam_base_xyz_r, radius_m=_magnet_radius_m,
         )
+        if _experimental_radius_mm is not None:
+            print(f"[insertion_anchor] CONSTRAINT STUDY: --experimental-magnet-exclusion-"
+                  f"radius-mm={_experimental_radius_mm:.1f}mm layered additively on top of "
+                  f"the real {args.beam_base_exclusion_floor_mm:.1f}+{args.magnet_exclusion_robust_margin_mm:.1f}"
+                  f"={( _magnet_floor_m+_magnet_margin_m)*1e3:.1f}mm floor+margin -- "
+                  f"effective in-QP radius this run = {_magnet_radius_m*1e3:.1f}mm. The real "
+                  f"floor/margin and --measured-clearance-abort-mm are unchanged.")
         print(f"[insertion_anchor] magnet-to-beam-base exclusion constraint will be wired "
               f"INTO the QP (beam_base_xyz_r={_beam_base_xyz_r[0].tolist()}, "
               f"floor={args.beam_base_exclusion_floor_mm:.1f}mm + "

@@ -149,3 +149,26 @@ def test_adaptation_active_runs_real_estimator_across_consecutive_ticks(tmp_path
         assert diag is not None, "active mode must populate diagnostics every successful tick"
         assert diag["mode"] == "active"
         assert "g_hat" in diag and "g_used" in diag and "accepted" in diag
+
+
+def test_experimental_magnet_exclusion_radius_is_additive_not_destructive(tmp_path):
+    """Constraint study (CONSTRAINT_STUDY_HARDWARE_PROPOSAL.md): --experimental-
+    magnet-exclusion-radius-mm (added 2026-11-20) must raise the EFFECTIVE
+    in-QP radius without ever modifying the real, reviewed floor/margin
+    values -- controller_metadata.json must show floor/margin unchanged at
+    their passed-in values (230/3mm), the pre-existing "commanded" field
+    unchanged at floor+margin (233mm, byte-identical to every prior A/B/D/E
+    run), and the NEW effective-radius field reflecting the larger
+    experimental value actually used in the QP."""
+    run_dir = _run_scenario("constrained", tmp_path)
+    pred_rows = _load_jsonl(os.path.join(run_dir, "predicted_beam_positions.jsonl"))
+    assert len(pred_rows) == 8
+    assert all(r["success"] for r in pred_rows), [r["qp_status"] for r in pred_rows]
+
+    with open(os.path.join(run_dir, "controller_metadata.json")) as f:
+        meta = json.load(f)
+    assert meta["magnet_beam_base_exclusion_floor_mm"] == 230.0
+    assert meta["magnet_exclusion_robust_margin_mm"] == 3.0
+    assert meta["magnet_beam_base_exclusion_commanded_radius_mm"] == 233.0
+    assert meta["magnet_exclusion_experimental_radius_mm"] == 276.0
+    assert meta["magnet_exclusion_effective_radius_mm"] == 276.0

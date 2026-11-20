@@ -44,7 +44,7 @@ def _const_jacobian_provider(state):
     return np.zeros((3, 7))
 
 
-def _build_adapter(magnet_exclusion_radius_m, lumen):
+def _build_adapter(magnet_exclusion_radius_m, lumen, virtual_boundary_hold_radius_m=None):
     reference = _Reference()
     return build_offline_solver(
         "inv_7dof_delay_aware",
@@ -54,6 +54,7 @@ def _build_adapter(magnet_exclusion_radius_m, lumen):
         external_check_magnet_transform_fn=_identity_magnet_transform_fn,
         magnet_exclusion_lumen_C_m=lumen,
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
+        virtual_boundary_hold_radius_m=virtual_boundary_hold_radius_m,
     )
 
 
@@ -109,6 +110,57 @@ def test_trim_kinds_override_path_builds_correct_transform_fn():
         assert "magnet_exclusion_violated" in result.info["abort_reason"]
     finally:
         pf._MAGNET_CONSTRAINT_CLIP_OVERRIDE = None
+
+
+def test_virtual_boundary_hold_zeroes_command_without_aborting():
+    """2026-11-20, constraint study: a tick inside the hold radius but
+    OUTSIDE the real abort radius must zero the command (success=True,
+    infeasible=False, no abort_reason) -- a hold, not a stop. The run
+    continuing (not breaking close_loop_path_follow.py's main loop) is
+    verified separately by the "status" field used for that distinction;
+    this test checks the adapter's own contract directly."""
+    lumen = np.array([[0.0, 0.0, 0.0]])
+    # real abort radius 0.100m; hold radius 0.300m (wider, trips first on
+    # approach) -- magnet at distance 0.200m: inside hold, outside abort.
+    adapter = _build_adapter(
+        magnet_exclusion_radius_m=0.100, lumen=lumen,
+        virtual_boundary_hold_radius_m=0.300,
+    )
+    result = adapter(_estimate([0.2, 0.0, 0.0, 0, 0, 0]), dt=0.1)
+    assert result.info["abort_reason"] is None, "a hold must never set abort_reason"
+    assert result.info["status"] == "virtual_boundary_hold"
+    assert result.info["virtual_boundary_hold_active"] is True
+    assert np.allclose(result.u0, 0.0), "command must be zeroed while the hold radius is violated"
+    assert result.infeasible is False, "a hold is not an infeasible/failed solve"
+
+
+def test_real_abort_takes_precedence_over_virtual_hold_at_the_same_tick():
+    """When BOTH radii would apply (magnet well inside both), the real
+    abort must fire, not the hold -- the real, physical check always
+    takes precedence."""
+    lumen = np.array([[0.0, 0.0, 0.0]])
+    adapter = _build_adapter(
+        magnet_exclusion_radius_m=0.100, lumen=lumen,
+        virtual_boundary_hold_radius_m=0.300,
+    )
+    result = adapter(_estimate([0.05, 0.0, 0.0, 0, 0, 0]), dt=0.1)
+    assert result.info["abort_reason"] is not None
+    assert "magnet_exclusion_violated" in result.info["abort_reason"]
+    assert result.info["status"] == "external_safety_abort"
+
+
+def test_virtual_boundary_hold_default_none_is_byte_identical_to_before():
+    """Every existing caller (including the real A-E campaign and every
+    pre-existing test in this file) never passes virtual_boundary_hold_
+    radius_m -- confirms the new field is present but inert (None) and
+    existing pass/fail behavior is completely unaffected."""
+    lumen = np.array([[0.0, 0.0, 0.05]])
+    adapter = _build_adapter(magnet_exclusion_radius_m=0.233, lumen=lumen)
+    result = adapter(_estimate([1.0, 0.0, 0.05, 0, 0, 0]), dt=0.1)
+    assert result.info["virtual_boundary_hold_active"] is False
+    assert result.info["virtual_boundary_hold_radius_m"] is None
+    assert result.infeasible is False
+    assert result.info["abort_reason"] is None
 
 
 def _build_adapter_via_pf_override():

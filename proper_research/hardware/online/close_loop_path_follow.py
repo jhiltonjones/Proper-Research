@@ -2024,10 +2024,24 @@ def main() -> None:
                     "external_check_magnet_transform_fn": _external_check_magnet_transform_fn,
                     "magnet_exclusion_lumen_C_m": _magnet_clip_override.get("magnet_exclusion_lumen_C_m"),
                     "magnet_exclusion_radius_m": _magnet_clip_override.get("magnet_exclusion_radius_m"),
+                    # 2026-11-20, constraint study: SEPARATE, narrower,
+                    # non-aborting hold radius -- see OfflineJointController
+                    # Adapter.__init__'s own docstring note. None unless the
+                    # calling script's override dict sets it; every existing
+                    # caller (including the real A-E campaign) never does,
+                    # so this stays None and the adapter's behavior is
+                    # unchanged for them.
+                    "virtual_boundary_hold_radius_m": _magnet_clip_override.get("virtual_boundary_hold_radius_m"),
                 }
                 print(f"[path] {cfg.controller_kind}: shared external measured-state "
                       f"safety check ENABLED (reactive controller, no predictive "
                       f"constraint added)")
+                if _magnet_clip_override.get("virtual_boundary_hold_radius_m") is not None:
+                    print(f"[path] {cfg.controller_kind}: CONSTRAINT STUDY virtual-"
+                          f"boundary HOLD (not abort) ENABLED at "
+                          f"{_magnet_clip_override['virtual_boundary_hold_radius_m']*1e3:.1f}mm "
+                          f"-- command zeroed only while this radius is violated AND the "
+                          f"real abort radius above is not also violated; run continues")
 
         force_pref_kwargs = {}
         _force_pref_override = globals().get("_FORCE_PREFERENCE_OVERRIDE")
@@ -2619,6 +2633,17 @@ def main() -> None:
                 # saved file, not only the final abort event.
                 "external_measured_clearance_gap_m": info.get("external_measured_clearance_gap_m"),
                 "adapter_abort_reason": info.get("abort_reason"),
+                # 2026-11-20: these two were already populated in the
+                # adapter's own info dict (OfflineJointControllerAdapter's
+                # virtual-boundary hold mechanism) but never copied into
+                # this saved row -- confirmed missing by direct inspection
+                # of a real run where the hold was active for 98
+                # consecutive ticks (solver_status=="virtual_boundary_hold")
+                # with no corroborating field here; a reader had to infer
+                # the hold from solver_status string-matching plus an
+                # all-zero u0/u0_correction instead of reading it directly.
+                "virtual_boundary_hold_active": info.get("virtual_boundary_hold_active"),
+                "virtual_boundary_hold_radius_m": info.get("virtual_boundary_hold_radius_m"),
             }
             log_file.write(json.dumps(row) + "\n")
             log_file.flush()

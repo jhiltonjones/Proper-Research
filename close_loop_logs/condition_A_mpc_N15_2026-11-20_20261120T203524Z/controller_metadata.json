@@ -1,0 +1,112 @@
+{
+  "controller_variant": "nullspace_Q_R700_frame_fix",
+  "gamma": 0.0,
+  "input_tracking_weight": 7.0,
+  "input_increment_weight": 0.001,
+  "insertion_state_anchor_weight": 0.0,
+  "insertion_state_anchor_scale_m": 0.00025,
+  "insertion_offset_abort_m": null,
+  "insertion_offset_monitor_disabled": true,
+  "state_scale_q_rad": 0.008726646259971648,
+  "state_scale_L_m": 0.00025,
+  "input_scale_q_rad_s": 0.05,
+  "input_scale_L_m_s": 0.005,
+  "delay_samples": 2,
+  "beta_d": 1.0,
+  "horizon": 15,
+  "terminal_cost": false,
+  "insertion_rate_limit_m_s": 0.002,
+  "plan_dir": "plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/time_parameterized_configuration_path",
+  "planner_to_live_R_fit": [
+    [
+      0.9999999999989999,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.9999999999989999,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.9999999999979998
+    ]
+  ],
+  "planner_to_live_t_fit_m": [
+    0.0011005441366366275,
+    0.0016498613866180456,
+    0.00014376488204145832
+  ],
+  "planner_to_live_t_fit_norm_m": 0.001988443696222469,
+  "tcp_workspace_in_qp": true,
+  "magnet_exclusion_in_qp": true,
+  "magnet_beam_base_exclusion_floor_mm": 230.0,
+  "magnet_exclusion_robust_margin_mm": 3.0,
+  "magnet_beam_base_exclusion_commanded_radius_mm": 233.0,
+  "magnet_exclusion_experimental_radius_mm": 276.0,
+  "magnet_exclusion_effective_radius_mm": 276.0,
+  "measured_clearance_abort_mm": 230.0,
+  "magnet_measured_clearance_protective_radius_mm_UNUSED_provisional": 250.0,
+  "dipole_alignment_weight": 0.0,
+  "input_penalty_mode": "planned",
+  "jacobian_adaptation_mode": "off",
+  "workspace_xyz_min_m": [
+    0.24469,
+    -0.89361,
+    0.36544
+  ],
+  "workspace_xyz_max_m": [
+    0.58971,
+    -0.49576,
+    0.46496
+  ],
+  "unverified_plan_bypass": false,
+  "argv": [
+    "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py",
+    "--plan-dir",
+    "plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/time_parameterized_configuration_path",
+    "--schedule-cache",
+    "plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/jacobian_schedule_insertion_anchor.npy",
+    "--out-dir",
+    "close_loop_logs",
+    "--run-name",
+    "condition_A_mpc_N15_2026-11-20",
+    "--horizon",
+    "15",
+    "--jacobian-adaptation-mode",
+    "off",
+    "--input-penalty",
+    "planned",
+    "--dipole-alignment-weight",
+    "0.0",
+    "--insertion-command-min-mm",
+    "20.0",
+    "--insertion-command-max-mm",
+    "70.0",
+    "--measured-clearance-abort-mm",
+    "230.0",
+    "--beam-base-exclusion-floor-mm",
+    "230.0",
+    "--magnet-exclusion-robust-margin-mm",
+    "3.0",
+    "--protective-config-reviewed",
+    "--experimental-magnet-exclusion-radius-mm",
+    "276.0"
+  ],
+  "code_provenance": {
+    "git_commit": "d824a44a3e56b95e7af8c9f96c6688bd7abb9498",
+    "git_dirty": true,
+    "git_error": null,
+    "source_file_sha256": {
+      "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/run_mpc_delay_aware_insertion_anchor.py": "f1174fb1577aaee02597b6f579564b7b1905c5fa3f004bb6031624533d087a5d",
+      "/home/jack/Proper-Research/proper_research/hardware/online/rectangle_stage_a/common.py": "09e550a26bb6b3273a1841ceb6c8586982ed9289122aa67290eada9943972119"
+    }
+  },
+  "plan_file_sha256": {
+    "plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/time_parameterized_configuration_path/time_parameterized_configuration_path.npz": "93c6e546ea0dd334db7bf4af3658d974bf14463ac4f374fb03d2dc30caaa70b8"
+  },
+  "schedule_cache_sha256": "4346ef4e43e4620e59265459a05bfa830fce2123b4b77dcc54c93961cd8250b1",
+  "schedule_cache_path": "plans/rectangle_10x15mm_skipglobal_L30to50mm_2026-11-19_noDipole/jacobian_schedule_insertion_anchor.npy"
+}

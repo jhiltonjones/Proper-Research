@@ -137,6 +137,7 @@ class OfflineJointControllerAdapter:
         magnet_z_bounds_m: Optional[Any] = None,
         magnet_exclusion_radius_m: Optional[float] = None,
         lumen_C_m: Optional[Array] = None,
+        virtual_boundary_hold_radius_m: Optional[float] = None,
     ) -> None:
         self.controller = controller
         self.reference = reference
@@ -158,6 +159,22 @@ class OfflineJointControllerAdapter:
         self._magnet_z_bounds_m = magnet_z_bounds_m
         self._magnet_exclusion_radius_m = magnet_exclusion_radius_m
         self._lumen_C_m = lumen_C_m
+
+        # 2026-11-20, constraint study (demonstration-of-constraint-value
+        # request): a SEPARATE, NARROWLY-SCOPED, additive mechanism -- NOT
+        # a replacement for magnet_exclusion_radius_m's real abort check
+        # above. When set, a tick whose measured gap falls below this
+        # radius (but is still >= the real magnet_exclusion_radius_m, so
+        # the real safety abort above still fires first and takes
+        # precedence whenever both would apply) gets its command zeroed
+        # for THAT TICK ONLY -- no abort_reason is set, so close_loop_
+        # path_follow.py's generic abort hook never sees this and the run
+        # continues (hold, not stop). Resumes normal reactive commands the
+        # next tick the gap recovers above this radius. Default None:
+        # every existing caller (including every A-E campaign run) is
+        # completely unaffected -- this parameter did not exist for them.
+        self._virtual_boundary_hold_radius_m = virtual_boundary_hold_radius_m
+        self._virtual_boundary_hold_active_last_tick = False
 
         self._t0: Optional[float] = None
         self._counter = 0
@@ -249,11 +266,41 @@ class OfflineJointControllerAdapter:
             lumen_C_m=self._lumen_C_m,
         )
 
+        # 2026-11-20, constraint study: a SEPARATE, narrower, non-aborting
+        # hold check (see __init__'s docstring note). Only considered when
+        # the REAL abort above did not already trip -- that check always
+        # takes precedence when both would apply, since it's the one with
+        # an actual physical boundary behind it. Reuses external_gap_m
+        # (reported "unconditionally when computed", per
+        # check_measured_external_safety's own docstring) rather than a
+        # second geometry call.
+        virtual_hold_active = False
+        if (
+            external_abort_reason is None
+            and self._virtual_boundary_hold_radius_m is not None
+            and external_gap_m is not None
+            and external_gap_m < self._virtual_boundary_hold_radius_m
+        ):
+            virtual_hold_active = True
+        self._virtual_boundary_hold_active_last_tick = virtual_hold_active
+
         if external_abort_reason is not None:
             command = np.zeros(7, dtype=float)
             step = None
             success = False
             infeasible = True
+        elif virtual_hold_active:
+            # Hold, not abort: command is zeroed for THIS tick only, no
+            # abort_reason is ever set, so close_loop_path_follow.py's
+            # generic "if adapter_abort: break" hook never fires and the
+            # run continues. The controller is still never consulted this
+            # tick (matches the real check's own "controller gets no
+            # chance to react differently" convention) -- only the next
+            # tick, once the gap recovers, does control resume normally.
+            command = np.zeros(7, dtype=float)
+            step = None
+            success = True
+            infeasible = False
         else:
             step = self.controller.solve(
                 measured_state=measured_state,
@@ -272,23 +319,28 @@ class OfflineJointControllerAdapter:
         self._counter += 1
 
         if step is None:
-            # external-check trip: build a minimal info dict here (the
-            # normal info dict below reads attributes off `step`, which
-            # does not exist on this path) -- matches the MPC adapter's
-            # own "no worker request sent on a trip" convention.
-            return SolveResult(u0=command, infeasible=True, info={
+            # external-check trip OR virtual-boundary hold: build a minimal
+            # info dict here (the normal info dict below reads attributes
+            # off `step`, which does not exist on either path) -- matches
+            # the MPC adapter's own "no worker request sent on a trip"
+            # convention. The two cases are distinguished explicitly below
+            # (status/success/infeasible/abort_reason all differ) so a
+            # hold is never misreported as an abort or vice versa.
+            return SolveResult(u0=command, infeasible=infeasible, info={
                 "controller": getattr(self.controller, "name", None)
                 or getattr(self.controller, "variant_name", "offline_controller"),
                 "progress_index": progress_index,
                 "reference_index": reference_index,
                 "terminal_hold": bool(progress_index >= sample_count - 1),
-                "status": "external_safety_abort",
-                "success": False,
+                "status": "external_safety_abort" if external_abort_reason is not None else "virtual_boundary_hold",
+                "success": success,
                 "iterations": 0,
                 "solve_time_s": 0.0,
                 "measured_joint_state": measured_state,
                 "abort_reason": external_abort_reason,
                 "external_measured_clearance_gap_m": external_gap_m,
+                "virtual_boundary_hold_active": virtual_hold_active,
+                "virtual_boundary_hold_radius_m": self._virtual_boundary_hold_radius_m,
             })
 
         # 2026-09-11: widened for controller-internals diagnosis (why does one
@@ -365,6 +417,8 @@ class OfflineJointControllerAdapter:
                 or external_abort_reason
             ),
             "external_measured_clearance_gap_m": external_gap_m,
+            "virtual_boundary_hold_active": virtual_hold_active,
+            "virtual_boundary_hold_radius_m": self._virtual_boundary_hold_radius_m,
         }
         return SolveResult(u0=command, infeasible=infeasible, info=info)
 
@@ -460,6 +514,7 @@ def build_offline_solver(
     tcp_workspace_xyz_max_m: Any = None,
     tcp_constraint_violation_abort_m: float = 2.0e-3,
     external_check_magnet_transform_fn: Optional[Any] = None,
+    virtual_boundary_hold_radius_m: Optional[float] = None,
 ) -> OfflineJointControllerAdapter:
     """Build one of the five offline controllers and wrap it for the runner.
 
@@ -757,6 +812,7 @@ def build_offline_solver(
         magnet_z_bounds_m=magnet_z_bounds_m,
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
         lumen_C_m=magnet_exclusion_lumen_C_m,
+        virtual_boundary_hold_radius_m=virtual_boundary_hold_radius_m,
     )
 
 

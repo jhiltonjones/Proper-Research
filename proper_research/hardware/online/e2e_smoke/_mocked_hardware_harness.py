@@ -310,6 +310,18 @@ def main():
         # (added 2026-11-20) builds a valid frozen schedule file and the
         # real worker accepts and solves against it, with no hardware.
         argv += ["--freeze-jacobian", "--freeze-jacobian-index", "0"]
+    elif scenario == "constrained":
+        # Constraint-study offline smoke check: confirms --experimental-
+        # magnet-exclusion-radius-mm (added 2026-11-20, per the frozen
+        # CONSTRAINT_STUDY_HARDWARE_PROPOSAL.md) is additive -- the real
+        # floor/margin stay at their production 230/3mm values, only the
+        # effective in-QP radius rises -- and that the real worker still
+        # spawns and solves with the tighter constraint, no hardware.
+        argv += [
+            "--beam-base-exclusion-floor-mm", "230.0",
+            "--magnet-exclusion-robust-margin-mm", "3.0",
+            "--experimental-magnet-exclusion-radius-mm", "276.0",
+        ]
     sys.argv = argv
 
     import proper_research.hardware.online.rectangle_stage_a.run_mpc_delay_aware_insertion_anchor as runner

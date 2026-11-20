@@ -120,6 +120,22 @@ def main() -> None:
                          "(printed at startup) before starting. Without this flag, the runner "
                          "REFUSES to start rather than silently running protected by an "
                          "unreviewed value or running with no protection at all.")
+    p.add_argument("--experimental-virtual-boundary-hold-radius-mm", type=float, default=None,
+                    help="2026-11-20, constraint study (demonstration of what a non-"
+                         "predictive controller does near a virtual boundary it has no "
+                         "optimizer-level awareness of): ADDITIVE, non-destructive. "
+                         "Default None -- behavior is byte-identical to not passing this "
+                         "flag. When set, any tick whose measured magnet-to-beam-base "
+                         "clearance drops below this radius gets its command ZEROED for "
+                         "that tick only -- held, not aborted: no abort_reason is set, the "
+                         "run is NOT stopped, and the controller resumes normal reactive "
+                         "commands the next tick the clearance recovers above this radius. "
+                         "The REAL --measured-clearance-abort-mm check is completely "
+                         "unchanged and always takes precedence if both would apply on the "
+                         "same tick. This does not give the controller any predictive/"
+                         "optimizer-level awareness of the boundary -- it is a reactive, "
+                         "after-the-fact freeze, demonstrating the ABSENCE of predictive "
+                         "handling, not a substitute for it.")
     args = p.parse_args()
 
     # 2026-11-20: ported verbatim from run_mpc_delay_aware_insertion_anchor.py's
@@ -160,7 +176,18 @@ def main() -> None:
         magnet_position_fn=_magnet_position_fn,
         magnet_exclusion_lumen_C_m=_beam_base_xyz_r,
         magnet_exclusion_radius_m=args.measured_clearance_abort_mm * 1e-3,
+        virtual_boundary_hold_radius_m=(
+            args.experimental_virtual_boundary_hold_radius_mm * 1e-3
+            if args.experimental_virtual_boundary_hold_radius_mm is not None else None
+        ),
     )
+    if args.experimental_virtual_boundary_hold_radius_mm is not None:
+        print(f"[inv_7dof_delay_aware] CONSTRAINT STUDY virtual-boundary HOLD (not abort) "
+              f"ENABLED at {args.experimental_virtual_boundary_hold_radius_mm:.1f}mm -- "
+              f"command zeroed only while violated (and the real "
+              f"{args.measured_clearance_abort_mm:.1f}mm abort radius is not also "
+              f"violated); run continues. No predictive handling is added to the "
+              f"controller -- this is a reactive, after-the-fact freeze only.")
     print(f"[inv_7dof_delay_aware] shared external measured-state safety check: "
           f"abort_radius={args.measured_clearance_abort_mm:.1f}mm (reactive controller -- "
           f"no predictive constraint added; a trip holds the command and enters the shared "

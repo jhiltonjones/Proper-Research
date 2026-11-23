@@ -1,0 +1,16 @@
+{
+  "shape": "flower",
+  "stalk_mm": 10.0,
+  "leaf_amplitude_mm": 10.0,
+  "smoothing_window_mm": 3.0,
+  "L0_m": 0.035,
+  "insertion_max_override_m": 0.07,
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "all_nodes_feasible": true,
+  "time_param_dir": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path",
+  "time_param_samples": 391
+}

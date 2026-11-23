@@ -134,6 +134,9 @@ _METADATA_WRITTEN = False
 # validated formulation.
 _GAMMA = 0.0
 _INPUT_TRACKING_WEIGHT = 7.0          # 700 * default 1.0e-2 = R700
+# 2026-11-24 servo/cost pilot: True only when --input-tracking-weight was
+# explicitly passed; _INPUT_TRACKING_WEIGHT itself stays at 7.0 otherwise.
+_INPUT_TRACKING_WEIGHT_OVERRIDDEN: bool = False
 _INPUT_INCREMENT_WEIGHT = 1.0e-3      # unchanged from M0/nullq_r700
 _INSERTION_RATE_LIMIT_M_S = 2.0e-3    # unchanged -- s_u,L stays 5mm/s via defaults
 _INSERTION_STATE_ANCHOR_WEIGHT = 0.0  # RESTORED to 0 -- w_L=0.1 tuning discarded as
@@ -179,6 +182,13 @@ _MAGNET_EXCLUSION_ROBUST_MARGIN_MM: float = common.MAGNET_EXCLUSION_ROBUST_MARGI
 # metadata.json never leaves this implicit.
 _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM: "float | None" = None
 _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM: "float | None" = None
+# 2026-11-23 servo-lookahead pilot: True only when --servo-lookahead-s was
+# explicitly passed; cfg.servo_lookahead_s itself stays at its PathFollow-
+# Config default (0.20s) otherwise, this flag is purely for the metadata record.
+_SERVO_LOOKAHEAD_S_OVERRIDDEN: bool = False
+_SERVO_GAIN_OVERRIDDEN: bool = False
+_DELAY_SAMPLES: int = 2
+_DELAY_SAMPLES_OVERRIDDEN: bool = False
 # 2026-11-19 (rectangle-experiment config): the measured-clearance
 # post-hoc monitor's own abort radius, set in main() from
 # --measured-clearance-abort-mm. Deliberately SEPARATE from the unapproved
@@ -226,6 +236,7 @@ def spawn_and_warm_worker(
     jacobian_adaptation_kwargs: dict | None = None,
     insertion_command_min_m: float = -0.05,
     insertion_command_max_m: float = 0.20,
+    delay_samples: int = 2,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens --
     identical lifecycle ordering to nullq_r700's runner.
@@ -275,7 +286,7 @@ def spawn_and_warm_worker(
     worker = MPCWorkerHandle(
         plan_dir=plan_dir, schedule_path=schedule_cache,
         mpc_config_kwargs=mpc_config_kwargs, beam_config_kwargs=beam_config_kwargs,
-        delay_samples=2, beta_d=1.0, single_threaded=True,
+        delay_samples=delay_samples, beta_d=1.0, single_threaded=True,
         enable_nullspace_r700=True,
         nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
         insertion_state_anchor_weight=_INSERTION_STATE_ANCHOR_WEIGHT,
@@ -329,6 +340,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "controller_variant": "nullspace_Q_R700_frame_fix",
             "gamma": _GAMMA,
             "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
+            "input_tracking_weight_overridden": _INPUT_TRACKING_WEIGHT_OVERRIDDEN,
             "input_increment_weight": _INPUT_INCREMENT_WEIGHT,
             "insertion_state_anchor_weight": _INSERTION_STATE_ANCHOR_WEIGHT,
             "insertion_state_anchor_scale_m": _INSERTION_STATE_ANCHOR_SCALE,
@@ -338,10 +350,19 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "state_scale_L_m": 0.25e-3,
             "input_scale_q_rad_s": 0.05,
             "input_scale_L_m_s": 5.0e-3,
-            "delay_samples": 2,
+            "delay_samples": _DELAY_SAMPLES,
+            "delay_samples_overridden": _DELAY_SAMPLES_OVERRIDDEN,
             "beta_d": 1.0,
             "horizon": int(cfg.mpc_prediction_horizon),
             "terminal_cost": False,
+            # 2026-11-23 servo-lookahead pilot: read off cfg (the effective value
+            # servo_j() actually receives, via cfg.servo_lookahead_s), not args,
+            # so this is correct even if something else set cfg directly.
+            "servo_lookahead_s": float(cfg.servo_lookahead_s),
+            "servo_lookahead_s_overridden": _SERVO_LOOKAHEAD_S_OVERRIDDEN,
+            "servo_gain": int(cfg.servo_gain),
+            "servo_gain_overridden": _SERVO_GAIN_OVERRIDDEN,
+            "control_hz": float(cfg.control_hz),
             "insertion_rate_limit_m_s": _INSERTION_RATE_LIMIT_M_S,
             "plan_dir": str(cfg.plan_dir),
             "planner_to_live_R_fit": r_fit.tolist(),
@@ -518,6 +539,41 @@ def main() -> None:
     p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
     p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
     p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
+    p.add_argument(
+        "--servo-lookahead-s", type=float, default=None,
+        help="2026-11-23 servo-lookahead pilot: override close_loop_path_follow.py's "
+             "PathFollowConfig.servo_lookahead_s (production default 0.20s, unchanged "
+             "if this flag is omitted). This is the UR RTDE servoJ() lookahead_time "
+             "argument -- UR's documented valid range is [0.03, 0.2]s (Script Manual: "
+             "'range [0.03,0.2] smoothens the trajectory with this lookahead time'); "
+             "out-of-range values are rejected below, never silently clamped or sent "
+             "to the real controller. Does not touch servo_gain (200), the 0.04s "
+             "servoJ time_s (2x the 20ms stream interval), control_hz (10.0 = 100ms "
+             "MPC period), delay_samples, horizon, or jacobian-adaptation-mode.",
+    )
+    p.add_argument(
+        "--delay-samples", type=int, default=None,
+        help="2026-11-24 delay-model pilot: override MPCWorkerHandle's delay_samples "
+             "(production default 2, unchanged if this flag is omitted). This is the "
+             "controller's own ASSUMED processing delay for predictive compensation -- "
+             "it does not change how long commands actually take to execute, only how "
+             "the model accounts for that. A real measured lag (via cross-correlation "
+             "of commanded vs. measured joint deltas) that disagrees with this value "
+             "indicates a model/reality mismatch, not a literal delay being added or "
+             "removed. d=0 (zero assumed delay) is NOT exposed here deliberately -- if "
+             "the real delay is nonzero (it has been, every run measured so far), "
+             "telling the model there is none is expected to degrade tracking, not "
+             "improve it; this flag refuses d=0, see the range check below.",
+    )
+    p.add_argument(
+        "--servo-gain", type=int, default=None,
+        help="2026-11-24 servo-lookahead pilot: override close_loop_path_follow.py's "
+             "PathFollowConfig.servo_gain (production default 200, unchanged if this "
+             "flag is omitted). UR's documented valid range is [100, 2000] (Script "
+             "Manual: 'proportional gain for following target position, range "
+             "[100,2000]'); out-of-range values are rejected below. Independent of "
+             "--servo-lookahead-s -- the two may be set together or separately.",
+    )
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
     p.add_argument(
@@ -673,6 +729,17 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true",
                     help="real camera+robot connection, real solves, but no servoJ motion "
                          "-- integration smoke test before committing real robot time")
+    p.add_argument(
+        "--input-tracking-weight", type=float, default=None,
+        help="2026-11-24 servo/cost pilot: override the module-level R-term weight "
+             "_INPUT_TRACKING_WEIGHT (production default 7.0, i.e. 'R700' = 700x the "
+             "ConfigurationMPCConfig base weight of 1.0e-2; unchanged if this flag is "
+             "omitted). Combine with --input-penalty zero_centered to investigate "
+             "penalizing raw command MAGNITUDE (u^T R u) instead of deviation from the "
+             "offline plan's own reference input ((u-u_ref)^T R (u-u_ref)) -- changing "
+             "the penalty's CENTER and its WEIGHT are independent choices; this flag "
+             "only changes the weight, in either mode.",
+    )
     p.add_argument("--input-penalty", choices=("planned", "zero_centered"), default="planned",
                     help="2026-11-18 (EXPERIMENTAL, default='planned'=baseline, UNCHANGED "
                          "behaviour): 'planned' is the existing (u-u_ref)^T R (u-u_ref) cost "
@@ -827,6 +894,7 @@ def main() -> None:
 
     global _MAGNET_EXCLUSION_IN_QP, _DIPOLE_ALIGNMENT_WEIGHT
     global _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM, _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM
+    global _SERVO_LOOKAHEAD_S_OVERRIDDEN, _SERVO_GAIN_OVERRIDDEN
     _MAGNET_EXCLUSION_EXPERIMENTAL_RADIUS_MM = args.experimental_magnet_exclusion_radius_mm
     _MAGNET_EXCLUSION_EFFECTIVE_RADIUS_MM = None
     global _MAGNET_BEAM_BASE_EXCLUSION_FLOOR_MM, _MAGNET_EXCLUSION_ROBUST_MARGIN_MM
@@ -888,9 +956,16 @@ def main() -> None:
               f"by construction), NOT torque minimization -- live-relinearized every solve, "
               f"wired INTO the QP cost, no schedule file")
 
-    global _INPUT_PENALTY_MODE, _JACOBIAN_ADAPTATION_MODE
+    global _INPUT_PENALTY_MODE, _JACOBIAN_ADAPTATION_MODE, _INPUT_TRACKING_WEIGHT
+    global _INPUT_TRACKING_WEIGHT_OVERRIDDEN
     _INPUT_PENALTY_MODE = args.input_penalty
     _JACOBIAN_ADAPTATION_MODE = args.jacobian_adaptation_mode
+    if args.input_tracking_weight is not None:
+        _INPUT_TRACKING_WEIGHT = float(args.input_tracking_weight)
+        _INPUT_TRACKING_WEIGHT_OVERRIDDEN = True
+        print(f"[insertion_anchor] input_tracking_weight OVERRIDDEN to {_INPUT_TRACKING_WEIGHT} "
+              f"(production default 7.0 = 'R700'); input_penalty mode={_INPUT_PENALTY_MODE!r} "
+              f"(the weight and the penalty's reference-vs-zero CENTER are independent settings)")
     jacobian_adaptation_kwargs = None
     if args.jacobian_adaptation_mode != "off":
         jacobian_adaptation_kwargs = dict(
@@ -901,12 +976,34 @@ def main() -> None:
           f"jacobian_adaptation_mode={_JACOBIAN_ADAPTATION_MODE!r} (both default/baseline "
           f"unless explicitly requested above)")
 
+    global _DELAY_SAMPLES, _DELAY_SAMPLES_OVERRIDDEN
+    if args.delay_samples is not None:
+        if args.delay_samples == 0:
+            raise SystemExit(
+                "[insertion_anchor] --delay-samples 0 is refused deliberately: the "
+                "measured real command-to-response lag has been nonzero (>=2 ticks) "
+                "in every run so far, so telling the model to assume zero delay is "
+                "expected to degrade tracking, not remove a delay that is still "
+                "physically present. Use a positive value, or discuss before relaxing "
+                "this check."
+            )
+        if args.delay_samples < 0 or args.delay_samples >= args.horizon:
+            raise SystemExit(
+                f"[insertion_anchor] --delay-samples {args.delay_samples} must be a "
+                f"positive integer less than --horizon ({args.horizon}) -- refusing."
+            )
+        _DELAY_SAMPLES = int(args.delay_samples)
+        _DELAY_SAMPLES_OVERRIDDEN = True
+        print(f"[insertion_anchor] delay_samples OVERRIDDEN to {_DELAY_SAMPLES} "
+              f"(production default 2)")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=common.CONTROL_HZ, prediction_horizon=args.horizon,
         joint_velocity_limit_rad_s=args.joint_velocity_limit_rad_s,
         insertion_rate_limit_m_s=_INSERTION_RATE_LIMIT_M_S,
         joint_acceleration_limit_rad_s2=common.JOINT_ACCELERATION_LIMIT_RAD_S2,
+        delay_samples=_DELAY_SAMPLES,
         position_error_scale_mm=0.5, position_tracking_weight=1.0,
         tcp_workspace_kwargs=tcp_workspace_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
@@ -928,6 +1025,32 @@ def main() -> None:
     # close_loop_path_follow.py's validity gate needed.
     cfg.plan_dir = args.plan_dir
     cfg.reference_source = "plan_dir"
+    # 2026-11-23/24 servo pilot: additive overrides only -- cfg.servo_lookahead_s /
+    # cfg.servo_gain keep their PathFollowConfig defaults (0.20s / 200) whenever
+    # these flags are omitted. Both are range-checked against the UR Script
+    # Manual's own documented valid ranges (servoj: lookahead_time [0.03,0.2],
+    # gain [100,2000]) and REFUSED outside them -- never silently clamped or
+    # sent to the real controller as an out-of-spec value.
+    if args.servo_lookahead_s is not None:
+        if not (0.03 <= args.servo_lookahead_s <= 0.2):
+            raise SystemExit(
+                f"[insertion_anchor] --servo-lookahead-s {args.servo_lookahead_s} is outside "
+                f"UR's documented servoj() lookahead_time range [0.03, 0.2]s -- refusing."
+            )
+        cfg.servo_lookahead_s = float(args.servo_lookahead_s)
+        _SERVO_LOOKAHEAD_S_OVERRIDDEN = True
+        print(f"[insertion_anchor] servo_lookahead_s OVERRIDDEN to {cfg.servo_lookahead_s}s "
+              f"(production default 0.20s)")
+    if args.servo_gain is not None:
+        if not (100 <= args.servo_gain <= 2000):
+            raise SystemExit(
+                f"[insertion_anchor] --servo-gain {args.servo_gain} is outside UR's "
+                f"documented servoj() gain range [100, 2000] -- refusing."
+            )
+        cfg.servo_gain = int(args.servo_gain)
+        _SERVO_GAIN_OVERRIDDEN = True
+        print(f"[insertion_anchor] servo_gain OVERRIDDEN to {cfg.servo_gain} "
+              f"(production default 200)")
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
     cfg.insertion_command_min_m = args.insertion_command_min_mm / 1000.0
     cfg.insertion_command_max_m = args.insertion_command_max_mm / 1000.0

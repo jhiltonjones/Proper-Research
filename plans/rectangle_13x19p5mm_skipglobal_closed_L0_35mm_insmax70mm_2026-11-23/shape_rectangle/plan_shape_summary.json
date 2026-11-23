@@ -1,0 +1,25 @@
+{
+  "shape": "rectangle",
+  "size_mm": 13.0,
+  "rect_depth_mm": 19.5,
+  "closed": true,
+  "lumen_radius_mm": 50.0,
+  "L0_m": 0.035,
+  "insertion_max_m_override": 0.07,
+  "insertion_max_m_shared_default_unchanged": 0.05,
+  "online_command_envelope_mm": [
+    20.0,
+    70.0
+  ],
+  "override_mechanism": "unittest.mock.patch.object(planning_context, 'make_robot_config', ...) scoped to the single build_planning_context() call; verified shared module restored after use",
+  "centreline_points": 131,
+  "perimeter_mm": 63.10124513984813,
+  "time_param_dir": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/rectangle_13x19p5mm_skipglobal_closed_L0_35mm_insmax70mm_2026-11-23/time_parameterized_configuration_path",
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "note": "2026-11-23: same 13x19.5mm closed rectangle, L0=35mm, as rectangle_13x19p5mm_skipglobal_closed_L0_35mm_2026-11-21 (which failed at node 65 due to the shared 50mm insertion_max_m ceiling), rebuilt with insertion_max_m locally overridden to 70mm (matching the approved online command envelope), all other settings identical.",
+  "time_param_samples": 348
+}

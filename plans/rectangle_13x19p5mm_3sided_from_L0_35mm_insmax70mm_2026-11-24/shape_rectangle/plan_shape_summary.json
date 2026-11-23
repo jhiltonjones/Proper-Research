@@ -1,0 +1,17 @@
+{
+  "shape": "rectangle_3sided",
+  "size_mm": 13.0,
+  "rect_depth_mm": 19.5,
+  "closed": false,
+  "note": "truncated to 3 sides (ends at the 3rd corner visited, s=51.25mm of the original 63.10mm closed loop) from rectangle_13x19p5mm_skipglobal_closed_L0_35mm_insmax70mm_2026-11-23, reusing its already-solved Layer-1 inverse-configuration path (nodes 0-205) -- not re-solved.",
+  "lumen_radius_mm": 50.0,
+  "L0_m": 0.035,
+  "insertion_max_override_m": 0.07,
+  "beam_base_xyz_m": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "time_param_dir": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/rectangle_13x19p5mm_3sided_from_L0_35mm_insmax70mm_2026-11-24/time_parameterized_configuration_path",
+  "time_param_samples": 280
+}

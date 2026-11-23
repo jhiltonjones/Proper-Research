@@ -102,13 +102,23 @@ SCHED = _SCHED
 OUT_DIR = _OUT_DIR
 
 
+# 2026-11-23 servo-lookahead pilot: capture the single live MockRobot
+# instance this run constructs, so the harness can dump its servo_j_calls'
+# actual (time_s, lookahead_time, gain) to disk after runner.main() returns
+# -- the test reads that file, not live Python state, since this script
+# itself IS the subprocess entry point.
+_LAST_MOCK_ROBOT = None
+
+
 class MockRobot:
     """Replaces URRTDERobot -- no RTDE connection ever opens."""
 
     def __init__(self, *_a, **_kw):
-        self.servo_j_calls = []  # (t_monotonic, q_target_copy)
+        global _LAST_MOCK_ROBOT
+        self.servo_j_calls = []  # (t_monotonic, q_target_copy, time_s, lookahead_time, gain)
         self.closed = False
         self._lock = threading.Lock()
+        _LAST_MOCK_ROBOT = self
 
     def get_robot_mode(self):
         return 7
@@ -138,7 +148,10 @@ class MockRobot:
 
     def servo_j(self, q, time_s=0.1, lookahead_time=0.1, gain=300):
         with self._lock:
-            self.servo_j_calls.append((time.monotonic(), np.asarray(q, dtype=float).copy()))
+            self.servo_j_calls.append((
+                time.monotonic(), np.asarray(q, dtype=float).copy(),
+                float(time_s), float(lookahead_time), int(gain),
+            ))
 
     def servo_stop(self, _timeout):
         pass
@@ -292,6 +305,10 @@ def main():
     # update at least once.
     adaptation_mode = "active" if scenario == "adaptation_active" else "off"
     max_steps = "20" if scenario == "adaptation_active" else ("8" if scenario not in ("abort",) else "5")
+    # 2026-11-24 input-penalty pilot: zero_centered + a non-default weight
+    # together, exercised by "input_penalty_pilot" below -- every other
+    # scenario keeps the unchanged "planned"/default-weight baseline.
+    input_penalty_mode = "zero_centered" if scenario == "input_penalty_pilot" else "planned"
 
     argv = [
         "run_mpc_delay_aware_insertion_anchor.py",
@@ -299,7 +316,7 @@ def main():
         "--out-dir", out_subdir, "--run-name", f"e2e_smoke_{scenario}",
         "--skip-preflight", "--protective-config-reviewed",
         "--horizon", "15", "--jacobian-adaptation-mode", adaptation_mode,
-        "--input-penalty", "planned", "--dipole-alignment-weight", "0.0",
+        "--input-penalty", input_penalty_mode, "--dipole-alignment-weight", "0.0",
         "--measured-clearance-abort-mm", clearance_abort_mm,
         "--deadline-ms", deadline_ms,
         "--insertion-command-min-mm", "20.0", "--insertion-command-max-mm", "70.0",
@@ -322,6 +339,38 @@ def main():
             "--magnet-exclusion-robust-margin-mm", "3.0",
             "--experimental-magnet-exclusion-radius-mm", "276.0",
         ]
+    elif scenario == "input_penalty_pilot":
+        # Input-penalty pilot offline smoke check: confirms --input-tracking-
+        # weight (added 2026-11-24) is additive and independent of --input-
+        # penalty's reference-vs-zero CENTER choice -- the real worker still
+        # spawns and solves with both set away from their defaults together,
+        # no hardware.
+        argv += ["--input-tracking-weight", "3.5"]
+    elif scenario == "delay_samples_pilot":
+        # Delay-model pilot offline smoke check: confirms --delay-samples
+        # (added 2026-11-24) reaches the real MPCWorkerHandle construction
+        # and controller_metadata.json, no hardware.
+        argv += ["--delay-samples", "1"]
+    elif scenario == "delay_samples_zero_refused":
+        # d=0 is deliberately refused (see the flag's own help text) --
+        # confirms the refusal fires before the worker spawns.
+        argv += ["--delay-samples", "0"]
+    elif scenario == "servo_lookahead":
+        # Servo pilot offline smoke check: confirms --servo-lookahead-s
+        # (2026-11-23) and --servo-gain (2026-11-24) are additive and
+        # combinable -- the real worker still spawns and solves with both
+        # at the planned next-pilot values (the real UR Script Manual's
+        # own cartesian-servoing example uses lookahead=0.05/gain=500;
+        # 0.03 is the documented floor), and both reach the real robot.
+        # servo_j() call and controller_metadata.json, no hardware.
+        argv += ["--servo-lookahead-s", "0.03", "--servo-gain", "500"]
+    elif scenario == "servo_param_out_of_range":
+        # Confirms the UR-documented-range check REJECTS an out-of-spec
+        # value (e.g. the 0.008s the operator initially proposed, which is
+        # below servoj()'s documented lookahead_time floor of 0.03s) before
+        # it ever reaches cfg or the real servo_j() call -- not silently
+        # clamped, not sent to the mocked (or real) controller at all.
+        argv += ["--servo-lookahead-s", "0.008"]
     sys.argv = argv
 
     import proper_research.hardware.online.rectangle_stage_a.run_mpc_delay_aware_insertion_anchor as runner
@@ -331,6 +380,28 @@ def main():
     print(f"[diag] pf is runner.pf: {pf is runner.pf}")
     runner.main()
     print(f"\n[e2e_smoke:{scenario}] completed, output in {out_subdir}")
+
+    # 2026-11-23 servo-lookahead pilot: dump the actual (time_s, lookahead_time,
+    # gain) the mocked servo_j() received on every call, so a test can verify
+    # the --servo-lookahead-s override reached the real servoJ call site, not
+    # just cfg.
+    if _LAST_MOCK_ROBOT is not None and _LAST_MOCK_ROBOT.servo_j_calls:
+        calls = [
+            {"time_s": c[2], "lookahead_time": c[3], "gain": c[4]}
+            for c in _LAST_MOCK_ROBOT.servo_j_calls
+        ]
+        # the run's own files (controller_metadata.json etc.) live in a
+        # timestamped subdirectory of out_subdir, named by run_mpc_delay_
+        # aware_insertion_anchor.py's own --run-name + timestamp logic --
+        # not out_subdir itself. Find that one subdirectory the same way
+        # the test's _run_scenario() does.
+        run_subdirs = [
+            os.path.join(out_subdir, d) for d in os.listdir(out_subdir)
+            if os.path.isdir(os.path.join(out_subdir, d))
+        ]
+        if len(run_subdirs) == 1:
+            with open(os.path.join(run_subdirs[0], "mock_servo_j_calls.json"), "w") as f:
+                json.dump(calls, f, indent=2)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,102 @@
+CAMPAIGN: A-I rectangle run, 2026-11-24
+Shape: 13x19.5mm closed rectangle, L0=35mm start, 70mm insertion ceiling override, 276mm
+experimental magnet-exclusion radius. Most runs used the 3-sided truncated plan
+(plans/rectangle_13x19p5mm_3sided_from_L0_35mm_insmax70mm_2026-11-24); two early
+"A"-labeled runs used the older 4-sided closed plan and are flagged separately below.
+Servo anchors where present: --servo-lookahead-s 0.03 --servo-gain 500 --delay-samples 2
+(validated 2026-11-23/24, UR Script Manual documented ranges).
+
+All data verified against each run's own controller_metadata.json "argv" field
+(or summary.json for INV-7 runs, which write no controller_metadata.json) --
+run-name labels were NOT trusted at face value; see MISMATCHES below.
+
+===========================================================================
+RUN DIRECTORIES (close_loop_logs/, canonical checkout /home/jack/Proper-Research/)
+===========================================================================
+
+-- A (MPC, horizon=15, adaptation off, not frozen) --
+condition_A_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T133206Z   [OLD 4-sided plan, stop=stale_vision -- NOT valid comparison data]
+condition_A_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T133618Z   [OLD 4-sided plan, stop=tcp_out_of_workspace -- NOT valid comparison data]
+condition_A_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T141140Z   [MISLABELED: actual --horizon=6, not 15 -- see MISMATCHES]
+condition_A_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T141535Z   [actual horizon=6; summary.json missing stop_reason/control_steps despite 301 logged ticks -- metadata gap]
+(additional h=15/off reps counted under G below, which is config-identical to A)
+
+-- B (MPC, horizon=15, frozen Jacobian) --
+condition_B_frozen_jacobian_rect13x19p5_L035mm_2026-11-24_20261123T135432Z   stop=tracking_error_exceeded(7.11mm>7.00mm)  steps=295  RMSE=1.735mm
+condition_B_frozen_jacobian_rect13x19p5_L035mm_2026-11-24_20261123T142334Z   stop=path_complete                          steps=300  RMSE=1.121mm
+condition_B_frozen_jacobian_rect13x19p5_L035mm_2026-11-24_20261123T142657Z   stop=tracking_error_exceeded(7.06mm>7.00mm)  steps=275  RMSE=2.044mm
+  => 1/3 completed. Worst RMSE of any MPC condition in this campaign.
+
+-- C (INV-7 reactive, with virtual-boundary-hold @276mm) --
+condition_C_inv7_virtual_hold_rect13x19p5_L035mm_2026-11-24_20261123T135809Z   stop=tracking_error_exceeded(15.22mm>15.00mm)  steps=248  held_ticks=94
+condition_C_inv7_virtual_hold_rect13x19p5_L035mm_2026-11-24_20261123T141931Z   stop=tracking_error_exceeded(15.12mm>15.00mm)  steps=246  held_ticks=94
+condition_C_inv7_virtual_hold_rect13x19p5_L035mm_2026-11-24_20261123T142131Z   stop=tracking_error_exceeded(15.18mm>15.00mm)  steps=246  held_ticks=92
+  => 0/3 completed. Same hold-deadlock mechanism in all 3 (92-94 ticks each), reproducible.
+
+-- D (MPC, horizon=3, adaptation off) --
+3 reps, 3/3 completed, RMSE range 0.485-0.549mm.
+
+-- E (MPC, horizon=15, adaptation active) --
+condition_E... reps + I (config-identical, see below): 7 reps combined, 6/7 completed
+(1x tracking_error_exceeded @7mm), RMSE range 0.578-0.720mm (completed reps).
+
+-- F (MPC, horizon=3, adaptation active) --
+condition_F... reps + H (config-identical, see below): 7 reps combined, 7/7 completed,
+RMSE range 0.557-0.619mm.
+
+-- G (labeled as new condition; VERIFIED config-identical to A: horizon=15, off, not frozen) --
+condition_G_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T145306Z   horizon=15 adaptation=off freeze=False
+condition_G_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T145450Z   horizon=15 adaptation=off freeze=False
+condition_G_mpc_N15_rect13x19p5_L035mm_2026-11-24_20261123T145635Z   horizon=15 adaptation=off freeze=False
+  => G is NOT a distinct condition; it is an unlabeled repeat of A.
+
+-- H (labeled as new condition; VERIFIED config-identical to F: horizon=3, active) --
+  => H is NOT a distinct condition; it is an unlabeled repeat of F.
+
+-- I (labeled as new condition; VERIFIED config-identical to E: horizon=15, active) --
+  => I is NOT a distinct condition; it is an unlabeled repeat of E.
+
+===========================================================================
+AGGREGATED RESULTS BY REAL CONFIGURATION (not by label)
+===========================================================================
+
+config                      reps   completion   RMSE range (mm)
+h=15, off        (A+G)       6       6/6         0.508 - 0.637
+h=15, active      (E+I)      7       6/7         0.578 - 0.720
+h=3,  off         (D)        3       3/3         0.485 - 0.549
+h=3,  active      (F+H)      7       7/7         0.557 - 0.619
+h=6,  off                    5     4/5 confirmed  0.536 - 0.617  (1 metadata gap, see above)
+h=15, frozen-J    (B)        3       1/3          1.12 - 2.04   <- worst in campaign
+INV-7 + hold      (C)        3       0/3          5.40 - 5.45   <- all via same hold deadlock
+
+MISMATCHES FOUND (label vs. verified metadata):
+1. Two "A"-named runs (133206Z, 133618Z) used the OLD 4-sided plan and stopped on
+   environmental interruptions (stale_vision, tcp_out_of_workspace) -- excluded from
+   the aggregated table above.
+2. "condition_A..._141140Z" claims horizon=15 in its name; actual --horizon=6.
+3. G, H, I are each byte-identical in configuration to A, F, E respectively -- not new
+   conditions, confirmed via controller_metadata.json horizon/jacobian_adaptation_mode/
+   freeze-jacobian fields.
+
+===========================================================================
+CONCLUSION TESTED: "frozen jacobian and INV are good results; INV failing shows
+the MPC's constraints are particularly important" -- NOT SUPPORTED BY THIS DATA.
+===========================================================================
+- Frozen Jacobian (B) is the WORST-performing MPC condition in the campaign (1/3
+  completion, RMSE 2x+ every successful MPC condition). Not a good result.
+- INV's failure is a solid, reproducible negative result (3/3, same mechanism) but
+  does NOT isolate the MPC's constraint-handling as the cause: every MPC run in this
+  campaign (A/B/D/E/F/G/H/I) has the SAME 276mm constraint active, including B, which
+  still failed 2/3 times. No constraint-off MPC run exists in this campaign to test
+  that claim directly.
+- The best-supported driver visible in this data is JACOBIAN FRESHNESS: MPC with a
+  current/scheduled/adapted Jacobian (A/D/E/F/G/H) holds the 276mm boundary cleanly
+  (min gap 277-280mm, qp_status always "solved"); MPC with a stale, frozen Jacobian
+  (B) does not reliably hold it even with the identical constraint present.
+- Horizon-shortening (15->3) did not hurt tracking in this data -- h=3 reps (13 total,
+  D+F+H) completed 13/13 with the tightest RMSE band of the whole campaign.
+- The online Jacobian estimator (adaptation active) showed no clear benefit here, and
+  at h=15 is associated with the campaign's only non-frozen-Jacobian MPC failure.
+
+Generated 2026-11-24 from a verified read of the above close_loop_logs/ directories.
+Source conversation: this session's A-I campaign analysis (fork agent ae79f0d4cc5c889de).

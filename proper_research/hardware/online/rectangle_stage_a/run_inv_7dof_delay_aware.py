@@ -79,6 +79,20 @@ def main() -> None:
     p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
     p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
     p.add_argument("--servo-stream-hz", type=float, default=common.SERVO_STREAM_HZ)
+    p.add_argument(
+        "--servo-lookahead-s", type=float, default=None,
+        help="2026-11-24 servo pilot (ported from run_mpc_delay_aware_insertion_anchor.py "
+             "for a like-for-like A-E comparison): override close_loop_path_follow.py's "
+             "PathFollowConfig.servo_lookahead_s (production default 0.20s, unchanged if "
+             "omitted). UR's documented valid range is [0.03, 0.2]s; out-of-range values "
+             "are refused, never silently clamped or sent to the real controller.",
+    )
+    p.add_argument(
+        "--servo-gain", type=int, default=None,
+        help="2026-11-24 servo pilot (ported for parity with the MPC runner): override "
+             "PathFollowConfig.servo_gain (production default 200, unchanged if omitted). "
+             "UR's documented valid range is [100, 2000]; out-of-range values are refused.",
+    )
     p.add_argument("--max-control-steps", type=int, default=800)
     p.add_argument("--skip-preflight", action="store_true")
     p.add_argument("--insertion-tol-mm", type=float, default=3.0,
@@ -206,6 +220,28 @@ def main() -> None:
     cfg.max_tracking_error_m = args.max_tracking_error_mm / 1000.0
     cfg.insertion_command_min_m = args.insertion_command_min_mm / 1000.0
     cfg.insertion_command_max_m = args.insertion_command_max_mm / 1000.0
+
+    # 2026-11-24 servo pilot (ported from run_mpc_delay_aware_insertion_anchor.py for
+    # a like-for-like A-E comparison): additive overrides, refused outside UR's own
+    # documented servoj() ranges, never silently clamped before reaching the controller.
+    if args.servo_lookahead_s is not None:
+        if not (0.03 <= args.servo_lookahead_s <= 0.2):
+            raise SystemExit(
+                f"[inv_7dof_delay_aware] --servo-lookahead-s {args.servo_lookahead_s} is "
+                f"outside UR's documented servoj() lookahead_time range [0.03, 0.2]s -- refusing."
+            )
+        cfg.servo_lookahead_s = float(args.servo_lookahead_s)
+        print(f"[inv_7dof_delay_aware] servo_lookahead_s OVERRIDDEN to {cfg.servo_lookahead_s}s "
+              f"(production default 0.20s)")
+    if args.servo_gain is not None:
+        if not (100 <= args.servo_gain <= 2000):
+            raise SystemExit(
+                f"[inv_7dof_delay_aware] --servo-gain {args.servo_gain} is outside UR's "
+                f"documented servoj() gain range [100, 2000] -- refusing."
+            )
+        cfg.servo_gain = int(args.servo_gain)
+        print(f"[inv_7dof_delay_aware] servo_gain OVERRIDDEN to {cfg.servo_gain} "
+              f"(production default 200)")
 
     cfg.trim_kp = args.kp
     cfg.trim_kn = 0.0

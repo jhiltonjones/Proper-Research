@@ -172,3 +172,111 @@ def test_experimental_magnet_exclusion_radius_is_additive_not_destructive(tmp_pa
     assert meta["magnet_beam_base_exclusion_commanded_radius_mm"] == 233.0
     assert meta["magnet_exclusion_experimental_radius_mm"] == 276.0
     assert meta["magnet_exclusion_effective_radius_mm"] == 276.0
+
+
+def test_servo_lookahead_and_gain_override_reach_the_real_servoj_call(tmp_path):
+    """Servo pilot (2026-11-23/24): --servo-lookahead-s AND --servo-gain,
+    set together at the planned next-pilot values (0.03s / 500), must both
+    reach the REAL servo_j() call (verified via the mocked robot's own
+    recorded lookahead_time/gain, not just cfg), both be recorded in
+    controller_metadata.json, and must NOT change control_hz/the 0.04s
+    servoJ time_s."""
+    run_dir = _run_scenario("servo_lookahead", tmp_path)
+    pred_rows = _load_jsonl(os.path.join(run_dir, "predicted_beam_positions.jsonl"))
+    assert len(pred_rows) == 8
+    assert all(r["success"] for r in pred_rows), [r["qp_status"] for r in pred_rows]
+
+    with open(os.path.join(run_dir, "controller_metadata.json")) as f:
+        meta = json.load(f)
+    assert meta["servo_lookahead_s"] == 0.03
+    assert meta["servo_lookahead_s_overridden"] is True
+    assert meta["servo_gain"] == 500
+    assert meta["servo_gain_overridden"] is True
+    assert meta["control_hz"] == 10.0
+
+    with open(os.path.join(run_dir, "mock_servo_j_calls.json")) as f:
+        calls = json.load(f)
+    assert len(calls) > 0
+    assert all(c["lookahead_time"] == 0.03 for c in calls), calls
+    assert all(c["gain"] == 500 for c in calls), calls
+    assert all(c["time_s"] == 0.04 for c in calls), calls
+
+
+def test_servo_lookahead_below_ur_documented_floor_is_refused(tmp_path):
+    """The UR Script Manual documents servoj()'s lookahead_time valid range
+    as [0.03, 0.2]s. 0.008s (what the operator initially proposed, having
+    conflated it with servoj()'s separate time_s/CB3-default parameter)
+    must be REFUSED before reaching cfg or the mocked/real servo_j() call --
+    never silently clamped into range and sent to the controller anyway."""
+    out_dir = tmp_path
+    result = subprocess.run(
+        [sys.executable, "-u", HARNESS, "servo_param_out_of_range", str(out_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0, (
+        f"expected a nonzero exit refusing the out-of-range value, got 0:\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+    assert "outside UR's documented servoj() lookahead_time range" in result.stderr, result.stderr
+    # no run directory should have been created -- the refusal must happen
+    # before the worker spawns or any servo_j() call is attempted.
+    scenario_dir = os.path.join(out_dir, "servo_param_out_of_range")
+    run_dirs = (
+        [d for d in os.listdir(scenario_dir) if os.path.isdir(os.path.join(scenario_dir, d))]
+        if os.path.isdir(scenario_dir) else []
+    )
+    assert run_dirs == [], f"unexpected run directory created despite the refusal: {run_dirs}"
+
+
+def test_input_penalty_weight_override_is_additive_and_independent_of_center(tmp_path):
+    """Input-penalty pilot (2026-11-24): --input-tracking-weight must reach the
+    real QP's R-term weight independently of --input-penalty's reference-vs-
+    zero CENTER choice -- both away from their defaults together must still
+    solve, and both must be recorded in controller_metadata.json."""
+    run_dir = _run_scenario("input_penalty_pilot", tmp_path)
+    pred_rows = _load_jsonl(os.path.join(run_dir, "predicted_beam_positions.jsonl"))
+    assert len(pred_rows) == 8
+    assert all(r["success"] for r in pred_rows), [r["qp_status"] for r in pred_rows]
+
+    with open(os.path.join(run_dir, "controller_metadata.json")) as f:
+        meta = json.load(f)
+    assert meta["input_tracking_weight"] == 3.5
+    assert meta["input_tracking_weight_overridden"] is True
+    assert meta["input_penalty_mode"] == "zero_centered"
+
+
+def test_delay_samples_override_reaches_the_real_worker(tmp_path):
+    """Delay-model pilot (2026-11-24): --delay-samples must reach the real
+    MPCWorkerHandle construction and be recorded in controller_metadata.json."""
+    run_dir = _run_scenario("delay_samples_pilot", tmp_path)
+    pred_rows = _load_jsonl(os.path.join(run_dir, "predicted_beam_positions.jsonl"))
+    assert len(pred_rows) == 8
+    assert all(r["success"] for r in pred_rows), [r["qp_status"] for r in pred_rows]
+
+    with open(os.path.join(run_dir, "controller_metadata.json")) as f:
+        meta = json.load(f)
+    assert meta["delay_samples"] == 1
+    assert meta["delay_samples_overridden"] is True
+
+
+def test_delay_samples_zero_is_refused(tmp_path):
+    """d=0 (zero assumed delay) is deliberately refused -- the real measured
+    lag has been nonzero in every run so far, so telling the model to assume
+    none is expected to hurt, not help. Must be refused before the worker
+    spawns or any servo_j() call is attempted."""
+    out_dir = tmp_path
+    result = subprocess.run(
+        [sys.executable, "-u", HARNESS, "delay_samples_zero_refused", str(out_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode != 0, (
+        f"expected a nonzero exit refusing d=0, got 0:\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+    assert "refused deliberately" in result.stderr, result.stderr
+    scenario_dir = os.path.join(out_dir, "delay_samples_zero_refused")
+    run_dirs = (
+        [d for d in os.listdir(scenario_dir) if os.path.isdir(os.path.join(scenario_dir, d))]
+        if os.path.isdir(scenario_dir) else []
+    )
+    assert run_dirs == [], f"unexpected run directory created despite the refusal: {run_dirs}"

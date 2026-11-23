@@ -1,0 +1,100 @@
+{
+  "configuration": {
+    "sample_period_s": 0.1,
+    "state_velocity_limit": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.002
+    ],
+    "state_acceleration_limit": [
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.02
+    ],
+    "velocity_safety_factor": 0.8,
+    "acceleration_safety_factor": 0.75,
+    "maximum_path_speed_m_s": 0.003,
+    "maximum_path_acceleration_m_s2": 0.02,
+    "start_path_speed_m_s": 0.0,
+    "end_path_speed_m_s": 0.0,
+    "timing_subdivisions_per_interval": 4,
+    "beam_validation_samples_per_interval": 3,
+    "validate_nonlinear_beam": true,
+    "require_nonlinear_beam_feasible": false,
+    "require_saved_global_feasible": false,
+    "require_saved_dense_feasible": false,
+    "beam_validation_position_tolerance_m": null,
+    "beam_validation_tangent_tolerance_rad": null,
+    "interpolation": "natural_cubic",
+    "linear_program_tolerance": 1e-10,
+    "constraint_tolerance": 1e-08,
+    "debug": true
+  },
+  "summary": {
+    "time_parameterized": true,
+    "globally_feasible": true,
+    "source_global_feasible": false,
+    "source_dense_validation_feasible": false,
+    "beam_validation_performed": true,
+    "beam_validation_feasible": true,
+    "duration_s": 39.0,
+    "raw_duration_s": 34.77900833454892,
+    "number_mpc_samples": 391,
+    "number_timing_grid_points": 1173,
+    "number_spatial_beam_validation_samples": 1173,
+    "maximum_velocity_limit_ratio": 0.9070354291545074,
+    "maximum_acceleration_limit_ratio": 0.8094959840513035,
+    "maximum_state_rate": [
+      0.022816678215224862,
+      0.020400072999800466,
+      0.02208100614032507,
+      0.024293339709090273,
+      0.01600468630805393,
+      0.004633815878801168,
+      0.001451256686647212
+    ],
+    "maximum_state_acceleration": [
+      0.08052738585639208,
+      0.054880044635065,
+      0.058508435952866436,
+      0.06217902332938355,
+      0.06744554574774554,
+      0.014409389052141727,
+      0.012142439760769553
+    ],
+    "maximum_path_speed_m_s": 0.00267530833342684,
+    "maximum_absolute_path_acceleration_m_s2": 0.015905054842006883,
+    "maximum_beam_position_error_m": 0.00015322856933104557,
+    "maximum_beam_tangent_error_rad": 3.133980790908973,
+    "endpoint_state_rate_norms": [
+      0.0,
+      0.0
+    ],
+    "interpolation": "natural_cubic",
+    "constraint_model": "kinematic configuration velocity and acceleration limits",
+    "torque_constraints_included": false,
+    "jerk_constraints_included": false,
+    "path_parameter": "lumen_arc_length_m",
+    "state_layout": "q1_q2_q3_q4_q5_q6_insertion",
+    "input_layout": "qd1_qd2_qd3_qd4_qd5_qd6_insertion_rate",
+    "controllable_interval_at_start": [
+      0.0,
+      3.845429445595536e-06
+    ]
+  },
+  "output_files": {
+    "csv": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path/time_parameterized_configuration_path.csv",
+    "json": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path/time_parameterized_configuration_summary.json",
+    "npz": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path/time_parameterized_configuration_path.npz",
+    "spatial_validation_csv": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path/time_parameterized_spatial_validation.csv",
+    "plot": "/home/jack/Proper-Research/.claude/worktrees/contact-mechanism-analysis/plans/flower_stalk10mm_3leaves10mm_smooth3mm_L035mm_2026-11-24/time_parameterized_configuration_path/time_parameterized_configuration_path.png"
+  }
+}

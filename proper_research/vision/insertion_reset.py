@@ -18,4 +18,4 @@ from proper_research.hardware.online.advancer_excitation.reset_insertion import 
     reset_insertion,
 )
 
-reset_insertion(30.0, live=True)
+reset_insertion(35.0, live=True)

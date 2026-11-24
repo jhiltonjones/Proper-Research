@@ -93,16 +93,25 @@ def _raised_stream_stream_config():
 def check_camera_healthy(
     min_valid_fraction: float = 0.8, n_frames: int = 20,
     *, expected_insertion_m: float | None = None, insertion_tol_mm: float = 3.0,
+    auto_retract: bool = True, auto_retract_max_iters: int = 5,
 ) -> None:
     """Raise if the camera/vision pipeline can't reliably find the tip.
 
-    See `stage_a_common.check_camera_healthy` for the full behavior; this
-    just supplies this rig's own raised `PivotConfig`.
+    2026-11-24: the vessel rig was physically moved to match the
+    rectangle rig's setup (unraised beam base) -- per that change, this
+    now reuses rectangle_stage_a.common.check_camera_healthy directly
+    (same measure_l0 chord+affine-correction length calculation, same
+    reset_insertion auto-retract loop) instead of the vessel-specific
+    raised-pivot check this used to call. NOT a byte-identical call --
+    rectangle's own PIVOT_XYZ/affine correction are now the right
+    reference for this rig's actual (moved) physical geometry.
     """
-    _shared.check_camera_healthy(
+    from proper_research.hardware.online.rectangle_stage_a import common as _rect_common
+
+    _rect_common.check_camera_healthy(
         min_valid_fraction, n_frames,
         expected_insertion_m=expected_insertion_m, insertion_tol_mm=insertion_tol_mm,
-        pivot_config=_raised_pivot_config(),
+        auto_retract=auto_retract, auto_retract_max_iters=auto_retract_max_iters,
     )
 
 
@@ -116,16 +125,28 @@ def preflight(
 ) -> tuple[np.ndarray, float]:
     """Full pre-run sequence: health checks + reset. Returns (q0, L0) from the plan.
 
-    See `stage_a_common.preflight` for the full behavior (magnet-exclusion
-    reset-path safety, `reset_target_q0` override); this just supplies
-    this rig's own raised `PivotConfig`.
+    2026-11-24: inlined from `stage_a_common.preflight` (rather than
+    delegating to it) so the insertion-length health check goes through
+    THIS module's own `check_camera_healthy` -- now reusing rectangle_
+    stage_a's measure_l0/reset_insertion mechanism directly, per the rig
+    having been physically moved to match that setup -- instead of the
+    old raised-`PivotConfig` check. `reset_to_plan_initial_safe`/
+    `check_robot_safe`/`load_plan_initial_state` are unchanged, reused
+    exactly as `stage_a_common.preflight` itself uses them.
     """
-    return _shared.preflight(
-        plan_dir, robot_ip=robot_ip, insertion_tol_mm=insertion_tol_mm,
-        pivot_config=_raised_pivot_config(),
+    q0, l0 = load_plan_initial_state(plan_dir)
+    print(f"[vessel-preflight] plan initial state: q0={np.round(q0, 4).tolist()} L0={l0*1000:.2f}mm")
+    reset_q0 = q0 if reset_target_q0 is None else np.asarray(reset_target_q0, dtype=float).reshape(6)
+    if reset_target_q0 is not None:
+        print(f"[vessel-preflight] reset target OVERRIDDEN to {np.round(reset_q0, 4).tolist()} "
+              f"(plan's own trajectory/schedule unaffected)")
+    check_camera_healthy(expected_insertion_m=l0, insertion_tol_mm=insertion_tol_mm)
+    reset_to_plan_initial_safe(
+        reset_q0, robot_ip=robot_ip,
         magnet_transform_fn=magnet_transform_fn,
         magnet_exclusion_lumen_C_m=magnet_exclusion_lumen_C_m,
         magnet_exclusion_radius_m=magnet_exclusion_radius_m,
         magnet_z_bounds_m=magnet_z_bounds_m,
-        reset_target_q0=reset_target_q0,
     )
+    check_robot_safe(robot_ip=robot_ip)
+    return q0, l0

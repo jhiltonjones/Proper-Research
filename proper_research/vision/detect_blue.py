@@ -31,7 +31,15 @@ _DEFAULT_POSITIVE_AXIS_SIGNS = (-1.0, 1.0)
 _DEFAULT_BEAM_AXIAL_AXIS_R = (-1.0, 0.0, 0.0)
 _DEFAULT_BEAM_PLANE_NORMAL_AXIS_R = (0.0, 0.0, -1.0)
 _DEFAULT_T_ROBOT_BEAM_POSE6 = (
-    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), -0.016567, 0.0, -1.5707963, 0.0,
+    # 2026-11-24 fix: X/Y already read live from BEAM_BASE_XYZ_M, but Z was a
+    # hardcoded literal (-0.016567, the PRE-2026-10-02-recalibration value) --
+    # this is the exact root cause of the "stale-lumen-Z" bug vessel_context.py
+    # guards against (digitized points all land at this one wrong Z constant,
+    # since in-plane beam-frame points' Z comes purely from this translation,
+    # confirmed by direct derivation: rotation contributes nothing to Z for a
+    # point with z_B=0). Read Z from BEAM_BASE_XYZ_M too, so a future beam-base
+    # recalibration doesn't silently desync this constant from reality again.
+    float(BEAM_BASE_XYZ_M[0]), float(BEAM_BASE_XYZ_M[1]), float(BEAM_BASE_XYZ_M[2]), 0.0, -1.5707963, 0.0,
 )
 def resample_polyline_by_arclength(points, n_samples=200):
     pts = np.asarray(points, dtype=float)

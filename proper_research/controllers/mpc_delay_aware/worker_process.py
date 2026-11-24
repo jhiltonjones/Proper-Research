@@ -223,6 +223,19 @@ def _worker_main(
             magnet_exclusion=magnet_exclusion_kwargs,
             dipole_alignment_preference=dipole_alignment_preference_kwargs,
             jacobian_adaptation=jacobian_adaptation_kwargs,
+            # 2026-11-24: same fix, same class, for magnet_workspace/magnet_
+            # workspace_clearance -- missed in the 2026-11-18 pass above.
+            # Root-caused live: a vessel-navigation nullspace_r700 run
+            # tripped magnet_z_out_of_bounds repeatedly regardless of
+            # --magnet-workspace-robust-margin-mm (3/5/10mm) or
+            # --magnet-workspace-live-relinearize, because this call site
+            # never passed magnet_workspace through at all -- the QP's z
+            # ceiling was never actually configured for this controller
+            # kind, so no value of either flag could have had any effect.
+            # exact_qn0_controller below already receives both kwargs
+            # correctly; this makes nullspace_r700 match it.
+            magnet_workspace=magnet_workspace_kwargs,
+            magnet_workspace_clearance=magnet_workspace_clearance_kwargs,
         )
         if jacobian_adaptation_kwargs is not None:
             print(f"[worker] (nullspace_r700) jacobian adaptation mode="
@@ -238,6 +251,14 @@ def _worker_main(
                   f"sign={dipole_alignment_preference_kwargs['sign']:+.0f}, "
                   "purely kinematic, live-relinearized every solve, distance-blind by "
                   "construction -- see controllers.dipole_alignment)")
+        if magnet_workspace_kwargs is not None:
+            print(f"[worker] (nullspace_r700) magnet z-workspace constraint wired INTO the QP "
+                  f"(z in [{magnet_workspace_kwargs['z_min_m']*1e3:.1f}, "
+                  f"{magnet_workspace_kwargs['z_max_m']*1e3:.1f}]mm)")
+        if magnet_workspace_clearance_kwargs is not None:
+            print(f"[worker] (nullspace_r700) magnet z-workspace SOFT clearance cost wired "
+                  f"INTO the QP (gain={magnet_workspace_clearance_kwargs['gain']:.3g}, "
+                  f"soft_margin={magnet_workspace_clearance_kwargs['soft_margin_m']*1e3:.1f}mm)")
 
         # --- startup assertions (frozen-spec item 13): verify the exact
         # projector properties the gamma=1<->M0 unit test relies on, over
@@ -337,6 +358,9 @@ def _worker_main(
                   f"soft_margin={magnet_workspace_clearance_kwargs['soft_margin_m']*1e3:.1f}mm, "
                   f"active only within soft_margin of either z bound, separate from the hard "
                   f"z-workspace bound above)")
+        if jacobian_adaptation_kwargs is not None:
+            print(f"[worker] jacobian adaptation mode="
+                  f"{jacobian_adaptation_kwargs.get('mode')!r}")
         if magnetic_force_preference_kwargs is not None:
             print(f"[worker] magnetic force/torque PREFERENCE wired INTO the QP "
                   f"(lambda_force={magnetic_force_preference_kwargs['lambda_force']:.3g}, "

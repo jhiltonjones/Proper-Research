@@ -61,6 +61,16 @@ def _arguments() -> argparse.Namespace:
                          "default 50mm). Confirmed this vessel's true end needs "
                          "~64.5mm via insertion-synchronised tracking; only raise "
                          "this if the advancer/beam hardware genuinely supports it.")
+    p.add_argument("--jacobian-mode", choices=("fast", "accurate"), default="fast",
+                    help="2026-11-24 fix: this flag was previously missing entirely -- "
+                         "build_vessel_planning_context() always ran with its own "
+                         "'fast' default, even though that function's OWN docstring "
+                         "recommends 'accurate' for 'Layer 1 offline solving where "
+                         "\"fast\" mode's numerical-estimator artifact can make the "
+                         "optimizer chase a bad gradient'. Default stays 'fast' here "
+                         "(unchanged behavior for existing callers); pass 'accurate' "
+                         "if Layer 1's chain-rule validation fails with a relative "
+                         "error near 1.0 (confirmed symptom of this exact artifact).")
     p.add_argument("--tangent-tolerance-deg", type=float, default=179.9,
                     help="inverse-planner tangent feasibility GATE. A vessel path "
                          "is open (not closed) so this rarely binds, unlike a "
@@ -121,6 +131,7 @@ def main() -> None:
             insertion_max_m=(
                 args.insertion_max_mm * 1.0e-3 if args.insertion_max_mm is not None else None
             ),
+            jacobian_mode=args.jacobian_mode,
         )
     )
     out_root = Path(args.output_root or out_root)

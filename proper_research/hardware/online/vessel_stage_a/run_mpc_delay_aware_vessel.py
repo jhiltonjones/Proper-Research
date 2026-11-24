@@ -252,6 +252,21 @@ _DEADLINE_MS = 70.0
 _INSERTION_OFFSET_ABORT_M = 0.005  # 5mm, matches the validated rectangle default
 _WORKER: MPCWorkerHandle | None = None
 _CONTACT: bool = True
+# 2026-11-24: ADDITIVE -- lets this script build+dispatch to the SAME
+# InsertionAnchoredTaskNullspaceMPC ("nullspace_r700") controller class the
+# rectangle/shape campaign work (run_mpc_delay_aware_insertion_anchor.py)
+# uses, instead of this script's own separate exact_qn0 (ExactQNZeroTask
+# NullspaceDelayAwareMPC) condition from the 2026-09-23 model-necessity
+# study. Default "exact_qn0" preserves this script's existing behavior
+# exactly; pass --controller-kind nullspace_r700 for apples-to-apples
+# comparison against shape-work results. Both can be built in the SAME
+# worker process (worker_process.py's own docstring: "both may be enabled
+# simultaneously without interacting; each is dispatched by its own `kind`
+# string") -- this flag only changes which one this script actually
+# requests each tick.
+_CONTROLLER_KIND = "exact_qn0"
+_INSERTION_STATE_ANCHOR_WEIGHT = 0.0  # only used when _CONTROLLER_KIND == "nullspace_r700"
+_JACOBIAN_ADAPTATION_MODE = "off"  # set in main() from --jacobian-adaptation-mode
 _MAGNET_Z_BOUNDS_M: tuple | None = None  # set in main() from the plan's own start pose
 _MAGNET_EXCLUSION_LUMEN_C_M = None  # set in main(); single beam-base point for the exclusion check
 _MAGNET_EXCLUSION_RADIUS_M: float | None = None  # set in main()
@@ -328,8 +343,10 @@ def spawn_and_warm_worker(
     solver_time_limit_s: float = 0.0,
     zero_input_reference_in_r: bool = False,
     right_shift_m: float = 0.0,
+    controller_kind: str = "exact_qn0",
     jacobian_source_kwargs: dict | None = None,
     dipole_alignment_preference_kwargs: dict | None = None,
+    jacobian_adaptation_kwargs: dict | None = None,
 ) -> MPCWorkerHandle:
     """Spawn + warm the MPC worker BEFORE any RTDE/camera connection opens."""
     dt = 1.0 / control_hz
@@ -391,13 +408,34 @@ def spawn_and_warm_worker(
         position_error_scale_m=(s, s, s), position_tracking_weight=float(position_tracking_weight),
         use_dare_terminal_cost=False, directional_damping=0.0,
     )
-    print("[vessel-mpc] spawning + warming process-isolated MPC worker "
-          "(BEFORE any hardware connection); building exact-Q_N=0/R700...")
+    # 2026-11-24, ADDITIVE: when --controller-kind nullspace_r700 is passed,
+    # also build InsertionAnchoredTaskNullspaceMPC -- the SAME controller
+    # class run_mpc_delay_aware_insertion_anchor.py (rectangle/shape
+    # campaign work) uses -- so this script can dispatch to it instead of
+    # (not in addition to -- see below) its own exact_qn0 condition. Mirrors
+    # that script's nullspace_r700_config_kwargs construction exactly:
+    # same base kwargs (here, exact_qn0_config_kwargs, which already carries
+    # sample_period_s/horizon/state+velocity+acceleration bounds identical
+    # in form to the rectangle script's own mpc_config_kwargs) plus the
+    # R700 input-tracking/increment weights.
+    enable_nullspace_r700 = (controller_kind == "nullspace_r700")
+    nullspace_r700_config_kwargs = None
+    if enable_nullspace_r700:
+        nullspace_r700_config_kwargs = dict(
+            exact_qn0_config_kwargs,
+            input_tracking_weight=_INPUT_TRACKING_WEIGHT,
+            input_increment_weight=_INPUT_INCREMENT_WEIGHT,
+        )
+    print(f"[vessel-mpc] spawning + warming process-isolated MPC worker "
+          f"(BEFORE any hardware connection); building exact-Q_N=0/R700"
+          f"{' + nullspace/R700' if enable_nullspace_r700 else ''}...")
     worker = MPCWorkerHandle(
         plan_dir=plan_dir, schedule_path=schedule_cache,
         mpc_config_kwargs=exact_qn0_config_kwargs, beam_config_kwargs=beam_config_kwargs,
         delay_samples=2, beta_d=1.0, single_threaded=True,
         enable_exact_qn_zero=True, exact_qn_zero_config_kwargs=exact_qn0_config_kwargs,
+        enable_nullspace_r700=enable_nullspace_r700,
+        nullspace_r700_config_kwargs=nullspace_r700_config_kwargs,
         magnet_exclusion_kwargs=magnet_exclusion_kwargs,
         magnet_workspace_kwargs=magnet_workspace_kwargs,
         magnet_exclusion_clearance_kwargs=magnet_exclusion_clearance_kwargs,
@@ -406,12 +444,25 @@ def spawn_and_warm_worker(
         right_shift_m=right_shift_m,
         jacobian_source_kwargs=jacobian_source_kwargs,
         dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
     )
     spawn_ms = (worker.t_worker_ready - worker.t_spawn_start) * 1e3
     print(f"[vessel-mpc] worker ready (spawn+import+construct+warm-up+checks = {spawn_ms:.0f}ms)")
+    # 2026-11-24 fix: _INSERTION_OFFSET_ABORT_M is None whenever neither
+    # --enable-insertion-offset-abort nor --disable-insertion-offset-abort
+    # is passed (both default to False) -- a real, pre-existing bug that
+    # crashed this print unconditionally multiplying None by 1e3. Every
+    # prior real run happened to pass --enable-insertion-offset-abort
+    # explicitly, so this was never triggered before.
+    _insertion_abort_desc = (
+        "disabled (insertion-offset abort off by default; pass "
+        "--enable-insertion-offset-abort to turn it on)"
+        if _INSERTION_OFFSET_ABORT_M is None
+        else f"|L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm"
+    )
     print(f"[vessel-mpc] CONTROLLER CONFIRMED: exact Q_N=0 (P_N=P_R=0), R700 "
           f"(input_tracking_weight={_INPUT_TRACKING_WEIGHT}), contact={_CONTACT}, "
-          f"safety abort at |L-Lref|>{_INSERTION_OFFSET_ABORT_M*1e3:.1f}mm, "
+          f"safety abort at {_insertion_abort_desc}, "
           f"magnet-exclusion-in-qp={'ON' if magnet_exclusion_kwargs is not None else 'OFF'}, "
           f"magnet-workspace-in-qp={'ON' if magnet_workspace_kwargs is not None else 'OFF'}, "
           f"magnet-workspace-clearance-cost={'ON' if magnet_workspace_clearance_kwargs is not None else 'OFF'}")
@@ -443,7 +494,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
 
     if not _METADATA_WRITTEN:
         meta = {
-            "controller_variant": "exact_qn0_R700_vessel",
+            "controller_variant": f"{_CONTROLLER_KIND}_R700_vessel",
             "contact": _CONTACT,
             "gamma": _GAMMA,
             "input_tracking_weight": _INPUT_TRACKING_WEIGHT,
@@ -469,6 +520,7 @@ def _wrapped_build_offline_solver(kind, **kwargs):
             "magnet_exclusion_source": f"beam_base_fixed_{_BEAM_BASE_EXCLUSION_RADIUS_M*1e3:.2f}mm",
             "magnet_constraints_in_qp": _MAGNET_CONSTRAINTS_IN_QP,
             "tcp_workspace_in_qp": _TCP_WORKSPACE_IN_QP,
+            "jacobian_adaptation_mode": _JACOBIAN_ADAPTATION_MODE,
             "argv": list(_ARGV),
             "planner_to_live_R_fit": r_fit.tolist(),
             "planner_to_live_t_fit_m": t_fit.tolist(),
@@ -484,8 +536,8 @@ def _wrapped_build_offline_solver(kind, **kwargs):
         max_joint_step_rad=float(cfg.max_joint_step_rad),
         config=kwargs.get("adapter_config"),
         prediction_log_path=str(_LAST_OUTPUT_DIR / "predicted_beam_positions.jsonl"),
-        controller_kind="exact_qn0",
-        controller_label=f"mpc_delay_aware_exact_qn0_vessel_{'contact' if _CONTACT else 'nocontact'}",
+        controller_kind=_CONTROLLER_KIND,
+        controller_label=f"mpc_delay_aware_{_CONTROLLER_KIND}_vessel_{'contact' if _CONTACT else 'nocontact'}",
         insertion_offset_abort_m=_INSERTION_OFFSET_ABORT_M,
         magnet_transform_fn=_magnet_transform_fn,
         magnet_z_bounds_m=_MAGNET_Z_BOUNDS_M,
@@ -655,7 +707,8 @@ def build_or_load_schedule(
 
 
 def main() -> None:
-    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M
+    global _DEADLINE_MS, _WORKER, _INSERTION_OFFSET_ABORT_M, _CONTACT, _MAGNET_Z_BOUNDS_M, _CONTROLLER_KIND
+    global _JACOBIAN_ADAPTATION_MODE
     global _MAGNET_EXCLUSION_LUMEN_C_M, _MAGNET_EXCLUSION_RADIUS_M, _MAGNET_CONSTRAINTS_IN_QP
     global _BEAM_BASE_PIVOT_XYZ_R, _BEAM_BASE_EXCLUSION_RADIUS_M
     global _ARGV, _TCP_WORKSPACE_IN_QP
@@ -725,6 +778,48 @@ def main() -> None:
     contact_group.add_argument("--contact", dest="contact", action="store_true")
     contact_group.add_argument("--no-contact", dest="contact", action="store_false")
     p.add_argument("--horizon", type=int, default=15)
+    p.add_argument("--controller-kind", choices=("exact_qn0", "nullspace_r700"), default="exact_qn0",
+                    help="2026-11-24, ADDITIVE: default 'exact_qn0' preserves this script's "
+                         "existing (model-necessity-study) behavior exactly. Pass "
+                         "'nullspace_r700' to build+dispatch to InsertionAnchoredTaskNullspaceMPC "
+                         "-- the SAME controller class run_mpc_delay_aware_insertion_anchor.py "
+                         "(rectangle/shape campaign work) uses -- for a direct, same-"
+                         "implementation comparison. See worker_process.py: both controllers "
+                         "can be built in the same worker without interacting; this flag only "
+                         "changes which `kind` gets requested each tick.")
+    p.add_argument("--freeze-jacobian", action="store_true",
+                    help="2026-11-24, ADDITIVE, ported verbatim from run_mpc_delay_aware_"
+                         "insertion_anchor.py's condition B: use ONE fixed Jacobian for the "
+                         "whole run instead of the scheduled (per-reference-sample) LTV "
+                         "Jacobian baseline A uses. Implemented at this runner's level, not "
+                         "inside the worker: every row of the loaded --schedule-cache array is "
+                         "overwritten with the row at --freeze-jacobian-index (default 0) "
+                         "before being written to a temporary .npy file and handed to the "
+                         "worker exactly as the unfrozen schedule would be. Off by default; "
+                         "baseline behavior is unchanged when this flag is not passed.")
+    p.add_argument("--freeze-jacobian-index", type=int, default=0,
+                    help="reference-sample index whose Jacobian is held fixed for the whole "
+                         "run when --freeze-jacobian is set. Default 0 (the plan's own start).")
+    p.add_argument("--jacobian-adaptation-mode", choices=("off", "shadow", "active"), default="off",
+                    help="2026-11-24, ADDITIVE, ported verbatim from run_mpc_delay_aware_"
+                         "insertion_anchor.py's own flag (rectangle/shape campaign's condition "
+                         "E): online joint-Jacobian scalar correction -- see controllers."
+                         "mpc_delay_aware.jacobian_adaptation's module docstring for the full "
+                         "derivation. 'off' (default): feature fully inert, no estimator "
+                         "object constructed, bit-identical to baseline. 'shadow': the "
+                         "estimator updates and logs every tick but its result can never "
+                         "reach the QP (g_used forced to 0.0) -- commands are therefore "
+                         "identical to 'off'. 'active': the estimator's current bounded "
+                         "g_hat IS applied to the joint columns of every horizon-stage "
+                         "schedule Jacobian this tick (insertion column never adapted). "
+                         "Recorded into controller_metadata.json as jacobian_adaptation_mode. "
+                         "Already accepted end-to-end by both exact_qn0 and nullspace_r700 "
+                         "controllers in worker_process.py -- this flag was simply never "
+                         "threaded through this runner's own CLI/spawn_and_warm_worker before.")
+    p.add_argument("--jacobian-adaptation-g-min", type=float, default=-0.3,
+                    help="lower bound on the adaptation scalar g (dimensionless). Default -0.3.")
+    p.add_argument("--jacobian-adaptation-g-max", type=float, default=0.5,
+                    help="upper bound on the adaptation scalar g (dimensionless). Default 0.5.")
     p.add_argument("--joint-velocity-limit-rad-s", type=float, default=common.JOINT_VELOCITY_LIMIT_RAD_S)
     p.add_argument("--max-joint-step-rad", type=float, default=common.MAX_JOINT_STEP_RAD)
     p.add_argument("--control-hz", type=float, default=common.CONTROL_HZ,
@@ -997,13 +1092,42 @@ def main() -> None:
         else None
     )
     _CONTACT = bool(args.contact)
+    _CONTROLLER_KIND = str(args.controller_kind)
 
     schedule = build_or_load_schedule(
         args.plan_dir, args.schedule_cache, lumen_file=args.lumen_file,
         insertion_max_mm=args.insertion_max_mm, contact=_CONTACT,
     )
+    if args.freeze_jacobian:
+        # Condition B: hold ONE Jacobian fixed for every tick instead of
+        # baseline A's scheduled, per-reference-sample LTV Jacobian.
+        # Ported verbatim from run_mpc_delay_aware_insertion_anchor.py --
+        # overwrites the schedule array in memory and writes it to a NEW
+        # .npy file (spawn_and_warm_worker's schedule_cache is a PATH the
+        # worker process reloads independently, so this must be a real
+        # file on disk, not just the in-memory `schedule` variable here).
+        if not (0 <= args.freeze_jacobian_index < schedule.shape[0]):
+            raise ValueError(
+                f"--freeze-jacobian-index={args.freeze_jacobian_index} is out of range "
+                f"for a schedule with {schedule.shape[0]} reference samples"
+            )
+        frozen_row = schedule[args.freeze_jacobian_index]
+        schedule = np.tile(frozen_row[None, :, :], (schedule.shape[0], 1, 1))
+        os.makedirs(args.out_dir, exist_ok=True)
+        _frozen_schedule_path = os.path.join(
+            args.out_dir, f"{args.run_name}_frozen_jacobian_schedule.npy"
+        )
+        np.save(_frozen_schedule_path, schedule)
+        args.schedule_cache = _frozen_schedule_path
+        print(
+            f"[vessel-mpc] CONDITION B: Jacobian FROZEN at reference-sample index "
+            f"{args.freeze_jacobian_index} for the whole run -- every one of the "
+            f"{schedule.shape[0]} schedule rows now holds that single Jacobian; "
+            f"written to {_frozen_schedule_path}"
+        )
     pf._SCHEDULE_OVERRIDE = schedule
     print(f"[vessel-mpc] schedule: {schedule.shape} contact={_CONTACT} "
+          f"controller_kind={_CONTROLLER_KIND} freeze_jacobian={args.freeze_jacobian} "
           f"d=2, beta_d=1.0, V_f=0, N={args.horizon}, process-isolated, "
           f"deadline={args.deadline_ms:.0f}ms, insertion-offset-abort={args.insertion_offset_abort_mm:.1f}mm")
 
@@ -1267,6 +1391,16 @@ def main() -> None:
               f"sign={args.dipole_alignment_sign:+.0f}, m_body={_dipole_m_body.tolist()}) -- "
               f"live-relinearized every solve, wired INTO the QP cost, no schedule file")
 
+    _JACOBIAN_ADAPTATION_MODE = str(args.jacobian_adaptation_mode)
+    jacobian_adaptation_kwargs = None
+    if args.jacobian_adaptation_mode != "off":
+        jacobian_adaptation_kwargs = dict(
+            mode=args.jacobian_adaptation_mode,
+            g_min=args.jacobian_adaptation_g_min, g_max=args.jacobian_adaptation_g_max,
+        )
+    print(f"[vessel-mpc] jacobian_adaptation_mode={_JACOBIAN_ADAPTATION_MODE!r} "
+          f"(default/baseline unless explicitly requested)")
+
     _WORKER = spawn_and_warm_worker(
         plan_dir=args.plan_dir, schedule_cache=args.schedule_cache,
         control_hz=args.control_hz, prediction_horizon=args.horizon,
@@ -1283,8 +1417,10 @@ def main() -> None:
         solver_time_limit_s=args.solver_time_limit_s,
         zero_input_reference_in_r=args.zero_input_reference_in_r,
         right_shift_m=args.right_shift_mm * 1.0e-3,
+        controller_kind=_CONTROLLER_KIND,
         jacobian_source_kwargs=jacobian_source_kwargs,
         dipole_alignment_preference_kwargs=dipole_alignment_preference_kwargs,
+        jacobian_adaptation_kwargs=jacobian_adaptation_kwargs,
     )
     print(f"[vessel-mpc] R-term v_ref: "
           f"{'ZEROED (v^T R v)' if args.zero_input_reference_in_r else 'offline plan (v-v_ref)^T R (v-v_ref)'}")

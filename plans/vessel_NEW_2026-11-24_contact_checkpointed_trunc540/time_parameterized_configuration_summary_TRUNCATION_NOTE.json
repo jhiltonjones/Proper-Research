@@ -1,0 +1,5 @@
+{
+  "truncated_from": 682,
+  "truncated_to": 540,
+  "note": "this plan dir's npz/csv were truncated to the first 540 of 682 original samples; original summary.json copied unmodified below for reference only -- its own sample-count fields describe the ORIGINAL full path, not this truncated one."
+}

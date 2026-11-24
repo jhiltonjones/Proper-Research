@@ -1,0 +1,149 @@
+{"event": "idle_no_target", "realized_interval_s": null, "t_s": 6004927.069159323}
+{"event": "idle_no_target", "realized_interval_s": 0.005028044804930687, "t_s": 6004927.074191232}
+{"event": "idle_no_target", "realized_interval_s": 0.005067097954452038, "t_s": 6004927.07925779}
+{"event": "idle_no_target", "realized_interval_s": 0.005047294311225414, "t_s": 6004927.084309185}
+{"event": "idle_no_target", "realized_interval_s": 0.005067017860710621, "t_s": 6004927.08937488}
+{"event": "idle_no_target", "realized_interval_s": 0.0050487220287323, "t_s": 6004927.094426918}
+{"event": "idle_no_target", "realized_interval_s": 0.005081692710518837, "t_s": 6004927.099509389}
+{"event": "idle_no_target", "realized_interval_s": 0.0050333961844444275, "t_s": 6004927.104536914}
+{"event": "publish", "seq": 1, "publish_time_s": 6004927.104833655, "state_age_s": 0.014586802572011948, "t_s": 6004927.104837483}
+{"event": "pickup", "seq": 1, "is_new_target": true, "pickup_time_s": 6004927.109605237, "pickup_latency_s": 0.0047715818509459496, "state_age_s": 0.014586802572011948, "realized_interval_s": 0.0050601717084646225, "t_s": 6004927.109606815}
+{"event": "servo_j_call", "seq": 1, "servo_start_s": 6004927.109616461, "servo_end_s": 6004927.109754429, "servo_duration_ms": 0.13796798884868622, "error": null, "t_s": 6004927.109756247}
+{"event": "pickup", "seq": 1, "is_new_target": false, "pickup_time_s": 6004927.129684937, "pickup_latency_s": 0.024851282127201557, "state_age_s": 0.014586802572011948, "realized_interval_s": 0.020077738910913467, "t_s": 6004927.129688309}
+{"event": "servo_j_call", "seq": 1, "servo_start_s": 6004927.129706856, "servo_end_s": 6004927.129797747, "servo_duration_ms": 0.09089149534702301, "error": null, "t_s": 6004927.129799436}
+{"event": "pickup", "seq": 1, "is_new_target": false, "pickup_time_s": 6004927.14964283, "pickup_latency_s": 0.044809174723923206, "state_age_s": 0.014586802572011948, "realized_interval_s": 0.0199522627517581, "t_s": 6004927.149645781}
+{"event": "servo_j_call", "seq": 1, "servo_start_s": 6004927.149657381, "servo_end_s": 6004927.149739587, "servo_duration_ms": 0.08220598101615906, "error": null, "t_s": 6004927.149741207}
+{"event": "pickup", "seq": 1, "is_new_target": false, "pickup_time_s": 6004927.169730455, "pickup_latency_s": 0.06489679962396622, "state_age_s": 0.014586802572011948, "realized_interval_s": 0.020103683695197105, "t_s": 6004927.169733249}
+{"event": "servo_j_call", "seq": 1, "servo_start_s": 6004927.169743602, "servo_end_s": 6004927.169822444, "servo_duration_ms": 0.07884204387664795, "error": null, "t_s": 6004927.169823875}
+{"event": "pickup", "seq": 1, "is_new_target": false, "pickup_time_s": 6004927.189636859, "pickup_latency_s": 0.08480320405215025, "state_age_s": 0.014586802572011948, "realized_interval_s": 0.01990149635821581, "t_s": 6004927.189639403}
+{"event": "servo_j_call", "seq": 1, "servo_start_s": 6004927.189651728, "servo_end_s": 6004927.189732015, "servo_duration_ms": 0.08028745651245117, "error": null, "t_s": 6004927.189733817}
+{"event": "publish", "seq": 2, "publish_time_s": 6004927.197028468, "state_age_s": 0.018555115908384323, "t_s": 6004927.197031476}
+{"event": "pickup", "seq": 2, "is_new_target": true, "pickup_time_s": 6004927.209637338, "pickup_latency_s": 0.012608869932591915, "state_age_s": 0.018555115908384323, "realized_interval_s": 0.01999934669584036, "t_s": 6004927.209639481}
+{"event": "servo_j_call", "seq": 2, "servo_start_s": 6004927.209653286, "servo_end_s": 6004927.209730043, "servo_duration_ms": 0.07675681263208389, "error": null, "t_s": 6004927.209732167}
+{"event": "pickup", "seq": 2, "is_new_target": false, "pickup_time_s": 6004927.229615086, "pickup_latency_s": 0.03258661739528179, "state_age_s": 0.018555115908384323, "realized_interval_s": 0.019978285767138004, "t_s": 6004927.229618105}
+{"event": "servo_j_call", "seq": 2, "servo_start_s": 6004927.229632179, "servo_end_s": 6004927.229781024, "servo_duration_ms": 0.1488449051976204, "error": null, "t_s": 6004927.229783172}
+{"event": "pickup", "seq": 2, "is_new_target": false, "pickup_time_s": 6004927.249659425, "pickup_latency_s": 0.052630956284701824, "state_age_s": 0.018555115908384323, "realized_interval_s": 0.020051036961376667, "t_s": 6004927.249660686}
+{"event": "servo_j_call", "seq": 2, "servo_start_s": 6004927.249668311, "servo_end_s": 6004927.249795965, "servo_duration_ms": 0.1276535913348198, "error": null, "t_s": 6004927.2497976}
+{"event": "pickup", "seq": 2, "is_new_target": false, "pickup_time_s": 6004927.269692161, "pickup_latency_s": 0.0726636927574873, "state_age_s": 0.018555115908384323, "realized_interval_s": 0.020031871274113655, "t_s": 6004927.269693513}
+{"event": "servo_j_call", "seq": 2, "servo_start_s": 6004927.26969994, "servo_end_s": 6004927.269925659, "servo_duration_ms": 0.22571813315153122, "error": null, "t_s": 6004927.26992711}
+{"event": "pickup", "seq": 2, "is_new_target": false, "pickup_time_s": 6004927.289604833, "pickup_latency_s": 0.09257636498659849, "state_age_s": 0.018555115908384323, "realized_interval_s": 0.01991288084536791, "t_s": 6004927.289606865}
+{"event": "servo_j_call", "seq": 2, "servo_start_s": 6004927.289616658, "servo_end_s": 6004927.289754368, "servo_duration_ms": 0.13771001249551773, "error": null, "t_s": 6004927.289756307}
+{"event": "publish", "seq": 3, "publish_time_s": 6004927.291418948, "state_age_s": 0.04784020036458969, "t_s": 6004927.291421438}
+{"event": "pickup", "seq": 3, "is_new_target": true, "pickup_time_s": 6004927.309644781, "pickup_latency_s": 0.0182258328422904, "state_age_s": 0.04784020036458969, "realized_interval_s": 0.020018093287944794, "t_s": 6004927.309647453}
+{"event": "servo_j_call", "seq": 3, "servo_start_s": 6004927.30965759, "servo_end_s": 6004927.309789498, "servo_duration_ms": 0.1319078728556633, "error": null, "t_s": 6004927.309791367}
+{"event": "pickup", "seq": 3, "is_new_target": false, "pickup_time_s": 6004927.329633031, "pickup_latency_s": 0.03821408282965422, "state_age_s": 0.04784020036458969, "realized_interval_s": 0.020006666891276836, "t_s": 6004927.32963534}
+{"event": "servo_j_call", "seq": 3, "servo_start_s": 6004927.329646626, "servo_end_s": 6004927.329779322, "servo_duration_ms": 0.1326967030763626, "error": null, "t_s": 6004927.329781243}
+{"event": "pickup", "seq": 3, "is_new_target": false, "pickup_time_s": 6004927.349625488, "pickup_latency_s": 0.05820653960108757, "state_age_s": 0.04784020036458969, "realized_interval_s": 0.019996054470539093, "t_s": 6004927.349626847}
+{"event": "servo_j_call", "seq": 3, "servo_start_s": 6004927.349634946, "servo_end_s": 6004927.349682481, "servo_duration_ms": 0.04753470420837402, "error": null, "t_s": 6004927.34968395}
+{"event": "pickup", "seq": 3, "is_new_target": false, "pickup_time_s": 6004927.369690738, "pickup_latency_s": 0.07827178947627544, "state_age_s": 0.04784020036458969, "realized_interval_s": 0.020065315067768097, "t_s": 6004927.369692245}
+{"event": "servo_j_call", "seq": 3, "servo_start_s": 6004927.369698604, "servo_end_s": 6004927.369752274, "servo_duration_ms": 0.053670257329940796, "error": null, "t_s": 6004927.369753702}
+{"event": "pickup", "seq": 3, "is_new_target": false, "pickup_time_s": 6004927.389606831, "pickup_latency_s": 0.0981878824532032, "state_age_s": 0.04784020036458969, "realized_interval_s": 0.01991469319909811, "t_s": 6004927.389609417}
+{"event": "servo_j_call", "seq": 3, "servo_start_s": 6004927.38962017, "servo_end_s": 6004927.389687161, "servo_duration_ms": 0.06699096411466599, "error": null, "t_s": 6004927.389688594}
+{"event": "publish", "seq": 4, "publish_time_s": 6004927.394991645, "state_age_s": 0.05685465224087238, "t_s": 6004927.394994247}
+{"event": "pickup", "seq": 4, "is_new_target": true, "pickup_time_s": 6004927.409600707, "pickup_latency_s": 0.014609062112867832, "state_age_s": 0.05685465224087238, "realized_interval_s": 0.019995801150798798, "t_s": 6004927.409602079}
+{"event": "servo_j_call", "seq": 4, "servo_start_s": 6004927.409608581, "servo_end_s": 6004927.409649043, "servo_duration_ms": 0.04046224057674408, "error": null, "t_s": 6004927.409650275}
+{"event": "pickup", "seq": 4, "is_new_target": false, "pickup_time_s": 6004927.4296295, "pickup_latency_s": 0.03463785536587238, "state_age_s": 0.05685465224087238, "realized_interval_s": 0.02002554200589657, "t_s": 6004927.429631462}
+{"event": "servo_j_call", "seq": 4, "servo_start_s": 6004927.429644405, "servo_end_s": 6004927.429706993, "servo_duration_ms": 0.062587670981884, "error": null, "t_s": 6004927.429708471}
+{"event": "pickup", "seq": 4, "is_new_target": false, "pickup_time_s": 6004927.449631016, "pickup_latency_s": 0.05463937111198902, "state_age_s": 0.05685465224087238, "realized_interval_s": 0.01999481860548258, "t_s": 6004927.449632784}
+{"event": "servo_j_call", "seq": 4, "servo_start_s": 6004927.449642102, "servo_end_s": 6004927.449700723, "servo_duration_ms": 0.05862116813659668, "error": null, "t_s": 6004927.449702217}
+{"event": "pickup", "seq": 4, "is_new_target": false, "pickup_time_s": 6004927.469696783, "pickup_latency_s": 0.07470513880252838, "state_age_s": 0.05685465224087238, "realized_interval_s": 0.020074929110705853, "t_s": 6004927.469698355}
+{"event": "servo_j_call", "seq": 4, "servo_start_s": 6004927.469704911, "servo_end_s": 6004927.469800576, "servo_duration_ms": 0.09566452354192734, "error": null, "t_s": 6004927.469802049}
+{"event": "pickup", "seq": 4, "is_new_target": false, "pickup_time_s": 6004927.489637862, "pickup_latency_s": 0.09464621730148792, "state_age_s": 0.05685465224087238, "realized_interval_s": 0.019926177337765694, "t_s": 6004927.489639327}
+{"event": "servo_j_call", "seq": 4, "servo_start_s": 6004927.489648072, "servo_end_s": 6004927.4897044, "servo_duration_ms": 0.05632825195789337, "error": null, "t_s": 6004927.489705966}
+{"event": "publish", "seq": 5, "publish_time_s": 6004927.492306069, "state_age_s": 0.05606877710670233, "t_s": 6004927.492308582}
+{"event": "pickup", "seq": 5, "is_new_target": true, "pickup_time_s": 6004927.509641018, "pickup_latency_s": 0.0173349492251873, "state_age_s": 0.05606877710670233, "realized_interval_s": 0.020015706308186054, "t_s": 6004927.509642239}
+{"event": "servo_j_call", "seq": 5, "servo_start_s": 6004927.509649136, "servo_end_s": 6004927.509701513, "servo_duration_ms": 0.052376650273799896, "error": null, "t_s": 6004927.509702917}
+{"event": "pickup", "seq": 5, "is_new_target": false, "pickup_time_s": 6004927.52965725, "pickup_latency_s": 0.037351181730628014, "state_age_s": 0.05606877710670233, "realized_interval_s": 0.02001950703561306, "t_s": 6004927.529658366}
+{"event": "servo_j_call", "seq": 5, "servo_start_s": 6004927.529665126, "servo_end_s": 6004927.529705814, "servo_duration_ms": 0.040687620639801025, "error": null, "t_s": 6004927.529707208}
+{"event": "pickup", "seq": 5, "is_new_target": false, "pickup_time_s": 6004927.549654622, "pickup_latency_s": 0.05734855309128761, "state_age_s": 0.05606877710670233, "realized_interval_s": 0.01999739743769169, "t_s": 6004927.549655829}
+{"event": "servo_j_call", "seq": 5, "servo_start_s": 6004927.549662808, "servo_end_s": 6004927.549704999, "servo_duration_ms": 0.04219077527523041, "error": null, "t_s": 6004927.549706349}
+{"event": "pickup", "seq": 5, "is_new_target": false, "pickup_time_s": 6004927.569708, "pickup_latency_s": 0.07740193139761686, "state_age_s": 0.05606877710670233, "realized_interval_s": 0.020052052102982998, "t_s": 6004927.56971048}
+{"event": "servo_j_call", "seq": 5, "servo_start_s": 6004927.569720262, "servo_end_s": 6004927.569923046, "servo_duration_ms": 0.20278431475162506, "error": null, "t_s": 6004927.569924851}
+{"event": "pickup", "seq": 5, "is_new_target": false, "pickup_time_s": 6004927.589645743, "pickup_latency_s": 0.0973396748304367, "state_age_s": 0.05606877710670233, "realized_interval_s": 0.01992735266685486, "t_s": 6004927.589649168}
+{"event": "servo_j_call", "seq": 5, "servo_start_s": 6004927.58966532, "servo_end_s": 6004927.589755745, "servo_duration_ms": 0.09042490273714066, "error": null, "t_s": 6004927.589757502}
+{"event": "publish", "seq": 6, "publish_time_s": 6004927.59226539, "state_age_s": 0.024897479452192783, "t_s": 6004927.592268705}
+{"event": "pickup", "seq": 6, "is_new_target": true, "pickup_time_s": 6004927.609645698, "pickup_latency_s": 0.017380308359861374, "state_age_s": 0.024897479452192783, "realized_interval_s": 0.019999354146420956, "t_s": 6004927.609648966}
+{"event": "servo_j_call", "seq": 6, "servo_start_s": 6004927.609666425, "servo_end_s": 6004927.609757576, "servo_duration_ms": 0.09115133434534073, "error": null, "t_s": 6004927.609760026}
+{"event": "pickup", "seq": 6, "is_new_target": false, "pickup_time_s": 6004927.629625354, "pickup_latency_s": 0.03735996410250664, "state_age_s": 0.024897479452192783, "realized_interval_s": 0.019977210089564323, "t_s": 6004927.629629706}
+{"event": "servo_j_call", "seq": 6, "servo_start_s": 6004927.629650116, "servo_end_s": 6004927.629769028, "servo_duration_ms": 0.11891219764947891, "error": null, "t_s": 6004927.629771945}
+{"event": "pickup", "seq": 6, "is_new_target": false, "pickup_time_s": 6004927.649638337, "pickup_latency_s": 0.057372947223484516, "state_age_s": 0.024897479452192783, "realized_interval_s": 0.020012185908854008, "t_s": 6004927.64964049}
+{"event": "servo_j_call", "seq": 6, "servo_start_s": 6004927.649651229, "servo_end_s": 6004927.649726702, "servo_duration_ms": 0.07547251880168915, "error": null, "t_s": 6004927.649728701}
+{"event": "pickup", "seq": 6, "is_new_target": false, "pickup_time_s": 6004927.669747304, "pickup_latency_s": 0.07748191431164742, "state_age_s": 0.024897479452192783, "realized_interval_s": 0.02012313064187765, "t_s": 6004927.669750272}
+{"event": "servo_j_call", "seq": 6, "servo_start_s": 6004927.669760982, "servo_end_s": 6004927.669986529, "servo_duration_ms": 0.2255477011203766, "error": null, "t_s": 6004927.66998837}
+{"event": "pickup", "seq": 6, "is_new_target": false, "pickup_time_s": 6004927.689632302, "pickup_latency_s": 0.09736691229045391, "state_age_s": 0.024897479452192783, "realized_interval_s": 0.019877254031598568, "t_s": 6004927.689634586}
+{"event": "servo_j_call", "seq": 6, "servo_start_s": 6004927.689645414, "servo_end_s": 6004927.689720882, "servo_duration_ms": 0.07546786218881607, "error": null, "t_s": 6004927.689722565}
+{"event": "publish", "seq": 7, "publish_time_s": 6004927.691371109, "state_age_s": 0.02386574074625969, "t_s": 6004927.691373675}
+{"event": "pickup", "seq": 7, "is_new_target": true, "pickup_time_s": 6004927.709644726, "pickup_latency_s": 0.018273616209626198, "state_age_s": 0.02386574074625969, "realized_interval_s": 0.020000627264380455, "t_s": 6004927.709647693}
+{"event": "servo_j_call", "seq": 7, "servo_start_s": 6004927.709659774, "servo_end_s": 6004927.709800877, "servo_duration_ms": 0.14110282063484192, "error": null, "t_s": 6004927.709803119}
+{"event": "pickup", "seq": 7, "is_new_target": false, "pickup_time_s": 6004927.729636415, "pickup_latency_s": 0.03826530557125807, "state_age_s": 0.02386574074625969, "realized_interval_s": 0.019998718053102493, "t_s": 6004927.729637779}
+{"event": "servo_j_call", "seq": 7, "servo_start_s": 6004927.729645092, "servo_end_s": 6004927.729768432, "servo_duration_ms": 0.1233397051692009, "error": null, "t_s": 6004927.729770191}
+{"event": "pickup", "seq": 7, "is_new_target": false, "pickup_time_s": 6004927.749629998, "pickup_latency_s": 0.05825888831168413, "state_age_s": 0.02386574074625969, "realized_interval_s": 0.020004507154226303, "t_s": 6004927.749632107}
+{"event": "servo_j_call", "seq": 7, "servo_start_s": 6004927.749642685, "servo_end_s": 6004927.749712543, "servo_duration_ms": 0.06985757499933243, "error": null, "t_s": 6004927.749714277}
+{"event": "pickup", "seq": 7, "is_new_target": false, "pickup_time_s": 6004927.769663199, "pickup_latency_s": 0.07829208951443434, "state_age_s": 0.02386574074625969, "realized_interval_s": 0.020034892484545708, "t_s": 6004927.769664733}
+{"event": "servo_j_call", "seq": 7, "servo_start_s": 6004927.769672335, "servo_end_s": 6004927.769734241, "servo_duration_ms": 0.06190594285726547, "error": null, "t_s": 6004927.769735732}
+{"event": "publish", "seq": 8, "publish_time_s": 6004927.787816937, "state_age_s": 0.013207249343395233, "t_s": 6004927.78782033}
+{"event": "pickup", "seq": 8, "is_new_target": true, "pickup_time_s": 6004927.789626939, "pickup_latency_s": 0.001810002140700817, "state_age_s": 0.013207249343395233, "realized_interval_s": 0.01995658315718174, "t_s": 6004927.789628087}
+{"event": "servo_j_call", "seq": 8, "servo_start_s": 6004927.789634587, "servo_end_s": 6004927.789684409, "servo_duration_ms": 0.04982203245162964, "error": null, "t_s": 6004927.789685696}
+{"event": "pickup", "seq": 8, "is_new_target": false, "pickup_time_s": 6004927.809642474, "pickup_latency_s": 0.021825537085533142, "state_age_s": 0.013207249343395233, "realized_interval_s": 0.020005441270768642, "t_s": 6004927.809645154}
+{"event": "servo_j_call", "seq": 8, "servo_start_s": 6004927.809657786, "servo_end_s": 6004927.809793639, "servo_duration_ms": 0.13585295528173447, "error": null, "t_s": 6004927.809796063}
+{"event": "pickup", "seq": 8, "is_new_target": false, "pickup_time_s": 6004927.829652878, "pickup_latency_s": 0.04183594137430191, "state_age_s": 0.013207249343395233, "realized_interval_s": 0.020024621859192848, "t_s": 6004927.829656105}
+{"event": "servo_j_call", "seq": 8, "servo_start_s": 6004927.829667639, "servo_end_s": 6004927.829816955, "servo_duration_ms": 0.14931615442037582, "error": null, "t_s": 6004927.829819148}
+{"event": "pickup", "seq": 8, "is_new_target": false, "pickup_time_s": 6004927.849635549, "pickup_latency_s": 0.061818611808121204, "state_age_s": 0.013207249343395233, "realized_interval_s": 0.01997421123087406, "t_s": 6004927.849637817}
+{"event": "servo_j_call", "seq": 8, "servo_start_s": 6004927.849664453, "servo_end_s": 6004927.849813391, "servo_duration_ms": 0.14893803745508194, "error": null, "t_s": 6004927.849815478}
+{"event": "pickup", "seq": 8, "is_new_target": false, "pickup_time_s": 6004927.869741894, "pickup_latency_s": 0.08192495722323656, "state_age_s": 0.013207249343395233, "realized_interval_s": 0.020118442364037037, "t_s": 6004927.869743425}
+{"event": "servo_j_call", "seq": 8, "servo_start_s": 6004927.869750183, "servo_end_s": 6004927.869829931, "servo_duration_ms": 0.07974822074174881, "error": null, "t_s": 6004927.869831252}
+{"event": "publish", "seq": 9, "publish_time_s": 6004927.888069707, "state_age_s": 0.012428789399564266, "t_s": 6004927.888079503}
+{"event": "pickup", "seq": 9, "is_new_target": true, "pickup_time_s": 6004927.889639176, "pickup_latency_s": 0.0015694694593548775, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.019881393760442734, "t_s": 6004927.889640506}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.889648862, "servo_end_s": 6004927.889700044, "servo_duration_ms": 0.05118176341056824, "error": null, "t_s": 6004927.889701685}
+{"event": "pickup", "seq": 9, "is_new_target": false, "pickup_time_s": 6004927.909637467, "pickup_latency_s": 0.021567760035395622, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.020014259032905102, "t_s": 6004927.909638808}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.90964618, "servo_end_s": 6004927.909703441, "servo_duration_ms": 0.057260505855083466, "error": null, "t_s": 6004927.909704881}
+{"event": "pickup", "seq": 9, "is_new_target": false, "pickup_time_s": 6004927.929632502, "pickup_latency_s": 0.04156279470771551, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.01998624298721552, "t_s": 6004927.929634719}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.929644038, "servo_end_s": 6004927.929718887, "servo_duration_ms": 0.07484946399927139, "error": null, "t_s": 6004927.929720571}
+{"event": "pickup", "seq": 9, "is_new_target": false, "pickup_time_s": 6004927.949630597, "pickup_latency_s": 0.06156088970601559, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.020004392601549625, "t_s": 6004927.949632702}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.949642633, "servo_end_s": 6004927.949742093, "servo_duration_ms": 0.09945966303348541, "error": null, "t_s": 6004927.949743978}
+{"event": "pickup", "seq": 9, "is_new_target": false, "pickup_time_s": 6004927.969691751, "pickup_latency_s": 0.0816220436245203, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.020063494332134724, "t_s": 6004927.969693174}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.969699444, "servo_end_s": 6004927.96987912, "servo_duration_ms": 0.1796754077076912, "error": null, "t_s": 6004927.969880589}
+{"event": "pickup", "seq": 9, "is_new_target": false, "pickup_time_s": 6004927.989632842, "pickup_latency_s": 0.10156313516199589, "state_age_s": 0.012428789399564266, "realized_interval_s": 0.01994128432124853, "t_s": 6004927.989634374}
+{"event": "servo_j_call", "seq": 9, "servo_start_s": 6004927.989642333, "servo_end_s": 6004927.989705851, "servo_duration_ms": 0.06351806223392487, "error": null, "t_s": 6004927.98970729}
+{"event": "publish", "seq": 10, "publish_time_s": 6004927.992342097, "state_age_s": 0.011591051705181599, "t_s": 6004927.992344552}
+{"event": "pickup", "seq": 10, "is_new_target": true, "pickup_time_s": 6004928.009658954, "pickup_latency_s": 0.01731685735285282, "state_age_s": 0.011591051705181599, "realized_interval_s": 0.020026812329888344, "t_s": 6004928.009660031}
+{"event": "servo_j_call", "seq": 10, "servo_start_s": 6004928.009666432, "servo_end_s": 6004928.009726956, "servo_duration_ms": 0.0605238601565361, "error": null, "t_s": 6004928.009728285}
+{"event": "pickup", "seq": 10, "is_new_target": false, "pickup_time_s": 6004928.029628476, "pickup_latency_s": 0.037286379374563694, "state_age_s": 0.011591051705181599, "realized_interval_s": 0.019969315268099308, "t_s": 6004928.029629654}
+{"event": "servo_j_call", "seq": 10, "servo_start_s": 6004928.029636726, "servo_end_s": 6004928.029666869, "servo_duration_ms": 0.030143186450004578, "error": null, "t_s": 6004928.029668075}
+{"event": "pickup", "seq": 10, "is_new_target": false, "pickup_time_s": 6004928.049600876, "pickup_latency_s": 0.05725877918303013, "state_age_s": 0.011591051705181599, "realized_interval_s": 0.019972399808466434, "t_s": 6004928.049605579}
+{"event": "servo_j_call", "seq": 10, "servo_start_s": 6004928.049612117, "servo_end_s": 6004928.049674897, "servo_duration_ms": 0.0627804547548294, "error": null, "t_s": 6004928.049676204}
+{"event": "pickup", "seq": 10, "is_new_target": false, "pickup_time_s": 6004928.069722406, "pickup_latency_s": 0.07738030888140202, "state_age_s": 0.011591051705181599, "realized_interval_s": 0.020118936896324158, "t_s": 6004928.069725234}
+{"event": "servo_j_call", "seq": 10, "servo_start_s": 6004928.069734503, "servo_end_s": 6004928.069811214, "servo_duration_ms": 0.07671117782592773, "error": null, "t_s": 6004928.069812687}
+{"event": "pickup", "seq": 10, "is_new_target": false, "pickup_time_s": 6004928.089631072, "pickup_latency_s": 0.09728897549211979, "state_age_s": 0.011591051705181599, "realized_interval_s": 0.019898995757102966, "t_s": 6004928.089632813}
+{"event": "servo_j_call", "seq": 10, "servo_start_s": 6004928.089643175, "servo_end_s": 6004928.089721287, "servo_duration_ms": 0.07811188697814941, "error": null, "t_s": 6004928.089723027}
+{"event": "publish", "seq": 11, "publish_time_s": 6004928.095179008, "state_age_s": 0.05119406711310148, "t_s": 6004928.095181494}
+{"event": "pickup", "seq": 11, "is_new_target": true, "pickup_time_s": 6004928.109652624, "pickup_latency_s": 0.014473616145551205, "state_age_s": 0.05119406711310148, "realized_interval_s": 0.020015195943415165, "t_s": 6004928.109656426}
+{"event": "servo_j_call", "seq": 11, "servo_start_s": 6004928.109677446, "servo_end_s": 6004928.109795528, "servo_duration_ms": 0.11808238923549652, "error": null, "t_s": 6004928.109797453}
+{"event": "pickup", "seq": 11, "is_new_target": false, "pickup_time_s": 6004928.129636093, "pickup_latency_s": 0.034457084722816944, "state_age_s": 0.05119406711310148, "realized_interval_s": 0.019986163824796677, "t_s": 6004928.129638691}
+{"event": "servo_j_call", "seq": 11, "servo_start_s": 6004928.129650965, "servo_end_s": 6004928.129738488, "servo_duration_ms": 0.08752290159463882, "error": null, "t_s": 6004928.12974036}
+{"event": "pickup", "seq": 11, "is_new_target": false, "pickup_time_s": 6004928.149636996, "pickup_latency_s": 0.054457987658679485, "state_age_s": 0.05119406711310148, "realized_interval_s": 0.02001021709293127, "t_s": 6004928.149639855}
+{"event": "servo_j_call", "seq": 11, "servo_start_s": 6004928.149653122, "servo_end_s": 6004928.149743876, "servo_duration_ms": 0.09075459092855453, "error": null, "t_s": 6004928.149745565}
+{"event": "pickup", "seq": 11, "is_new_target": false, "pickup_time_s": 6004928.169770463, "pickup_latency_s": 0.0745914550498128, "state_age_s": 0.05119406711310148, "realized_interval_s": 0.020137800835072994, "t_s": 6004928.169773821}
+{"event": "servo_j_call", "seq": 11, "servo_start_s": 6004928.169785404, "servo_end_s": 6004928.169876454, "servo_duration_ms": 0.09105075150728226, "error": null, "t_s": 6004928.169878058}
+{"event": "pickup", "seq": 11, "is_new_target": false, "pickup_time_s": 6004928.189668875, "pickup_latency_s": 0.09448986686766148, "state_age_s": 0.05119406711310148, "realized_interval_s": 0.01989785023033619, "t_s": 6004928.189670881}
+{"event": "servo_j_call", "seq": 11, "servo_start_s": 6004928.189681085, "servo_end_s": 6004928.18991312, "servo_duration_ms": 0.232035294175148, "error": null, "t_s": 6004928.189915899}
+{"event": "publish", "seq": 12, "publish_time_s": 6004928.192924775, "state_age_s": 0.05033798608928919, "t_s": 6004928.19292746}
+{"event": "pickup", "seq": 12, "is_new_target": true, "pickup_time_s": 6004928.209649443, "pickup_latency_s": 0.016724667511880398, "state_age_s": 0.05033798608928919, "realized_interval_s": 0.01998236123472452, "t_s": 6004928.209651249}
+{"event": "servo_j_call", "seq": 12, "servo_start_s": 6004928.209660001, "servo_end_s": 6004928.209728641, "servo_duration_ms": 0.06864033639431, "error": null, "t_s": 6004928.209730069}
+{"event": "pickup", "seq": 12, "is_new_target": false, "pickup_time_s": 6004928.229629589, "pickup_latency_s": 0.036704814061522484, "state_age_s": 0.05033798608928919, "realized_interval_s": 0.019970485009253025, "t_s": 6004928.229631624}
+{"event": "servo_j_call", "seq": 12, "servo_start_s": 6004928.229644002, "servo_end_s": 6004928.229736292, "servo_duration_ms": 0.09228941053152084, "error": null, "t_s": 6004928.229737797}
+{"event": "pickup", "seq": 12, "is_new_target": false, "pickup_time_s": 6004928.249648554, "pickup_latency_s": 0.05672377906739712, "state_age_s": 0.05033798608928919, "realized_interval_s": 0.019999523647129536, "t_s": 6004928.249650184}
+{"event": "servo_j_call", "seq": 12, "servo_start_s": 6004928.249658159, "servo_end_s": 6004928.249800309, "servo_duration_ms": 0.14214962720870972, "error": null, "t_s": 6004928.249802849}
+{"event": "pickup", "seq": 12, "is_new_target": false, "pickup_time_s": 6004928.269635279, "pickup_latency_s": 0.07671050354838371, "state_age_s": 0.05033798608928919, "realized_interval_s": 0.020016185007989407, "t_s": 6004928.269636611}
+{"event": "servo_j_call", "seq": 12, "servo_start_s": 6004928.269643546, "servo_end_s": 6004928.269918547, "servo_duration_ms": 0.2750009298324585, "error": null, "t_s": 6004928.269920225}
+{"event": "pickup", "seq": 12, "is_new_target": false, "pickup_time_s": 6004928.2896302, "pickup_latency_s": 0.0967054245993495, "state_age_s": 0.05033798608928919, "realized_interval_s": 0.019994424656033516, "t_s": 6004928.289633123}
+{"event": "servo_j_call", "seq": 12, "servo_start_s": 6004928.289643894, "servo_end_s": 6004928.289718258, "servo_duration_ms": 0.07436424493789673, "error": null, "t_s": 6004928.289720298}
+{"event": "publish", "seq": 13, "publish_time_s": 6004928.29434969, "state_age_s": 0.01913142390549183, "t_s": 6004928.294352379}
+{"event": "pickup", "seq": 13, "is_new_target": true, "pickup_time_s": 6004928.309662115, "pickup_latency_s": 0.01531242486089468, "state_age_s": 0.01913142390549183, "realized_interval_s": 0.020031186752021313, "t_s": 6004928.309664371}
+{"event": "servo_j_call", "seq": 13, "servo_start_s": 6004928.309674009, "servo_end_s": 6004928.309747491, "servo_duration_ms": 0.07348228245973587, "error": null, "t_s": 6004928.309749094}
+{"event": "pickup", "seq": 13, "is_new_target": false, "pickup_time_s": 6004928.329630055, "pickup_latency_s": 0.035280365496873856, "state_age_s": 0.01913142390549183, "realized_interval_s": 0.01996772550046444, "t_s": 6004928.329632518}
+{"event": "servo_j_call", "seq": 13, "servo_start_s": 6004928.329642942, "servo_end_s": 6004928.329742825, "servo_duration_ms": 0.09988248348236084, "error": null, "t_s": 6004928.329744556}
+{"event": "pickup", "seq": 13, "is_new_target": false, "pickup_time_s": 6004928.349630886, "pickup_latency_s": 0.05528119578957558, "state_age_s": 0.01913142390549183, "realized_interval_s": 0.019991262815892696, "t_s": 6004928.349632804}
+{"event": "servo_j_call", "seq": 13, "servo_start_s": 6004928.349643658, "servo_end_s": 6004928.349716354, "servo_duration_ms": 0.0726962462067604, "error": null, "t_s": 6004928.349718151}
+{"event": "pickup", "seq": 13, "is_new_target": false, "pickup_time_s": 6004928.369697674, "pickup_latency_s": 0.07534798420965672, "state_age_s": 0.01913142390549183, "realized_interval_s": 0.02007689420133829, "t_s": 6004928.369699921}
+{"event": "servo_j_call", "seq": 13, "servo_start_s": 6004928.36970872, "servo_end_s": 6004928.369794632, "servo_duration_ms": 0.08591264486312866, "error": null, "t_s": 6004928.36979619}

@@ -1,0 +1,80 @@
+{
+  "controller_variant": "nullspace_r700_R700_vessel",
+  "contact": false,
+  "gamma": 0.0,
+  "input_tracking_weight": 7.0,
+  "input_increment_weight": 0.001,
+  "insertion_offset_abort_m": null,
+  "insertion_offset_monitor_disabled": true,
+  "max_tracking_error_m": 0.009,
+  "state_scale_q_rad": 0.008726646259971648,
+  "state_scale_L_m": 0.00025,
+  "input_scale_q_rad_s": 0.05,
+  "input_scale_L_m_s": 0.005,
+  "delay_samples": 2,
+  "beta_d": 1.0,
+  "horizon": 15,
+  "terminal_cost": false,
+  "insertion_rate_limit_m_s": 0.002,
+  "plan_dir": "plans/vessel_NEW_2026-11-24_nocontact_checkpointed_trunc_matched103/time_parameterized_configuration_path",
+  "beam_base_pivot_z_m": -0.039627,
+  "magnet_z_bounds_m": [
+    -0.07968319644627811,
+    0.0003168035537218991
+  ],
+  "magnet_exclusion_point_R": [
+    0.670575,
+    -0.719727,
+    -0.039627
+  ],
+  "magnet_exclusion_radius_m": 0.205,
+  "magnet_exclusion_source": "beam_base_fixed_210.00mm",
+  "magnet_constraints_in_qp": true,
+  "tcp_workspace_in_qp": true,
+  "jacobian_adaptation_mode": "off",
+  "argv": [
+    "/home/jack/Proper-Research/proper_research/hardware/online/vessel_stage_a/run_mpc_delay_aware_vessel.py",
+    "--plan-dir",
+    "plans/vessel_NEW_2026-11-24_nocontact_checkpointed_trunc_matched103/time_parameterized_configuration_path",
+    "--schedule-cache",
+    "plans/vessel_NEW_2026-11-24_nocontact_checkpointed_trunc_matched103/jacobian_schedule_nocontact.npy",
+    "--lumen-file",
+    "vessel_lumen_robot_frame_NEW_2026-11-24.json",
+    "--insertion-max-mm",
+    "200.0",
+    "--no-contact",
+    "--controller-kind",
+    "nullspace_r700",
+    "--magnet-workspace-robust-margin-mm",
+    "3.0",
+    "--out-dir",
+    "close_loop_logs/vessel_nocontact_condition_A",
+    "--run-name",
+    "vessel_nocontact_condition_A",
+    "--max-tracking-error-mm",
+    "9"
+  ],
+  "planner_to_live_R_fit": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "planner_to_live_t_fit_m": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "planner_to_live_t_fit_norm_m": 0.0
+}
